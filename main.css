@@ -1,0 +1,300 @@
+/* GXW main stylesheet.
+ *
+ * Carries forward the desktop app's palette and spacing decisions:
+ * near-black editor background with warm off-white text, mid-grey
+ * 3-pixel dividers between every region, dark metallic transport
+ * bar, and large bold fonts throughout for accessibility.
+ *
+ * Colour naming conventions (for future maintenance):
+ *   Near-black:   #2a2a2a  (editor background, input field fill)
+ *   Panel dark:   #3a3a3a  (transport bar, tab-selected, dock title)
+ *   Mid-grey:     #555555  (menu bar, transport button fill)
+ *   Divider:      #777777  (all dividers and subtle borders)
+ *   Warm off-white:#d8d4cc (editor text)
+ *   Light text:   #f0f0f0  (transport elapsed time, button labels)
+ *   Secondary:    #c8c8c8  (field labels)
+ *   Tab inactive: #c0c0c0  (unselected tab text)
+ */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+    font-size: 15pt;
+    background-color: #2a2a2a;
+    color: #d8d4cc;
+}
+
+/* Root app container — fills the viewport and lays out the four
+ * main regions as rows. */
+#app {
+    display: grid;
+    grid-template-rows: auto 3px 1fr auto;
+    height: 100%;
+    width: 100%;
+}
+
+/* Top menu bar */
+#menubar {
+    display: flex;
+    align-items: center;
+    background-color: #555555;
+    color: #ffffff;
+    font-weight: bold;
+    padding: 6px 8px;
+    gap: 4px;
+}
+
+.menu-item {
+    padding: 4px 12px;
+    cursor: pointer;
+    border-radius: 3px;
+    user-select: none;
+}
+
+.menu-item:hover,
+.menu-item:focus {
+    background-color: #777777;
+    outline: none;
+}
+
+.menu-title {
+    margin-left: auto;
+    padding-right: 12px;
+    font-size: 14pt;
+    color: #e0e0e0;
+}
+
+/* Dividers. Three pixels, mid-grey, rendered as real elements so
+ * they stay visible regardless of child widget backgrounds. */
+.divider-horizontal {
+    background-color: #777777;
+    height: 3px;
+    width: 100%;
+}
+
+.divider-vertical {
+    background-color: #777777;
+    width: 3px;
+    height: 100%;
+}
+
+/* Inline vertical divider inside the transport bar, between the
+ * controls and the status area. */
+.divider-vertical-inline {
+    background-color: #777777;
+    width: 3px;
+    align-self: stretch;
+    margin: 0 8px;
+}
+
+/* Main body area — canvas on the left, editor on the right, with
+ * a 3-pixel vertical divider between them. */
+#body {
+    display: grid;
+    grid-template-columns: 1fr 3px 1fr;
+    overflow: hidden;
+}
+
+#canvas-pane,
+#editor-pane {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background-color: #2a2a2a;
+}
+
+/* Canvas pane title bar — styled to match the editor's tab bar
+ * height so their respective bottom dividers line up. */
+.pane-title-bar {
+    display: flex;
+    align-items: center;
+    height: 32px;
+    background-color: #3a3a3a;
+    padding: 0 12px;
+}
+
+.pane-title {
+    color: #e0e0e0;
+    font-size: 14pt;
+    font-weight: bold;
+}
+
+#canvas-area {
+    flex: 1;
+    background-color: #2a2a2a;
+    overflow: hidden;
+}
+
+/* Editor tab bar. Dark-on-dark tabs, with the selected tab slightly
+ * lighter and connected to the content below via the tab-bar-filler
+ * trick: the divider lives along the bottom of the tab bar, but the
+ * selected tab's background extends down through it. */
+.tab-bar {
+    display: flex;
+    align-items: flex-end;
+    height: 32px;
+    background-color: #2a2a2a;
+    position: relative;
+}
+
+.tab {
+    padding: 6px 14px;
+    font-size: 14pt;
+    font-weight: bold;
+    background-color: #2a2a2a;
+    color: #c0c0c0;
+    border: 1px solid #777777;
+    border-bottom: none;
+    margin-right: 2px;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1;
+}
+
+.tab-selected {
+    background-color: #3a3a3a;
+    color: #ffffff;
+    position: relative;
+    z-index: 2;
+}
+
+/* The filler is the empty space to the right of the last tab. It
+ * gets the bottom divider so the line continues across the full
+ * width of the tab bar. Each tab already has its own border so the
+ * line appears continuous. */
+.tab-bar-filler {
+    flex: 1;
+    align-self: stretch;
+    border-bottom: 3px solid #777777;
+}
+
+/* The non-filler tabs also need a bottom divider. We put it on the
+ * tab-bar itself as a shadow-like border, and the selected tab
+ * covers a slice of it by sitting on top with z-index. */
+.tab-bar::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background-color: #777777;
+    z-index: 1;
+}
+
+/* Move the selected tab's bottom edge down over the divider so it
+ * visually connects to the content pane below. */
+.tab-selected {
+    margin-bottom: -3px;
+    padding-bottom: 9px;
+}
+
+#editor-area {
+    flex: 1;
+    background-color: #2a2a2a;
+    color: #d8d4cc;
+    overflow: auto;
+}
+
+.placeholder {
+    padding: 24px;
+    color: #888888;
+    font-style: italic;
+}
+
+/* Transport bar at the bottom.
+ * Divider above it is a child element so it spans the full width
+ * regardless of how the controls below are laid out. */
+#transport-bar {
+    display: flex;
+    flex-direction: column;
+    background-color: #3a3a3a;
+}
+
+.transport-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 3px 12px;
+    min-height: 50px;
+}
+
+.transport-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 20px;
+    background-color: #555555;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    font-size: 18pt;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.transport-btn:hover,
+.transport-btn:focus {
+    background-color: #666666;
+    outline: none;
+}
+
+.elapsed-time {
+    color: #f0f0f0;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 24pt;
+    font-weight: normal;
+    padding: 0 16px;
+    line-height: 1;
+}
+
+.field-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.field-label {
+    color: #c8c8c8;
+    font-size: 12pt;
+}
+
+.field-input {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 2px 4px;
+    font-size: 14pt;
+    font-weight: normal;
+    width: 80px;
+    height: 28px;
+    font-family: inherit;
+}
+
+.field-readonly {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 2px 8px;
+    font-size: 14pt;
+    font-weight: normal;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+}
+
+.status-area {
+    flex: 1;
+    min-height: 28px;
+}

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GXW</title>
+    <link rel="stylesheet" href="main.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Top menu bar -->
+        <header id="menubar" role="menubar" aria-label="Main menu">
+            <div class="menu-item" role="menuitem" tabindex="0">File</div>
+            <div class="menu-item" role="menuitem" tabindex="0">Edit</div>
+            <div class="menu-item" role="menuitem" tabindex="0">View</div>
+            <div class="menu-title">GXW</div>
+        </header>
+
+        <!-- Horizontal grey divider below the menu bar -->
+        <div class="divider-horizontal" aria-hidden="true"></div>
+
+        <!-- Main body: canvas left, editor right -->
+        <main id="body">
+            <section id="canvas-pane" aria-label="Canvas">
+                <div class="pane-title-bar">
+                    <span class="pane-title">Canvas</span>
+                </div>
+                <div class="divider-horizontal" aria-hidden="true"></div>
+                <div id="canvas-area">
+                    <!-- Canvas will render here later -->
+                </div>
+            </section>
+
+            <!-- Vertical divider between canvas and editor -->
+            <div class="divider-vertical" aria-hidden="true"></div>
+
+            <section id="editor-pane" aria-label="Editor">
+                <div class="tab-bar" role="tablist">
+                    <div class="tab tab-selected" role="tab" aria-selected="true" tabindex="0">sketch.js</div>
+                    <div class="tab" role="tab" aria-selected="false" tabindex="0">helpers.js</div>
+                    <div class="tab-bar-filler"></div>
+                </div>
+                <div id="editor-area">
+                    <!-- Editor will mount here later (CodeMirror in Milestone 2) -->
+                    <div class="placeholder">Editor placeholder</div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Transport bar at the bottom, with its own divider on top -->
+        <footer id="transport-bar" aria-label="Transport">
+            <div class="divider-horizontal" aria-hidden="true"></div>
+            <div class="transport-row">
+                <button class="transport-btn" id="rewind-btn" aria-label="Rewind to start">⏮</button>
+                <button class="transport-btn" id="play-btn" aria-label="Play">▶</button>
+                <div class="elapsed-time" id="elapsed-time">0:00:00</div>
+                <div class="field-group">
+                    <label for="bpm-input" class="field-label">Beats Per Minute</label>
+                    <input
+                        type="number"
+                        id="bpm-input"
+                        class="field-input"
+                        min="1"
+                        max="1000"
+                        step="1"
+                        value="120"
+                    >
+                </div>
+                <div class="field-group">
+                    <span class="field-label">Time Signature</span>
+                    <span class="field-readonly" id="time-signature">4/4</span>
+                </div>
+                <div class="divider-vertical-inline" aria-hidden="true"></div>
+                <div class="status-area" id="status-area">
+                    <!-- Reserved for future error and status output -->
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>
