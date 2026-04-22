@@ -201,7 +201,31 @@ html, body {
     flex: 1;
     background-color: #2a2a2a;
     color: #d8d4cc;
-    overflow: auto;
+    overflow: hidden;
+    position: relative;
+}
+
+#editor-area .cm-editor {
+    height: 100%;
+    background-color: #2a2a2a;
+}
+
+#editor-area .cm-editor.cm-focused {
+    outline: none;
+}
+
+#editor-area .cm-scroller {
+    background-color: #2a2a2a;
+}
+
+#editor-area .cm-gutters {
+    background-color: #2a2a2a;
+    border-right: 1px solid #444444;
+    color: #666666;
+}
+
+#editor-area .cm-content {
+    color: #d8d4cc;
 }
 
 .placeholder {
