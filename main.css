@@ -3,15 +3,22 @@
  * Carries forward the desktop app's palette and spacing decisions:
  * near-black editor background with warm off-white text, mid-grey
  * 3-pixel dividers between every region, dark metallic transport
- * bar, and large bold fonts throughout for accessibility.
+ * controls, and large readable fonts.
  *
- * Colour naming conventions (for future maintenance):
+ * The top row combines the menu bar (left) and the transport
+ * controls (right) on a single horizontal strip. The body below
+ * holds the canvas and editor panes side by side. There is no
+ * bottom chrome — the bottom of the body reaches the window edge
+ * so the OS dock doesn't pop up over app controls on auto-hide
+ * systems.
+ *
+ * Colour naming conventions:
  *   Near-black:   #2a2a2a  (editor background, input field fill)
- *   Panel dark:   #3a3a3a  (transport bar, tab-selected, dock title)
- *   Mid-grey:     #555555  (menu bar, transport button fill)
+ *   Panel dark:   #3a3a3a  (top row, tab-selected, pane titles)
+ *   Mid-grey:     #555555  (menu bar accent, transport button fill)
  *   Divider:      #777777  (all dividers and subtle borders)
  *   Warm off-white:#d8d4cc (editor text)
- *   Light text:   #f0f0f0  (transport elapsed time, button labels)
+ *   Light text:   #f0f0f0  (time displays, button labels)
  *   Secondary:    #c8c8c8  (field labels)
  *   Tab inactive: #c0c0c0  (unselected tab text)
  */
@@ -32,24 +39,53 @@ html, body {
     color: #d8d4cc;
 }
 
-/* Root app container — fills the viewport and lays out the four
- * main regions as rows. */
+/* Root app container — fills the viewport. Top row, divider, body. */
 #app {
     display: grid;
-    grid-template-rows: auto 3px 1fr auto;
+    grid-template-rows: auto 3px 1fr;
     height: 100%;
     width: 100%;
 }
 
-/* Top menu bar */
-#menubar {
+/* --- Top row (menu + transport) --- */
+
+#top-row {
     display: flex;
     align-items: center;
-    background-color: #555555;
-    color: #ffffff;
-    font-weight: bold;
-    padding: 6px 8px;
+    background-color: #3a3a3a;
+    height: 50px;
+    padding: 0 8px;
+    gap: 16px;
+}
+
+/* Three-column layout: menu left, transport centred, wordmark
+ * right. Each side section has equal flex weight so they occupy
+ * matching widths, which keeps the centred transport visually
+ * anchored to the window centre regardless of content widths. */
+#menubar,
+#app-wordmark {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+#menubar {
+    justify-content: flex-start;
     gap: 4px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+#app-wordmark {
+    justify-content: flex-end;
+    color: #00ff33;
+    font-size: 30pt;
+    font-weight: bold;
+    letter-spacing: 2px;
+    padding-right: 8px;
+    line-height: 1;
+    text-shadow: 0 0 6px rgba(0, 255, 51, 0.4);
 }
 
 .menu-item {
@@ -61,19 +97,103 @@ html, body {
 
 .menu-item:hover,
 .menu-item:focus {
-    background-color: #777777;
+    background-color: #555555;
     outline: none;
 }
 
-.menu-title {
-    margin-left: auto;
-    padding-right: 12px;
-    font-size: 14pt;
-    color: #e0e0e0;
+#transport-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
 }
 
-/* Dividers. Three pixels, mid-grey, rendered as real elements so
- * they stay visible regardless of child widget backgrounds. */
+/* Tighter gap between the musical-position readout and the
+ * BPM/time-signature cluster, so the time signature reads as
+ * belonging with the BPM rather than floating on its own. */
+#transport-controls #bpm-group {
+    margin-left: 4px;
+}
+
+#transport-controls #time-sig-group {
+    margin-left: -4px;
+}
+
+/* Transport buttons (rewind, play-pause) */
+.transport-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 20px;
+    background-color: #555555;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    font-size: 18pt;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.transport-btn:hover,
+.transport-btn:focus {
+    background-color: #666666;
+    outline: none;
+}
+
+/* Time displays: wall-clock and musical position, side by side,
+ * same size, same vertical alignment. Monospace so digits don't
+ * shift horizontally as values change. */
+.elapsed-time,
+.musical-position {
+    color: #f0f0f0;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 18pt;
+    font-weight: normal;
+    line-height: 1;
+    padding: 0 4px;
+}
+
+/* BPM group: small label + numeric input. */
+.field-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.field-label {
+    color: #c8c8c8;
+    font-size: 12pt;
+}
+
+.field-input {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 2px 4px;
+    font-size: 14pt;
+    font-weight: normal;
+    width: 64px;
+    height: 28px;
+    font-family: inherit;
+}
+
+.field-readonly {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 2px 8px;
+    font-size: 14pt;
+    font-weight: normal;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+}
+
+/* --- Dividers --- */
+
 .divider-horizontal {
     background-color: #777777;
     height: 3px;
@@ -86,57 +206,78 @@ html, body {
     height: 100%;
 }
 
-/* Inline vertical divider inside the transport bar, between the
- * controls and the status area. */
-.divider-vertical-inline {
-    background-color: #777777;
-    width: 3px;
-    align-self: stretch;
-    margin: 0 8px;
-}
+/* --- Body (editor + canvas) --- */
 
-/* Main body area — canvas on the left, editor on the right, with
- * a 3-pixel vertical divider between them. */
+/* Flex layout rather than fixed grid so the draggable divider
+ * can set each pane's flex-basis at runtime. Editor on the left
+ * (code reads first), canvas on the right (result second),
+ * matching the natural left-to-right mental flow. */
 #body {
-    display: grid;
-    grid-template-columns: 1fr 3px 1fr;
+    display: flex;
     overflow: hidden;
 }
 
-#canvas-pane,
-#editor-pane {
+#editor-pane,
+#canvas-pane {
     display: flex;
     flex-direction: column;
     overflow: hidden;
     background-color: #2a2a2a;
-}
-
-/* Canvas pane title bar — styled to match the editor's tab bar
- * height so their respective bottom dividers line up. */
-.pane-title-bar {
-    display: flex;
-    align-items: center;
-    height: 32px;
-    background-color: #3a3a3a;
-    padding: 0 12px;
-}
-
-.pane-title {
-    color: #e0e0e0;
-    font-size: 14pt;
-    font-weight: bold;
+    flex: 1 1 50%;
+    min-width: 0;
 }
 
 #canvas-area {
-    flex: 1;
+    flex: 1 1 auto;
     background-color: #2a2a2a;
     overflow: hidden;
+    position: relative;
+    min-height: 0;
 }
 
-/* Editor tab bar. Dark-on-dark tabs, with the selected tab slightly
- * lighter and connected to the content below via the tab-bar-filler
- * trick: the divider lives along the bottom of the tab bar, but the
- * selected tab's background extends down through it. */
+#message-area {
+    flex: 0 0 140px;
+    background-color: #262626;
+    color: #c8c8c8;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 12pt;
+    overflow: auto;
+    padding: 8px 12px;
+    min-height: 40px;
+}
+
+.message-placeholder {
+    color: #666666;
+    font-style: italic;
+}
+
+/* Draggable dividers. The same pattern serves both the vertical
+ * divider between editor and canvas panes and the horizontal
+ * divider between the canvas area and the message area. Width
+ * or height stays at 3 pixels to match the static dividers; the
+ * hit target is implicitly a bit larger because the cursor
+ * resize styling extends to the full element bounds. */
+#body-divider.divider-draggable {
+    flex: 0 0 3px;
+    cursor: col-resize;
+    position: relative;
+}
+
+#message-divider.divider-draggable {
+    flex: 0 0 3px;
+    cursor: row-resize;
+    position: relative;
+}
+
+#body-divider.divider-draggable:hover,
+#body-divider.divider-draggable.dragging,
+#message-divider.divider-draggable:hover,
+#message-divider.divider-draggable.dragging {
+    background-color: #999999;
+}
+
+/* --- Editor tab bar --- */
+
 .tab-bar {
     display: flex;
     align-items: flex-end;
@@ -164,21 +305,16 @@ html, body {
     color: #ffffff;
     position: relative;
     z-index: 2;
+    margin-bottom: -3px;
+    padding-bottom: 9px;
 }
 
-/* The filler is the empty space to the right of the last tab. It
- * gets the bottom divider so the line continues across the full
- * width of the tab bar. Each tab already has its own border so the
- * line appears continuous. */
 .tab-bar-filler {
     flex: 1;
     align-self: stretch;
     border-bottom: 3px solid #777777;
 }
 
-/* The non-filler tabs also need a bottom divider. We put it on the
- * tab-bar itself as a shadow-like border, and the selected tab
- * covers a slice of it by sitting on top with z-index. */
 .tab-bar::after {
     content: "";
     position: absolute;
@@ -190,12 +326,7 @@ html, body {
     z-index: 1;
 }
 
-/* Move the selected tab's bottom edge down over the divider so it
- * visually connects to the content pane below. */
-.tab-selected {
-    margin-bottom: -3px;
-    padding-bottom: 9px;
-}
+/* --- CodeMirror editor area --- */
 
 #editor-area {
     flex: 1;
@@ -228,97 +359,66 @@ html, body {
     color: #d8d4cc;
 }
 
-.placeholder {
-    padding: 24px;
-    color: #888888;
-    font-style: italic;
-}
+/* --- View menu dropdown --- */
 
-/* Transport bar at the bottom.
- * Divider above it is a child element so it spans the full width
- * regardless of how the controls below are laid out. */
-#transport-bar {
-    display: flex;
-    flex-direction: column;
+.menu-dropdown {
+    position: absolute;
+    display: none;
     background-color: #3a3a3a;
-}
-
-.transport-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 3px 12px;
-    min-height: 50px;
-}
-
-.transport-btn {
-    width: 40px;
-    height: 40px;
-    border-radius: 20px;
-    background-color: #555555;
-    color: #f0f0f0;
     border: 1px solid #777777;
-    font-size: 18pt;
-    font-weight: bold;
-    cursor: pointer;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    min-width: 200px;
+    z-index: 1000;
+    padding: 4px 0;
 }
 
-.transport-btn:hover,
-.transport-btn:focus {
-    background-color: #666666;
+.menu-dropdown.open {
+    display: block;
+}
+
+.menu-dropdown-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px;
+    color: #e0e0e0;
+    font-size: 14pt;
+    cursor: pointer;
+    user-select: none;
+    gap: 24px;
+}
+
+.menu-dropdown-item:hover,
+.menu-dropdown-item:focus {
+    background-color: #555555;
     outline: none;
 }
 
-.elapsed-time {
-    color: #f0f0f0;
-    font-family: "SF Mono", "Menlo", "Courier New", monospace;
-    font-size: 24pt;
-    font-weight: normal;
-    padding: 0 16px;
-    line-height: 1;
-}
-
-.field-group {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.field-label {
-    color: #c8c8c8;
+.menu-dropdown-shortcut {
+    color: #a0a0a0;
     font-size: 12pt;
 }
 
-.field-input {
-    background-color: #2a2a2a;
-    color: #f0f0f0;
-    border: 1px solid #777777;
-    padding: 2px 4px;
-    font-size: 14pt;
-    font-weight: normal;
-    width: 80px;
-    height: 28px;
-    font-family: inherit;
+.menu-dropdown-separator {
+    height: 1px;
+    background-color: #555555;
+    margin: 4px 0;
 }
 
-.field-readonly {
-    background-color: #2a2a2a;
-    color: #f0f0f0;
-    border: 1px solid #777777;
-    padding: 2px 8px;
-    font-size: 14pt;
-    font-weight: normal;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
+/* --- Focus Canvas mode --- */
+
+/* When body.focus-canvas is active, the editor pane and the
+ * vertical body-divider are hidden so the canvas pane occupies
+ * the entire body width. Top row and its horizontal divider
+ * remain visible so the user stays oriented and can toggle
+ * focus off via the View menu or keyboard. The editor pane's
+ * CodeMirror state is preserved by display:none rather than
+ * torn down. */
+body.focus-canvas #editor-pane,
+body.focus-canvas #body-divider {
+    display: none;
 }
 
-.status-area {
-    flex: 1;
-    min-height: 28px;
+body.focus-canvas #canvas-pane {
+    flex: 1 1 100% !important;
 }

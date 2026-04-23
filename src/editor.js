@@ -93,7 +93,7 @@ export class TabbedEditor {
                 EditorView.theme({
                     "&": {
                         height: "100%",
-                        fontSize: "15pt",
+                        fontSize: "14pt",
                     },
                     ".cm-scroller": {
                         fontFamily: "SF Mono, Menlo, Consolas, monospace",

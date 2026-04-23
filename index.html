@@ -8,52 +8,21 @@
 </head>
 <body>
     <div id="app">
-        <!-- Top menu bar -->
-        <header id="menubar" role="menubar" aria-label="Main menu">
-            <div class="menu-item" role="menuitem" tabindex="0">File</div>
-            <div class="menu-item" role="menuitem" tabindex="0">Edit</div>
-            <div class="menu-item" role="menuitem" tabindex="0">View</div>
-            <div class="menu-title">GXW</div>
-        </header>
+        <!-- Combined top row: menu on the left, transport centred, wordmark on the right. -->
+        <header id="top-row">
+            <nav id="menubar" role="menubar" aria-label="Main menu">
+                <div class="menu-item" role="menuitem" tabindex="0">File</div>
+                <div class="menu-item" role="menuitem" tabindex="0">Edit</div>
+                <div class="menu-item" role="menuitem" tabindex="0">View</div>
+            </nav>
 
-        <!-- Horizontal grey divider below the menu bar -->
-        <div class="divider-horizontal" aria-hidden="true"></div>
-
-        <!-- Main body: canvas left, editor right -->
-        <main id="body">
-            <section id="canvas-pane" aria-label="Canvas">
-                <div class="pane-title-bar">
-                    <span class="pane-title">Canvas</span>
-                </div>
-                <div class="divider-horizontal" aria-hidden="true"></div>
-                <div id="canvas-area">
-                    <!-- Canvas will render here later -->
-                </div>
-            </section>
-
-            <!-- Vertical divider between canvas and editor -->
-            <div class="divider-vertical" aria-hidden="true"></div>
-
-            <section id="editor-pane" aria-label="Editor">
-                <div class="tab-bar" role="tablist">
-                    <!-- Tabs are rendered dynamically from the bundle; see src/editor.js. -->
-                    <div class="tab-bar-filler"></div>
-                </div>
-                <div id="editor-area">
-                    <!-- CodeMirror mounts here. -->
-                </div>
-            </section>
-        </main>
-
-        <!-- Transport bar at the bottom, with its own divider on top -->
-        <footer id="transport-bar" aria-label="Transport">
-            <div class="divider-horizontal" aria-hidden="true"></div>
-            <div class="transport-row">
+            <div id="transport-controls" aria-label="Transport">
                 <button class="transport-btn" id="rewind-btn" aria-label="Rewind to start">⏮</button>
                 <button class="transport-btn" id="play-btn" aria-label="Play">▶</button>
                 <div class="elapsed-time" id="elapsed-time">0:00:00</div>
-                <div class="field-group">
-                    <label for="bpm-input" class="field-label">Beats Per Minute</label>
+                <div class="musical-position" id="musical-position">1.1.000</div>
+                <div class="field-group" id="bpm-group">
+                    <label for="bpm-input" class="field-label">BPM</label>
                     <input
                         type="number"
                         id="bpm-input"
@@ -64,16 +33,47 @@
                         value="120"
                     >
                 </div>
-                <div class="field-group">
-                    <span class="field-label">Time Signature</span>
+                <div class="field-group" id="time-sig-group">
                     <span class="field-readonly" id="time-signature">4/4</span>
                 </div>
-                <div class="divider-vertical-inline" aria-hidden="true"></div>
-                <div class="status-area" id="status-area">
-                    <!-- Reserved for future error and status output -->
-                </div>
             </div>
-        </footer>
+
+            <div id="app-wordmark" aria-hidden="true">GXW</div>
+        </header>
+
+        <!-- Horizontal grey divider below the top row -->
+        <div class="divider-horizontal" aria-hidden="true"></div>
+
+        <!-- Main body: editor left, canvas right, draggable divider between. -->
+        <main id="body">
+            <section id="editor-pane" aria-label="Editor">
+                <div class="tab-bar" role="tablist">
+                    <!-- Tabs are rendered dynamically from the bundle; see src/editor.js. -->
+                    <div class="tab-bar-filler"></div>
+                </div>
+                <div id="editor-area">
+                    <!-- CodeMirror mounts here. -->
+                </div>
+            </section>
+
+            <!-- Draggable vertical divider between editor and canvas. -->
+            <div id="body-divider" class="divider-vertical divider-draggable" role="separator" aria-orientation="vertical" aria-label="Resize editor and canvas" tabindex="0"></div>
+
+            <!-- Canvas pane splits vertically into canvas area on top
+                 and message area below, separated by a draggable
+                 horizontal divider. -->
+            <section id="canvas-pane" aria-label="Canvas">
+                <div id="canvas-area">
+                    <!-- HTML canvas element is created by src/canvas.js. -->
+                </div>
+
+                <div id="message-divider" class="divider-horizontal divider-draggable" role="separator" aria-orientation="horizontal" aria-label="Resize canvas and message area" tabindex="0"></div>
+
+                <div id="message-area">
+                    <div class="message-placeholder">(No messages)</div>
+                </div>
+            </section>
+        </main>
     </div>
 
     <script type="module" src="main.js"></script>

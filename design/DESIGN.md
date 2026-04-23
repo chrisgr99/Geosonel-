@@ -450,15 +450,21 @@ The repository is at /Users/chrisgr/ProgrammingProjects/GXW. The earlier Python 
 
 ## Section 20 — Canvas Coordinate System
 
-Canvas coordinates are 0.0 to 100.0 in both X and Y. Y=0 is at the bottom left, Y=100 at the top (mathematical convention, matches GeoSonix).
+Canvas coordinates are Cartesian and origin-centred. The origin (0, 0) sits at the centre of the viewport. Positive X points right, positive Y points up. Both axes share the same metric — one unit in X represents the same displayed distance as one unit in Y — so geometry preserves its shape regardless of the viewport's aspect ratio.
 
-Conversion from canvas to screen: screenX = (canvasX / 100) * width, screenY = (1 - canvasY / 100) * height.
+The default viewport at zoom level 1 shows at least ±16 canvas units horizontally and ±12 canvas units vertically, a 32 × 24 region with 4:3 aspect. When the canvas pane's aspect ratio differs from 4:3, the visible region is extended along the longer axis rather than letterboxed, so no grid space is wasted — extra canvas simply shows.
 
-Conversion from canvas to normalised image coordinates: normX = canvasX / 100, normY = canvasY / 100. Image Y=0 is top-left in standard image coordinates; whether to flip Y for image sampling is an implementation detail — sampling uses canvas Y directly by default.
+The coordinate system has no inherent boundary. The visible region changes only through zoom, which is always centred on the origin: the viewport always shows the canvas centred on (0, 0) regardless of zoom level. Panning is not supported.
 
-Mover diameter: 10 canvas units by default, radius 5. Bouncing at 5 units from any wall.
+Images, when loaded into a scene, are stretched to fit the ±16 by ±12 default region (32 × 24 units). Any source aspect ratio becomes 4:3. This is intentional: images serve as scalar fields providing colour and luminance, not pictures to be viewed for their own sake, so stretching is acceptable. This inherits GeoSonix's behaviour.
 
-Event visual size: 2-3 canvas units for hit target, glyph shape indicates payload type.
+The grid is drawn at 1-unit spacing, with the X=0 and Y=0 axes rendered slightly brighter than the minor grid so the origin is visually anchored. Major 5-unit lines may be drawn slightly brighter than minor 1-unit lines for a subtle ruler effect. No numeric labels — the grid is frequent enough that position can be read by counting cells.
+
+Zoom methods: a View menu with Zoom In, Zoom Out, and Reset Zoom items; keyboard shortcuts (Cmd-plus, Cmd-minus, Cmd-0); and the mouse scroll wheel while the pointer is over the canvas. All three converge on the same Transport-style state; zoom always centres on the origin.
+
+Mover diameter default: 1.5 canvas units, radius 0.75.
+
+Event visual size: 0.4 to 0.6 canvas units for hit target; glyph shape indicates payload type.
 
 Projector shapes use canvas units directly.
 
@@ -466,17 +472,19 @@ Projector shapes use canvas units directly.
 
 ## Section 21 — Mover Physics Details
 
-Coordinate space 0.0 to 100.0 in both X and Y, Y=0 bottom left.
+Canvas units are origin-centred with equal metric along both axes (see [Section 20](#section-20--canvas-coordinate-system)).
 
-Mover diameter user-settable, default 10. Radius = diameter / 2.
+Mover diameter user-settable, default 1.5 canvas units. Radius = diameter / 2.
 
 Velocity ceiling two-level:
-- maxSpeed: user-settable per mover, default 50, range 1 to 200 canvas units/second.
-- absoluteMaxSpeed: hard system ceiling of 200, not user-settable, enforced every step.
+- maxSpeed: user-settable per mover, default 16 canvas units/sec, range 1 to 64.
+- absoluteMaxSpeed: hard system ceiling of 64 canvas units/sec, enforced every step.
 
 Applied by scaling the velocity vector to preserve direction.
 
-At absoluteMaxSpeed=200 and dt=1/60, max travel per step is 3.3 units. Mover diameter 10 units. Tunnelling requires 10+ units per step = 600 units/second, impossible with ceiling at 200.
+At absoluteMaxSpeed=64 and dt=1/60, max travel per step is ~1.07 units. Mover diameter 1.5 units, so tunnelling through an obstacle the size of a mover is impossible at permitted velocities.
+
+Bounding region: since the canvas has no inherent boundary, movers are contained by an implicit bounding box matching the default viewable region (±16 by ±12 units) against which they collide and reflect. A scene or mover may configure a larger or smaller box, or disable bounding entirely (letting movers fly off indefinitely). Default bounding is on.
 
 Collision detection: continuous within each time step. Calculates exact time when mover perimeter reaches each wall, moves to that point, reflects velocity, continues for remaining time. Up to 10 bounces per step resolved. Final position clamp as safety net.
 
