@@ -79,11 +79,59 @@ html, body {
 
 #app-wordmark {
     justify-content: flex-end;
+    gap: 14px;
+    padding-right: 8px;
+}
+
+#current-score-name {
+    color: #d0d0d0;
+    font-size: 14pt;
+    font-weight: normal;
+    letter-spacing: 0;
+    text-shadow: none;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    padding: 2px 4px;
+    border: 1px solid transparent;
+    border-radius: 2px;
+}
+
+#current-score-name:hover {
+    background-color: #444444;
+    border-color: #555555;
+}
+
+#current-score-name.editing {
+    background-color: #222222;
+    border-color: #00ff33;
+    outline: none;
+    cursor: text;
+    max-width: none;
+    overflow: visible;
+}
+
+.saved-indicator {
+    color: #a0a0a0;
+    font-size: 11pt;
+    font-weight: normal;
+    letter-spacing: 0;
+    text-shadow: none;
+    opacity: 0;
+    transition: opacity 0.3s ease-out;
+}
+
+.saved-indicator.visible {
+    opacity: 1;
+}
+
+#wordmark-text {
     color: #00ff33;
     font-size: 30pt;
     font-weight: bold;
     letter-spacing: 2px;
-    padding-right: 8px;
     line-height: 1;
     text-shadow: 0 0 6px rgba(0, 255, 51, 0.4);
 }
@@ -249,6 +297,17 @@ html, body {
 .message-placeholder {
     color: #666666;
     font-style: italic;
+}
+
+.message-entry {
+    color: #c8c8c8;
+    padding: 1px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.message-entry.message-error {
+    color: #ff8870;
 }
 
 /* Draggable dividers. The same pattern serves both the vertical
@@ -421,4 +480,131 @@ body.focus-canvas #body-divider {
 
 body.focus-canvas #canvas-pane {
     flex: 1 1 100% !important;
+}
+
+/* --- Modal dialog (Open Score) --- */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.modal-dialog {
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 4px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    min-width: 420px;
+    max-width: 600px;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+}
+
+.modal-title {
+    color: #f0f0f0;
+    font-size: 18pt;
+    font-weight: bold;
+    margin-bottom: 16px;
+}
+
+.modal-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid #555555;
+    background-color: #242424;
+    margin-bottom: 16px;
+}
+
+.modal-list-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid #3a3a3a;
+    cursor: pointer;
+}
+
+.modal-list-item:last-child {
+    border-bottom: none;
+}
+
+.modal-list-item:hover,
+.modal-list-item:focus {
+    background-color: #3a3a3a;
+    outline: none;
+}
+
+.modal-list-item.selected {
+    background-color: #4a4a4a;
+}
+
+.modal-list-item.selected .modal-list-name {
+    color: #ffffff;
+}
+
+.modal-list-name {
+    color: #f0f0f0;
+    font-size: 14pt;
+}
+
+.modal-list-date {
+    color: #909090;
+    font-size: 11pt;
+    margin-top: 2px;
+}
+
+.modal-empty {
+    color: #909090;
+    font-style: italic;
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 16px;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.modal-button {
+    background-color: #555555;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 6px 16px;
+    font-size: 13pt;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.modal-button:hover,
+.modal-button:focus {
+    background-color: #666666;
+    outline: none;
+}
+
+.modal-button:disabled {
+    background-color: #3a3a3a;
+    color: #666666;
+    cursor: default;
+}
+
+.modal-button-primary {
+    background-color: #2d7a3a;
+    border-color: #3fa054;
+}
+
+.modal-button-primary:hover,
+.modal-button-primary:focus {
+    background-color: #358a44;
+}
+
+.modal-button-primary:disabled {
+    background-color: #3a3a3a;
+    border-color: #555555;
+    color: #666666;
 }

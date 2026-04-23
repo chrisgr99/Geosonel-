@@ -78,6 +78,13 @@ export class Canvas {
         this.halfWidthUnits = DEFAULT_HALF_WIDTH;
         this.halfHeightUnits = DEFAULT_HALF_HEIGHT;
 
+        /**
+         * The decoded image bitmap ready for drawImage, or null
+         * when the bundle has no image.
+         * @type {ImageBitmap | HTMLImageElement | null}
+         */
+        this._imageBitmap = null;
+
         // Redraws are coalesced through requestAnimationFrame so
         // multiple triggers in the same frame (resize + zoom, say)
         // produce a single draw.
@@ -110,6 +117,37 @@ export class Canvas {
 
     resetZoom() {
         this._setZoom(1);
+    }
+
+    /**
+     * Set or clear the background image. Pass null to clear.
+     * The bytes are decoded here and cached as an ImageBitmap
+     * (or HTMLImageElement fallback) so future draws don't need
+     * to decode again.
+     * @param {{ bytes: ArrayBuffer, mimeType: string } | null} image
+     */
+    async setImage(image) {
+        if (image === null) {
+            this._imageBitmap = null;
+            this.scheduleDraw();
+            return;
+        }
+        const blob = new Blob([image.bytes], { type: image.mimeType });
+        try {
+            // createImageBitmap is the modern fast path; falls
+            // back to an HTMLImageElement via object URL if
+            // unavailable (ancient browsers).
+            if (typeof createImageBitmap === "function") {
+                this._imageBitmap = await createImageBitmap(blob);
+            } else {
+                this._imageBitmap = await imageFromBlob(blob);
+            }
+            this.scheduleDraw();
+        } catch (err) {
+            console.error("GXW: failed to decode image:", err);
+            this._imageBitmap = null;
+            this.scheduleDraw();
+        }
     }
 
     /**
@@ -202,9 +240,29 @@ export class Canvas {
         ctx.fillStyle = BG_COLOUR;
         ctx.fillRect(0, 0, this.cssWidth, this.cssHeight);
 
+        this._drawImage();
         this._drawGrid();
 
         ctx.restore();
+    }
+
+    _drawImage() {
+        if (this._imageBitmap === null) return;
+        const ctx = this.ctx;
+        // The image always fills the default ±16 by ±12 region
+        // regardless of the canvas pane's aspect ratio. Any
+        // source aspect ratio is stretched. This matches the
+        // GeoSonix behaviour documented in DESIGN.md Section 20.
+        const left = this.toPixelX(-16);
+        const right = this.toPixelX(16);
+        const top = this.toPixelY(12);
+        const bottom = this.toPixelY(-12);
+        ctx.drawImage(
+            this._imageBitmap,
+            left, top,
+            right - left,
+            bottom - top
+        );
     }
 
     _drawGrid() {
@@ -276,4 +334,26 @@ export class Canvas {
         ctx.lineTo(this.cssWidth, axisPy);
         ctx.stroke();
     }
+}
+
+/**
+ * Decode a Blob into an HTMLImageElement via an object URL.
+ * Used as a fallback when createImageBitmap is not available.
+ * @param {Blob} blob
+ * @returns {Promise<HTMLImageElement>}
+ */
+function imageFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(img);
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error("image decode failed"));
+        };
+        img.src = url;
+    });
 }
