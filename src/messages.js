@@ -29,7 +29,10 @@ export class MessageArea {
     }
 
     /**
-     * Append a message to the log.
+     * Append a message to the log. Error-level messages get a
+     * "! " prefix so they can be recognised even when displayed
+     * in the same colour as info-level messages — brightness-
+     * only readers rely on the prefix character rather than hue.
      * @param {string} text
      * @param {MessageLevel} [level]
      */
@@ -42,7 +45,7 @@ export class MessageArea {
         entry.className = level === "error"
             ? "message-entry message-error"
             : "message-entry";
-        entry.textContent = text;
+        entry.textContent = level === "error" ? `! ${text}` : text;
         this.root.appendChild(entry);
         // Scroll to the latest entry.
         this.root.scrollTop = this.root.scrollHeight;

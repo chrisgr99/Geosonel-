@@ -1,22 +1,26 @@
 /**
  * GXW main entry point.
  *
- * Wires up all the app's components and owns the score session
- * — the identity of the currently-open score. When the user
- * switches scores via File menu actions, the session's
- * switchToBundle() method swaps the open bundle and updates
- * every component that needs to know (editor, canvas, image
- * importer).
+ * Wires up every component and owns the score session. In
+ * addition to the existing concerns (editor, transport, canvas,
+ * dividers, menus, image importer), this milestone adds the
+ * sketch runner: the current score's sketch.js is executed on
+ * demand (Cmd-Enter or Run menu) to produce a Scene, which the
+ * canvas renders on top of the grid.
  *
- * Milestone scope so far:
- *   1. Static layout skeleton — done.
- *   2. Functional editor with tabs — done.
- *   3. Transport with AudioContext clock — done.
- *   4. Canvas rendering, message area, View menu, zoom, Focus
- *      Canvas — done.
- *   5. Image loading with IndexedDB persistence — done.
- *   6. Multi-score management with auto-persist, export,
- *      import, backup, restore — this one.
+ * The save model is explicit-only: typing marks the bundle
+ * dirty; Cmd-S saves. Run Scene implicitly saves first. A
+ * visible indicator next to the score name shows Saved or
+ * Unsaved. A beforeunload warning protects against tab close
+ * with unsaved changes.
+ *
+ * Milestone 7 scope:
+ *   - Scene data model (Scene, Event, Mover, Projector).
+ *   - Sketch runner that builds a Scene from sketch.js.
+ *   - Canvas rendering of scenes (static).
+ *   - Explicit save (Cmd-S); no autosave timer.
+ *   - Run Scene command (Cmd-Enter) with auto-save-before-run.
+ *   - First-load auto-run so the canvas shows something.
  */
 
 // @ts-check
@@ -43,6 +47,8 @@ import { MessageArea } from "./src/messages.js";
 import { ImageImporter } from "./src/imageImporter.js";
 import { installViewMenu } from "./src/viewMenu.js";
 import { installFileMenu } from "./src/fileMenu.js";
+import { installRunMenu } from "./src/runMenu.js";
+import { SketchRunner } from "./src/sketchRunner.js";
 
 main();
 
@@ -50,7 +56,7 @@ async function main() {
     // --- Persistent storage request (best-effort, early) ---
     requestPersistentStorage().catch(() => {});
 
-    // --- Figure out which score to open ---
+    // --- Initial bundle ---
     const bundle = await resolveInitialBundle();
 
     // --- Canvas, message area ---
@@ -71,6 +77,23 @@ async function main() {
         }
     }
 
+    // --- Saved indicator (top row) ---
+    const savedIndicatorEl = document.getElementById("saved-indicator");
+    const setSavedIndicator = (/** @type {"saved" | "unsaved" | "just-saved"} */ state) => {
+        if (!(savedIndicatorEl instanceof HTMLElement)) return;
+        savedIndicatorEl.classList.remove("unsaved", "just-saved");
+        if (state === "unsaved") {
+            savedIndicatorEl.textContent = "Unsaved";
+            savedIndicatorEl.classList.add("unsaved");
+        } else {
+            savedIndicatorEl.textContent = "Saved";
+            if (state === "just-saved") {
+                savedIndicatorEl.classList.add("just-saved");
+            }
+        }
+    };
+    setSavedIndicator("saved");
+
     // --- Editor ---
     const tabBarEl = document.querySelector(".tab-bar");
     const editorAreaEl = document.getElementById("editor-area");
@@ -78,18 +101,28 @@ async function main() {
         console.error("GXW: editor mount points missing.");
         return;
     }
-    const savedIndicatorEl = document.getElementById("saved-indicator");
-    const flashSaved = () => {
-        if (!(savedIndicatorEl instanceof HTMLElement)) return;
-        savedIndicatorEl.classList.add("visible");
-        clearTimeout(flashSaved._t);
-        flashSaved._t = setTimeout(() => {
-            savedIndicatorEl.classList.remove("visible");
-        }, 1200);
-    };
     /** @type {any} */
-    flashSaved._t = null;
-    const editor = new TabbedEditor(tabBarEl, editorAreaEl, bundle, flashSaved);
+    let justSavedTimeout = null;
+
+    // runScene is defined further down (it depends on both
+    // session and the editor itself). To let the editor's
+    // CodeMirror keymap invoke it, we use a let binding that
+    // starts as a no-op and gets reassigned once the real
+    // function is ready.
+    /** @type {() => Promise<void>} */
+    let runScene = async () => {};
+
+    const editor = new TabbedEditor(tabBarEl, editorAreaEl, bundle, {
+        onDirtyChange: (dirty) => {
+            setSavedIndicator(dirty ? "unsaved" : "saved");
+        },
+        onSaved: () => {
+            setSavedIndicator("just-saved");
+            clearTimeout(justSavedTimeout);
+            justSavedTimeout = setTimeout(() => setSavedIndicator("saved"), 1000);
+        },
+        onRunScene: () => { runScene(); },
+    });
 
     // --- Transport ---
     const transport = new Transport();
@@ -113,10 +146,36 @@ async function main() {
     const imageImporter = new ImageImporter({ bundle, canvas, messages });
     imageImporter.installGlobalListeners();
 
+    // --- Sketch runner ---
+    const sketchRunner = new SketchRunner();
+
+    /**
+     * Execute the current score's sketch.js and update the
+     * canvas with the resulting scene. Saves the bundle first
+     * so the bytes on disk match what we executed. Errors are
+     * reported in the message area; the canvas retains the
+     * previous scene on failure.
+     */
+    runScene = async () => {
+        if (editor.isDirty) {
+            await editor.save();
+        }
+        const sketchFile = session.bundle.getFile("sketch.js");
+        if (sketchFile === null) {
+            messages.write("No sketch.js in this score.", "error");
+            return;
+        }
+        const result = sketchRunner.run(sketchFile.content);
+        if (result.success && result.scene !== null) {
+            canvas.setScene(result.scene);
+            applySceneParamsToTransport(result.scene, transport);
+            messages.write("Scene updated.");
+        } else {
+            messages.write(result.error ?? "Unknown run error.", "error");
+        }
+    };
+
     // --- Score session ---
-    // The session ties together every component that holds a
-    // reference to the current bundle. When the user switches
-    // scores, switchToBundle() updates each component.
     const scoreNameEl = document.getElementById("current-score-name");
     const refreshScoreNameDisplay = () => {
         if (scoreNameEl instanceof HTMLElement) {
@@ -141,12 +200,17 @@ async function main() {
                 await canvas.setImage(null);
             }
             refreshScoreNameDisplay();
+            setSavedIndicator("saved");
+
+            // Auto-run the sketch on score switch so the canvas
+            // reflects the newly-opened score.
+            await runScene();
         },
         refreshScoreNameDisplay,
     };
     refreshScoreNameDisplay();
 
-    // --- Inline rename on the score-name element ---
+    // --- Inline rename ---
     if (scoreNameEl instanceof HTMLElement) {
         wireInlineRename(scoreNameEl, session, messages);
     }
@@ -159,16 +223,51 @@ async function main() {
         },
     });
     installFileMenu({ session, messages, imageImporter });
+    installRunMenu({ runScene });
 
-    // No Cmd-S handler anymore — autosave handles persistence.
+    // --- Save shortcut (Cmd-S) ---
+    window.addEventListener("keydown", (e) => {
+        const meta = e.metaKey || e.ctrlKey;
+        if (meta && e.key.toLowerCase() === "s" && !e.shiftKey) {
+            e.preventDefault();
+            editor.save();
+        }
+    });
+
+    // --- Protect unsaved changes on tab close ---
+    window.addEventListener("beforeunload", (e) => {
+        if (editor.isDirty) {
+            // Modern browsers ignore the custom message and
+            // show a standard dialog, but returning a string
+            // is still what triggers the prompt.
+            e.preventDefault();
+            e.returnValue = "";
+            return "";
+        }
+    });
+
+    // --- Initial auto-run so the canvas shows something ---
+    await runScene();
 }
 
 /**
- * Figure out which score to open on startup:
- *   - If a "currentScoreName" setting exists and that score is
- *     present in IndexedDB, open it.
- *   - Else if any scores exist, open the most recently updated.
- *   - Else create a fresh "Untitled" score.
+ * Apply scene-declared bpm and time signature to the Transport
+ * if the sketch set them. Preserves null — a time-based sketch
+ * (no bpm declared) hides the musical-position display.
+ * @param {import("./src/scene.js").Scene} scene
+ * @param {import("./src/transport.js").Transport} transport
+ */
+function applySceneParamsToTransport(scene, transport) {
+    transport.setBpm(scene.bpm, "sketch");
+    if (scene.timeSignature !== null) {
+        transport.setTimeSignature(scene.timeSignature);
+    } else {
+        transport.setTimeSignature(null);
+    }
+}
+
+/**
+ * Figure out which score to open on startup.
  * @returns {Promise<Bundle>}
  */
 async function resolveInitialBundle() {
@@ -198,10 +297,7 @@ async function resolveInitialBundle() {
 
 /**
  * Wire the current-score-name element so clicking it enters
- * an editable state. Enter commits; Escape or blur with an
- * empty or duplicate name cancels. Commits call through to
- * the same rename logic used by the menu item, keeping the
- * two paths consistent.
+ * an editable state.
  * @param {HTMLElement} el
  * @param {any} session
  * @param {import("./src/messages.js").MessageArea} messages
@@ -217,7 +313,6 @@ function wireInlineRename(el, session, messages) {
         el.classList.add("editing");
         el.setAttribute("contenteditable", "true");
         el.focus();
-        // Select all text inside for easy replace.
         const range = document.createRange();
         range.selectNodeContents(el);
         const sel = window.getSelection();
@@ -263,8 +358,7 @@ function wireInlineRename(el, session, messages) {
 }
 
 /**
- * Rename the current score to a new name. Validates that the
- * name is non-empty and unique.
+ * Rename the current score to a new name.
  * @param {any} session
  * @param {string} newName
  */

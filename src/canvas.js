@@ -46,6 +46,15 @@ const MINOR_GRID_COLOUR = "#3a3a3a";
 const MAJOR_GRID_COLOUR = "#4a4a4a";
 const AXIS_COLOUR = "#606060";
 
+// Colours for scene elements. Events are warm off-white so
+// they read as musical content. Movers are cool blue to
+// contrast with events. Projectors are soft green, referencing
+// GeoSonix's accent colour.
+const EVENT_COLOUR = "#e8dcc0";
+const MOVER_COLOUR = "#6ab0ff";
+const MOVER_CENTRE_COLOUR = "#b8d8ff";
+const PROJECTOR_COLOUR = "#7dd68a";
+
 export class Canvas {
     /**
      * @param {HTMLElement} container  The element the canvas mounts into.
@@ -85,6 +94,13 @@ export class Canvas {
          */
         this._imageBitmap = null;
 
+        /**
+         * The scene to render on top of the grid, or null if
+         * no sketch has been run yet.
+         * @type {import("./scene.js").Scene | null}
+         */
+        this._scene = null;
+
         // Redraws are coalesced through requestAnimationFrame so
         // multiple triggers in the same frame (resize + zoom, say)
         // produce a single draw.
@@ -117,6 +133,16 @@ export class Canvas {
 
     resetZoom() {
         this._setZoom(1);
+    }
+
+    /**
+     * Set the scene to render, or pass null to render just the
+     * grid. Triggers a redraw.
+     * @param {import("./scene.js").Scene | null} scene
+     */
+    setScene(scene) {
+        this._scene = scene;
+        this.scheduleDraw();
     }
 
     /**
@@ -240,10 +266,78 @@ export class Canvas {
         ctx.fillStyle = BG_COLOUR;
         ctx.fillRect(0, 0, this.cssWidth, this.cssHeight);
 
+        // Draw order: image as substrate, grid as reference
+        // overlay, scene elements on top as content. This way
+        // the composer can always see where agents are relative
+        // to the grid, while the image sits behind providing
+        // its scalar-field role.
         this._drawImage();
         this._drawGrid();
+        this._drawScene();
 
         ctx.restore();
+    }
+
+    _drawScene() {
+        if (this._scene === null) return;
+        this._drawProjectors();
+        this._drawEvents();
+        this._drawMovers();
+    }
+
+    _drawProjectors() {
+        if (this._scene === null) return;
+        const ctx = this.ctx;
+        ctx.strokeStyle = PROJECTOR_COLOUR;
+        ctx.lineWidth = 2;
+        for (const p of this._scene.projectors) {
+            if (p.points.length < 2) continue;
+            ctx.beginPath();
+            for (let i = 0; i < p.points.length; i++) {
+                const pt = p.points[i];
+                const px = this.toPixelX(pt.x);
+                const py = this.toPixelY(pt.y);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            if (p.closed) ctx.closePath();
+            ctx.stroke();
+        }
+    }
+
+    _drawEvents() {
+        if (this._scene === null) return;
+        const ctx = this.ctx;
+        ctx.fillStyle = EVENT_COLOUR;
+        for (const e of this._scene.events) {
+            const px = this.toPixelX(e.x);
+            const py = this.toPixelY(e.y);
+            const r = Math.max(3, e.radius * this.pixelsPerUnit);
+            ctx.beginPath();
+            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    _drawMovers() {
+        if (this._scene === null) return;
+        const ctx = this.ctx;
+        for (const m of this._scene.movers) {
+            const px = this.toPixelX(m.x);
+            const py = this.toPixelY(m.y);
+            const r = Math.max(4, m.radius * this.pixelsPerUnit);
+            // Outer ring
+            ctx.strokeStyle = MOVER_COLOUR;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.stroke();
+            // Centre dot
+            ctx.fillStyle = MOVER_CENTRE_COLOUR;
+            ctx.beginPath();
+            ctx.arc(px, py, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 
     _drawImage() {

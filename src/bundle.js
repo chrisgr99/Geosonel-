@@ -238,15 +238,40 @@ export function makeEmptyBundle(name) {
 
     bundle.addTextFile(
         "sketch.js",
-        `// sketch.js — your GXW score definition.
+        `// sketch.js — your GXW score.
 //
-// The sketch API will be wired up in a later milestone. For
-// now this file is just editable text.
+// Define a setup() function that builds your scene. Running
+// the scene (Cmd-Enter or Run → Run Scene) executes setup()
+// against a fresh Scene and renders the result on the canvas.
+//
+// Available API:
+//   scene.addEvent(x, y, opts)    — a firing point
+//   scene.addMover(x, y, opts)    — a moving agent
+//   scene.addProjector(points, opts) — a geometric sweep
+//   bpm(n)                         — set tempo
+//   timeSignature(num, den)        — set meter
+//   scale(name)                    — set the default scale
+//   image(name)                    — reference the current image
 
 function setup() {
     bpm(120);
     timeSignature(4, 4);
     scale("D minor");
+
+    // A diamond of events.
+    scene.addEvent(0, 8, { note: "C5" });
+    scene.addEvent(10, 0, { note: "G4" });
+    scene.addEvent(0, -8, { note: "C4" });
+    scene.addEvent(-10, 0, { note: "E4" });
+
+    // A mover at the origin.
+    scene.addMover(0, 0);
+
+    // A square projector around the diamond.
+    scene.addProjector(
+        [[-12, -8], [12, -8], [12, 8], [-12, 8]],
+        { closed: true, sweepBeats: 8 }
+    );
 }
 `
     );

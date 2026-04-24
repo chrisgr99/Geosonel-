@@ -1,45 +1,124 @@
+/** @typedef {import("./bundle.js").Bundle} Bundle */
 /**
  * Tabbed editor module.
  *
  * Manages the tab bar and the single CodeMirror editor instance
- * below it. Only one editor exists — switching tabs swaps the
- * editor's document rather than creating multiple editor views.
+ * below it. One editor; switching tabs swaps the editor's
+ * document rather than creating multiple editor views.
  *
- * Auto-persistence: every content change schedules a debounced
- * save of the full bundle to IndexedDB. There is no explicit
- * save action and no dirty dots on tabs — the content is
- * always saved. This matches a modern web-app model (Google
- * Docs, Notion) where "what you see is what's persisted."
+ * Persistence model: explicit save only. Typing marks the
+ * bundle dirty. Calling save() persists to IndexedDB and
+ * clears the dirty flag. There is no timer-driven autosave;
+ * the composer (or the Run Scene command) decides when bytes
+ * hit storage. This avoids autosaving mid-edit in a state the
+ * composer didn't intend.
  *
- * When the active bundle changes (e.g. the user opens a
- * different score), call setBundle() to swap in the new
- * content.
+ * When the active bundle changes (user opens a different
+ * score), call setBundle() to swap in the new content.
  */
 
 // @ts-check
 
 import { EditorView, keymap, lineNumbers } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
-import { EditorState } from "https://esm.sh/@codemirror/state@6.5.2";
-import { defaultKeymap, history, historyKeymap } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
+import { EditorState, Prec } from "https://esm.sh/@codemirror/state@6.5.2";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
+import { indentOnInput, indentUnit, bracketMatching, HighlightStyle, syntaxHighlighting } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
 import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6?deps=@codemirror/state@6.5.2";
+import { linter, lintGutter } from "https://esm.sh/@codemirror/lint@6?deps=@codemirror/state@6.5.2";
 import { oneDark } from "https://esm.sh/@codemirror/theme-one-dark@6?deps=@codemirror/state@6.5.2";
+import { tags as t } from "https://esm.sh/@lezer/highlight@1";
+import * as acorn from "https://esm.sh/acorn@8";
 
-/** @typedef {import("./bundle.js").Bundle} Bundle */
+/**
+ * Targeted overrides to oneDark. Everything not listed here
+ * keeps oneDark's default colour. Iterating by exception:
+ * only the specific tokens the user finds hard to read get
+ * shifted.
+ *
+ * Comments — pushed to the same warm gray as the message area
+ * so commented-out code and documentation read with
+ * consistent brightness across the app.
+ *
+ * Property names and other coral-group tokens (oneDark uses
+ * a saturated coral-red for these by default) — shifted to a
+ * lighter pink with more white mixed in, since saturated red
+ * reads poorly for the composer.
+ */
+const contrastOverrides = HighlightStyle.define([
+    { tag: t.comment, color: "#c8c0b0" },
+    { tag: t.lineComment, color: "#c8c0b0" },
+    { tag: t.blockComment, color: "#c8c0b0" },
+    { tag: t.docComment, color: "#c8c0b0" },
+    { tag: t.meta, color: "#c8c0b0" },
 
-const AUTOSAVE_DEBOUNCE_MS = 500;
+    { tag: t.propertyName, color: "#ff8595" },
+    { tag: t.name, color: "#ff8595" },
+    { tag: t.character, color: "#ff8595" },
+    { tag: t.macroName, color: "#ff8595" },
+    { tag: t.deleted, color: "#ff8595" },
+]);
+
+/**
+ * CodeMirror linter that runs the source through Acorn's
+ * JavaScript parser. Any parse error is returned as a
+ * diagnostic with its line/column position, which CodeMirror
+ * renders as a squiggly underline plus a hover tooltip and a
+ * marker in the lint gutter.
+ *
+ * The linter is called automatically when the document
+ * changes, with CodeMirror's built-in debounce (about 750ms
+ * of idle time before a re-run). No runtime execution happens
+ * here — this only catches syntax errors, not things like
+ * "variable not declared" which require running the code.
+ */
+const jsSyntaxLinter = linter((view) => {
+    const source = view.state.doc.toString();
+    /** @type {Array<{from: number, to: number, severity: string, message: string}>} */
+    const diagnostics = [];
+    try {
+        acorn.parse(source, {
+            ecmaVersion: 2022,
+            sourceType: "script",
+            allowReturnOutsideFunction: true,
+            locations: false,
+        });
+    } catch (err) {
+        if (err instanceof SyntaxError) {
+            // @ts-ignore — Acorn attaches pos as a number.
+            const pos = typeof err.pos === "number" ? err.pos : 0;
+            diagnostics.push({
+                from: pos,
+                to: Math.min(source.length, pos + 1),
+                severity: "error",
+                message: err.message,
+            });
+        }
+    }
+    return diagnostics;
+});
+
+
+/**
+ * @typedef {Object} EditorCallbacks
+ * @property {(dirty: boolean) => void} [onDirtyChange]
+ * @property {() => void} [onSaved]
+ * @property {() => void} [onRunScene]
+ */
 
 export class TabbedEditor {
     /**
-     * @param {HTMLElement} tabBarElement   The .tab-bar element.
-     * @param {HTMLElement} editorAreaElement  The #editor-area element.
+     * @param {HTMLElement} tabBarElement
+     * @param {HTMLElement} editorAreaElement
      * @param {Bundle} bundle
-     * @param {() => void} [onPersisted]  Called after each successful autosave.
+     * @param {EditorCallbacks} [callbacks]
      */
-    constructor(tabBarElement, editorAreaElement, bundle, onPersisted) {
+    constructor(tabBarElement, editorAreaElement, bundle, callbacks = {}) {
         this.tabBar = tabBarElement;
         this.editorArea = editorAreaElement;
         this.bundle = bundle;
-        this.onPersisted = onPersisted ?? (() => {});
+        this.onDirtyChange = callbacks.onDirtyChange ?? (() => {});
+        this.onSaved = callbacks.onSaved ?? (() => {});
+        this.onRunScene = callbacks.onRunScene ?? (() => {});
 
         /** @type {string | null} */
         this.activeName = null;
@@ -47,12 +126,12 @@ export class TabbedEditor {
         /** @type {EditorView | null} */
         this.view = null;
 
-        /** Suppress content-persistence during programmatic
-         * document replacement (tab switches, bundle swaps). */
-        this._suppressPersist = false;
+        /** Suppress dirty-marking during programmatic document
+         *  replacement (tab switches, bundle swaps). */
+        this._suppressDirty = false;
 
-        /** @type {number | null} */
-        this._autosaveTimer = null;
+        /** Has the bundle changed since the last save? */
+        this.isDirty = false;
 
         this._mountEditor();
         this._renderTabs();
@@ -65,37 +144,52 @@ export class TabbedEditor {
     // --- Bundle lifecycle ---
 
     /**
-     * Swap the editor over to a different bundle. Flushes any
-     * pending autosave for the old bundle first, then replaces
-     * the tab bar and editor contents with the new bundle's.
+     * Swap the editor over to a different bundle. Any pending
+     * unsaved changes on the old bundle are discarded (the
+     * caller should save first if that matters). Resets dirty
+     * state to clean for the new bundle.
      * @param {Bundle} bundle
      */
     async setBundle(bundle) {
-        await this._flushAutosave();
         this.bundle = bundle;
         this.activeName = null;
+        this._setDirty(false);
         this._renderTabs();
         if (this.bundle.textFiles.length > 0) {
             this.selectTab(this.bundle.textFiles[0].name);
         } else if (this.view !== null) {
-            // Empty bundle — blank the editor.
-            this._suppressPersist = true;
+            this._suppressDirty = true;
             this.view.dispatch({
                 changes: { from: 0, to: this.view.state.doc.length, insert: "" },
             });
-            this._suppressPersist = false;
+            this._suppressDirty = false;
         }
     }
 
     /**
-     * Flush any pending debounced autosave immediately.
+     * Persist the current bundle to IndexedDB, clear dirty.
      */
-    async _flushAutosave() {
-        if (this._autosaveTimer !== null) {
-            clearTimeout(this._autosaveTimer);
-            this._autosaveTimer = null;
-            await this._persistNow();
+    async save() {
+        try {
+            await this.bundle.save();
+            this._setDirty(false);
+            this.onSaved();
+        } catch (err) {
+            console.error("GXW: save failed:", err);
         }
+    }
+
+    /**
+     * Get the current content of a named text file in the
+     * bundle — reflects any in-flight edits, since updateContent
+     * keeps the bundle in sync on every change even though
+     * persistence is deferred.
+     * @param {string} name
+     * @returns {string | null}
+     */
+    getFileContent(name) {
+        const f = this.bundle.getFile(name);
+        return f === null ? null : f.content;
     }
 
     // --- Mounting ---
@@ -103,14 +197,48 @@ export class TabbedEditor {
     _mountEditor() {
         this.editorArea.innerHTML = "";
 
+        // Custom keymap entries for our app-level shortcuts.
+        // These sit BEFORE defaultKeymap in the keymap stack so
+        // CodeMirror consumes them (run returns true) before the
+        // default Enter handler inserts a newline.
+        const appKeymap = [
+            {
+                key: "Mod-Enter",
+                run: () => {
+                    this.onRunScene();
+                    return true;
+                },
+                preventDefault: true,
+            },
+            {
+                key: "Mod-s",
+                run: () => {
+                    this.save();
+                    return true;
+                },
+                preventDefault: true,
+            },
+        ];
+
         const state = EditorState.create({
             doc: "",
             extensions: [
                 lineNumbers(),
                 history(),
-                keymap.of([...defaultKeymap, ...historyKeymap]),
+                indentOnInput(),
+                indentUnit.of("    "),
+                bracketMatching(),
+                jsSyntaxLinter,
+                lintGutter(),
+                keymap.of([
+                    ...appKeymap,
+                    indentWithTab,
+                    ...defaultKeymap,
+                    ...historyKeymap,
+                ]),
                 javascript(),
                 oneDark,
+                Prec.highest(syntaxHighlighting(contrastOverrides)),
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         this._onDocChanged(update.state.doc.toString());
@@ -145,7 +273,7 @@ export class TabbedEditor {
 
         this.activeName = name;
 
-        this._suppressPersist = true;
+        this._suppressDirty = true;
         this.view.dispatch({
             changes: {
                 from: 0,
@@ -153,7 +281,7 @@ export class TabbedEditor {
                 insert: file.content,
             },
         });
-        this._suppressPersist = false;
+        this._suppressDirty = false;
 
         this._renderTabs();
     }
@@ -163,32 +291,18 @@ export class TabbedEditor {
      */
     _onDocChanged(content) {
         if (this.activeName === null) return;
-        if (this._suppressPersist) return;
+        if (this._suppressDirty) return;
         this.bundle.updateContent(this.activeName, content);
-        this._scheduleAutosave();
+        this._setDirty(true);
     }
 
-    _scheduleAutosave() {
-        if (this._autosaveTimer !== null) {
-            clearTimeout(this._autosaveTimer);
-        }
-        this._autosaveTimer = /** @type {number} */ (
-            /** @type {unknown} */ (
-                setTimeout(() => {
-                    this._autosaveTimer = null;
-                    this._persistNow();
-                }, AUTOSAVE_DEBOUNCE_MS)
-            )
-        );
-    }
-
-    async _persistNow() {
-        try {
-            await this.bundle.save();
-            this.onPersisted();
-        } catch (err) {
-            console.error("GXW: autosave failed:", err);
-        }
+    /**
+     * @param {boolean} dirty
+     */
+    _setDirty(dirty) {
+        if (this.isDirty === dirty) return;
+        this.isDirty = dirty;
+        this.onDirtyChange(dirty);
     }
 
     // --- Tab rendering ---
