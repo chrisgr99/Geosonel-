@@ -20,10 +20,11 @@
 // @ts-check
 
 import { EditorView, keymap, lineNumbers } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
-import { EditorState, Prec } from "https://esm.sh/@codemirror/state@6.5.2";
+import { EditorState, Prec, Compartment } from "https://esm.sh/@codemirror/state@6.5.2";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
 import { indentOnInput, indentUnit, bracketMatching, HighlightStyle, syntaxHighlighting } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
 import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6?deps=@codemirror/state@6.5.2";
+import { json } from "https://esm.sh/@codemirror/lang-json@6?deps=@codemirror/state@6.5.2";
 import { linter, lintGutter } from "https://esm.sh/@codemirror/lint@6?deps=@codemirror/state@6.5.2";
 import { oneDark } from "https://esm.sh/@codemirror/theme-one-dark@6?deps=@codemirror/state@6.5.2";
 import { tags as t } from "https://esm.sh/@lezer/highlight@1";
@@ -97,6 +98,95 @@ const jsSyntaxLinter = linter((view) => {
     return diagnostics;
 });
 
+/**
+ * CodeMirror linter for JSON. Runs JSON.parse on every
+ * idle-debounced change and surfaces parse errors with a
+ * best-effort source position. Browser engines disagree on
+ * the exact text of SyntaxError messages from JSON.parse, so
+ * we recognise both the V8 "position N" pattern and the
+ * SpiderMonkey "line N column M" pattern, and fall back to
+ * highlighting the start of the document.
+ */
+const jsonSyntaxLinter = linter((view) => {
+    const source = view.state.doc.toString();
+    /** @type {Array<{from: number, to: number, severity: string, message: string}>} */
+    const diagnostics = [];
+    if (source.trim() === "") return diagnostics;
+    try {
+        JSON.parse(source);
+    } catch (err) {
+        if (err instanceof Error) {
+            const pos = jsonErrorPosition(err.message, source);
+            diagnostics.push({
+                from: pos,
+                to: Math.min(source.length, pos + 1),
+                severity: "error",
+                message: err.message,
+            });
+        }
+    }
+    return diagnostics;
+});
+
+/**
+ * Best-effort 0-based source position from a JSON.parse
+ * error message. Returns 0 if no recognisable position
+ * pattern is present.
+ * @param {string} message
+ * @param {string} source
+ * @returns {number}
+ */
+function jsonErrorPosition(message, source) {
+    let m = message.match(/position\s+(\d+)/i);
+    if (m !== null) return Math.min(parseInt(m[1], 10), source.length);
+    m = message.match(/line\s+(\d+).*column\s+(\d+)/i);
+    if (m !== null) {
+        const line = parseInt(m[1], 10);
+        const col = parseInt(m[2], 10);
+        const lines = source.split("\n");
+        let pos = 0;
+        for (let i = 0; i < line - 1 && i < lines.length; i++) {
+            pos += lines[i].length + 1;
+        }
+        pos += Math.max(0, col - 1);
+        return Math.min(pos, source.length);
+    }
+    return 0;
+}
+
+/**
+ * Tab label overrides. Files with a friendly name listed here
+ * show that label in the tab bar instead of the raw filename.
+ * The filename remains the underlying identifier for storage,
+ * disk-mirror, and AI editing.
+ */
+const TAB_LABELS = {
+    "scene.json": "Properties",
+    "script.js": "Script",
+};
+
+/**
+ * @param {string} name
+ * @returns {string}
+ */
+function tabLabelFor(name) {
+    return TAB_LABELS[name] ?? name;
+}
+
+/**
+ * Pick the CodeMirror language extension and linter for a
+ * file, by extension. Anything that isn't .json gets the
+ * JavaScript pair.
+ * @param {string} name
+ * @returns {{language: any, linter: any}}
+ */
+function extensionsForFile(name) {
+    if (name.toLowerCase().endsWith(".json")) {
+        return { language: json(), linter: jsonSyntaxLinter };
+    }
+    return { language: javascript(), linter: jsSyntaxLinter };
+}
+
 
 /**
  * @typedef {Object} EditorCallbacks
@@ -132,6 +222,13 @@ export class TabbedEditor {
 
         /** Has the bundle changed since the last save? */
         this.isDirty = false;
+
+        // Compartments allow us to swap the language extension
+        // and linter dynamically when the active tab changes
+        // between scene.json and script.js. Created here so
+        // they exist by the time _mountEditor reads them.
+        this._langCompartment = new Compartment();
+        this._linterCompartment = new Compartment();
 
         this._mountEditor();
         this._renderTabs();
@@ -228,7 +325,7 @@ export class TabbedEditor {
                 indentOnInput(),
                 indentUnit.of("    "),
                 bracketMatching(),
-                jsSyntaxLinter,
+                this._linterCompartment.of(jsSyntaxLinter),
                 lintGutter(),
                 keymap.of([
                     ...appKeymap,
@@ -236,7 +333,7 @@ export class TabbedEditor {
                     ...defaultKeymap,
                     ...historyKeymap,
                 ]),
-                javascript(),
+                this._langCompartment.of(javascript()),
                 oneDark,
                 Prec.highest(syntaxHighlighting(contrastOverrides)),
                 EditorView.updateListener.of((update) => {
@@ -273,6 +370,8 @@ export class TabbedEditor {
 
         this.activeName = name;
 
+        const exts = extensionsForFile(name);
+
         this._suppressDirty = true;
         this.view.dispatch({
             changes: {
@@ -280,6 +379,10 @@ export class TabbedEditor {
                 to: this.view.state.doc.length,
                 insert: file.content,
             },
+            effects: [
+                this._langCompartment.reconfigure(exts.language),
+                this._linterCompartment.reconfigure(exts.linter),
+            ],
         });
         this._suppressDirty = false;
 
@@ -321,7 +424,7 @@ export class TabbedEditor {
             }
             el.setAttribute("role", "tab");
             el.setAttribute("tabindex", "0");
-            el.textContent = file.name;
+            el.textContent = tabLabelFor(file.name);
 
             el.addEventListener("click", () => this.selectTab(file.name));
             el.addEventListener("keydown", (e) => {

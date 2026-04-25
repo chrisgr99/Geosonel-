@@ -3,18 +3,28 @@
  *
  * Executes a score's sketch.js source to produce a populated
  * Scene. The sketch is wrapped in a function body that
- * receives the sketch API as named parameters; the user's code
- * references those as free variables (scene, bpm,
- * timeSignature, scale, image).
+ * receives the GXW sketch API as named parameters; the user's
+ * code references those as free variables.
  *
- * The convention is that the sketch defines a setup() function
- * that builds the scene's structure. The runner executes the
- * top-level code (which typically just declares functions) and
- * then invokes setup() if it exists.
+ * The convention is that the sketch (a) defines a setup()
+ * function that configures piece-level parameters (bpm,
+ * timeSignature, tonic, scale, etc.), and (b) at top level
+ * adds objects to the singleton `scene` via scene.addCurve,
+ * scene.addTrigger, scene.addSprite. The runner executes the
+ * top-level code first, then invokes setup() if it exists.
  *
- * An update() function is reserved by name for later milestones
- * (it will be called by the simulation loop during playback)
- * but is not invoked here.
+ * The injected API (DESIGN.md §11, §14, §18):
+ *   - scene: the Scene the user populates.
+ *   - bpm, timeSignature: transport setters.
+ *   - tonic, scale, root, chord, range, rangeLow, mapNotesTo:
+ *     score-level harmony framework setters.
+ *   - image, output: resource setters.
+ *   - scaleMap, rangeMap, chordMap, harmonyMap, listMap:
+ *     mapping helpers used by firing functions. Stubbed at
+ *     this milestone — they return reasonable placeholders so
+ *     sketches that reference them don't error, but no firing
+ *     functions are invoked yet (the simulation loop arrives
+ *     in a later milestone).
  *
  * Errors — syntax errors from new Function(), or runtime
  * errors from setup() — are caught, parsed for line numbers
@@ -37,6 +47,31 @@ import { Scene } from "./scene.js";
 const PREFIX = `"use strict";\n`;
 const SUFFIX = `\n;if (typeof setup === "function") { setup(); }\n//# sourceURL=sketch.js`;
 
+/**
+ * Names of the API parameters injected into every sketch
+ * wrapper. Listed here as the single source of truth so the
+ * calibration probe and the actual run path stay in sync.
+ */
+const API_NAMES = [
+    "scene",
+    "bpm",
+    "timeSignature",
+    "tonic",
+    "scale",
+    "root",
+    "chord",
+    "range",
+    "rangeLow",
+    "mapNotesTo",
+    "image",
+    "output",
+    "scaleMap",
+    "rangeMap",
+    "chordMap",
+    "harmonyMap",
+    "listMap",
+];
+
 /** Function-wrapper line offset, calibrated on first use. */
 /** @type {number | null} */
 let calibratedOffset = null;
@@ -51,12 +86,11 @@ let calibratedOffset = null;
  * @returns {number}
  */
 function calibrateOffset() {
-    const argNames = ["scene", "bpm", "timeSignature", "scale", "image"];
     const probeBody =
         `"use strict";\nthrow new Error("__gxw_probe__");\n//# sourceURL=sketch.js`;
     try {
         // eslint-disable-next-line no-new-func
-        new Function(...argNames, probeBody)();
+        new Function(...API_NAMES, probeBody)();
     } catch (err) {
         if (err instanceof Error) {
             const info = extractLineInfo(err);
@@ -94,32 +128,20 @@ export class SketchRunner {
      */
     run(source) {
         const scene = new Scene();
+        const api = buildApi(scene);
 
-        const api = {
-            scene,
-            bpm: (/** @type {number} */ n) => {
-                scene.bpm = n;
-            },
-            timeSignature: (/** @type {number} */ num, /** @type {number} */ den) => {
-                scene.timeSignature = [num, den];
-            },
-            scale: (/** @type {string} */ name) => {
-                scene.scaleName = name;
-            },
-            image: (/** @type {string} */ name) => {
-                scene.imageName = name;
-            },
-        };
-
-        const argNames = Object.keys(api);
-        const argValues = Object.values(api);
+        // Order must match API_NAMES exactly; build the values
+        // array in that order so the wrapper's parameter list
+        // and our argument list align with what calibration
+        // measured.
+        const argValues = API_NAMES.map((name) => api[name]);
 
         const body = PREFIX + source + SUFFIX;
 
         let fn;
         try {
             // eslint-disable-next-line no-new-func
-            fn = new Function(...argNames, body);
+            fn = new Function(...API_NAMES, body);
         } catch (err) {
             return {
                 success: false,
@@ -139,6 +161,78 @@ export class SketchRunner {
             };
         }
     }
+}
+
+/**
+ * Build the API object exposed to the sketch. The object's
+ * keys are the names sketches reference as free variables; the
+ * values are the implementations bound to the run's Scene.
+ * @param {Scene} scene
+ * @returns {Object<string, any>}
+ */
+function buildApi(scene) {
+    return {
+        // The Scene the sketch populates.
+        scene,
+
+        // --- Transport ---
+        bpm: (/** @type {number} */ n) => {
+            scene.bpm = n;
+        },
+        timeSignature: (/** @type {number} */ num, /** @type {number} */ den) => {
+            scene.timeSignature = [num, den];
+        },
+
+        // --- Harmony framework ---
+        tonic: (/** @type {string} */ name) => {
+            scene.tonic = name;
+        },
+        scale: (/** @type {string} */ name) => {
+            scene.scaleName = name;
+        },
+        root: (/** @type {string} */ name) => {
+            scene.root = name;
+        },
+        chord: (/** @type {string} */ name) => {
+            scene.chordName = name;
+        },
+        range: (/** @type {number} */ semitones) => {
+            scene.range = semitones;
+        },
+        rangeLow: (/** @type {number} */ midi) => {
+            scene.rangeLow = midi;
+        },
+        mapNotesTo: (/** @type {"Score" | "Scale" | "Chord" | "None"} */ target) => {
+            scene.mapNotesTo = target;
+        },
+
+        // --- Resources ---
+        image: (/** @type {string} */ name) => {
+            scene.imageName = name;
+        },
+        output: (/** @type {string} */ target, /** @type {string | null} */ port = null) => {
+            scene.output = { target, port };
+        },
+
+        // --- Mapping helpers (stubs until audio milestone). ---
+        // Signatures match what firing functions will use; the
+        // returned values are placeholders so a sketch that
+        // references these names doesn't error if its functions
+        // get evaluated. The simulation loop that actually
+        // invokes firing functions arrives in a later
+        // milestone, so the placeholder values never reach
+        // audio output at this stage.
+        scaleMap: (/** @type {number} */ _value, /** @type {object} */ _opts) => 60,
+        rangeMap: (/** @type {number} */ _value, /** @type {object} */ _opts) => 60,
+        chordMap: (/** @type {number} */ _index, /** @type {object} */ _opts) => 60,
+        harmonyMap: (/** @type {number} */ _value, /** @type {object} */ _opts) => 60,
+        listMap: (/** @type {number} */ index, /** @type {Array<any>} */ list) => {
+            if (!Array.isArray(list) || list.length === 0) return null;
+            const len = list.length;
+            const i = ((index % len) + len) % len;
+            return list[i];
+        },
+    };
 }
 
 /**

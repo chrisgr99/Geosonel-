@@ -1,9 +1,13 @@
 # GXW Design Document
 
-Version 1.0 — Updated April 2026
+Version 2.1 — Updated April 2026
 Status: Living document.
 
 Naming: GXW is the web-based successor to GeoSonix. The W stands for Web. The project folder and repository live at /Users/chrisgr/ProgrammingProjects/GXW. An earlier Python desktop prototype, GXM, exists at /Users/chrisgr/ProgrammingProjects/GX2 and remains preserved as reference; GXW supersedes it as the active development path.
+
+Revision v2.1 is a pure terminology change from v2.0: the "Mover" object type has been renamed to "Sprite" throughout. The term better leverages widely-understood game-development vocabulary for an autonomous visual agent with its own behaviour. No conceptual changes. No change to the number of object types (still three: Curves, Triggers, Sprites), no change to their function slots, no change to the collision rule, no change to any other section.
+
+The underlying v2.0 rework remains in effect: a substantial reshaping of the object model following detailed comparison with both GeoMaestro and GeoSonix. The v1.0 split between Projectors and Movers has been replaced by a three-object model — Curves, Triggers, and Sprites — that better reflects the compositional vocabulary the composer actually uses. Several v1.0 concepts have been removed or folded in: the separate Projector type, the separate Cursor object, the Distortion Function as a first-class concept, and the cross-paradigm BeatPattern resource. The GeoMaestro projector capability is preserved through the Curve's extended cursor; distortion behavior lives in the Curve's sweep function. See Section 23 for the discussion of what survived from each parent system and why.
 
 ---
 
@@ -12,14 +16,14 @@ Naming: GXW is the web-based successor to GeoSonix. The W stands for Web. The pr
 - [Section 1 — Vision](#section-1--vision)
 - [Section 2 — Conceptual Model](#section-2--conceptual-model)
 - [Section 3 — Scene Structure](#section-3--scene-structure)
-- [Section 4 — Projectors](#section-4--projectors)
-- [Section 5 — Movers](#section-5--movers)
-- [Section 6 — Events](#section-6--events)
+- [Section 4 — Curves](#section-4--curves)
+- [Section 5 — Triggers](#section-5--triggers)
+- [Section 6 — Sprites](#section-6--sprites)
 - [Section 7 — Transport and Tempo](#section-7--transport-and-tempo)
-- [Section 8 — BeatPatterns](#section-8--beatpatterns)
-- [Section 9 — The Context Object](#section-9--the-context-object)
-- [Section 10 — Message Functions](#section-10--message-functions)
-- [Section 11 — Distortion Functions](#section-11--distortion-functions)
+- [Section 8 — Collision Model](#section-8--collision-model)
+- [Section 9 — Function Slots and Context Objects](#section-9--function-slots-and-context-objects)
+- [Section 10 — Beat Points and Strength Strings](#section-10--beat-points-and-strength-strings)
+- [Section 11 — Harmony Framework](#section-11--harmony-framework)
 - [Section 12 — Phrases and the Compositor](#section-12--phrases-and-the-compositor)
 - [Section 13 — User Interface](#section-13--user-interface)
 - [Section 14 — Authoring Workflow](#section-14--authoring-workflow)
@@ -29,7 +33,7 @@ Naming: GXW is the web-based successor to GeoSonix. The W stands for Web. The pr
 - [Section 18 — Audio and MIDI Output](#section-18--audio-and-midi-output)
 - [Section 19 — Implementation](#section-19--implementation)
 - [Section 20 — Canvas Coordinate System](#section-20--canvas-coordinate-system)
-- [Section 21 — Mover Physics Details](#section-21--mover-physics-details)
+- [Section 21 — Sprite Physics Details](#section-21--sprite-physics-details)
 - [Section 22 — Module Overview](#section-22--module-overview)
 - [Section 23 — GeoMaestro and GeoSonix Reference](#section-23--geomaestro-and-geosonix-reference)
 - [Section 24 — Open Questions](#section-24--open-questions)
@@ -38,9 +42,9 @@ Naming: GXW is the web-based successor to GeoSonix. The W stands for Web. The pr
 
 ## Section 1 — Vision
 
-GXW is a web app for composing music that emerges from 2D scenes. Static projectors sweep across authored events to produce phrases; dynamic movers flow through force fields over images to generate note streams. All agents share one transport and one musical framework.
+GXW is a web app for composing music that emerges from 2D scenes. A scene is a substrate of curves and triggers placed at considered positions. Curves have intrinsic rhythmic structure and play their own beat points on internal cycles; curves with extended cursors also sweep through the scene, triggering any triggers they encounter — this is the GeoMaestro projector idea preserved as a property of every curve. Sprites are autonomous agents that wander the scene, reading its image-as-scalar-field and firing musical events based on their environment. All agents share one transport and one musical framework.
 
-The composer works by editing a JavaScript sketch file describing the scene, its agents, and their behaviour. GXW watches the sketch and re-executes it whenever it changes. A canvas shows the scene and its animation. Sound is produced by the browser's Web Audio API, and optionally routed to external synthesisers via Web MIDI where supported.
+The composer works by editing a JavaScript sketch file describing the scene, its objects, and their behaviour. GXW watches the sketch and re-executes it whenever it changes. A canvas shows the scene and its animation. Sound is produced by the browser's Web Audio API, and optionally routed to external synthesisers via Web MIDI where supported.
 
 Sketches are typically constructed and modified through conversation with Claude, which edits the sketch directly. The conversational authoring experience is a first-class concern of GXW rather than an external workflow.
 
@@ -48,15 +52,17 @@ Sketches are typically constructed and modified through conversation with Claude
 
 ## Section 2 — Conceptual Model
 
-A GXW scene is a timeless 2D substrate holding events, an image, and optional vector and scalar field sources. The scene is inhabited by two kinds of agents.
+A GXW scene holds three kinds of first-class objects — curves, triggers, and sprites — plus an optional background image that acts as a scalar field and a transport that keeps global tempo and time.
 
-A projector is a parametric agent. It has an authored geometric shape (line segment, circle, piste, or a more elaborate type like Helice or Batteur) and a distortion profile. When it evaluates, an implicit sweep point traverses its shape over a configured sweep duration; each event in the scene is projected onto the shape. The projector's distortion profile determines how each encounter becomes a musical parameter. The result is a phrase in beats. A projector itself does not move — only the evaluation point moves along its fixed geometry.
+Curves are geometric shapes (line, circle, piste, bezier, and other named forms) with intrinsic rhythmic structure. Each curve has a set of beat points distributed around its shape according to an algorithmic generator (primarily Euclidean) or a hand-authored pattern string. Each curve has a visible cursor that advances through its cycle over a settable number of beats. When the cursor reaches an active beat point, the curve's beat function fires. If the cursor has non-zero extent on either side of the curve direction, it sweeps through space as it advances, and any triggers in the swept region fire. Curves combine geometry, rhythm, and projection into one coherent compositional object.
 
-A mover is a dynamic agent. It has initial conditions (position, velocity, internal parameters). At each time step it integrates forces from the scene's vector field, samples scalar values from the image at its current position, and decides whether to fire a musical event based on a BeatPattern scheduled against the transport. When it fires, a message function translates its current spatial context into musical parameters. The mover's position evolves over time.
+Triggers are static positions in the scene with optional payload. They do not move. They fire when a curve's extended cursor sweeps over them, or on an optional auto-timer. Triggers are the free-standing musical atoms of the scene — positions the composer places with compositional intent.
 
-Both agent kinds share the transport: one global tempo, one time signature, one beat position. Projectors convert their sweep duration from beats to wall-clock seconds via tempo. Movers drive their physics integration from the transport's beat-incremented clock. Everything is rhythmically locked by default.
+Sprites are autonomous agents that move through the scene under their own logic. Each sprite has a step function called every physics step, in which it reads its environment (image colour under its position, vector field forces, transport state) and can mutate its own velocity and position and fire musical events directly. Sprites do not collide with anything; they only initiate musical events from inside their own step logic or on an optional auto-timer. The sprite is the autonomous-creature-in-a-field idea from GeoSonix, made first-class.
 
-Phrases produced by projectors and movers flow into the Compositor, a higher-level arrangement tool deferred to later implementation.
+The transport is global: tempo, time signature, beat position, play state. All objects reference it. Curves advance their cycles from transport time. Triggers tick their auto timers from transport time. Sprites integrate physics against transport time. One shared clock keeps everything rhythmically locked by default.
+
+Three object types, each with a clear compositional role. Two collision participants (the curve's extended cursor as collider, the trigger as collidee), one direction of interaction. Three function-slot budgets per object type, each slot named for what it reacts to. The mental model fits in a paragraph.
 
 ---
 
@@ -64,83 +70,92 @@ Phrases produced by projectors and movers flow into the Compositor, a higher-lev
 
 A scene's data model:
 
-- An optional image, resampled to 1000x1000. The image is a scalar field: at any 2D position it provides r, g, b, luminance, hue, saturation. Consulted by movers (via physics and message functions) and projectors (via distortion functions that read pixel values).
+- An optional image, resampled to 1000x1000. The image is a scalar field: at any 2D position it provides r, g, b, luminance, hue, saturation. Consulted by sprites (via their step functions) and available as context fields in all other functions.
 
-- A collection of events, each with (x, y) coordinates and symbolic musical payload. Shared by all projectors in the scene. No per-projector filtering. Movers do not consult events.
+- A collection of curves, each with a geometric shape, a set of beat points, a cursor, and zero to two functions.
 
-- A vector field built from one or more field sources (attractors, repulsors, uniform flows, pixel-gradient flows) that combine to produce a force vector at any position. Consulted by movers during integration. Projectors may optionally consult it for bent sweep paths (advanced feature).
+- A collection of triggers, each with a position, optional payload, and zero to two functions.
+
+- A collection of sprites, each with a position, velocity, motion parameters, and zero to two functions.
+
+- A vector field built from one or more field sources (attractors, repulsors, uniform flows, pixel-gradient flows) that combine to produce a force vector at any position. Consulted by sprites during integration.
 
 - Optional named regions — 2D areas with boolean membership and optional scalar data.
 
-- A collection of projectors.
+- Score-level harmonic parameters (see Section 11) — tonic, scale, root, chord, range — that objects inherit unless they override.
 
-- A collection of movers.
-
-The canvas is always live — it displays whatever state the model currently holds. There is no separate edit and run mode at the canvas level; editing happens by modifying the sketch, and the canvas reflects the result after the sketch re-executes.
+The canvas is always live and displays whatever state the model currently holds. There is no separate edit and run mode at the canvas level; editing happens by modifying the sketch, and the canvas reflects the result after the sketch re-executes.
 
 ---
 
-## Section 4 — Projectors
+## Section 4 — Curves
 
-A projector has a shape, a sweep duration in beats, a distortion profile, a channel assignment, and optional per-projector parameters.
+A curve is the most structured object in GXW. It bundles geometry, rhythm, a moving cursor, and up to two functions.
 
-Shape is the geometric form that defines traversal: line segment, circle, piste (polyline), or a more elaborate named type (Helice, Batteur, Rose, EarWalk, Radar, and others drawn from GeoMaestro's catalogue).
+Shape. A curve has a geometric form — line segment, circle, piste (polyline), bezier, or a more elaborate named type (helice, rose, spiral, and other shapes from the GeoMaestro catalogue). The shape defines the curve's spatial presence and the path along which the cursor advances. Shape types in implementation priority order: line segment, circle, piste, bezier, helice.
 
-Sweep duration is expressed in beats. A projector with sweep duration 4 traverses its shape in 4 beats of transport time. The sweep point advances along the shape at a uniform rate by default; some projector types implement non-uniform traversal.
+Beat points. A curve's rhythm is defined by two independent strings plus a few numeric parameters (full treatment in Section 10). The active-beats string uses "x" and "." to mark which positions in the cycle fire; the strength string uses digits 0-9 to set the emphasis of each firing, cycling independently of the active-beats string for polyrhythmic drift. Beat points render as tick marks along the curve, with active positions visually distinguishable from inactive ones. Active beat points pulse briefly when fired, with the pulse's brightness reflecting the firing's current strength. Strength-zero firings do not produce sound and do not pulse.
 
-Distortion profile is a set of named distortion functions mapping geometric features of each event-to-shape encounter (distance, angle, side, projection ratio) into musical parameters (pitch offset, velocity, duration, pan, time offset). Distortion functions are discussed in [Section 11](#section-11--distortion-functions).
+Cursor. A curve has a visible cursor that advances through its cycle at a rate governed by the curve's cycle time in beats (derived via Time Lock from curve length, or specified directly). The cursor has two extent values, R (right of curve direction) and L (left of curve direction), set independently. When both are zero, the cursor is a single point on the curve — purely a progress indicator with no spatial presence, visible only to the composer watching playback. When either R or L is non-zero, the cursor becomes a line segment of that length perpendicular to the curve's direction, and as the cursor advances, the segment sweeps through space.
 
-Channel assignment determines which audio or MIDI channel the projector's output goes to, allowing multiple projectors in one scene to produce independently-routable streams.
+Extended cursors collide with triggers in the scene. This is the GeoMaestro projector capability preserved as a property of every curve. A line-segment curve with R=5 and L=5 sweeping from A to B over 4 beats is a classic projector. Setting both extents to zero turns the curve back into a pure rhythmic player with no spatial sweep. The extent is continuous property, not a mode switch — any curve can be a projector by setting extent, or stop being one by setting it back to zero.
 
-Per-projector overrides: a projector can specify its own distortion profile overriding the scene default, its own channel, its own sweep-rate modulation driven by a BeatPattern (see [Section 8](#section-8--beatpatterns)), and its own repetition count.
+Functions. A curve has two optional function slots:
 
-Projector shapes in implementation priority order: line segment, circle, piste, Helice, Batteur.
+- The beat function fires when the curve's cursor reaches an active beat point during internal cycle advancement. It does not fire on external collisions.
+- The sweep function fires when the curve's extended cursor collides with a trigger in the scene (either a free-standing trigger or a beat-as-trigger on another curve). It does not fire on internal beat points.
+
+Either or both slots may be undefined. A curve with only a beat function and a zero-extent cursor is a rhythmic player. A curve with only a sweep function is a projector that doesn't play its own beat points. A curve with both is a rhythmic projector that simultaneously plays its own rhythm and sweeps other objects. A curve with neither is pure visual scaffolding, drawn but silent.
+
+Beats-as-triggers property. A curve has a "beats are triggers" property (default false). When true, the curve's active beat points become externally collidable — another curve's extended cursor sweeping across these positions will fire them, with context including which curve was hit and which beat point was struck. See Section 10 for how the strength string cycles under external collisions.
+
+Cycle Time and Cursor Speed. Governed by a Time Lock toggle. With Time Lock on, the composer sets Cycle Time in beats and the system derives Cursor Speed from the curve's length. With Time Lock off, the composer sets Cursor Speed directly and Cycle Time derives. The typical authoring choice is to think in beats per cycle, so Time Lock defaults on.
 
 ---
 
-## Section 5 — Movers
+## Section 5 — Triggers
 
-A mover has initial conditions: starting position, starting velocity, mass, maxSpeed (user-settable velocity ceiling), and absoluteMaxSpeed (hard system ceiling of 200 canvas units per second).
+A trigger is a static musical position in the scene. It has:
 
-Motion modes:
+- A position in canvas coordinates.
+- A size, which serves as the collision radius for cursor-sweep detection.
+- Optional payload — a note specification, controller value, parameter set, pre-rendered phrase, or callback function. Used by the firing function as this.note, this.cc, etc.
+- Up to two optional function slots:
+  - A collision function fires when a curve's extended cursor sweeps over the trigger. Context includes the curve that hit it and the hit geometry.
+  - An auto function fires on the trigger's own timer at an interval set in the trigger's properties.
 
-- Free mode responds fully to the vector field, bounces off canvas boundaries, obeys velocity ceilings.
-- Line mode moves along an implicit line segment, reversing at endpoints. No visible line drawn.
-- Circle mode orbits an implicit circle at constant angular velocity. No visible circle drawn.
+Both functions are optional. A trigger can be pure data — position and payload with no functions — in which case nothing fires when the trigger is hit. This is specifically useful when the composer wants the colliding curve's sweep function to do all the musical work, reading the trigger's payload as context. See Section 8 for the collision resolution rule that makes this pattern work.
+
+Triggers do not move. They do not observe the scene. They do not carry per-step logic. They sit at their position and fire when hit or when their auto timer ticks.
+
+---
+
+## Section 6 — Sprites
+
+A sprite is an autonomous agent that moves through the scene under its own logic.
+
+Geometry. A sprite is a point. It has a position and a velocity but no spatial extent. This falls out of the collision model: since sprites do not collide with anything (see Section 8), they have no need for geometric size. Visual rendering draws the sprite as a small filled circle so the composer can see it, but the circle's size is purely a rendering concern — the sprite itself is the moving point at its current position.
+
+Motion. Sprites move freely in the scene. They are not path-constrained — if the composer wants sweep-along-a-path behavior, that is handled by a curve with an extended cursor, not by a sprite. Sprites have a position and velocity, sample the vector field at each step, integrate forces, and bounce off canvas boundaries (see Section 21 for physics details).
 
 Per physics step:
-1. Sample vector field at current position.
-2. Integrate position and velocity.
-3. Apply velocity ceiling.
-4. Resolve collisions with canvas boundaries (continuous collision detection).
-5. Sample image colour at final position.
-6. Check beat firing against BeatPattern and transport.
-7. If a new beat has emphasis nonzero, fire the message function.
-8. Update visual trail.
 
-Firing is scheduled by BeatPattern plus transport, not by collision. The BeatPattern decides when to fire; the message function decides what to play, using the mover's current spatial context.
+1. The sprite's step function is called (if defined). Inside it the sprite reads its environment and may mutate its velocity, position, or other properties, and may emit musical events.
+2. The vector field force at current position is sampled and added to velocity.
+3. Velocity is capped at maxSpeed and absoluteMaxSpeed.
+4. Position updates from velocity × dt.
+5. Boundary collisions with the canvas's implicit bounding box are resolved via continuous collision detection.
 
-A mover with BeatPattern = none uses a free-running firing function instead — a user-defined predicate evaluated each physics step, producing non-rhythmic image-driven event streams.
+Functions. A sprite has two optional function slots:
 
-Soft UI convention: six movers in the default palette, based on empirical experience from GeoSonix that parameter management past six becomes overwhelming. Not a data-model limit.
+- The step function is called every physics step, before physics integration. Inside the function the sprite has access to its current state, the image colour under its position, the vector field force, region membership, and transport state. The function can mutate the sprite's properties (velocity is the most common case, producing image-driven wandering) and can fire musical events — emit notes, trigger phrases, send controller messages — on any condition the composer expresses in code. The step function is the richest authoring surface in GXW and is the heart of what makes sprites expressive. A sprite that fires "every time luminance crosses 0.5 upward" produces non-rhythmic event streams driven purely by the scene's scalar field; a sprite that fires "on any red value above 0.8" produces color-triggered events; a sprite that integrates image-gradient into its velocity and fires on position-over-time conditions produces behaviors unique to the scene.
+- The auto function fires on the sprite's own timer at an interval set in the sprite's properties. This is the rhythmic emission slot — useful for sprites that play on a beat clock regardless of where they are or what they're doing.
 
----
+Either or both slots may be undefined. A sprite with only a step function is a pure autonomous agent. A sprite with only an auto function is a drifting metronome. A sprite with both does both. A sprite with neither is a position reference that moves under pure physics without playing.
 
-## Section 6 — Events
+Sprites do not have a collision function. They do not collide with triggers, curves, or other sprites. If a sprite wants to fire triggers based on proximity, its step function reads scene state and does so explicitly — "is there a trigger within 2 units of me, and did I just enter that radius?" is a three-line check in the step function. This asymmetry — sprites only initiate, never receive — keeps the collision model single-directional and simple. See Section 8.
 
-An event has a position and a payload. Payload types:
-
-- A note specification (pitch, velocity, duration as nodur).
-- A controller value (CC number and value).
-- A parameter set (key-value pairs consulted by distortion functions).
-- A phrase (pre-rendered sequence inserted wholesale when encountered).
-- A function (user-defined callback returning a phrase when called).
-
-Events have no time. Time arises when a projector encounters them. Event duration fields use nodur notation ("q" for quarter, "e." for dotted eighth) — proportional to a beat, not absolute seconds.
-
-Events are shared scene-wide. If a user needs one projector to read only some events, they use a separate scene. An escape hatch is available through distortion functions that can emit silence based on event metadata, but this is a fallback not a primary mechanism.
-
-Movers do not consult events. Projectors read events. Movers read fields. Disjoint consumption.
+Soft UI convention: six sprites in the default palette, based on empirical experience from GeoSonix that parameter management past six becomes overwhelming. Not a data-model limit.
 
 ---
 
@@ -148,126 +163,160 @@ Movers do not consult events. Projectors read events. Movers read fields. Disjoi
 
 The transport is global, with state: BPM, time signature, current beat position, play/stop/pause/rewind, and optional tempo automation.
 
-Projectors convert sweep duration in beats into wall-clock seconds using the current BPM at evaluation time. Tempo changes during a sweep affect pacing accordingly.
+Curves convert their cycle time from beats to wall-clock seconds using the current BPM at evaluation time. Tempo changes during a cycle affect pacing accordingly. Triggers' auto timers tick in beats, converted to wall-clock time via BPM. Sprites drive physics from the transport's beat clock — physics time step is expressed in beats; wall-clock mapping happens via tempo. Halving tempo doubles the time it takes a sprite to cover the same spatial trajectory; forces and field values don't depend on tempo, only pacing does.
 
-Movers drive physics from the transport's beat clock. Physics time step is expressed in beats; wall-clock mapping happens via tempo. Halving tempo doubles the time it takes a mover to cover the same spatial trajectory; forces and field values don't depend on tempo, only pacing does.
+Duration overrides: each curve's cycle time, each trigger's auto interval, and each sprite's auto interval can be specified in beats (default), absolute seconds (ignores tempo), or proportional units relative to some reference.
 
-BeatPatterns cycle against the transport's beat position (see [Section 8](#section-8--beatpatterns)).
+Per-object tempo override is available but deferred. Common case is one global tempo.
 
-Duration overrides: each projector and each event can specify duration in beats (default), absolute seconds (ignores tempo), or proportional units relative to the projector's sweep duration.
-
-Per-agent tempo override is available but deferred. Common case is one global tempo.
-
-Transport controls are exposed in a bar along the bottom of the main window: a rewind button and a play-pause toggle on the left, followed by an elapsed-time readout, a BPM field, and a read-only time signature display. BPM and time signature defaults are defined in the sketch's setup() function (see [Section 14](#section-14--authoring-workflow)). BPM is editable at runtime from the transport bar for live experimentation; runtime changes do not write back to the sketch, so a sketch reload restores the value defined in setup(). Time signature is read-only in the UI, since changing it at runtime has non-trivial musical implications best reserved for sketch edits.
+Transport controls are exposed in a bar along the bottom of the main window: a rewind button and a play-pause toggle on the left, followed by an elapsed-time readout, a BPM field, and a read-only time signature display. BPM and time signature defaults are defined in the sketch's setup() function (see Section 14). BPM is editable at runtime from the transport bar for live experimentation; runtime changes do not write back to the sketch, so a sketch reload restores the value defined in setup(). Time signature is read-only in the UI, since changing it at runtime has non-trivial musical implications best reserved for sketch edits.
 
 The transport clock is driven by the browser's AudioContext.currentTime, which provides sub-millisecond timing accuracy independent of animation frame timing.
 
 ---
 
-## Section 8 — BeatPatterns
+## Section 8 — Collision Model
 
-A BeatPattern has:
-- A name.
-- A bar length.
-- An emphasis string (digits 0-9 at each sub-beat position; 0 = silence; higher = greater accent). Slash-separated groups for readability: `/9614/9224` for a two-bar pattern with accents on beats 1 and 3 each bar.
-- An optional swing value.
+GXW has exactly one collision rule, applying to exactly one participant pair.
 
-BeatPatterns shorter than a mover's phrase length cycle automatically. A one-bar pattern fills a four-bar phrase by repeating.
+The collider. An extended cursor — a curve's cursor with non-zero R or L extent — is the only thing that initiates collisions. Cursors with zero extent are pure progress indicators and do not collide.
 
-BeatPatterns are shared resources. Multiple movers can reference the same named BeatPattern; editing the pattern updates all referencing movers.
+The collidee. A trigger is the only thing that can be collided with. Curves with the "beats are triggers" property true also expose their active beat points as collidees for this purpose, firing using the curve's beat-function context augmented with external-collision information.
 
-Cross-paradigm use: a projector can consume a BeatPattern to modulate its sweep rate non-linearly (pause on emphasis 0, accelerate through high-emphasis beats). Optional; default sweep is linear.
+The rule. When a curve's extended cursor sweeps through a trigger's collision radius during a physics step, a collision event fires. Continuous collision detection within each step ensures a fast-moving cursor cannot skip past a small trigger between frames.
 
----
+Functions fired on collision. Both the trigger's collision function and the curve's sweep function fire, in that order, if both are defined. If only one is defined, only it fires. The composer chooses per object which function to define, which enables several compositional patterns:
 
-## Section 9 — The Context Object
+- Define only the trigger's collision function: the trigger controls its own firing regardless of which curve hit it. Each trigger sounds the same way no matter how it was struck. The classical trigger-as-sound-emitter pattern.
+- Define only the curve's sweep function: triggers are pure data (position plus payload); the curve decides how to interpret each hit. This is the GeoMaestro distortion-function pattern — centralized firing logic reading trigger data as context. A single function with distance-based pitch and angle-based pan, applied uniformly to every trigger the curve sweeps.
+- Define both: two things fire per collision. Useful when one function emits a note and the other logs, animates, or triggers a secondary effect.
+- Define neither: silent hit. Rarely useful except as a placeholder during authoring.
 
-When a mover's BeatPattern fires a beat, its message function is called with a ctx object:
+What does not collide. Sprites do not collide — not with triggers, not with curves, not with other sprites. If a sprite wants to fire a trigger by proximity, its step function reads scene state and does so explicitly. Curves do not collide with other curves (except via the beats-as-triggers mechanism, which makes beat points collidable as triggers, not the curve itself). Triggers do not collide with other triggers.
 
-Mover state:
-- r, g, b, lum, hue, sat — colour values at position (0.0-1.0).
-- x, y — position (0-100 canvas units).
-- vx, vy — velocity.
-- v — scalar speed.
-- beat — emphasis digit (0-9).
-- beatNumber — position within BeatPattern cycle.
-- phrasePosition — fractional position through current phrase.
-- triggerCount — fires since last rewind.
-
-Score state:
-- scale — scale name.
-- root — root note (MIDI).
-- chord — chord name.
-- bpm — current BPM.
-- timeSignature — tuple.
-- channel, port.
-
-Example:
-
-```javascript
-function myMessage(ctx) {
-    const note = scaleMap(ctx.r, { scale: ctx.scale, root: ctx.root });
-    const velocity = rangeMap(ctx.lum, 20, 127);
-    const duration = rangeMap(ctx.b, 200, 800);
-    return { note, velocity, duration };
-}
-```
-
-The mapping library (scaleMap, rangeMap, chordMap, harmonyMap, listMap) is available globally to sketch code. The Math object is available as usual.
-
-Distortion function context is structurally analogous but carries geometric fields rather than spatial fields. See [Section 11](#section-11--distortion-functions).
+This one-rule model replaces the five firing types of GeoSonix (cursor-auto, curve-auto, curve-beat, trigger-auto, trigger-collision) with an architecture where firing situations map one-to-one onto named function slots on the relevant object. Beat points fire on internal curve cycles via the curve's beat function. Triggers fire on auto timers via their auto function or on cursor-sweep collisions via their collision function (or the colliding curve's sweep function). Sprites fire on auto timers via their auto function or from inside their step function. Each firing situation has its own named function slot, so no source-switching logic inside functions is needed.
 
 ---
 
-## Section 10 — Message Functions
+## Section 9 — Function Slots and Context Objects
 
-Message functions are named JavaScript functions defined in the sketch. Each mover holds a reference to a named function. Multiple movers can share one; editing it updates all references.
+Each object type has a fixed set of optional function slots. Defining a function means writing a named JavaScript function in the sketch and referencing it by name in the object's property.
 
-A message function takes a context object and returns an object with musical parameters: note, velocity, duration. Optional extended fields include channel and port.
+- Curve: beat, sweep.
+- Trigger: collision, auto.
+- Sprite: step, auto.
 
-Pre-loaded helpers available globally:
-- scaleMap, rangeMap, chordMap, harmonyMap, listMap.
-- Math.
+All slots are optional. An object with no defined functions is visually and structurally present but musically silent.
+
+When a function fires, it is called with `this` bound to the firing object and a `ctx` argument carrying additional fields specific to the firing reason. Single-purpose functions mean no source-switching is required — each function has a fixed context shape.
+
+Curve beat function context. Fires on internal beat points.
+- this: the curve (id, note, channel, port, object-level harmony overrides)
+- ctx.beatIndex: position in the cycle (0-based into the active-beats string)
+- ctx.strength: current strength digit (1-9; zeros do not fire)
+- ctx.cyclePosition: 0-1 fractional position around the curve
+- ctx.r, g, b, lum, hue, sat: image values at the beat point's canvas position
+- ctx.scale, root, chord, tonic, bpm, timeSignature: current harmony and transport state
+
+Curve sweep function context. Fires when the extended cursor collides with a trigger.
+- this: the curve
+- ctx.trigger: the trigger hit (full object access — this.note from the trigger, its payload, position)
+- ctx.d: perpendicular distance from curve to trigger
+- ctx.side: +1 or -1 indicating which side of the curve the trigger lies on
+- ctx.angle: the curve's local direction angle at the hit point
+- ctx.cursorParam: 0-1 position along the curve at the moment of hit
+- ctx.r, g, b, lum, hue, sat: image values at the trigger's canvas position
+- Harmony and transport fields
+
+Trigger collision function context. Fires when a curve's extended cursor sweeps the trigger.
+- this: the trigger (position, payload, id)
+- ctx.curve: the curve whose cursor hit it
+- ctx.d, side, angle, cursorParam: the geometry of the hit, as in the curve sweep context
+- ctx.r, g, b, lum, hue, sat: image values at this trigger's position
+- Harmony and transport fields
+
+Trigger auto function context. Fires on the trigger's own timer.
+- this: the trigger
+- ctx.beatNumber: position in the trigger's auto cycle
+- ctx.r, g, b, lum, hue, sat: image values at this trigger's position
+- Harmony and transport fields
+
+Sprite step function context. Fires every physics step before integration.
+- this: the sprite (position, velocity, id, payload)
+- ctx.x, y: current position (also accessible as this.x, this.y)
+- ctx.vx, vy: current velocity
+- ctx.v: scalar speed sqrt(vx² + vy²)
+- ctx.r, g, b, lum, hue, sat: image values under the sprite's current position
+- ctx.fx, fy: vector field force at current position (before physics applies it)
+- ctx.region: region membership (if regions defined)
+- ctx.transport: beat, bar, time signature, BPM
+- Mutation: the step function can assign to this.vx, this.vy, this.x, this.y, and other sprite properties — mutations take effect before physics integration runs for this step. Returning a musical-params object fires an event.
+
+Sprite auto function context. Fires on the sprite's own timer.
+- this: the sprite
+- ctx.beatNumber: position in the auto cycle
+- ctx.r, g, b, lum, hue, sat: image values under the sprite's current position
+- Harmony and transport fields
+
+Firing behavior. Functions return an object with musical parameters (`{ note, velocity, duration, channel, port }`) to fire a musical event, or return null/undefined to remain silent. Sprite step functions can fire events and separately mutate sprite state in the same invocation — the returned object only affects audio; mutations happen via assignment to this.*.
+
+Pre-loaded helpers available globally to all functions: scaleMap, rangeMap, chordMap, harmonyMap, listMap. Plus Math.
 
 ---
 
-## Section 11 — Distortion Functions
+## Section 10 — Beat Points and Strength Strings
 
-Distortion functions are the projector-side equivalent of message functions. They map geometric features of an event-to-shape encounter into musical parameters.
+A curve's rhythm is defined by two independent strings plus a few numeric parameters. The separation of the two strings is deliberate: it preserves a compositional capability from GeoSonix (polyrhythmic drift between position and emphasis) that a single combined string cannot express.
 
-GeoMaestro organised distortion functions into named arrays: Volume, Pit, Dur, Pan, Time, and Mer (merging additional events into output). GXW inherits this. A projector's distortion profile is a set of function references — one per array.
+Active-beats string. Uses "x" for an active position and "." for an inactive position. Length equals the curve's beats-per-cycle. This string can be generated algorithmically — the primary generator is Euclidean, parameterized by beats-per-cycle, active-beats-count, and beat-shift — or authored by hand (property editor) or by direct string assignment (sketch code). Example: `..x...x...x...x.` places four active beats at positions 2, 6, 10, 14 in a 16-cycle.
 
-Context fields for a distortion function:
-- ev — the encountered event.
-- d — distance from shape to event.
-- a — angle of projection.
-- s — side (+1 or -1).
-- p — projection ratio (0-1 along shape).
-- r, g, b, lum, hue, sat — scalar values at event position.
-- ctx — broader context (scale, root, channel, transport).
+Strength string. Uses digits 0 through 9 to specify the emphasis of each firing. A 0 is a silent position (cycle position is consumed but no sound is emitted); 1 through 9 are increasing emphasis. The strength string's length is independent of the active-beats string. If strength is shorter than active-beats, it cycles and produces polyrhythmic drift against the position pattern. A single-digit strength like `9` means all firings at strength 9.
 
-Example:
+Example of drift. A curve with beats-per-cycle 16, active-beats `..x...x...x...x.`, and strength `9272` produces firings at cycle positions 2, 6, 10, 14 with strengths 9, 2, 7, 2 — aligned exactly because the strength string length (4) equals the number of active beats. If the strength were `927` instead (length 3), the first cycle would fire 9, 2, 7, 9, the second would fire 2, 7, 9, 2, the third 7, 9, 2, 7, and so on. This drifting-emphasis pattern is a genuine compositional tool and is why the two strings stay independent rather than merging into a single `/9614/9224` form.
 
-```javascript
-function distancePitch(ctx) {
-    return ctx.ev.pitch - Math.floor(ctx.d / 2);
-}
-```
+Strength pointer semantics. A curve maintains a pointer into the strength string that advances by one on each firing of an active beat. The pointer wraps when it reaches the end of the string. A strength of 0 still advances the pointer (silent firings consume positions in the cycle). Inactive positions in the active-beats string (`.`) do not advance the strength pointer — they produce no firing, internal or external.
 
-Distortion functions live in the same sketch file as message functions. A distortion slot can hold either a named function reference or an inline expression.
+External collision pointer. When a curve's "beats are triggers" property is true, the curve maintains a second, independent strength-string pointer for external collisions. When another curve's extended cursor sweeps over one of this curve's active beat points, the external pointer reads and advances, just as the internal pointer does for internal cycle firing. The two pointers do not interact. This preserves clean polyrhythmic structure in both streams independently: even if the internal cycle has fired `9 2 7 9` and is part-way through `2 7 9 2`, the external pointer can be independently on its own position in the string.
+
+Only active positions are externally collidable. Inactive positions (`.`) are not rendered as tick marks and are not collidable, even when "beats are triggers" is on. The active-beats string fully determines where beat points visibly exist on the curve.
+
+---
+
+## Section 11 — Harmony Framework
+
+GXW inherits GeoSonix's two-level harmony model. The score has global harmonic parameters and each object can inherit these from the score or override them individually.
+
+Score-level parameters, set in setup():
+- tonic(name): the piece's tonic center (e.g. "C").
+- scale(name): the piece's scale (e.g. "Major", "D minor", "Dorian").
+- root(name): root note for the active chord, often identical to tonic but separable.
+- chord(name): the piece's current chord ("Major", "m7", etc.).
+- range(semitones): the number of semitones spanned by the output range.
+- rangeLow(midi): the lowest MIDI note in the output range.
+- mapNotesTo("Score" | "Scale" | "Chord" | "None"): the final mapping target.
+
+Object-level overrides. Each object has the same parameters, defaulting to "inherit from score". Inheritance is the common case; per-object overrides let one curve play in D dorian while the rest of the piece stays in C major without rewriting the score. The override model is uniform across curves, triggers, and sprites — any object can override any parameter.
+
+Map-notes-to target. Controls the final pitch mapping:
+- "Score" — use the current effective scale and chord from the object's point of view (considering overrides).
+- "Scale" — map notes to the active scale only, ignoring chord.
+- "Chord" — map notes to chord tones only (typically one to four notes per octave).
+- "None" — no mapping; notes are emitted as-is from the function.
+
+Helper functions in message-function bodies consult these parameters. `scaleMap(value, { scale: ctx.scale, root: ctx.root })` maps a 0-1 input value into a note within the currently effective scale. `chordMap(index, { chord: ctx.chord })` returns the indexed chord tone. These helpers read from the context (which carries the current effective harmony for the firing object) rather than from score-level globals, so per-object overrides are automatically respected.
 
 ---
 
 ## Section 12 — Phrases and the Compositor
 
-Both projectors and movers emit Phrases — time-indexed event streams in beats.
+Curves, triggers, and sprites all emit Phrases — time-indexed event streams in beats.
 
 A Phrase has:
-- A sequence of events, each with time offset in beats, musical parameters, optional metadata.
+- A sequence of events, each with time offset in beats and musical parameters, plus optional metadata.
 - An overall duration in beats.
 - An optional name.
 
-The Compositor accepts phrases from any source (rendered projector output, recorded mover output, imported MIDI files) and arranges them on a beat-indexed timeline via a box-graph model inherited from GeoMaestro. Echo boxes, iterative boxes, synth boxes, mix boxes, effect boxes.
+The Compositor accepts phrases from any source (rendered curve output, recorded trigger output, accumulated sprite output, imported MIDI files) and arranges them on a beat-indexed timeline via a box-graph model inherited from GeoMaestro. Echo boxes, iterative boxes, synth boxes, mix boxes, effect boxes.
 
 The Compositor is deferred. Initial releases produce phrases but arrange them trivially.
 
@@ -285,11 +334,13 @@ Tab labels show a dot prefix when the tab has unsaved changes. Save and Save All
 
 The transport bar at the bottom contains, from left to right: a rewind button, a play-pause toggle button, an elapsed-time readout in minutes, seconds, and hundredths, a BPM field editable via up-down stepper arrows, and a read-only time signature display. A vertical grey divider separates these controls from the right half of the bar, which is reserved for error and status output from sketch execution.
 
-The canvas is a live viewer. It displays the scene: background image, vector field visualisation (optional), events as glyphs, projectors as their shapes with animated sweep points, movers as filled circles coloured from the pixel underneath with white ring outline, beat trails as fading dots. The user does not interact with the canvas to modify the scene. All editing happens in the sketch — either in GXW's editor pane or via the AI authoring pane. Whenever a sketch file changes, GXW re-executes it and the canvas updates.
+The canvas is a live viewer. It displays the scene: background image, vector field visualisation (optional), curves rendered as their geometric shapes with tick marks at beat points and animated cursors (extended cursors render as perpendicular lines showing their sweep region), triggers rendered as filled dots sized by their collision radius, sprites rendered as filled circles coloured from the pixel underneath with white ring outline, and optional trails fading behind sprites.
 
-AI authoring pane. A conversational pane is available for chatting with Claude. Requests like "add two more events near the top right" or "make the mover move faster" cause Claude to edit the sketch. The pane is toggleable and can be hidden when not in use. This is described further in [Section 14](#section-14--authoring-workflow).
+Object creation and property editing. The current v2.1 design anticipates a property inspector pane and object-creation toolbar similar to what GeoSonix offered, but the design for those is deferred. See Section 24 for open questions about whether object creation happens via toolbar, via sketch code, or both, and how the sketch and the property editor stay in sync when either can modify the scene.
 
-No REPL. No live-coding during playback initially (edit-and-rerun loop only).
+AI authoring pane. A conversational pane is available for chatting with Claude. Requests like "add two more triggers near the top right" or "make the sprite wander faster" cause Claude to edit the sketch. The pane is toggleable and can be hidden when not in use. This is described further in Section 14.
+
+No REPL in the initial release. No live-coding during playback initially (edit-and-rerun loop only). A future milestone may expose per-line and per-function evaluation of sketch code into a live workspace, matching the GeoSonix execution model; this is an open question flagged in Section 24.
 
 Keyboard shortcuts: Spacebar toggles play-pause. R rewinds. Cmd-S saves the active tab. Cmd-Shift-S saves all tabs. Cmd-O opens a score. Cmd-N creates a new score.
 
@@ -301,48 +352,95 @@ Accessibility. Limited vision is a first-class concern in the UI. Large bold fon
 
 ## Section 14 — Authoring Workflow
 
-A sketch is a single JavaScript file, sketch.js, in the score bundle. Its structure:
+A sketch is a single JavaScript file, sketch.js, in the score bundle. Its structure top-to-bottom is: helpers and imports, named functions (curve beat/sweep functions, trigger collision/auto functions, sprite step/auto functions, mapping helpers), and finally setup() which consumes everything above to build the scene.
+
+Example sketch:
 
 ```javascript
-// Global settings defined in setup()
+// Global settings in setup().
 function setup() {
     bpm(120);
     timeSignature(4, 4);
-    image("background.jpg");
+    tonic("D");
     scale("D minor");
+    image("background.jpg");
 }
 
-// Named BeatPatterns
-beatPattern("groove1", "/9614/9224");
-
-// Message functions
-function blueNote(ctx) {
-    const note = scaleMap(ctx.r, { scale: ctx.scale, root: ctx.root });
-    const velocity = rangeMap(ctx.lum, 20, 127);
-    return { note, velocity, duration: 400 };
+// Curve functions.
+function circleBeat(ctx) {
+    // An arpeggio keyed to which beat of the cycle fired.
+    const degrees = [0, 2, 4, 5];
+    const note = scaleMap(degrees[ctx.beatIndex % 4] / 7,
+                          { scale: ctx.scale, root: ctx.root });
+    return { note, velocity: ctx.strength * 14, duration: 200 };
 }
 
-// Distortion functions
-function distancePitch(ctx) {
-    return ctx.ev.pitch - Math.floor(ctx.d / 2);
+function projectorSweep(ctx) {
+    // Distance-based pitch — GeoMaestro distortion pattern.
+    return {
+        note: ctx.trigger.note - Math.floor(ctx.d),
+        velocity: Math.max(0, 127 - Math.floor(ctx.d * 8)),
+        duration: 400,
+    };
 }
 
-// Scene construction
+// Trigger functions.
+function triggerHit(ctx) {
+    return { note: this.note, velocity: 100, duration: 300 };
+}
+
+// Sprite functions.
+function wander(ctx) {
+    // Image colour drives velocity — red pushes right, blue pushes left.
+    this.vx += (ctx.r - ctx.b) * 0.1;
+    this.vy += (ctx.g - 0.5) * 0.1;
+    // Fire a note when luminance crosses into a bright region.
+    if (ctx.lum > 0.7 && this.wasDark) {
+        this.wasDark = false;
+        return {
+            note: scaleMap(ctx.hue, { scale: ctx.scale, root: ctx.root }),
+            velocity: 80,
+            duration: 150,
+        };
+    } else if (ctx.lum < 0.3) {
+        this.wasDark = true;
+    }
+    return null;  // no firing this step
+}
+
+// Scene construction.
 const scene = new Scene();
-scene.addEvent(45, 60, { note: "C4" });
-scene.addEvent(55, 65, { note: "E4" });
-scene.addMover(20, 50, { mode: "free", beat: "groove1", msg: blueNote });
-scene.addProjector(new Line(10, 10, 90, 90), {
-    sweep: 4,
-    distortion: { Pit: distancePitch }
+
+// A circle curve that plays its beat points and also sweeps.
+scene.addCurve({
+    shape: { type: "circle", cx: 0, cy: 0, r: 5 },
+    cycleBeats: 4,
+    beatsPerCycle: 16,
+    activeBeats: "..x...x...x...x.",
+    strength: "9272",
+    cursorR: 3,
+    cursorL: 0,
+    beat: circleBeat,
+    sweep: projectorSweep,
+});
+
+// Free-standing triggers in the projector's sweep path.
+scene.addTrigger({ x: 3, y: 4, note: 60, collision: triggerHit });
+scene.addTrigger({ x: -4, y: 2, note: 64, collision: triggerHit });
+scene.addTrigger({ x: 2, y: -3, note: 67, collision: triggerHit });
+
+// An autonomous sprite driven by image colour.
+scene.addSprite({
+    x: 0, y: 0, vx: 1, vy: 0,
+    step: wander,
 });
 ```
 
 Construction is through plain JavaScript. No special DSL. The GXW runtime exposes classes and functions that the sketch calls.
 
-AI-assisted authoring is integrated. A conversation pane within GXW talks to Claude via the Anthropic API. The user converses in natural language; Claude edits the sketch directly. GXW auto-reloads. The user hears the result.
+Saving the sketch triggers auto-reload: the engine re-executes setup() to rebuild scene structure and updates the function table so future firings use the new definitions. Transport state is preserved across reload. See Section 17 for auto-reload details.
 
-Claude's knowledge of GXW's API is supplied through an API.md reference document that the integration pre-loads into the conversation context.
+AI-assisted authoring. A conversation pane within GXW talks to Claude via the Anthropic API. The user converses in natural language; Claude edits the sketch directly. GXW auto-reloads. The user hears the result. Claude's knowledge of GXW's API is supplied through an API.md reference document that the integration pre-loads into the conversation context.
 
 ---
 
@@ -395,13 +493,13 @@ Pushing to a remote (GitHub, personal git server) is available via isomorphic-gi
 
 When the active sketch is saved in the editor, GXW re-executes it after a short debounce (a few hundred milliseconds) to absorb multiple rapid writes.
 
-Transport state is preserved across reload where possible. If the transport is playing when the sketch reloads, it keeps playing. Function definition changes take effect on next call. Scene construction changes apply as diffs: new objects appear, deleted objects disappear, existing objects update their properties.
+Transport state is preserved across reload where possible. If the transport is playing when the sketch reloads, it keeps playing. Function definition changes take effect on next call. Scene construction changes apply as diffs: new objects appear, deleted objects disappear, existing objects update their declarative properties (position, functions, cursor extent, beat strings, and so on) while preserving runtime-dynamic state (current cursor cycle position, current velocity for sprites, strength-pointer position).
 
 Module caches for files in resources/ are invalidated on reload, so changes to imported support modules are picked up too.
 
 Auto-reload requires no user action. This behaviour is proven to work from GeoSonix, which had the same mechanism for JavaScript sketches.
 
-Errors during reload do not block loading. Errors in scene construction cause the affected objects to be skipped, and the scene loads without them. Errors in function definitions cause affected functions to be skipped; movers or projectors referencing them will fail when they fire. Errors are reported in the status area at the bottom of the editor window.
+Errors during reload do not block loading. Errors in scene construction cause the affected objects to be skipped, and the scene loads without them. Errors in function definitions cause affected functions to be skipped; curves, triggers, or sprites referencing them will fail when they fire. Errors are reported in the status area at the bottom of the editor window.
 
 When bundles are stored in the File System Access API and modified externally, GXW polls for changes at a low frequency (every second or two) since browsers do not expose a filesystem notification API.
 
@@ -462,41 +560,44 @@ The grid is drawn at 1-unit spacing, with the X=0 and Y=0 axes rendered slightly
 
 Zoom methods: a View menu with Zoom In, Zoom Out, and Reset Zoom items; keyboard shortcuts (Cmd-plus, Cmd-minus, Cmd-0); and the mouse scroll wheel while the pointer is over the canvas. All three converge on the same Transport-style state; zoom always centres on the origin.
 
-Mover diameter default: 1.5 canvas units, radius 0.75.
+Sprite visual rendering: drawn as a filled circle, default 1.5 canvas units diameter, for composer visibility. The diameter is a display-only setting; sprites themselves are points with no spatial extent (see Section 6).
 
-Event visual size: 0.4 to 0.6 canvas units for hit target; glyph shape indicates payload type.
+Trigger render size: controlled per-trigger by its size property, which also serves as the collision radius. Default 0.4 to 0.6 canvas units; the glyph shape indicates payload type.
 
-Projector shapes use canvas units directly.
+Curve rendering uses canvas units directly for geometry. Beat points are drawn as tick marks sized by a system constant that reads well at typical zoom levels.
 
 ---
 
-## Section 21 — Mover Physics Details
+## Section 21 — Sprite Physics Details
 
-Canvas units are origin-centred with equal metric along both axes (see [Section 20](#section-20--canvas-coordinate-system)).
+Canvas units are origin-centred with equal metric along both axes (see Section 20).
 
-Mover diameter user-settable, default 1.5 canvas units. Radius = diameter / 2.
+Sprite visual rendering diameter user-settable, default 1.5 canvas units. This is purely a display setting (see Section 6); sprites are points geometrically and have no spatial extent. The only collision sprites participate in is canvas-boundary reflection, which works against the sprite's point position.
 
-Velocity ceiling two-level:
-- maxSpeed: user-settable per mover, default 16 canvas units/sec, range 1 to 64.
+Velocity ceiling, two-level:
+- maxSpeed: user-settable per sprite, default 16 canvas units/sec, range 1 to 64.
 - absoluteMaxSpeed: hard system ceiling of 64 canvas units/sec, enforced every step.
 
 Applied by scaling the velocity vector to preserve direction.
 
-At absoluteMaxSpeed=64 and dt=1/60, max travel per step is ~1.07 units. Mover diameter 1.5 units, so tunnelling through an obstacle the size of a mover is impossible at permitted velocities.
+At absoluteMaxSpeed=64 and dt=1/60, max travel per step is ~1.07 units. Since sprites are points (they don't collide with triggers or curves or each other), the only collision detection is against the implicit canvas-boundary box, which is straightforward even at high speeds.
 
-Bounding region: since the canvas has no inherent boundary, movers are contained by an implicit bounding box matching the default viewable region (±16 by ±12 units) against which they collide and reflect. A scene or mover may configure a larger or smaller box, or disable bounding entirely (letting movers fly off indefinitely). Default bounding is on.
+Bounding region: since the canvas has no inherent boundary, sprites are contained by an implicit bounding box matching the default viewable region (±16 by ±12 units) against which they collide and reflect. A scene or sprite may configure a larger or smaller box, or disable bounding entirely (letting sprites fly off indefinitely). Default bounding is on.
 
-Collision detection: continuous within each time step. Calculates exact time when mover perimeter reaches each wall, moves to that point, reflects velocity, continues for remaining time. Up to 10 bounces per step resolved. Final position clamp as safety net.
+Boundary collision detection: continuous within each time step. Calculates exact time when sprite reaches each wall, moves to that point, reflects velocity, continues for remaining time. Up to 10 bounces per step resolved. Final position clamp as safety net.
 
 Reflection: angle of incidence equals angle of reflection. Speed preserved exactly. Corner hits reflect both components.
 
 Physics step order:
-1. Sample vector field.
-2. Integrate velocity and position.
-3. Apply velocity ceiling.
-4. Resolve collisions.
-5. Sample image colour.
-6. Check beat firing.
+1. Sprite step function is called (if defined).
+2. Sample vector field at current position.
+3. Integrate velocity and position.
+4. Apply velocity ceiling.
+5. Resolve boundary collisions.
+6. Sample image colour at final position (for next frame's context).
+7. Check auto-timer firing against transport.
+
+Curve cursor motion is not physics-integrated. Cursors advance along their curve's geometry at the rate set by the curve's cycle-speed / cycle-time / time-lock configuration, evaluated against transport time. Continuous-collision detection applies to cursor-trigger interactions: the cursor's sweep segment from its previous position to its current position is tested for intersection against trigger disks.
 
 Physics may run in a Web Worker so that audio-rate scheduling on the main thread is not starved. Final architecture of the physics-worker split is to be determined during implementation.
 
@@ -508,79 +609,130 @@ JavaScript modules in dependency order:
 
 1. Image — 1000x1000 pixel array, colour sampling, file loading, resampling.
 2. Field — vector force at any position, combining sources and optional image-gradient contribution.
-3. Event — position and symbolic payload.
-4. Mover — integrates field, samples image, maintains beat clock, fires events, stores trail.
-5. Projector — parametric shape, evaluates against scene events through distortion profile, produces phrase.
-6. DistortionFunction — named function mapping projection geometry to musical parameters.
-7. BeatPattern — named emphasis string cycling over a bar length.
-8. MessageFunction — named function translating mover context to musical parameters.
-9. Scene — holds events, image, fields, regions, projectors, movers.
-10. Transport — global clock, tempo, beat position, play state, AudioContext integration.
-11. Phrase — time-indexed event sequence emitted by projectors and movers.
-12. Audio — Web Audio synthesis, voice management, output routing.
-13. MIDI — Web MIDI wrapper, scheduling, port management.
-14. Simulation — physics loop and evaluation driver, fixed time step, integrates movers, advances projector sweeps, fires functions at beat events.
-15. SketchRunner — parses sketch.js, executes it in an isolated scope with the GXW API exposed, handles reload and error capture.
-16. Bundle — loads, creates, saves, duplicates, and lists JavaScript files within score bundles in IndexedDB or on disk.
-17. VersionControl — isomorphic-git wrappers, commit on reload, milestone tags, time-based tags, history queries.
-18. UI — top menu bar, canvas pane, tabbed JavaScript editor, bottom transport bar, AI authoring pane, deferred history panel.
-19. AIAuthoring — conversation pane, Anthropic API integration, sketch edit application.
-20. Compositor — deferred.
+3. Trigger — position, size, payload, collision and auto function references.
+4. Sprite — position, velocity, step and auto function references, integrates field and boundary collisions.
+5. Curve — geometric shape, beat points (active-beats and strength strings), cursor (with R/L extent), beat and sweep function references.
+6. BeatPoint — the per-position firing record within a curve (internal representation; not a separately-addressable object).
+7. Scene — holds image, field, regions, curves, triggers, sprites, and score-level harmony parameters.
+8. Transport — global clock, tempo, beat position, play state, AudioContext integration.
+9. Phrase — time-indexed event sequence emitted by curves, triggers, and sprites.
+10. Audio — Web Audio synthesis, voice management, output routing.
+11. MIDI — Web MIDI wrapper, scheduling, port management.
+12. Simulation — fixed time step, advances curve cursors, runs sprite physics, detects cursor-trigger collisions, fires functions at the appropriate times.
+13. SketchRunner — parses sketch.js, executes it in an isolated scope with the GXW API exposed, handles reload and error capture.
+14. Bundle — loads, creates, saves, duplicates, and lists JavaScript files within score bundles in IndexedDB or on disk.
+15. VersionControl — isomorphic-git wrappers, commit on reload, milestone tags, time-based tags, history queries.
+16. UI — top menu bar, canvas pane, tabbed JavaScript editor, bottom transport bar, AI authoring pane, deferred history panel, deferred property inspector.
+17. AIAuthoring — conversation pane, Anthropic API integration, sketch edit application.
+18. Compositor — deferred.
+
+Note that several v1.0 modules have been removed: Event (replaced by Trigger), Projector (folded into Curve), DistortionFunction (folded into Curve's sweep function), BeatPattern (removed; curves own their rhythm intrinsically, sprites and triggers use a simple interval). MessageFunction as a separate module is also gone; functions are plain JavaScript referenced by name from object properties. v2.1 renamed the Mover module to Sprite; no functional changes.
 
 ---
 
 ## Section 23 — GeoMaestro and GeoSonix Reference
 
-GXW succeeds two earlier programs:
+GXW succeeds two earlier programs.
 
-GeoMaestro (Stéphane Rollandin, 2000-2004, KeyKit-based) is archived at the GX2 repository at design/GeoMaestro/doc/. Entry points: READ_ME_FIRST.txt, eGM0.html, CHANGES.txt for design evolution, paper1.html and paper2.html for conceptual introduction.
+GeoMaestro (Stéphane Rollandin, 2000-2004, KeyKit-based) is archived at /Users/chrisgr/ProgrammingProjects/GeoMaestro/doc/. Entry points: READ_ME_FIRST.txt, eGM0.html, CHANGES.txt for design evolution, paper1.html and paper2.html for conceptual introduction.
 
-GeoSonix (Chris Graham, ~2012, IanniX fork) was a predecessor app by the same author. GX2's design folder contains screenshots for reference. GeoSonix also used JavaScript as its sketch language; GXW's JavaScript choice is partly continuity with that lineage.
+GeoSonix (Chris Graham, ~2012, Qt/IanniX-derived desktop app) was a predecessor by the same author. Source is not preserved, but the compiled app and ~33 sample score files in /Users/chrisgr/Documents/Geosonix Scores provide extensive reference. GeoSonix used JavaScript as its sketch language; GXW's JavaScript choice is partly continuity with that lineage.
 
-Carried forward from GeoMaestro: timeless scenes with events at spatial positions, projectors as geometric agents emitting phrases, distortion functions as the expressive heart, named projector catalogue, event payloads including functions, Compositor concept, open-ended user scripting.
+Carried forward from GeoMaestro:
+- Timeless scenes with musical atoms at spatial positions (now called triggers in GXW, formerly called events in GeoMaestro).
+- Curves with projector-style sweeping behavior (now a property of every GXW curve via cursor extent).
+- Distortion-function pattern — sweep function with distance/angle/side context (now the Curve sweep function's context).
+- Piste (polyline path) as a geometric primitive.
+- Compositor concept.
+- Event payloads including callbacks.
+- Open-ended user scripting.
 
-Carried forward from GeoSonix: moving objects over images, pixel colour influencing musical parameters, MessageFunction model, mapping function library, beat emphasis 0-9 system, named shared resources, score as reusable framework, auto-reload of external sketch files, resources folder for support files, JavaScript as sketch language.
+Carried forward from GeoSonix:
+- Moving autonomous agents (called sprites in GXW) that read image colour and wander fields.
+- JavaScript sketch language with named-function references from object properties.
+- Script editor with multi-granularity execution (the specific selection/line/function/all pattern is deferred to a future milestone — see Section 24).
+- Beat-point rhythms intrinsic to curves, authored by Euclidean generator or direct string.
+- Two-string rhythm model (active-beats plus strength) with independent cycling for polyrhythmic drift.
+- Emphasis values 0-9 per firing.
+- Per-object harmony overrides layered on score-level harmony.
+- MIDI routing per object (port, channel, base note).
+- Time-shift in ticks per object (deferred to a future milestone).
+- Extended cursor with left/right extents as the collision mechanism.
+- "Beats are triggers" property for cross-curve cascading.
+- Named shared functions invoked by multiple objects via name lookup.
+- Auto-reload of external sketch files.
+- Resources folder for support modules.
+- Scale/chord/tonic/root as score-level musical framework.
+- Property-inspector vocabulary (deferred but informing Section 24).
 
-Added in GXW: unified projector and mover architecture, shared transport, BeatPattern as cross-paradigm resource, image as shared scalar field, bundle with git versioning, integrated AI authoring, web deployment.
+Simplifications in GXW relative to both parents:
+- Three object types (curves, triggers, sprites) replacing GeoSonix's four (curves, cursors, triggers, plus the Score).
+- One collision rule (extended cursor hits trigger) replacing five firing types in GeoSonix.
+- No separate Projector type — the GeoMaestro projector is a curve with extended cursor.
+- No separate DistortionFunction concept — distortion behavior lives in the curve's sweep function.
+- No separate BeatPattern resource — curves own rhythm intrinsically; sprites and triggers use simple intervals.
+- No separate Cursor object — the cursor is part of its curve, not independently addressable.
+- Sprites do not have collision functions — they only initiate musical events, never receive them.
+
+Terminology note. The autonomous-agent object is called "Sprite" in GXW, a term borrowed from game development where it is widely understood. v1.0 and v2.0 called this object "Mover"; v2.1 renamed it to Sprite for vocabulary clarity. No behavioural differences.
+
+Capabilities not yet decided whether to carry forward:
+- 3D positions. GeoSonix had Z coordinates and a 3D rendering mode. GXW currently specifies 2D (with image sampling as a scalar field doing the work 3D was sometimes used for). The screenshots and score files show Z=0 throughout, suggesting 3D was rarely used in practice. Deferring unless demand emerges. See Section 24.
+- Populate-beat-points-with-triggers as an authoring action. GeoSonix offered this and the user found it added friction. The "beats are triggers" property on curves covers the musical capability without requiring the extra trigger objects. Not implemented as an action.
+- Per-object time-shift-in-ticks. Useful compositional capability but adds fields to property editors. Deferred.
 
 ---
 
 ## Section 24 — Open Questions
 
-1. Vector field normalisation algorithm.
+1. Property inspector design. The current sketch-based authoring covers all functionality but asks the composer to write JavaScript for every object. GeoSonix had a property inspector that substantially reduced the code required for common operations. GXW will likely adopt similar tools. Questions: what fields to expose per object type, how they are grouped visually, how the inspector renders when multiple objects are selected, and how far into advanced properties (step functions, distortion context usage) the inspector goes before kicking back to the sketch editor.
 
-2. Free-running beat firing function authoring API.
+2. Object-creation toolbar design. GeoSonix had dedicated tools for adding triggers, lines, curves, beziers, etc. GXW needs an equivalent. Questions: which tools in the initial palette, whether curves of different shape types are one tool with a dropdown or separate tools, and what the tool does on click versus drag.
 
-3. Full projector shape catalogue beyond the initial five.
+3. Sketch and property-editor synchronization. When the composer edits a trigger's position via the inspector, the sketch source needs to reflect that change (so saving the sketch to disk preserves the new position). Two models: (a) the inspector directly writes into the sketch source code (requires source-code rewriting logic that understands the existing structure); (b) the scene data and the sketch are parallel stores, with the inspector modifying scene data and an explicit "save to sketch" action rewriting the sketch. Model (a) is closer to a visual editor; model (b) is closer to how GeoSonix worked (which used a separate snapShot section in .score XML). Decision deferred.
 
-4. Distortion function library scope.
+4. REPL / workspace execution model. GeoSonix maintained a persistent JavaScript workspace and allowed the composer to execute individual lines, selections, functions, or the whole script from within the script editor. This is a valuable pattern for incremental development. GXW currently specifies "save-triggers-reload" which is simpler but less interactive. Whether to add GeoSonix-style workspace execution in a later milestone is open.
 
-5. Projector BeatPattern-driven sweep modulation in initial implementation or later.
+5. Vector field normalisation algorithm.
 
-6. Per-agent tempo overrides.
+6. Sprite step function mutation conventions. Currently the step function both mutates the sprite (via this.vx = ...) and fires events (via return value). Should mutations be wrapped in a helper function for clarity, or is direct assignment idiomatic enough? Is returning null to not fire clear enough, or should there be a separate explicit "fire" helper?
 
-7. External transport sync (Ableton Link, MIDI clock).
+7. Sprite-fires-trigger-by-proximity pattern. This is the common case the step function will handle. Should GXW provide a helper like `ctx.nearbyTriggers(radius)` so the composer doesn't have to write the scene-scan logic by hand every time? If so, what's the API?
 
-8. Multi-scene scores and how scenes relate in the Compositor.
+8. Full curve shape catalogue beyond the initial four or five.
 
-9. Compositor design in detail.
+9. Distortion helper library. GeoMaestro had a rich catalogue of named distortion functions (Volume, Pit, Dur, Pan, Time, Mer). GXW folds these into the curve's sweep function, but named presets for common distortion patterns would speed authoring. Open whether to ship a standard library of them.
 
-10. Default internal synthesis voice bank scope and quality.
+10. Curve sweep-modulation by internal beat pattern. A curve's cursor could advance non-uniformly, pausing on silent beats and accelerating through high-strength beats, driven by the curve's own rhythm. This is a compositional capability from GeoMaestro's projector modulation. Whether to expose it in the initial release is open.
 
-11. Web Worker boundary for physics and simulation.
+11. Per-agent tempo overrides.
 
-12. Anthropic API authentication model — direct in browser, lightweight proxy, or user-supplied API key.
+12. External transport sync (Ableton Link, MIDI clock).
 
-13. Video instead of static images.
+13. Multi-scene scores and how scenes relate in the Compositor.
 
-14. MIDI input for score parameter control.
+14. Compositor design in detail.
 
-15. OSC output via WebSocket bridge.
+15. Default internal synthesis voice bank scope and quality.
 
-16. Default helper functions in the mapping library beyond the initial set.
+16. Web Worker boundary for physics and simulation.
 
-17. Bundle sharing mechanism — URL-based, export file, hosted gallery.
+17. Anthropic API authentication model — direct in browser, lightweight proxy, or user-supplied API key.
+
+18. 3D support. GeoSonix had Z coordinates but in practice kept Z=0 almost everywhere. GXW specifies 2D. Whether to reintroduce Z is open; current decision is to defer.
+
+19. Video instead of static images for the scalar-field background.
+
+20. MIDI input for score parameter control.
+
+21. OSC output via WebSocket bridge.
+
+22. Default helper functions in the mapping library beyond the initial set.
+
+23. Bundle sharing mechanism — URL-based, export file, hosted gallery.
+
+24. Save-snapshot / recall-snapshot feature. GeoSonix's .score format suggested the possibility of multiple named snapShots of scene state. Whether GXW supports this is open; the sketch re-execution model already makes scene state reproducible from source, so snapshots would be a convenience for exploratory work more than a necessity.
 
 ---
 
-*End of design document version 1.0*
+*End of design document version 2.1*

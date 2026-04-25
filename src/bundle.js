@@ -229,7 +229,14 @@ export class Bundle {
 }
 
 /**
- * Produce the contents of a freshly-created score.
+ * Produce the contents of a freshly-created score. The score
+ * holds two text files: scene.json (declarative data, edited
+ * via the Properties tab and a future property panel) and
+ * script.js (named function definitions, edited via the
+ * Script tab). The scene loader stitches them together at
+ * run time. See DESIGN.md v2.1 for the data and behaviour
+ * split.
+ *
  * @param {string} name
  * @returns {Bundle}
  */
@@ -237,49 +244,90 @@ export function makeEmptyBundle(name) {
     const bundle = new Bundle(name);
 
     bundle.addTextFile(
-        "sketch.js",
-        `// sketch.js — your GXW score.
-//
-// Define a setup() function that builds your scene. Running
-// the scene (Cmd-Enter or Run → Run Scene) executes setup()
-// against a fresh Scene and renders the result on the canvas.
-//
-// Available API:
-//   scene.addEvent(x, y, opts)    — a firing point
-//   scene.addMover(x, y, opts)    — a moving agent
-//   scene.addProjector(points, opts) — a geometric sweep
-//   bpm(n)                         — set tempo
-//   timeSignature(num, den)        — set meter
-//   scale(name)                    — set the default scale
-//   image(name)                    — reference the current image
+        "scene.json",
+        `{
+  "bpm": 120,
+  "timeSignature": [4, 4],
+  "tonic": "C",
+  "scaleName": "C major",
 
-function setup() {
-    bpm(120);
-    timeSignature(4, 4);
-    scale("D minor");
+  "curves": [
+    {
+      "shape": { "type": "circle", "cx": 0, "cy": 0, "r": 6 },
+      "cycleBeats": 4,
+      "beatsPerCycle": 16,
+      "activeBeats": "x...x...x...x...",
+      "strength": "9272",
+      "cursorR": 2,
+      "cursorL": 0,
+      "beat": "circleBeat",
+      "sweep": "projectorSweep"
+    }
+  ],
 
-    // A diamond of events.
-    scene.addEvent(0, 8, { note: "C5" });
-    scene.addEvent(10, 0, { note: "G4" });
-    scene.addEvent(0, -8, { note: "C4" });
-    scene.addEvent(-10, 0, { note: "E4" });
+  "triggers": [
+    { "x":  9, "y":  0, "note": 60, "collision": "triggerHit" },
+    { "x": -9, "y":  0, "note": 64, "collision": "triggerHit" },
+    { "x":  0, "y":  9, "note": 67, "collision": "triggerHit" },
+    { "x":  0, "y": -9, "note": 72, "collision": "triggerHit" }
+  ],
 
-    // A mover at the origin.
-    scene.addMover(0, 0);
-
-    // A square projector around the diamond.
-    scene.addProjector(
-        [[-12, -8], [12, -8], [12, 8], [-12, 8]],
-        { closed: true, sweepBeats: 8 }
-    );
+  "sprites": [
+    { "x": 0, "y": 0, "vx": 1, "vy": 0, "step": "wander" }
+  ]
 }
-`
+`,
+        "application/json"
     );
 
     bundle.addTextFile(
-        "helpers.js",
-        `// helpers.js — a place to define reusable message and
-// distortion functions shared across sketches.
+        "script.js",
+        `// script.js — function definitions for this score.
+//
+// Functions defined here can be referenced from scene.json by
+// name. Each function slot in scene.json (beat, sweep,
+// collision, step, auto) takes the string name of one of the
+// functions below.
+//
+// Function bodies aren't yet invoked — the simulation loop
+// arrives in a later milestone. Until then this file just
+// needs to parse and execute without errors. The bodies
+// reference helpers (scaleMap, etc.) that will be wired up
+// when audio output lands; until then, any reference inside
+// a function body is harmless because nothing calls these
+// functions yet.
+
+// --- Curve functions ---
+function circleBeat(ctx) {
+    const degrees = [0, 2, 4, 5];
+    return {
+        note: scaleMap(degrees[ctx.beatIndex % 4] / 7,
+                       { scale: ctx.scale, root: ctx.root }),
+        velocity: ctx.strength * 14,
+        duration: 200,
+    };
+}
+
+function projectorSweep(ctx) {
+    return {
+        note: ctx.trigger.note - Math.floor(ctx.d),
+        velocity: Math.max(20, 127 - Math.floor(ctx.d * 8)),
+        duration: 400,
+    };
+}
+
+// --- Trigger functions ---
+function triggerHit(ctx) {
+    return { note: this.note, velocity: 100, duration: 300 };
+}
+
+// --- Sprite functions ---
+function wander(ctx) {
+    // No-op for now — the sprite drifts under its initial
+    // velocity. Once the simulation loop runs, this is where
+    // image-driven behaviour will live.
+    return null;
+}
 `
     );
 

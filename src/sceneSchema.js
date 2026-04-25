@@ -1,0 +1,180 @@
+/**
+ * Scene field schema.
+ *
+ * Single source of truth for the per-object data fields that
+ * make up a GXW score. Each field carries:
+ *   - key:    the JSON property name (camelCase, JS-safe)
+ *   - label:  the human-readable name shown in the property
+ *             editor (matches GeoSonix terminology where
+ *             possible)
+ *   - type:   the field's data shape, used by the loader for
+ *             function-ref resolution and by the future
+ *             property panel to pick an input widget
+ *   - default: the value applied when the field is omitted
+ *              (informational; the runtime defaults still live
+ *              in the Scene/Curve/Trigger/Sprite constructors
+ *              for now, and the schema mirrors them)
+ *   - enumValues: for enum-typed fields, the allowed values
+ *
+ * Field types:
+ *   "integer", "number", "string", "boolean"   — primitives
+ *   "enum"                                      — one of enumValues
+ *   "tuple"                                     — small ordered array
+ *   "color"                                     — RGBA string or named palette entry
+ *   "shape"                                     — curve geometry sub-object
+ *   "object"                                    — opaque sub-object
+ *   "functionRef"                               — name of a function defined in script.js
+ *   "beatsString" / "strengthString"            — domain-specific strings
+ *
+ * The schema is read by:
+ *   - the scene loader, to know which fields are functionRef
+ *     and need name-to-function resolution
+ *   - the property panel (future), to render forms
+ *   - AI assistants editing scene.json or script.js, as a
+ *     reference for what fields exist and what they mean
+ *
+ * When adding a new field: update this schema first, then
+ * update the corresponding constructor in scene.js to read it
+ * with a matching default. The two should stay in lock-step
+ * until a future milestone moves runtime defaults into the
+ * schema as well.
+ */
+
+// @ts-check
+
+/**
+ * @typedef {Object} FieldDef
+ * @property {string} key
+ * @property {string} label
+ * @property {string} type
+ * @property {*} default
+ * @property {string[]} [enumValues]
+ * @property {number} [min]
+ * @property {number} [max]
+ */
+
+/**
+ * Harmony override fields shared by Curve, Trigger, and
+ * Sprite. Each one has a null default meaning "inherit from
+ * the score-level setting".
+ * @type {FieldDef[]}
+ */
+const HARMONY_OVERRIDE_FIELDS = [
+    { key: "tonic", label: "Tonic", type: "string", default: null },
+    { key: "scaleName", label: "Scale", type: "string", default: null },
+    { key: "root", label: "Root", type: "string", default: null },
+    { key: "chordName", label: "Chord", type: "string", default: null },
+    { key: "range", label: "Range In Semitones", type: "integer", default: null },
+    { key: "rangeLow", label: "Lowest Note", type: "integer", default: null },
+    {
+        key: "mapNotesTo",
+        label: "Map Notes To",
+        type: "enum",
+        default: null,
+        enumValues: ["Score", "Scale", "Chord", "None"],
+    },
+];
+
+/**
+ * Score-level (piece-wide) fields. These live at the top of
+ * scene.json, not inside any object array.
+ * @type {FieldDef[]}
+ */
+export const SCENE_FIELDS = [
+    { key: "bpm", label: "BPM", type: "integer", default: null, min: 1, max: 1000 },
+    { key: "timeSignature", label: "Time Signature", type: "tuple", default: null },
+    { key: "tonic", label: "Tonic", type: "string", default: null },
+    { key: "scaleName", label: "Scale", type: "string", default: null },
+    { key: "root", label: "Root", type: "string", default: null },
+    { key: "chordName", label: "Chord", type: "string", default: null },
+    { key: "range", label: "Range In Semitones", type: "integer", default: null },
+    { key: "rangeLow", label: "Lowest Note", type: "integer", default: null },
+    {
+        key: "mapNotesTo",
+        label: "Map Notes To",
+        type: "enum",
+        default: null,
+        enumValues: ["Score", "Scale", "Chord", "None"],
+    },
+    { key: "imageName", label: "Image", type: "string", default: null },
+    { key: "output", label: "Output", type: "object", default: null },
+];
+
+/**
+ * Curve-specific fields, followed by the shared harmony
+ * overrides.
+ * @type {FieldDef[]}
+ */
+export const CURVE_FIELDS = [
+    { key: "id", label: "Object ID", type: "string", default: null },
+    { key: "shape", label: "Shape", type: "shape", default: null },
+    { key: "cycleBeats", label: "Cycle Beats", type: "number", default: 4 },
+    { key: "beatsPerCycle", label: "Beats/Cycle", type: "integer", default: 16 },
+    { key: "activeBeats", label: "Active Beats", type: "beatsString", default: null },
+    { key: "strength", label: "Beat Strength", type: "strengthString", default: "9" },
+    { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
+    { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
+    { key: "beatsAreTriggers", label: "Beats Are Triggers", type: "boolean", default: false },
+    { key: "beat", label: "Beat Function", type: "functionRef", default: null },
+    { key: "sweep", label: "Sweep Function", type: "functionRef", default: null },
+    ...HARMONY_OVERRIDE_FIELDS,
+];
+
+/**
+ * Trigger-specific fields, followed by harmony overrides.
+ * @type {FieldDef[]}
+ */
+export const TRIGGER_FIELDS = [
+    { key: "id", label: "Object ID", type: "string", default: null },
+    { key: "x", label: "X", type: "number", default: 0 },
+    { key: "y", label: "Y", type: "number", default: 0 },
+    { key: "size", label: "Trigger Size", type: "number", default: 0.5 },
+    { key: "note", label: "Note", type: "integer", default: null },
+    { key: "payload", label: "Payload", type: "object", default: null },
+    { key: "collision", label: "Collision Function", type: "functionRef", default: null },
+    { key: "auto", label: "Auto Function", type: "functionRef", default: null },
+    { key: "autoInterval", label: "Auto Interval", type: "number", default: 1 },
+    ...HARMONY_OVERRIDE_FIELDS,
+];
+
+/**
+ * Sprite-specific fields, followed by harmony overrides.
+ * @type {FieldDef[]}
+ */
+export const SPRITE_FIELDS = [
+    { key: "id", label: "Object ID", type: "string", default: null },
+    { key: "x", label: "X", type: "number", default: 0 },
+    { key: "y", label: "Y", type: "number", default: 0 },
+    { key: "vx", label: "VX", type: "number", default: 0 },
+    { key: "vy", label: "VY", type: "number", default: 0 },
+    { key: "maxSpeed", label: "Max Speed", type: "number", default: 16 },
+    { key: "displayDiameter", label: "Display Diameter", type: "number", default: 1.5 },
+    { key: "step", label: "Step Function", type: "functionRef", default: null },
+    { key: "auto", label: "Auto Function", type: "functionRef", default: null },
+    { key: "autoInterval", label: "Auto Interval", type: "number", default: 1 },
+    ...HARMONY_OVERRIDE_FIELDS,
+];
+
+/**
+ * Lookup of the per-object-type field arrays, keyed by the
+ * scene.json array name (curves / triggers / sprites).
+ */
+export const OBJECT_FIELDS_BY_KIND = {
+    curves: CURVE_FIELDS,
+    triggers: TRIGGER_FIELDS,
+    sprites: SPRITE_FIELDS,
+};
+
+/**
+ * Return the names of fields whose value is a function
+ * reference, for a given object kind. Used by the loader to
+ * resolve string-valued function names against the executed
+ * script.
+ * @param {"curves" | "triggers" | "sprites"} kind
+ * @returns {string[]}
+ */
+export function functionRefFieldsFor(kind) {
+    const fields = OBJECT_FIELDS_BY_KIND[kind];
+    if (!fields) return [];
+    return fields.filter((f) => f.type === "functionRef").map((f) => f.key);
+}

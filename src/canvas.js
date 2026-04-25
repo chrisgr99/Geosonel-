@@ -5,10 +5,13 @@
  * the coordinate transform between canvas units (origin-centred
  * Cartesian, equal metric, Y up) and device pixels.
  *
- * At this milestone the only thing drawn is the reference grid.
- * Future milestones add background image rendering, event
- * glyphs, projector shapes with sweep points, mover dots with
- * trails, and optional vector-field visualisation.
+ * Drawn elements: the reference grid, the optional background
+ * image, and the scene's curves, triggers, and sprites. Curves
+ * render as their geometric shape with tick marks at active
+ * beat positions and a cursor (a perpendicular segment when
+ * the cursor extent is non-zero, a small dot otherwise) at
+ * cycle parameter 0 — the cursor will animate around the
+ * curve once the simulation loop arrives in a later milestone.
  *
  * Coordinate model (see DESIGN.md sections 20 and 21):
  *   - Origin (0, 0) is at the centre of the visible canvas area.
@@ -46,14 +49,19 @@ const MINOR_GRID_COLOUR = "#3a3a3a";
 const MAJOR_GRID_COLOUR = "#4a4a4a";
 const AXIS_COLOUR = "#606060";
 
-// Colours for scene elements. Events are warm off-white so
-// they read as musical content. Movers are cool blue to
-// contrast with events. Projectors are soft green, referencing
-// GeoSonix's accent colour.
-const EVENT_COLOUR = "#e8dcc0";
-const MOVER_COLOUR = "#6ab0ff";
-const MOVER_CENTRE_COLOUR = "#b8d8ff";
-const PROJECTOR_COLOUR = "#7dd68a";
+// Colours for scene elements. Curves are soft green, picking
+// up on GeoSonix's accent colour. Beat tick marks are a
+// brighter green so they pop visually against the curve.
+// Cursors are warm amber to stand out from everything else.
+// Triggers are warm off-white. Sprites are cool blue with a
+// white outline ring so they stay readable over both light
+// and dark image backgrounds.
+const CURVE_COLOUR = "#7dd68a";
+const BEAT_TICK_COLOUR = "#b8e8c0";
+const CURSOR_COLOUR = "#ffb060";
+const TRIGGER_COLOUR = "#e8dcc0";
+const SPRITE_COLOUR = "#6ab0ff";
+const SPRITE_RING_COLOUR = "#ffffff";
 
 export class Canvas {
     /**
@@ -280,63 +288,154 @@ export class Canvas {
 
     _drawScene() {
         if (this._scene === null) return;
-        this._drawProjectors();
-        this._drawEvents();
-        this._drawMovers();
+        this._drawCurves();
+        this._drawTriggers();
+        this._drawSprites();
     }
 
-    _drawProjectors() {
+    _drawCurves() {
         if (this._scene === null) return;
+        for (const curve of this._scene.curves) {
+            this._strokeCurveShape(curve);
+            this._drawCurveBeatTicks(curve);
+            this._drawCurveCursor(curve);
+        }
+    }
+
+    _strokeCurveShape(curve) {
         const ctx = this.ctx;
-        ctx.strokeStyle = PROJECTOR_COLOUR;
+        ctx.strokeStyle = CURVE_COLOUR;
         ctx.lineWidth = 2;
-        for (const p of this._scene.projectors) {
-            if (p.points.length < 2) continue;
-            ctx.beginPath();
-            for (let i = 0; i < p.points.length; i++) {
-                const pt = p.points[i];
-                const px = this.toPixelX(pt.x);
-                const py = this.toPixelY(pt.y);
-                if (i === 0) ctx.moveTo(px, py);
-                else ctx.lineTo(px, py);
+        ctx.beginPath();
+        const s = curve.shape;
+        if (s.type === "line") {
+            ctx.moveTo(this.toPixelX(s.x1), this.toPixelY(s.y1));
+            ctx.lineTo(this.toPixelX(s.x2), this.toPixelY(s.y2));
+        } else if (s.type === "circle") {
+            const cx = this.toPixelX(s.cx);
+            const cy = this.toPixelY(s.cy);
+            const r = s.r * this.pixelsPerUnit;
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        } else if (s.type === "piste") {
+            const pts = s.points;
+            if (pts.length >= 2) {
+                for (let i = 0; i < pts.length; i++) {
+                    const px = this.toPixelX(pts[i][0]);
+                    const py = this.toPixelY(pts[i][1]);
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                if (s.closed) ctx.closePath();
             }
-            if (p.closed) ctx.closePath();
+        }
+        // Other shape types (bezier, helice, etc.) are
+        // documented in DESIGN.md §4 but not yet implemented.
+        ctx.stroke();
+    }
+
+    _drawCurveBeatTicks(curve) {
+        const ctx = this.ctx;
+        ctx.strokeStyle = BEAT_TICK_COLOUR;
+        ctx.lineWidth = 2;
+
+        // Active beat tick mark length, in CSS pixels each side
+        // of the curve. Constant in pixels so ticks remain
+        // legible at every zoom level.
+        const tickHalfPx = 5;
+
+        const ab = curve.activeBeats;
+        const len = curve.beatsPerCycle;
+        for (let i = 0; i < len && i < ab.length; i++) {
+            if (ab[i] !== "x") continue;
+            const t = i / len;
+            const sample = sampleCurve(curve.shape, t);
+            if (sample === null) continue;
+            const px = this.toPixelX(sample.x);
+            const py = this.toPixelY(sample.y);
+            const perp = pixelPerpendicularUnit(sample.tx, sample.ty);
+            ctx.beginPath();
+            ctx.moveTo(px - perp.x * tickHalfPx, py - perp.y * tickHalfPx);
+            ctx.lineTo(px + perp.x * tickHalfPx, py + perp.y * tickHalfPx);
             ctx.stroke();
         }
     }
 
-    _drawEvents() {
+    _drawCurveCursor(curve) {
+        // The cursor is drawn at parameter 0 statically. Once
+        // the simulation loop runs, the same routine will
+        // sample at the live cycle position.
+        const ctx = this.ctx;
+        const sample = sampleCurve(curve.shape, 0);
+        if (sample === null) return;
+        const px = this.toPixelX(sample.x);
+        const py = this.toPixelY(sample.y);
+
+        if (curve.cursorR === 0 && curve.cursorL === 0) {
+            // Point cursor: a small filled marker.
+            ctx.fillStyle = CURSOR_COLOUR;
+            ctx.beginPath();
+            ctx.arc(px, py, 4, 0, Math.PI * 2);
+            ctx.fill();
+            return;
+        }
+
+        // Extended cursor: a perpendicular segment of length
+        // cursorL on the left and cursorR on the right.
+        const perp = pixelPerpendicularUnit(sample.tx, sample.ty);
+        const ppu = this.pixelsPerUnit;
+        const xRight = px + perp.x * curve.cursorR * ppu;
+        const yRight = py + perp.y * curve.cursorR * ppu;
+        const xLeft = px - perp.x * curve.cursorL * ppu;
+        const yLeft = py - perp.y * curve.cursorL * ppu;
+
+        ctx.strokeStyle = CURSOR_COLOUR;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(xLeft, yLeft);
+        ctx.lineTo(xRight, yRight);
+        ctx.stroke();
+
+        // A small filled dot at the curve point so the cursor's
+        // anchor on the curve itself is unambiguous.
+        ctx.fillStyle = CURSOR_COLOUR;
+        ctx.beginPath();
+        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    _drawTriggers() {
         if (this._scene === null) return;
         const ctx = this.ctx;
-        ctx.fillStyle = EVENT_COLOUR;
-        for (const e of this._scene.events) {
-            const px = this.toPixelX(e.x);
-            const py = this.toPixelY(e.y);
-            const r = Math.max(3, e.radius * this.pixelsPerUnit);
+        ctx.fillStyle = TRIGGER_COLOUR;
+        for (const t of this._scene.triggers) {
+            const px = this.toPixelX(t.x);
+            const py = this.toPixelY(t.y);
+            const r = Math.max(3, t.size * this.pixelsPerUnit);
             ctx.beginPath();
             ctx.arc(px, py, r, 0, Math.PI * 2);
             ctx.fill();
         }
     }
 
-    _drawMovers() {
+    _drawSprites() {
         if (this._scene === null) return;
         const ctx = this.ctx;
-        for (const m of this._scene.movers) {
-            const px = this.toPixelX(m.x);
-            const py = this.toPixelY(m.y);
-            const r = Math.max(4, m.radius * this.pixelsPerUnit);
-            // Outer ring
-            ctx.strokeStyle = MOVER_COLOUR;
-            ctx.lineWidth = 2;
+        for (const s of this._scene.sprites) {
+            const px = this.toPixelX(s.x);
+            const py = this.toPixelY(s.y);
+            const r = Math.max(4, (s.displayDiameter / 2) * this.pixelsPerUnit);
+            // Filled disk first, then the white outline ring on
+            // top so the sprite stays readable over both light
+            // and dark image backgrounds.
+            ctx.fillStyle = SPRITE_COLOUR;
+            ctx.beginPath();
+            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = SPRITE_RING_COLOUR;
+            ctx.lineWidth = 1.5;
             ctx.beginPath();
             ctx.arc(px, py, r, 0, Math.PI * 2);
             ctx.stroke();
-            // Centre dot
-            ctx.fillStyle = MOVER_CENTRE_COLOUR;
-            ctx.beginPath();
-            ctx.arc(px, py, 2, 0, Math.PI * 2);
-            ctx.fill();
         }
     }
 
@@ -428,6 +527,118 @@ export class Canvas {
         ctx.lineTo(this.cssWidth, axisPy);
         ctx.stroke();
     }
+}
+
+/**
+ * Sample a curve shape at parameter t in [0, 1]. Returns the
+ * canvas-space position {x, y} and the tangent direction
+ * {tx, ty} (unnormalised, also in canvas space), or null when
+ * the shape is degenerate or not yet implemented (bezier,
+ * helice).
+ *
+ * @param {import("./scene.js").CurveShape} shape
+ * @param {number} t
+ * @returns {{x: number, y: number, tx: number, ty: number} | null}
+ */
+function sampleCurve(shape, t) {
+    switch (shape.type) {
+        case "line": {
+            const x = shape.x1 + (shape.x2 - shape.x1) * t;
+            const y = shape.y1 + (shape.y2 - shape.y1) * t;
+            return {
+                x, y,
+                tx: shape.x2 - shape.x1,
+                ty: shape.y2 - shape.y1,
+            };
+        }
+        case "circle": {
+            const a = 2 * Math.PI * t;
+            const x = shape.cx + shape.r * Math.cos(a);
+            const y = shape.cy + shape.r * Math.sin(a);
+            return { x, y, tx: -Math.sin(a), ty: Math.cos(a) };
+        }
+        case "piste":
+            return samplePiste(shape, t);
+        default:
+            return null;
+    }
+}
+
+/**
+ * Sample a piste (polyline) by arc length. Walks segments
+ * until target distance is reached, then returns the position
+ * and tangent of the containing segment.
+ *
+ * @param {import("./scene.js").ShapePiste} shape
+ * @param {number} t
+ * @returns {{x: number, y: number, tx: number, ty: number} | null}
+ */
+function samplePiste(shape, t) {
+    const pts = shape.points;
+    if (pts.length < 2) return null;
+
+    /** @type {Array<{x0: number, y0: number, dx: number, dy: number, length: number}>} */
+    const segments = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+        const dx = pts[i + 1][0] - pts[i][0];
+        const dy = pts[i + 1][1] - pts[i][1];
+        segments.push({
+            x0: pts[i][0],
+            y0: pts[i][1],
+            dx, dy,
+            length: Math.hypot(dx, dy),
+        });
+    }
+    if (shape.closed) {
+        const last = pts.length - 1;
+        const dx = pts[0][0] - pts[last][0];
+        const dy = pts[0][1] - pts[last][1];
+        segments.push({
+            x0: pts[last][0],
+            y0: pts[last][1],
+            dx, dy,
+            length: Math.hypot(dx, dy),
+        });
+    }
+
+    let total = 0;
+    for (const s of segments) total += s.length;
+    if (total === 0) return null;
+
+    let target = Math.max(0, Math.min(1, t)) * total;
+    for (let i = 0; i < segments.length; i++) {
+        const s = segments[i];
+        if (target <= s.length || i === segments.length - 1) {
+            const localT = s.length === 0 ? 0 : target / s.length;
+            return {
+                x: s.x0 + s.dx * localT,
+                y: s.y0 + s.dy * localT,
+                tx: s.dx,
+                ty: s.dy,
+            };
+        }
+        target -= s.length;
+    }
+    return null; // unreachable, but keeps the type checker happy
+}
+
+/**
+ * Given a canvas-space tangent (tx, ty), return a unit-length
+ * perpendicular vector in pixel space, pointing right of the
+ * direction of motion (DESIGN.md §4 convention).
+ *
+ * In canvas coordinates (Y up) the right perpendicular of
+ * (tx, ty) is (ty, -tx). Mapping canvas to pixel space flips
+ * Y, so the same vector in pixel space is (ty, tx).
+ *
+ * @param {number} tx
+ * @param {number} ty
+ * @returns {{x: number, y: number}}
+ */
+function pixelPerpendicularUnit(tx, ty) {
+    const len = Math.hypot(tx, ty);
+    if (len === 0) return { x: 0, y: 0 };
+    return { x: ty / len, y: tx / len };
 }
 
 /**

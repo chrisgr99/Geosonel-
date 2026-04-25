@@ -1,12 +1,12 @@
 /**
  * GXW main entry point.
  *
- * Wires up every component and owns the score session. In
- * addition to the existing concerns (editor, transport, canvas,
- * dividers, menus, image importer), this milestone adds the
- * sketch runner: the current score's sketch.js is executed on
- * demand (Cmd-Enter or Run menu) to produce a Scene, which the
- * canvas renders on top of the grid.
+ * Wires up every component and owns the score session. The
+ * current score's data and behaviour are kept in two files
+ * inside the bundle — scene.json (declarative data) and
+ * script.js (named functions) — which the scene loader
+ * stitches together on demand (Cmd-Enter or Run menu) to
+ * produce a Scene that the canvas renders on top of the grid.
  *
  * The save model is explicit-only: typing marks the bundle
  * dirty; Cmd-S saves. Run Scene implicitly saves first. A
@@ -14,10 +14,14 @@
  * Unsaved. A beforeunload warning protects against tab close
  * with unsaved changes.
  *
- * Milestone 7 scope:
- *   - Scene data model (Scene, Event, Mover, Projector).
- *   - Sketch runner that builds a Scene from sketch.js.
+ * Current milestone scope:
+ *   - Scene data model (Scene, Curve, Trigger, Sprite).
+ *   - Scene loader that builds a Scene from scene.json plus
+ *     script.js, with named function references resolved
+ *     against the script's top-level declarations.
  *   - Canvas rendering of scenes (static).
+ *   - Editor with Properties (JSON) and Script (JS) tabs,
+ *     each with its own syntax highlighting and linter.
  *   - Explicit save (Cmd-S); no autosave timer.
  *   - Run Scene command (Cmd-Enter) with auto-save-before-run.
  *   - First-load auto-run so the canvas shows something.
@@ -48,7 +52,7 @@ import { ImageImporter } from "./src/imageImporter.js";
 import { installViewMenu } from "./src/viewMenu.js";
 import { installFileMenu } from "./src/fileMenu.js";
 import { installRunMenu } from "./src/runMenu.js";
-import { SketchRunner } from "./src/sketchRunner.js";
+import { SceneLoader } from "./src/sceneLoader.js";
 
 main();
 
@@ -146,32 +150,27 @@ async function main() {
     const imageImporter = new ImageImporter({ bundle, canvas, messages });
     imageImporter.installGlobalListeners();
 
-    // --- Sketch runner ---
-    const sketchRunner = new SketchRunner();
+    // --- Scene loader ---
+    const sceneLoader = new SceneLoader();
 
     /**
-     * Execute the current score's sketch.js and update the
-     * canvas with the resulting scene. Saves the bundle first
-     * so the bytes on disk match what we executed. Errors are
-     * reported in the message area; the canvas retains the
-     * previous scene on failure.
+     * Load the current score's scene.json and script.js,
+     * build a Scene, and update the canvas. Saves the bundle
+     * first so the bytes on disk match what we executed.
+     * Errors are reported in the message area; the canvas
+     * retains the previous scene on failure.
      */
     runScene = async () => {
         if (editor.isDirty) {
             await editor.save();
         }
-        const sketchFile = session.bundle.getFile("sketch.js");
-        if (sketchFile === null) {
-            messages.write("No sketch.js in this score.", "error");
-            return;
-        }
-        const result = sketchRunner.run(sketchFile.content);
+        const result = sceneLoader.load(session.bundle);
         if (result.success && result.scene !== null) {
             canvas.setScene(result.scene);
             applySceneParamsToTransport(result.scene, transport);
             messages.write("Scene updated.");
         } else {
-            messages.write(result.error ?? "Unknown run error.", "error");
+            messages.write(result.error ?? "Unknown load error.", "error");
         }
     };
 
