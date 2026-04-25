@@ -73,6 +73,20 @@ export class Scene {
         /** @type {{target: string, port: string | null} | null} */
         this.output = null;
 
+        // --- Per-score display scales ---
+        // Multipliers applied to every trigger and sprite at
+        // draw time. Travel with the score so a piece looks
+        // the same on any user's screen as it did on its
+        // author's. The Settings dialog seeds these values into
+        // newly-created scores; they're never overridden once
+        // stored. spriteScale is part of the music (it changes
+        // how sprites bounce off canvas walls); triggerScale
+        // is purely visual under the point-collision model.
+        /** @type {number} */
+        this.triggerScale = 1;
+        /** @type {number} */
+        this.spriteScale = 1;
+
         /**
          * Per-kind id counters used when the sketch doesn't
          * supply ids. Scoped to this Scene so ids restart at 1
@@ -232,10 +246,16 @@ export class Trigger {
         this.x = opts.x ?? 0;
         this.y = opts.y ?? 0;
         /**
-         * Render and collision radius in canvas units. Default
-         * sized to read clearly without dominating the image
-         * underneath — user-overridable per object via the
-         * size field in scene.json.
+         * Visual size in canvas units, drawn as a diamond on
+         * the canvas with diagonal half-length `size`. Purely
+         * a display attribute under the point-collision model:
+         * triggers collide as points along their position
+         * (DESIGN.md §6; collision is point-vs-point with the
+         * sweeping cursor or with sprites). User-overridable
+         * per object via the size field in scene.json. The
+         * user's triggerDisplayScale preference multiplies
+         * this value at draw time without changing the stored
+         * value, since size doesn't influence the music.
          */
         this.size = opts.size ?? 0.35;
         /** Optional shorthand note. */
@@ -285,10 +305,16 @@ export class Sprite {
         /** Velocity ceiling, canvas units per second. */
         this.maxSpeed = opts.maxSpeed ?? 16;
         /**
-         * Visual diameter in canvas units. Display only;
-         * sprites are points geometrically (DESIGN.md §6).
-         * User-overridable per object via the displayDiameter
-         * field in scene.json.
+         * Visual diameter in canvas units. Sprites are points
+         * geometrically (DESIGN.md §6), but their display
+         * diameter is also their collision radius against the
+         * canvas edges — a sprite bounces when its boundary
+         * touches a wall, not when its centre crosses one.
+         * That makes displayDiameter part of the music, so it
+         * is stored per sprite in scene.json. The user's
+         * newSpriteSize preference is used only to seed the
+         * value when a new sprite is created; it never
+         * overrides what's stored.
          */
         this.displayDiameter = opts.displayDiameter ?? 1.05;
 

@@ -196,6 +196,12 @@ function applyPieceLevelFields(scene, data) {
     if ("mapNotesTo" in data) scene.mapNotesTo = data.mapNotesTo;
     if ("imageName" in data) scene.imageName = data.imageName;
     if ("output" in data) scene.output = data.output;
+    if ("triggerScale" in data && typeof data.triggerScale === "number") {
+        scene.triggerScale = data.triggerScale;
+    }
+    if ("spriteScale" in data && typeof data.spriteScale === "number") {
+        scene.spriteScale = data.spriteScale;
+    }
 }
 
 /**

@@ -98,6 +98,8 @@ export const SCENE_FIELDS = [
     },
     { key: "imageName", label: "Image", type: "string", default: null },
     { key: "output", label: "Output", type: "object", default: null },
+    { key: "triggerScale", label: "Trigger Scale", type: "number", default: 1, min: 0.1, max: 10 },
+    { key: "spriteScale", label: "Sprite Scale", type: "number", default: 1, min: 0.1, max: 10 },
 ];
 
 /**

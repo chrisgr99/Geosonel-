@@ -622,3 +622,152 @@ body.focus-canvas #canvas-pane {
     border-color: #555555;
     color: #666666;
 }
+
+/* --- Modal body (generic content area within a dialog) --- */
+
+.modal-body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin-bottom: 16px;
+    overflow-y: auto;
+}
+
+/* --- About dialog --- */
+
+.about-body {
+    gap: 0;
+}
+
+.about-header {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #555555;
+}
+
+.about-app-name {
+    color: #00ff33;
+    font-size: 24pt;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+.about-description {
+    color: #c8c8c8;
+    font-size: 13pt;
+    margin-top: 4px;
+}
+
+.about-row {
+    display: flex;
+    gap: 16px;
+    padding: 6px 0;
+    align-items: baseline;
+}
+
+.about-row-label {
+    color: #909090;
+    font-size: 12pt;
+    min-width: 110px;
+}
+
+.about-row-value {
+    color: #f0f0f0;
+    font-size: 13pt;
+    word-break: break-all;
+}
+
+.about-row-value-empty {
+    color: #808080;
+    font-style: italic;
+}
+
+/* --- Settings dialog --- */
+
+.settings-body {
+    overflow: hidden;
+}
+
+.settings-layout {
+    display: flex;
+    gap: 16px;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.settings-sidebar {
+    flex: 0 0 140px;
+    border-right: 1px solid #555555;
+    padding-right: 8px;
+    overflow-y: auto;
+}
+
+.settings-category {
+    padding: 8px 12px;
+    color: #d0d0d0;
+    font-size: 14pt;
+    cursor: pointer;
+    border-radius: 3px;
+    user-select: none;
+}
+
+.settings-category:hover,
+.settings-category:focus {
+    background-color: #3a3a3a;
+    outline: none;
+}
+
+.settings-category.selected {
+    background-color: #4a4a4a;
+    color: #ffffff;
+}
+
+.settings-panel {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding-right: 4px;
+    min-height: 280px;
+}
+
+.settings-row {
+    margin-bottom: 18px;
+}
+
+.settings-label {
+    display: block;
+    color: #f0f0f0;
+    font-size: 14pt;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.settings-input {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 4px 8px;
+    font-size: 14pt;
+    font-family: inherit;
+}
+
+.settings-input-number {
+    width: 100px;
+}
+
+.settings-input-text {
+    width: 100%;
+}
+
+.settings-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-description {
+    color: #a0a0a0;
+    font-size: 12pt;
+    margin-top: 4px;
+    line-height: 1.35;
+}

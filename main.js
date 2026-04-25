@@ -52,6 +52,7 @@ import { ImageImporter } from "./src/imageImporter.js";
 import { installViewMenu } from "./src/viewMenu.js";
 import { installFileMenu } from "./src/fileMenu.js";
 import { installRunMenu } from "./src/runMenu.js";
+import { installAppMenu } from "./src/appMenu.js";
 import { SceneLoader } from "./src/sceneLoader.js";
 
 main();
@@ -223,6 +224,7 @@ async function main() {
     });
     installFileMenu({ session, messages, imageImporter });
     installRunMenu({ runScene });
+    installAppMenu();
 
     // --- Save shortcut (Cmd-S) ---
     window.addEventListener("keydown", (e) => {

@@ -448,10 +448,15 @@ export class Canvas {
         if (this._scene === null) return;
         const ctx = this.ctx;
         ctx.lineWidth = 1.5;
+        // Trigger size in canvas units, multiplied by the
+        // score's per-score triggerScale. The scale travels
+        // with the score so the visual layout is consistent
+        // across users.
+        const scale = this._scene.triggerScale;
         for (const t of this._scene.triggers) {
             const cx = this.toPixelX(t.x);
             const cy = this.toPixelY(t.y);
-            const r = Math.max(3, t.size * this.pixelsPerUnit);
+            const r = Math.max(3, t.size * scale * this.pixelsPerUnit);
             // Diamond: a square rotated 45° around (cx, cy)
             // with vertices at distance r from the centre.
             // Going top → right → bottom → left in pixel space
@@ -473,10 +478,16 @@ export class Canvas {
         if (this._scene === null) return;
         const ctx = this.ctx;
         ctx.lineWidth = 1.5;
+        // Sprite display radius in canvas units, multiplied by
+        // the score's per-score spriteScale. The scale is part
+        // of the music — it determines how sprites bounce off
+        // the canvas walls — so it travels with the score and
+        // is read here from scene data, not from preferences.
+        const scale = this._scene.spriteScale;
         for (const s of this._scene.sprites) {
             const cx = this.toPixelX(s.x);
             const cy = this.toPixelY(s.y);
-            const r = Math.max(4, (s.displayDiameter / 2) * this.pixelsPerUnit);
+            const r = Math.max(4, (s.displayDiameter / 2) * scale * this.pixelsPerUnit);
             // Filled disc with a light-blue boundary — the fill
             // takes the colour of the image pixel under the
             // centre, the boundary keeps the sprite visible

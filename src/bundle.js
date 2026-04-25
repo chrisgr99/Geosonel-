@@ -25,6 +25,7 @@ import {
     deleteScoreRecord,
     listScores,
 } from "./storage.js";
+import { getPreference } from "./preferences.js";
 
 /**
  * @typedef {Object} TextFile
@@ -243,6 +244,19 @@ export class Bundle {
 export function makeEmptyBundle(name) {
     const bundle = new Bundle(name);
 
+    // Per-score display scales are baked into scene.json at
+    // creation time, seeded from the user's defaultTriggerScale
+    // and defaultSpriteScale preferences. Once stored in the
+    // score they stay put — changing the preference later
+    // doesn't reach back into existing scores. spriteScale is
+    // part of the music (it changes how sprites bounce off
+    // canvas walls); triggerScale is purely visual but still
+    // travels with the score so visual layout is consistent
+    // across users. Both can be edited later via the Properties
+    // tab if the composer wants to fine-tune.
+    const triggerScale = getPreference("defaultTriggerScale");
+    const spriteScale = getPreference("defaultSpriteScale");
+
     bundle.addTextFile(
         "scene.json",
         `{
@@ -250,6 +264,8 @@ export function makeEmptyBundle(name) {
   "timeSignature": [4, 4],
   "tonic": "C",
   "scaleName": "C major",
+  "triggerScale": ${triggerScale},
+  "spriteScale": ${spriteScale},
 
   "curves": [
     {
