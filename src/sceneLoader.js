@@ -2,10 +2,10 @@
  * Scene loader.
  *
  * Builds a populated Scene from a score bundle's scene.json
- * and script.js files. Replaces the earlier sketchRunner that
- * combined data and behaviour in a single sketch.js — DESIGN.md
- * v2.1 splits the two so a property panel and AI assistants
- * can edit them independently.
+ * and behaviours.js files. Replaces the earlier sketchRunner
+ * that combined data and behaviour in a single sketch.js \u2014
+ * DESIGN.md v2.1 splits the two so a property panel and AI
+ * assistants can edit them independently.
  *
  * The loader does three things in sequence:
  *
@@ -14,14 +14,13 @@
  *      Arrays of curves, triggers, and sprites are walked and
  *      handed to scene.addCurve / addTrigger / addSprite.
  *
- *   2. Parse script.js with Acorn to find every top-level
+ *   2. Parse behaviours.js with Acorn to find every top-level
  *      function declaration and every const/let bound to a
  *      function expression or arrow. Those names are the
- *      identifiers a sketch can reference from scene.json's
- *      function-ref fields (beat, sweep, collision, step,
- *      auto).
+ *      identifiers a scene.json function-ref field can refer
+ *      to (beat, sweep, collision, step, auto).
  *
- *   3. Execute script.js inside a wrapper that returns a
+ *   3. Execute behaviours.js inside a wrapper that returns a
  *      name-to-function map. The user's code only contains
  *      declarations, no top-level side effects expected (and
  *      none required), so re-executing on every Run Scene is
@@ -38,7 +37,7 @@
  * relevant source. JSON parse errors carry "position N" or
  * "line N column M" patterns we can convert to a 1-based line
  * number. JavaScript syntax errors come from Acorn with a
- * structured loc field. Runtime errors during script
+ * structured loc field. Runtime errors during behaviours.js
  * execution use the same offset-calibration trick as the old
  * runner so line numbers map back to the user's source rather
  * than the wrapper's body.
@@ -51,6 +50,7 @@ import { functionRefFieldsFor } from "./sceneSchema.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const SCRIPT_PREFIX = `"use strict";\n`;
+const BEHAVIOURS_FILENAME = "behaviours.js";
 
 /** Function-wrapper line offset, calibrated on first use. */
 /** @type {number | null} */
@@ -65,8 +65,8 @@ let calibratedOffset = null;
 
 export class SceneLoader {
     /**
-     * Load a Scene from the bundle's scene.json and script.js
-     * files.
+     * Load a Scene from the bundle's scene.json and
+     * behaviours.js files.
      * @param {import("./bundle.js").Bundle} bundle
      * @returns {LoadResult}
      */
@@ -75,9 +75,9 @@ export class SceneLoader {
         if (sceneFile === null) {
             return errorResult("This score has no scene.json file.");
         }
-        const scriptFile = bundle.getFile("script.js");
-        if (scriptFile === null) {
-            return errorResult("This score has no script.js file.");
+        const behavioursFile = bundle.getFile(BEHAVIOURS_FILENAME);
+        if (behavioursFile === null) {
+            return errorResult(`This score has no ${BEHAVIOURS_FILENAME} file.`);
         }
 
         // --- 1. Parse scene.json ---
@@ -93,15 +93,15 @@ export class SceneLoader {
             return errorResult("scene.json must be a JSON object at top level.");
         }
 
-        // --- 2. Parse script.js with Acorn to find function names ---
-        const namesResult = extractTopLevelFunctionNames(scriptFile.content);
+        // --- 2. Parse behaviours.js with Acorn for function names ---
+        const namesResult = extractTopLevelFunctionNames(behavioursFile.content);
         if (!namesResult.ok) {
             return errorResult(namesResult.error);
         }
         const functionNames = namesResult.names;
 
-        // --- 3. Execute script.js to get a function map ---
-        const execResult = executeScript(scriptFile.content, functionNames);
+        // --- 3. Execute behaviours.js to get a function map ---
+        const execResult = executeScript(behavioursFile.content, functionNames);
         if (!execResult.ok) {
             return errorResult(execResult.error);
         }
@@ -141,13 +141,13 @@ export class SceneLoader {
                     if (typeof value !== "string") {
                         return errorResult(
                             `scene.json: ${kind}[${i}].${fieldKey} must be a string ` +
-                            `naming a function defined in script.js.`
+                            `naming a function defined in ${BEHAVIOURS_FILENAME}.`
                         );
                     }
                     if (!Object.prototype.hasOwnProperty.call(functionMap, value)) {
                         return errorResult(
                             `scene.json: ${kind}[${i}].${fieldKey} references "${value}", ` +
-                            `which is not defined in script.js.`
+                            `which is not defined in ${BEHAVIOURS_FILENAME}.`
                         );
                     }
                     opts[fieldKey] = functionMap[value];
@@ -199,9 +199,10 @@ function applyPieceLevelFields(scene, data) {
 }
 
 /**
- * Use Acorn to parse the script and extract the names of
- * every top-level function declaration plus every top-level
- * const/let/var bound to a function expression or arrow.
+ * Use Acorn to parse the behaviours source and extract the
+ * names of every top-level function declaration plus every
+ * top-level const/let/var bound to a function expression or
+ * arrow.
  *
  * @param {string} source
  * @returns {{ok: true, names: string[]} | {ok: false, error: string}}
@@ -217,17 +218,17 @@ function extractTopLevelFunctionNames(source) {
             locations: true,
         });
     } catch (err) {
-        // @ts-ignore — Acorn attaches loc as { line, column }.
+        // @ts-ignore \u2014 Acorn attaches loc as { line, column }.
         const loc = err && err.loc;
         const line = loc && typeof loc.line === "number" ? loc.line : null;
         const message = err instanceof Error ? err.message : String(err);
         if (line !== null) {
             return {
                 ok: false,
-                error: `script.js syntax error on line ${line}: ${message}`,
+                error: `${BEHAVIOURS_FILENAME} syntax error on line ${line}: ${message}`,
             };
         }
-        return { ok: false, error: `script.js syntax error: ${message}` };
+        return { ok: false, error: `${BEHAVIOURS_FILENAME} syntax error: ${message}` };
     }
 
     /** @type {string[]} */
@@ -253,12 +254,13 @@ function extractTopLevelFunctionNames(source) {
 }
 
 /**
- * Build a wrapper around the user script that, after running
- * the user's declarations, returns a name-to-function map.
- * The wrapper uses `typeof name === "function"` guards so a
- * name that Acorn flagged but that isn't actually a function
- * at runtime (e.g. a const reassigned to a non-function)
- * still doesn't crash the wrapper.
+ * Build a wrapper around the user behaviours source that,
+ * after running the user's declarations, returns a
+ * name-to-function map. The wrapper uses
+ * `typeof name === "function"` guards so a name that Acorn
+ * flagged but that isn't actually a function at runtime (e.g.
+ * a const reassigned to a non-function) still doesn't crash
+ * the wrapper.
  *
  * @param {string} source
  * @param {string[]} functionNames
@@ -272,7 +274,7 @@ function executeScript(source, functionNames) {
         SCRIPT_PREFIX +
         source +
         `\n;return { ${returnObjectEntries} };` +
-        `\n//# sourceURL=script.js`;
+        `\n//# sourceURL=${BEHAVIOURS_FILENAME}`;
 
     let fn;
     try {
@@ -284,7 +286,7 @@ function executeScript(source, functionNames) {
         // something Acorn didn't.
         return {
             ok: false,
-            error: formatScriptRuntimeError("Syntax error", err, source),
+            error: formatBehavioursRuntimeError("Syntax error", err, source),
         };
     }
 
@@ -294,7 +296,7 @@ function executeScript(source, functionNames) {
     } catch (err) {
         return {
             ok: false,
-            error: formatScriptRuntimeError("Runtime error", err, source),
+            error: formatBehavioursRuntimeError("Runtime error", err, source),
         };
     }
 
@@ -319,7 +321,7 @@ function executeScript(source, functionNames) {
  */
 function calibrateOffset() {
     const probeBody =
-        `"use strict";\nthrow new Error("__gxw_probe__");\n//# sourceURL=script.js`;
+        `"use strict";\nthrow new Error("__gxw_probe__");\n//# sourceURL=${BEHAVIOURS_FILENAME}`;
     try {
         // eslint-disable-next-line no-new-func
         new Function(probeBody)();
@@ -342,16 +344,16 @@ function getOffset() {
 }
 
 /**
- * Format an error from script.js execution, with a line
+ * Format an error from behaviours.js execution, with a line
  * number into the user's source where possible.
  * @param {string} kind
  * @param {unknown} err
  * @param {string} source
  * @returns {string}
  */
-function formatScriptRuntimeError(kind, err, source) {
+function formatBehavioursRuntimeError(kind, err, source) {
     if (!(err instanceof Error)) {
-        return `script.js ${kind.toLowerCase()}: ${String(err)}`;
+        return `${BEHAVIOURS_FILENAME} ${kind.toLowerCase()}: ${String(err)}`;
     }
     const info = extractLineInfo(err);
     const name = err.name && err.name !== "Error" ? err.name : kind;
@@ -359,10 +361,10 @@ function formatScriptRuntimeError(kind, err, source) {
         const userLine = info.line - getOffset();
         const lineText = lineFromSource(source, userLine);
         if (lineText !== null && userLine >= 1) {
-            return `script.js ${name} on line ${userLine}: ${err.message}\n  ${lineText.trim()}`;
+            return `${BEHAVIOURS_FILENAME} ${name} on line ${userLine}: ${err.message}\n  ${lineText.trim()}`;
         }
     }
-    return `script.js ${name}: ${err.message}`;
+    return `${BEHAVIOURS_FILENAME} ${name}: ${err.message}`;
 }
 
 /**
@@ -418,14 +420,14 @@ function lineNumberAtPosition(source, pos) {
  * @returns {{line: number, column: number} | null}
  */
 function extractLineInfo(err) {
-    // @ts-ignore — Firefox non-standard properties.
+    // @ts-ignore \u2014 Firefox non-standard properties.
     if (typeof err.lineNumber === "number") {
         // @ts-ignore
         return { line: err.lineNumber, column: err.columnNumber ?? 0 };
     }
     const stack = typeof err.stack === "string" ? err.stack : "";
     const patterns = [
-        /script\.js:(\d+):(\d+)/,
+        /behaviours\.js:(\d+):(\d+)/,
         /<anonymous>:(\d+):(\d+)/,
         /eval at.*:(\d+):(\d+)/,
     ];

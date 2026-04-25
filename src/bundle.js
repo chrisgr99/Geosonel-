@@ -232,9 +232,9 @@ export class Bundle {
  * Produce the contents of a freshly-created score. The score
  * holds two text files: scene.json (declarative data, edited
  * via the Properties tab and a future property panel) and
- * script.js (named function definitions, edited via the
- * Script tab). The scene loader stitches them together at
- * run time. See DESIGN.md v2.1 for the data and behaviour
+ * behaviours.js (named function definitions, edited via the
+ * Behaviours tab). The scene loader stitches them together
+ * at run time. See DESIGN.md v2.1 for the data and behaviour
  * split.
  *
  * @param {string} name
@@ -261,7 +261,7 @@ export function makeEmptyBundle(name) {
       "cursorR": 2,
       "cursorL": 0,
       "beat": "circleBeat",
-      "sweep": "projectorSweep"
+      "sweep": "curveSweep"
     }
   ],
 
@@ -281,13 +281,15 @@ export function makeEmptyBundle(name) {
     );
 
     bundle.addTextFile(
-        "script.js",
-        `// script.js — function definitions for this score.
+        "behaviours.js",
+        `// behaviours.js — object behaviour definitions for this
+// score.
 //
-// Functions defined here can be referenced from scene.json by
-// name. Each function slot in scene.json (beat, sweep,
-// collision, step, auto) takes the string name of one of the
-// functions below.
+// This file holds the named functions that scene.json's
+// objects refer to by name. Each function slot in scene.json
+// (beat, sweep, collision, step, auto) takes the string name
+// of one of the functions below. The two files together —
+// declarative data plus named behaviours — make up a score.
 //
 // Function bodies aren't yet invoked — the simulation loop
 // arrives in a later milestone. Until then this file just
@@ -297,7 +299,7 @@ export function makeEmptyBundle(name) {
 // a function body is harmless because nothing calls these
 // functions yet.
 
-// --- Curve functions ---
+// --- Curve behaviours ---
 function circleBeat(ctx) {
     const degrees = [0, 2, 4, 5];
     return {
@@ -308,7 +310,7 @@ function circleBeat(ctx) {
     };
 }
 
-function projectorSweep(ctx) {
+function curveSweep(ctx) {
     return {
         note: ctx.trigger.note - Math.floor(ctx.d),
         velocity: Math.max(20, 127 - Math.floor(ctx.d * 8)),
@@ -316,12 +318,12 @@ function projectorSweep(ctx) {
     };
 }
 
-// --- Trigger functions ---
+// --- Trigger behaviours ---
 function triggerHit(ctx) {
     return { note: this.note, velocity: 100, duration: 300 };
 }
 
-// --- Sprite functions ---
+// --- Sprite behaviours ---
 function wander(ctx) {
     // No-op for now — the sprite drifts under its initial
     // velocity. Once the simulation loop runs, this is where

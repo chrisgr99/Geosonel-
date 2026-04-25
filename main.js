@@ -4,7 +4,7 @@
  * Wires up every component and owns the score session. The
  * current score's data and behaviour are kept in two files
  * inside the bundle — scene.json (declarative data) and
- * script.js (named functions) — which the scene loader
+ * behaviours.js (named functions) — which the scene loader
  * stitches together on demand (Cmd-Enter or Run menu) to
  * produce a Scene that the canvas renders on top of the grid.
  *
@@ -17,10 +17,10 @@
  * Current milestone scope:
  *   - Scene data model (Scene, Curve, Trigger, Sprite).
  *   - Scene loader that builds a Scene from scene.json plus
- *     script.js, with named function references resolved
- *     against the script's top-level declarations.
+ *     behaviours.js, with named function references resolved
+ *     against the behaviours' top-level declarations.
  *   - Canvas rendering of scenes (static).
- *   - Editor with Properties (JSON) and Script (JS) tabs,
+ *   - Editor with Properties (JSON) and Behaviours (JS) tabs,
  *     each with its own syntax highlighting and linter.
  *   - Explicit save (Cmd-S); no autosave timer.
  *   - Run Scene command (Cmd-Enter) with auto-save-before-run.
@@ -154,7 +154,7 @@ async function main() {
     const sceneLoader = new SceneLoader();
 
     /**
-     * Load the current score's scene.json and script.js,
+     * Load the current score's scene.json and behaviours.js,
      * build a Scene, and update the canvas. Saves the bundle
      * first so the bytes on disk match what we executed.
      * Errors are reported in the message area; the canvas

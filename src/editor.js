@@ -162,7 +162,7 @@ function jsonErrorPosition(message, source) {
  */
 const TAB_LABELS = {
     "scene.json": "Properties",
-    "script.js": "Script",
+    "behaviours.js": "Behaviours",
 };
 
 /**

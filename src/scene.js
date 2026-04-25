@@ -233,9 +233,11 @@ export class Trigger {
         this.y = opts.y ?? 0;
         /**
          * Render and collision radius in canvas units. Default
-         * matches the design doc's typical 0.4–0.6 range.
+         * sized to read clearly without dominating the image
+         * underneath — user-overridable per object via the
+         * size field in scene.json.
          */
-        this.size = opts.size ?? 0.5;
+        this.size = opts.size ?? 0.35;
         /** Optional shorthand note. */
         this.note = opts.note ?? null;
         /** Arbitrary payload available as this.* in functions. */
@@ -285,8 +287,10 @@ export class Sprite {
         /**
          * Visual diameter in canvas units. Display only;
          * sprites are points geometrically (DESIGN.md §6).
+         * User-overridable per object via the displayDiameter
+         * field in scene.json.
          */
-        this.displayDiameter = opts.displayDiameter ?? 1.5;
+        this.displayDiameter = opts.displayDiameter ?? 1.05;
 
         // --- Function slots ---
         /** @type {Function | null} */

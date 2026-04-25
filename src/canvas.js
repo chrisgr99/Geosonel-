@@ -53,15 +53,34 @@ const AXIS_COLOUR = "#606060";
 // up on GeoSonix's accent colour. Beat tick marks are a
 // brighter green so they pop visually against the curve.
 // Cursors are warm amber to stand out from everything else.
-// Triggers are warm off-white. Sprites are cool blue with a
-// white outline ring so they stay readable over both light
-// and dark image backgrounds.
+//
+// Triggers and sprites both fill their interior with the
+// background image's pixel colour at the object's centre
+// point (matching GeoSonix's behaviour where these objects
+// took on the colour of the field underneath them). When no
+// image is loaded, both fall back to a placeholder dark gray
+// that's slightly lighter than the canvas background so the
+// objects remain visible during testing.
+//
+// Both also carry a light-blue boundary so they stay
+// distinguishable from the surrounding image — a diamond
+// for triggers, a circle for sprites. Motion is the visual
+// cue that distinguishes a moving sprite from a static
+// trigger once the simulation loop runs.
 const CURVE_COLOUR = "#7dd68a";
 const BEAT_TICK_COLOUR = "#b8e8c0";
 const CURSOR_COLOUR = "#ffb060";
-const TRIGGER_COLOUR = "#e8dcc0";
-const SPRITE_COLOUR = "#6ab0ff";
-const SPRITE_RING_COLOUR = "#ffffff";
+const OBJECT_BOUNDARY_COLOUR = "#7db8d6";
+const NO_IMAGE_FILL_COLOUR = "#404040";
+
+// Resolution of the pixel-sampling array built from the
+// background image. Matches GeoSonix's 1000×1000 sampling
+// grid — at this size, two adjacent units of canvas space
+// resolve to roughly 30 sample pixels in the default ±16/±12
+// viewing region, which is plenty for trigger/sprite fills
+// while keeping memory bounded to ~4 MB regardless of the
+// source image's true resolution.
+const PIXEL_SAMPLE_SIZE = 1000;
 
 export class Canvas {
     /**
@@ -101,6 +120,15 @@ export class Canvas {
          * @type {ImageBitmap | HTMLImageElement | null}
          */
         this._imageBitmap = null;
+
+        /**
+         * A 1000×1000 ImageData snapshot of the current image,
+         * used for fast pixel sampling under triggers and
+         * sprites. Built once when the image loads, then read
+         * at draw time. Null when no image is loaded.
+         * @type {ImageData | null}
+         */
+        this._imagePixels = null;
 
         /**
          * The scene to render on top of the grid, or null if
@@ -157,12 +185,15 @@ export class Canvas {
      * Set or clear the background image. Pass null to clear.
      * The bytes are decoded here and cached as an ImageBitmap
      * (or HTMLImageElement fallback) so future draws don't need
-     * to decode again.
+     * to decode again. A 1000×1000 pixel-sampling snapshot is
+     * also built so trigger and sprite fills can read the
+     * underlying image colour cheaply at draw time.
      * @param {{ bytes: ArrayBuffer, mimeType: string } | null} image
      */
     async setImage(image) {
         if (image === null) {
             this._imageBitmap = null;
+            this._imagePixels = null;
             this.scheduleDraw();
             return;
         }
@@ -176,10 +207,12 @@ export class Canvas {
             } else {
                 this._imageBitmap = await imageFromBlob(blob);
             }
+            this._imagePixels = this._buildPixelSamplingArray(this._imageBitmap);
             this.scheduleDraw();
         } catch (err) {
             console.error("GXW: failed to decode image:", err);
             this._imageBitmap = null;
+            this._imagePixels = null;
             this.scheduleDraw();
         }
     }
@@ -336,26 +369,34 @@ export class Canvas {
     _drawCurveBeatTicks(curve) {
         const ctx = this.ctx;
         ctx.strokeStyle = BEAT_TICK_COLOUR;
-        ctx.lineWidth = 2;
 
-        // Active beat tick mark length, in CSS pixels each side
-        // of the curve. Constant in pixels so ticks remain
-        // legible at every zoom level.
-        const tickHalfPx = 5;
+        // Tick marks are drawn at every beat slot. Active beats
+        // ("x") are visually prominent — longer and thicker —
+        // while inactive beats (".") get a short, thin mark so
+        // the rhythm structure is visible without dominating
+        // the curve. Lengths are constant in CSS pixels so
+        // ticks remain legible at every zoom level.
+        const activeHalfPx = 5;
+        const activeWidth = 2;
+        const inactiveHalfPx = 2.5;
+        const inactiveWidth = 1;
 
         const ab = curve.activeBeats;
         const len = curve.beatsPerCycle;
         for (let i = 0; i < len && i < ab.length; i++) {
-            if (ab[i] !== "x") continue;
+            const ch = ab[i];
+            if (ch !== "x" && ch !== ".") continue;
             const t = i / len;
             const sample = sampleCurve(curve.shape, t);
             if (sample === null) continue;
             const px = this.toPixelX(sample.x);
             const py = this.toPixelY(sample.y);
             const perp = pixelPerpendicularUnit(sample.tx, sample.ty);
+            const halfPx = ch === "x" ? activeHalfPx : inactiveHalfPx;
+            ctx.lineWidth = ch === "x" ? activeWidth : inactiveWidth;
             ctx.beginPath();
-            ctx.moveTo(px - perp.x * tickHalfPx, py - perp.y * tickHalfPx);
-            ctx.lineTo(px + perp.x * tickHalfPx, py + perp.y * tickHalfPx);
+            ctx.moveTo(px - perp.x * halfPx, py - perp.y * halfPx);
+            ctx.lineTo(px + perp.x * halfPx, py + perp.y * halfPx);
             ctx.stroke();
         }
     }
@@ -406,37 +447,101 @@ export class Canvas {
     _drawTriggers() {
         if (this._scene === null) return;
         const ctx = this.ctx;
-        ctx.fillStyle = TRIGGER_COLOUR;
+        ctx.lineWidth = 1.5;
         for (const t of this._scene.triggers) {
-            const px = this.toPixelX(t.x);
-            const py = this.toPixelY(t.y);
+            const cx = this.toPixelX(t.x);
+            const cy = this.toPixelY(t.y);
             const r = Math.max(3, t.size * this.pixelsPerUnit);
+            // Diamond: a square rotated 45° around (cx, cy)
+            // with vertices at distance r from the centre.
+            // Going top → right → bottom → left in pixel space
+            // (Y down), so "top" is cy - r.
             ctx.beginPath();
-            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.moveTo(cx, cy - r);
+            ctx.lineTo(cx + r, cy);
+            ctx.lineTo(cx, cy + r);
+            ctx.lineTo(cx - r, cy);
+            ctx.closePath();
+            ctx.fillStyle = this._sampleImageAt(t.x, t.y);
             ctx.fill();
+            ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
+            ctx.stroke();
         }
     }
 
     _drawSprites() {
         if (this._scene === null) return;
         const ctx = this.ctx;
+        ctx.lineWidth = 1.5;
         for (const s of this._scene.sprites) {
-            const px = this.toPixelX(s.x);
-            const py = this.toPixelY(s.y);
+            const cx = this.toPixelX(s.x);
+            const cy = this.toPixelY(s.y);
             const r = Math.max(4, (s.displayDiameter / 2) * this.pixelsPerUnit);
-            // Filled disk first, then the white outline ring on
-            // top so the sprite stays readable over both light
-            // and dark image backgrounds.
-            ctx.fillStyle = SPRITE_COLOUR;
+            // Filled disc with a light-blue boundary — the fill
+            // takes the colour of the image pixel under the
+            // centre, the boundary keeps the sprite visible
+            // against any background.
             ctx.beginPath();
-            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fillStyle = this._sampleImageAt(s.x, s.y);
             ctx.fill();
-            ctx.strokeStyle = SPRITE_RING_COLOUR;
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
             ctx.stroke();
         }
+    }
+
+    /**
+     * Build the 1000×1000 ImageData snapshot used for trigger
+     * and sprite fill sampling. Returns null on failure (e.g.
+     * canvas tainted by cross-origin image data) so the caller
+     * can fall back to the no-image fill.
+     * @param {ImageBitmap | HTMLImageElement} bitmap
+     * @returns {ImageData | null}
+     */
+    _buildPixelSamplingArray(bitmap) {
+        const off = document.createElement("canvas");
+        off.width = PIXEL_SAMPLE_SIZE;
+        off.height = PIXEL_SAMPLE_SIZE;
+        const offCtx = off.getContext("2d");
+        if (offCtx === null) return null;
+        offCtx.drawImage(bitmap, 0, 0, PIXEL_SAMPLE_SIZE, PIXEL_SAMPLE_SIZE);
+        try {
+            return offCtx.getImageData(0, 0, PIXEL_SAMPLE_SIZE, PIXEL_SAMPLE_SIZE);
+        } catch (err) {
+            console.error("GXW: failed to sample image pixels:", err);
+            return null;
+        }
+    }
+
+    /**
+     * Return the image colour at canvas position (x, y) as a
+     * CSS rgb() string. The image fills the default ±16 by
+     * ±12 viewing region (DESIGN.md §20), so positions outside
+     * that region (or any time no image is loaded) fall back
+     * to the no-image placeholder colour.
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {string}
+     */
+    _sampleImageAt(canvasX, canvasY) {
+        if (this._imagePixels === null) return NO_IMAGE_FILL_COLOUR;
+
+        // Map canvas coordinates to (u, v) in [0, 1]:
+        //   u: x in [-16, 16] → [0, 1] left-to-right
+        //   v: y in [12, -12] → [0, 1] top-to-bottom (flipped
+        //      because image rows go top-down while canvas Y
+        //      goes bottom-up)
+        const u = (canvasX + DEFAULT_HALF_WIDTH) / (2 * DEFAULT_HALF_WIDTH);
+        const v = (DEFAULT_HALF_HEIGHT - canvasY) / (2 * DEFAULT_HALF_HEIGHT);
+        if (u < 0 || u >= 1 || v < 0 || v >= 1) return NO_IMAGE_FILL_COLOUR;
+
+        const w = this._imagePixels.width;
+        const h = this._imagePixels.height;
+        const px = Math.min(w - 1, Math.floor(u * w));
+        const py = Math.min(h - 1, Math.floor(v * h));
+        const idx = (py * w + px) * 4;
+        const data = this._imagePixels.data;
+        return `rgb(${data[idx]}, ${data[idx + 1]}, ${data[idx + 2]})`;
     }
 
     _drawImage() {
