@@ -101,6 +101,11 @@ export async function saveScoreRecord(record) {
         store.put(record);
         tx.oncomplete = () => {
             db.close();
+            if (suppressedNames.has(record.name)) {
+                suppressedNames.delete(record.name);
+            } else {
+                emitAfterSave(record);
+            }
             resolve();
         };
         tx.onerror = () => {
@@ -144,6 +149,7 @@ export async function deleteScoreRecord(name) {
         tx.objectStore(SCORES_STORE).delete(name);
         tx.oncomplete = () => {
             db.close();
+            emitAfterDelete(name);
             resolve();
         };
         tx.onerror = () => {
@@ -254,4 +260,90 @@ export async function getCurrentScoreName() {
 /** @param {string} name */
 export async function setCurrentScoreName(name) {
     await setSetting(CURRENT_SCORE_KEY, name);
+}
+
+// --- Save / delete event hooks ---
+//
+// The disk-mirror module subscribes to these so it can
+// transparently push every IndexedDB save out to disk and
+// delete folders when scores are deleted, without each calling
+// site (score actions, editor save, etc.) having to remember
+// to do it. Subscribers receive the operation arguments after
+// the IndexedDB transaction completes successfully.
+
+/** @typedef {(record: ScoreRecord) => void | Promise<void>} AfterSaveSubscriber */
+/** @typedef {(name: string) => void | Promise<void>} AfterDeleteSubscriber */
+
+/** @type {Set<AfterSaveSubscriber>} */
+const afterSaveSubscribers = new Set();
+/** @type {Set<AfterDeleteSubscriber>} */
+const afterDeleteSubscribers = new Set();
+
+/**
+ * Subscribe to score-save events. Returns an unsubscribe
+ * function. The callback fires after a successful IndexedDB
+ * transaction; subscribers can read but should not mutate the
+ * record.
+ * @param {AfterSaveSubscriber} cb
+ * @returns {() => void}
+ */
+export function subscribeAfterSaveScore(cb) {
+    afterSaveSubscribers.add(cb);
+    return () => afterSaveSubscribers.delete(cb);
+}
+
+/**
+ * Subscribe to score-delete events. Returns an unsubscribe
+ * function.
+ * @param {AfterDeleteSubscriber} cb
+ * @returns {() => void}
+ */
+export function subscribeAfterDeleteScore(cb) {
+    afterDeleteSubscribers.add(cb);
+    return () => afterDeleteSubscribers.delete(cb);
+}
+
+/** @param {ScoreRecord} record */
+function emitAfterSave(record) {
+    for (const cb of afterSaveSubscribers) {
+        try {
+            void cb(record);
+        } catch (err) {
+            console.error("GXW: afterSaveScore subscriber threw.", err);
+        }
+    }
+}
+
+/** @param {string} name */
+function emitAfterDelete(name) {
+    for (const cb of afterDeleteSubscribers) {
+        try {
+            void cb(name);
+        } catch (err) {
+            console.error("GXW: afterDeleteScore subscriber threw.", err);
+        }
+    }
+}
+
+// --- Suppression: skip emitting save events for a given name ---
+//
+// Used by the disk mirror to break the feedback loop: when an
+// external change is detected on disk, we pull the new bundle
+// and write it to IndexedDB so the two stay in sync. Without
+// suppression, that write would trigger a push back to disk
+// (which is what we just read from). The mirror calls
+// `suppressNextSaveEmit(name)` immediately before writing so
+// the very next save for that name doesn't fire its hook.
+
+/** @type {Set<string>} */
+const suppressedNames = new Set();
+
+/**
+ * Suppress the next save event for a particular score name.
+ * The flag is consumed on the first save event matching that
+ * name; subsequent saves emit normally.
+ * @param {string} name
+ */
+export function suppressNextSaveEmit(name) {
+    suppressedNames.add(name);
 }

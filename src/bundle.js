@@ -223,6 +223,9 @@ export class Bundle {
 
     /**
      * Save this bundle to IndexedDB under its current name.
+     * Disk mirroring (when configured) is triggered
+     * transparently via the afterSave event hook in storage.js;
+     * this method doesn't need to know anything about it.
      */
     async save() {
         await saveScoreRecord(this.toRecord());
@@ -386,7 +389,11 @@ export async function listAvailableScores() {
 }
 
 /**
- * Delete a score by name.
+ * Delete a score by name. Removes from IndexedDB; the
+ * afterDelete event hook in storage.js triggers the on-disk
+ * folder removal transparently when a disk mirror is
+ * connected. The caller is responsible for any user
+ * confirmation prompt.
  * @param {string} name
  */
 export async function deleteScoreByName(name) {

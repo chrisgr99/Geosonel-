@@ -3,8 +3,8 @@
  *
  * Wires up every component and owns the score session. The
  * current score's data and behaviour are kept in two files
- * inside the bundle — scene.json (declarative data) and
- * behaviours.js (named functions) — which the scene loader
+ * inside the bundle \u2014 scene.json (declarative data) and
+ * behaviours.js (named functions) \u2014 which the scene loader
  * stitches together on demand (Cmd-Enter or Run menu) to
  * produce a Scene that the canvas renders on top of the grid.
  *
@@ -14,6 +14,13 @@
  * Unsaved. A beforeunload warning protects against tab close
  * with unsaved changes.
  *
+ * Disk mirroring (optional) writes every save out to a folder
+ * the user picks via Settings, and watches the active score's
+ * files for external changes. When a change is detected on
+ * disk \u2014 typically from an AI assistant editing through
+ * Claude Desktop's filesystem MCP \u2014 the bundle is reloaded
+ * automatically within a second or two.
+ *
  * Current milestone scope:
  *   - Scene data model (Scene, Curve, Trigger, Sprite).
  *   - Scene loader that builds a Scene from scene.json plus
@@ -22,6 +29,7 @@
  *   - Canvas rendering of scenes (static).
  *   - Editor with Properties (JSON) and Behaviours (JS) tabs,
  *     each with its own syntax highlighting and linter.
+ *   - Disk mirroring for scores; auto-reload on external edits.
  *   - Explicit save (Cmd-S); no autosave timer.
  *   - Run Scene command (Cmd-Enter) with auto-save-before-run.
  *   - First-load auto-run so the canvas shows something.
@@ -41,6 +49,9 @@ import {
     setCurrentScoreName,
     saveScoreRecord,
     deleteScoreRecord,
+    suppressNextSaveEmit,
+    subscribeAfterSaveScore,
+    subscribeAfterDeleteScore,
 } from "./src/storage.js";
 import { TabbedEditor } from "./src/editor.js";
 import { Transport } from "./src/transport.js";
@@ -54,6 +65,16 @@ import { installFileMenu } from "./src/fileMenu.js";
 import { installRunMenu } from "./src/runMenu.js";
 import { installAppMenu } from "./src/appMenu.js";
 import { SceneLoader } from "./src/sceneLoader.js";
+import { DiskMirror } from "./src/diskMirror.js";
+import { openDialog } from "./src/dialog.js";
+import { Toolbar } from "./src/toolbar.js";
+import {
+    parseScene,
+    stringifyScene,
+    addSpriteAt,
+    setSpritePositions,
+    removeObjects,
+} from "./src/sceneEditor.js";
 
 main();
 
@@ -109,11 +130,6 @@ async function main() {
     /** @type {any} */
     let justSavedTimeout = null;
 
-    // runScene is defined further down (it depends on both
-    // session and the editor itself). To let the editor's
-    // CodeMirror keymap invoke it, we use a let binding that
-    // starts as a no-op and gets reassigned once the real
-    // function is ready.
     /** @type {() => Promise<void>} */
     let runScene = async () => {};
 
@@ -151,6 +167,72 @@ async function main() {
     const imageImporter = new ImageImporter({ bundle, canvas, messages });
     imageImporter.installGlobalListeners();
 
+    // --- Disk mirror ---
+    // Restored from IndexedDB if previously configured. The
+    // folder handle persists across page reloads but the
+    // browser may require permission to be reaffirmed by the
+    // user; that re-grant happens implicitly when the user
+    // next opens Settings or initiates an action that needs
+    // disk access. Polling for external changes also fails
+    // silently if permission has lapsed, until the user
+    // restores it.
+    const diskMirror = new DiskMirror();
+    await diskMirror.restore();
+
+    // Mirror IndexedDB writes out to disk transparently. Every
+    // path that goes through saveScoreRecord/deleteScoreRecord
+    // \u2014 score actions, editor save, runScene's pre-save,
+    // imports, restores \u2014 automatically pushes/deletes on
+    // disk too. No call site needs to know about disk mirror.
+    subscribeAfterSaveScore(async (record) => {
+        await diskMirror.pushRecord(record);
+    });
+    subscribeAfterDeleteScore(async (name) => {
+        await diskMirror.deleteScore(name);
+    });
+
+    // Reconnect modal. When the disk mirror's permission lapses
+    // (typically after a page reload), getStatus() reports
+    // needsReconnect=true and we surface a modal asking the
+    // user to grant access again. The modal is only shown on
+    // the false-to-true transition so the user isn't pestered
+    // multiple times for the same lapse.
+    let lastNeedsReconnect = false;
+    let lastReady = false;
+    /** @type {{ close: () => void } | null} */
+    let openReconnectDialog = null;
+    diskMirror.subscribeStatus((status) => {
+        if (status.needsReconnect && !lastNeedsReconnect) {
+            openReconnectDialog = showReconnectDialog(diskMirror, messages);
+        } else if (!status.needsReconnect && openReconnectDialog !== null) {
+            openReconnectDialog.close();
+            openReconnectDialog = null;
+        }
+        // When the mirror transitions to ready (folder picked,
+        // or permission re-granted), refresh the README and
+        // write the active-score marker so AI assistants can
+        // see what's open.
+        if (status.ready && !lastReady) {
+            void diskMirror.refreshReadme();
+            void diskMirror.setActiveScore(session.bundle.name);
+            // Reconcile the active score with disk — the
+            // mirror just became available and disk may have
+            // newer content than IndexedDB.
+            void (async () => {
+                const reconciled = await reconcileBundleWithDisk(session.bundle, diskMirror);
+                if (reconciled !== session.bundle) {
+                    await onExternalChange(reconciled);
+                }
+            })();
+        }
+        lastNeedsReconnect = status.needsReconnect;
+        lastReady = status.ready;
+    });
+    if (diskMirror.getStatus().needsReconnect) {
+        openReconnectDialog = showReconnectDialog(diskMirror, messages);
+        lastNeedsReconnect = true;
+    }
+
     // --- Scene loader ---
     const sceneLoader = new SceneLoader();
 
@@ -183,12 +265,67 @@ async function main() {
         }
     };
 
+    /**
+     * Called by DiskMirror when external file changes are
+     * detected on disk for the watched score. The mirror has
+     * already persisted the new bundle to IndexedDB (using
+     * suppressed-emit so we don't push back to disk). Our job
+     * here is just to refresh the in-memory state and the UI.
+     *
+     * @param {Bundle} newBundle
+     */
+    const onExternalChange = async (newBundle) => {
+        if (newBundle.name !== session.bundle.name) return;
+        // Clear canvas selection: the indexes we hold refer to
+        // the previous version of this score's arrays. Even
+        // when the score name is unchanged, an external write
+        // can have inserted, removed, or reordered objects, so
+        // letting old indexes survive would silently rebind
+        // them to whatever object now sits at that slot.
+        canvas.setSelection({ sprites: [], triggers: [], curves: [] });
+        session.bundle = newBundle;
+        imageImporter.setBundle(newBundle);
+        await editor.setBundle(newBundle);
+        const img = newBundle.getCurrentImage();
+        if (img !== null) {
+            await canvas.setImage({ bytes: img.content, mimeType: img.mimeType });
+        } else {
+            await canvas.setImage(null);
+        }
+        setSavedIndicator("saved");
+        await runScene();
+        messages.write("Reloaded from disk.");
+    };
+
     const session = {
         bundle,
+        /**
+         * Re-establish the disk-mirror watch on the current
+         * bundle. Call after any change to session.bundle.name
+         * (rename) or session.bundle (switch) so polling tracks
+         * the right score's files.
+         */
+        rewatch() {
+            diskMirror.watch(session.bundle.name, onExternalChange);
+            void diskMirror.setActiveScore(session.bundle.name);
+        },
         /**
          * @param {Bundle} newBundle
          */
         async switchToBundle(newBundle) {
+            // Switching scores invalidates any selection from
+            // the previous score — indexes mean different
+            // objects in different scenes. Clear up front so
+            // setScene's filter logic doesn't rebind stale
+            // entries to whatever lives at the same index in
+            // the new scene.
+            canvas.setSelection({ sprites: [], triggers: [], curves: [] });
+
+            // Before applying, reconcile with disk so the user
+            // sees any external edits made while another score
+            // was active (or while GXW was closed).
+            newBundle = await reconcileBundleWithDisk(newBundle, diskMirror);
+
             session.bundle = newBundle;
             imageImporter.setBundle(newBundle);
             await editor.setBundle(newBundle);
@@ -202,13 +339,149 @@ async function main() {
             refreshScoreNameDisplay();
             setSavedIndicator("saved");
 
-            // Auto-run the sketch on score switch so the canvas
-            // reflects the newly-opened score.
+            session.rewatch();
+
             await runScene();
         },
         refreshScoreNameDisplay,
     };
     refreshScoreNameDisplay();
+
+    // Begin watching the initial score for external changes.
+    // This is a no-op when disk mirroring isn't configured;
+    // when it later becomes configured (via Settings), the
+    // watch state already in place starts polling automatically.
+    session.rewatch();
+
+    // Reconcile the active score with disk in case the disk
+    // version has changes that happened while GXW wasn't
+    // running (typically AI edits while the tab was closed).
+    // The polling watcher only sees changes that occur after
+    // it starts, so without this step those edits would be
+    // invisible until something else triggered a reload.
+    {
+        const reconciled = await reconcileBundleWithDisk(session.bundle, diskMirror);
+        if (reconciled !== session.bundle) {
+            session.bundle = reconciled;
+            imageImporter.setBundle(reconciled);
+            await editor.setBundle(reconciled);
+            const img = reconciled.getCurrentImage();
+            if (img !== null) {
+                await canvas.setImage({ bytes: img.content, mimeType: img.mimeType });
+            } else {
+                await canvas.setImage(null);
+            }
+            messages.write("Loaded latest version from disk.");
+        }
+    }
+
+    // --- Canvas toolbar and direct-manipulation editing ---
+    //
+    // The toolbar sits above the canvas and currently exposes
+    // a single tool: Add Sprite. Single-clicking arms it for
+    // one placement; double-clicking locks it for repeated
+    // placements until Esc or a second click on the tool. With
+    // no tool armed, the canvas is in selection mode: clicks
+    // select sprites, drag-from-empty draws a marquee, and
+    // drag-on-sprite moves the selection.
+    //
+    // Canvas edits are committed by parsing scene.json,
+    // mutating it, stringifying back, updating the bundle in
+    // place, then re-running the scene. runScene auto-saves
+    // first, so each canvas edit also persists through the
+    // normal save pipeline (and out to disk if mirroring is
+    // on). The editor's Properties (JSON) view is refreshed
+    // via refreshActiveTabFromBundle so the JSON reflects the
+    // new content immediately.
+    const toolbarEl = document.getElementById("canvas-toolbar");
+    if (!(toolbarEl instanceof HTMLElement)) {
+        console.error("GXW: canvas-toolbar element missing.");
+        return;
+    }
+    const toolbar = new Toolbar(toolbarEl);
+    canvas.setToolbar(toolbar);
+    toolbar.onChange((tool, locked) => {
+        canvas.setActiveTool(tool, locked);
+    });
+
+    /**
+     * Apply a mutation to the active score's scene.json,
+     * refresh the editor view, and re-run the scene. The
+     * mutator runs directly on the parsed scene-data object.
+     * If the JSON currently has a parse error (typically
+     * because the user is mid-edit in the JSON tab), the edit
+     * is skipped with a message rather than silently
+     * corrupting the file.
+     *
+     * @param {(data: any) => void} mutate
+     */
+    const applySceneEdit = async (mutate) => {
+        const sceneFile = session.bundle.getFile("scene.json");
+        if (sceneFile === null) {
+            messages.write("No scene.json in this score.", "error");
+            return;
+        }
+        const parsed = parseScene(sceneFile.content);
+        if (!parsed.ok) {
+            messages.write(
+                `Cannot edit canvas while scene.json has a parse error: ${parsed.error}`,
+                "error"
+            );
+            return;
+        }
+        mutate(parsed.data);
+        const newText = stringifyScene(parsed.data);
+        session.bundle.updateContent("scene.json", newText);
+        editor.refreshActiveTabFromBundle();
+        await runScene();
+    };
+
+    canvas.setEditCallback(async (edit) => {
+        if (edit.kind === "addSprite") {
+            await applySceneEdit((data) => addSpriteAt(data, edit.x, edit.y));
+        } else if (edit.kind === "moveSprites") {
+            await applySceneEdit((data) => setSpritePositions(data, edit.positions));
+        }
+        // selectionChanged is a no-op for now. A future
+        // per-object property inspector will listen here.
+    });
+
+    // Escape disarms the active tool. Listening at the window
+    // level means it works regardless of whether the canvas,
+    // editor, or empty body has focus.
+    window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && toolbar.getState().tool !== null) {
+            toolbar.setActive(null, false);
+        }
+    });
+
+    // Delete and Backspace remove the selected canvas objects.
+    // Listening at the window level means it works regardless
+    // of whether the canvas or the body has focus, but text-
+    // editor focus contexts are skipped so typing in the
+    // CodeMirror tab or any text input still does the obvious
+    // thing. preventDefault is only called when there's
+    // actually a selection to remove, so an idle Backspace
+    // doesn't accidentally swallow browser default behaviour.
+    window.addEventListener("keydown", (e) => {
+        if (e.key !== "Delete" && e.key !== "Backspace") return;
+        const target = e.target;
+        if (target instanceof HTMLElement) {
+            if (target.closest(".cm-editor") !== null) return;
+            if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+            if (target.isContentEditable) return;
+        }
+        const sel = canvas.getSelection();
+        const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
+        if (total === 0) return;
+        e.preventDefault();
+        // Clear the canvas's selection up front — the indexes
+        // are about to refer to objects that no longer exist,
+        // and removeObjects renumbers the remaining entries
+        // so any stale index would point at the wrong thing.
+        canvas.setSelection({ sprites: [], triggers: [], curves: [] });
+        void applySceneEdit((data) => removeObjects(data, sel));
+    });
 
     // --- Inline rename ---
     if (scoreNameEl instanceof HTMLElement) {
@@ -222,9 +495,9 @@ async function main() {
             document.body.classList.toggle("focus-canvas");
         },
     });
-    installFileMenu({ session, messages, imageImporter });
+    installFileMenu({ session, messages, imageImporter, diskMirror });
     installRunMenu({ runScene });
-    installAppMenu();
+    installAppMenu({ diskMirror, messages });
 
     // --- Save shortcut (Cmd-S) ---
     window.addEventListener("keydown", (e) => {
@@ -238,9 +511,6 @@ async function main() {
     // --- Protect unsaved changes on tab close ---
     window.addEventListener("beforeunload", (e) => {
         if (editor.isDirty) {
-            // Modern browsers ignore the custom message and
-            // show a standard dialog, but returning a string
-            // is still what triggers the prompt.
             e.preventDefault();
             e.returnValue = "";
             return "";
@@ -253,7 +523,7 @@ async function main() {
 
 /**
  * Apply scene-declared bpm and time signature to the Transport
- * if the sketch set them. Preserves null — a time-based sketch
+ * if the sketch set them. Preserves null \u2014 a time-based sketch
  * (no bpm declared) hides the musical-position display.
  * @param {import("./src/scene.js").Scene} scene
  * @param {import("./src/transport.js").Transport} transport
@@ -359,7 +629,12 @@ function wireInlineRename(el, session, messages) {
 }
 
 /**
- * Rename the current score to a new name.
+ * Rename the current score to a new name. The save and delete
+ * events fire automatically through storage.js's hooks, which
+ * the disk mirror picks up to push the new folder and delete
+ * the old one. So the rename appears on disk as a copy-then-
+ * delete, which is functionally identical to a rename.
+ *
  * @param {any} session
  * @param {string} newName
  */
@@ -378,4 +653,126 @@ async function renameCurrentScoreTo(session, newName) {
     session.bundle.name = newName;
     await setCurrentScoreName(newName);
     session.refreshScoreNameDisplay();
+    if (typeof session.rewatch === "function") session.rewatch();
+}
+
+/**
+ * Show a small modal that explains the disk mirror has lost
+ * access to its folder, with a button that re-requests
+ * permission. The button click counts as a user gesture, so
+ * the browser allows requestPermission() to surface its
+ * native prompt at that moment.
+ *
+ * Returns an object with a close() method so the main app can
+ * dismiss the dialog if the situation resolves on its own
+ * (e.g. the user picked a fresh folder via Settings before
+ * clicking Reconnect here).
+ *
+ * @param {import("./src/diskMirror.js").DiskMirror} diskMirror
+ * @param {import("./src/messages.js").MessageArea} messages
+ * @returns {{ close: () => void }}
+ */
+function showReconnectDialog(diskMirror, messages) {
+    const status = diskMirror.getStatus();
+    const folderName = status.folderName ?? "the chosen folder";
+    const handle = openDialog({
+        title: "Reconnect to disk storage",
+        width: "480px",
+    });
+    const body = handle.body;
+
+    const intro = document.createElement("div");
+    intro.className = "settings-description";
+    intro.style.marginBottom = "12px";
+    intro.textContent =
+        "GXW has lost permission to read or write the disk storage " +
+        `folder "${folderName}". This can happen after the browser ` +
+        "has been closed for a while. Click Reconnect to grant " +
+        "permission again, or Disable Mirroring to switch the " +
+        "feature off until you're ready to use it.";
+    body.appendChild(intro);
+
+    const buttons = document.createElement("div");
+    buttons.className = "modal-buttons";
+
+    const disableBtn = document.createElement("button");
+    disableBtn.className = "modal-button";
+    disableBtn.textContent = "Disable Mirroring";
+    disableBtn.addEventListener("click", async () => {
+        await diskMirror.setEnabled(false);
+        messages.write("Disk mirroring disabled. Re-enable in Settings when ready.");
+        handle.close();
+    });
+    buttons.appendChild(disableBtn);
+
+    const reconnectBtn = document.createElement("button");
+    reconnectBtn.className = "modal-button modal-button-primary";
+    reconnectBtn.textContent = "Reconnect";
+    reconnectBtn.addEventListener("click", async () => {
+        // The click event itself is the user gesture that lets
+        // the browser show its requestPermission prompt.
+        const result = await diskMirror.requestPermissionFromGesture();
+        if (result.permission === "granted") {
+            messages.write("Disk mirroring reconnected.");
+            handle.close();
+        } else {
+            messages.write(
+                "Permission was not granted. You can pick a different " +
+                "folder via Settings \u2192 Storage if needed.",
+                "error"
+            );
+            handle.close();
+        }
+    });
+    buttons.appendChild(reconnectBtn);
+
+    body.appendChild(buttons);
+
+    return { close: () => handle.close() };
+}
+
+/**
+ * Compare an in-memory bundle with the same score's content on
+ * disk. If the disk version differs (typically because an AI
+ * assistant edited it while GXW wasn't running, or while a
+ * different score was active), use the disk version as the
+ * source of truth: persist it to IndexedDB and return it.
+ * Returns the original bundle when disk has no changes, no
+ * version of this score, or the mirror isn't ready.
+ *
+ * Image data is preserved from the in-memory bundle if disk
+ * doesn't have an image for this score, since image
+ * roundtrip is one-way (GXW pushes images out, but pull-back
+ * relies on the file being present on disk).
+ *
+ * @param {Bundle} bundle
+ * @param {import("./src/diskMirror.js").DiskMirror} mirror
+ * @returns {Promise<Bundle>}
+ */
+async function reconcileBundleWithDisk(bundle, mirror) {
+    if (!mirror.getStatus().ready) return bundle;
+    const diskBundle = await mirror.pullBundle(bundle.name);
+    if (diskBundle === null) return bundle;
+
+    const memScene = bundle.getFile("scene.json")?.content ?? "";
+    const memBeh = bundle.getFile("behaviours.js")?.content ?? "";
+    const diskScene = diskBundle.getFile("scene.json")?.content ?? "";
+    const diskBeh = diskBundle.getFile("behaviours.js")?.content ?? "";
+    if (memScene === diskScene && memBeh === diskBeh) return bundle;
+
+    // Preserve image from in-memory if disk doesn't have one.
+    if (bundle.imageName !== null && diskBundle.imageName === null) {
+        const img = bundle.getBinaryFile(bundle.imageName);
+        if (img !== null) {
+            diskBundle.setBinaryFile(bundle.imageName, img.content, img.mimeType);
+            diskBundle.imageName = bundle.imageName;
+        }
+    }
+
+    // Persist disk version to IndexedDB. Suppress the mirror's
+    // push subscriber so we don't write back to disk what we
+    // just read.
+    suppressNextSaveEmit(diskBundle.name);
+    await saveScoreRecord(diskBundle.toRecord());
+    return diskBundle;
 }

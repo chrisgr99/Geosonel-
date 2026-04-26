@@ -82,6 +82,20 @@ const NO_IMAGE_FILL_COLOUR = "#404040";
 // source image's true resolution.
 const PIXEL_SAMPLE_SIZE = 1000;
 
+// Colours for selection markers and the marquee drag
+// rectangle. Marquees around selected objects are yellow
+// dotted squares per GeoSonix's convention; the marquee drag
+// rectangle (the one the user is dragging out across empty
+// canvas space) is a translucent grey region.
+const SELECTION_MARKER_COLOUR = "#ffd24a";
+const MARQUEE_DRAG_FILL = "rgba(220, 220, 220, 0.18)";
+const MARQUEE_DRAG_STROKE = "rgba(220, 220, 220, 0.5)";
+
+// Pixel distance the mouse must travel from mousedown before
+// a pending gesture transitions into a drag or marquee. Below
+// this, mousedown+mouseup is treated as a click.
+const DRAG_THRESHOLD_PX = 4;
+
 export class Canvas {
     /**
      * @param {HTMLElement} container  The element the canvas mounts into.
@@ -137,6 +151,47 @@ export class Canvas {
          */
         this._scene = null;
 
+        /**
+         * Active toolbar tool, or null if no creation tool is
+         * armed. When non-null the cursor is shown as a
+         * crosshair and a click on the canvas places a new
+         * object rather than performing selection.
+         * @type {string | null}
+         */
+        this._activeTool = null;
+        this._activeToolLocked = false;
+        /** @type {import("./toolbar.js").Toolbar | null} */
+        this._toolbar = null;
+        /** @type {((edit: any) => void) | null} */
+        this._editCallback = null;
+
+        /**
+         * Selection state, keyed by object kind. Each set
+         * holds indexes into the scene's matching array
+         * (sprites, triggers, curves). The sets are filtered
+         * to valid indexes whenever the scene is reloaded;
+         * a setScene where the new scene has the same array
+         * lengths preserves selection through move-style
+         * edits, while a delete or full reload prunes stale
+         * entries naturally.
+         * @type {{sprites: Set<number>, triggers: Set<number>, curves: Set<number>}}
+         */
+        this._selection = {
+            sprites: new Set(),
+            triggers: new Set(),
+            curves: new Set(),
+        };
+
+        /**
+         * Active mouse gesture, or null when nothing is in
+         * progress. Distinguishing kinds: "pending" (mousedown
+         * happened, waiting to see if it's a click or a drag),
+         * "drag" (moving objects), "marquee" (drawing a
+         * rubber-band rectangle to select).
+         * @type {any}
+         */
+        this._gesture = null;
+
         // Redraws are coalesced through requestAnimationFrame so
         // multiple triggers in the same frame (resize + zoom, say)
         // produce a single draw.
@@ -153,6 +208,7 @@ export class Canvas {
         this.canvasEl.addEventListener("wheel", (e) => this._onWheel(e), {
             passive: false,
         });
+        this.canvasEl.addEventListener("mousedown", (e) => this._onMouseDown(e));
 
         this._onResize();
     }
@@ -173,11 +229,30 @@ export class Canvas {
 
     /**
      * Set the scene to render, or pass null to render just the
-     * grid. Triggers a redraw.
+     * grid. Triggers a redraw. Selection is filtered to indexes
+     * that are still valid in the new scene; this lets a
+     * move-sprites edit (which preserves indexes) keep the
+     * user's selection across the consequent re-render, while
+     * a delete or full reload (which doesn't) prunes stale
+     * entries naturally.
      * @param {import("./scene.js").Scene | null} scene
      */
     setScene(scene) {
         this._scene = scene;
+        if (scene === null) {
+            this._selection = {
+                sprites: new Set(),
+                triggers: new Set(),
+                curves: new Set(),
+            };
+        } else {
+            this._selection = {
+                sprites: filterIndexSet(this._selection.sprites, scene.sprites.length),
+                triggers: filterIndexSet(this._selection.triggers, scene.triggers.length),
+                curves: filterIndexSet(this._selection.curves, scene.curves.length),
+            };
+        }
+        this._gesture = null;
         this.scheduleDraw();
     }
 
@@ -239,6 +314,81 @@ export class Canvas {
     /** @param {number} canvasY */
     toPixelY(canvasY) {
         return this.cssHeight / 2 - canvasY * this.pixelsPerUnit;
+    }
+
+    /** @param {number} pixelX */
+    fromPixelX(pixelX) {
+        return (pixelX - this.cssWidth / 2) / this.pixelsPerUnit;
+    }
+
+    /** @param {number} pixelY */
+    fromPixelY(pixelY) {
+        return -(pixelY - this.cssHeight / 2) / this.pixelsPerUnit;
+    }
+
+    // --- Toolbar / edit wiring ---
+
+    /**
+     * Attach a toolbar so the canvas can disarm it after
+     * single-shot placements.
+     * @param {import("./toolbar.js").Toolbar} toolbar
+     */
+    setToolbar(toolbar) {
+        this._toolbar = toolbar;
+    }
+
+    /**
+     * Subscribe to scene-edit and selection-change events.
+     * The callback receives a structured object with a kind
+     * field. See _onMouseUp for the event shapes.
+     * @param {(edit: any) => void} cb
+     */
+    setEditCallback(cb) {
+        this._editCallback = cb;
+    }
+
+    /**
+     * Update which tool, if any, is armed. Drives the cursor
+     * style and the click behaviour. Pass null to enter
+     * selection mode.
+     * @param {string | null} toolName
+     * @param {boolean} locked
+     */
+    setActiveTool(toolName, locked) {
+        this._activeTool = toolName;
+        this._activeToolLocked = locked;
+        this.canvasEl.style.cursor = toolName === null ? "default" : "crosshair";
+    }
+
+    /**
+     * Replace the current selection. Any kind not provided
+     * is left untouched; pass an empty array to clear that
+     * kind. Used by external host code to apply a selection
+     * decided elsewhere; internal gesture handling updates
+     * the sets directly.
+     * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} sel
+     */
+    setSelection(sel) {
+        if (sel.sprites !== undefined) this._selection.sprites = new Set(sel.sprites);
+        if (sel.triggers !== undefined) this._selection.triggers = new Set(sel.triggers);
+        if (sel.curves !== undefined) this._selection.curves = new Set(sel.curves);
+        this.scheduleDraw();
+    }
+
+    /**
+     * Snapshot of the current selection as plain arrays. Used
+     * by external host code (e.g. the Delete key handler) to
+     * read the selection without coupling to the internal Set
+     * representation. The returned arrays are independent
+     * copies; mutating them does not affect the canvas.
+     * @returns {{sprites: number[], triggers: number[], curves: number[]}}
+     */
+    getSelection() {
+        return {
+            sprites: Array.from(this._selection.sprites),
+            triggers: Array.from(this._selection.triggers),
+            curves: Array.from(this._selection.curves),
+        };
     }
 
     // --- Internals ---
@@ -308,13 +458,14 @@ export class Canvas {
         ctx.fillRect(0, 0, this.cssWidth, this.cssHeight);
 
         // Draw order: image as substrate, grid as reference
-        // overlay, scene elements on top as content. This way
-        // the composer can always see where agents are relative
-        // to the grid, while the image sits behind providing
-        // its scalar-field role.
+        // overlay, scene elements on top as content. Selection
+        // markers and the marquee rectangle sit on top so they
+        // remain visible against any underlying colour.
         this._drawImage();
         this._drawGrid();
         this._drawScene();
+        this._drawSelectionMarkers();
+        this._drawMarqueeRect();
 
         ctx.restore();
     }
@@ -498,6 +649,546 @@ export class Canvas {
             ctx.fill();
             ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
             ctx.stroke();
+        }
+    }
+
+    // --- Selection rendering ---
+
+    _drawSelectionMarkers() {
+        if (this._scene === null) return;
+        const sel = this._selection;
+        if (sel.sprites.size === 0 && sel.triggers.size === 0 && sel.curves.size === 0) return;
+
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.strokeStyle = SELECTION_MARKER_COLOUR;
+        ctx.setLineDash([3, 3]);
+
+        // Sprites — yellow dotted square slightly larger than
+        // the sprite's displayed disc.
+        ctx.lineWidth = 1;
+        const spriteScale = this._scene.spriteScale;
+        for (const i of sel.sprites) {
+            if (i >= this._scene.sprites.length) continue;
+            const s = this._scene.sprites[i];
+            const cx = this.toPixelX(s.x);
+            const cy = this.toPixelY(s.y);
+            const visualR = Math.max(4, (s.displayDiameter / 2) * spriteScale * this.pixelsPerUnit);
+            const half = visualR + 4;
+            ctx.strokeRect(
+                Math.round(cx - half) + 0.5,
+                Math.round(cy - half) + 0.5,
+                Math.round(half * 2),
+                Math.round(half * 2)
+            );
+        }
+
+        // Triggers — yellow dotted square slightly larger than
+        // the diamond's diagonal half-length.
+        const triggerScale = this._scene.triggerScale;
+        for (const i of sel.triggers) {
+            if (i >= this._scene.triggers.length) continue;
+            const t = this._scene.triggers[i];
+            const cx = this.toPixelX(t.x);
+            const cy = this.toPixelY(t.y);
+            const visualR = Math.max(3, t.size * triggerScale * this.pixelsPerUnit);
+            const half = visualR + 4;
+            ctx.strokeRect(
+                Math.round(cx - half) + 0.5,
+                Math.round(cy - half) + 0.5,
+                Math.round(half * 2),
+                Math.round(half * 2)
+            );
+        }
+
+        // Curves — yellow dotted rectangle around the curve's
+        // bounding box, sized just large enough to enclose the
+        // full geometry. Matches GeoSonix's convention of
+        // rectangular selection markers for curves; a marquee
+        // that hugs the geometry would be more informative
+        // about shape but is harder to recognise as a selection
+        // marker, and looks busy when several curves are
+        // selected.
+        ctx.lineWidth = 1;
+        for (const i of sel.curves) {
+            if (i >= this._scene.curves.length) continue;
+            const bbox = curveBoundingBox(this._scene.curves[i].shape);
+            if (bbox === null) continue;
+            const px1 = this.toPixelX(bbox.x1);
+            const px2 = this.toPixelX(bbox.x2);
+            // Canvas Y is up; pixel Y is down. The rectangle's
+            // top in pixel space corresponds to bbox.y2 (max y
+            // in canvas units).
+            const py1 = this.toPixelY(bbox.y2);
+            const py2 = this.toPixelY(bbox.y1);
+            const padding = 4;
+            ctx.strokeRect(
+                Math.round(px1 - padding) + 0.5,
+                Math.round(py1 - padding) + 0.5,
+                Math.round(px2 - px1 + padding * 2),
+                Math.round(py2 - py1 + padding * 2)
+            );
+        }
+
+        ctx.restore();
+    }
+
+    _drawMarqueeRect() {
+        if (this._gesture === null || this._gesture.kind !== "marquee") return;
+        const ctx = this.ctx;
+        const g = this._gesture;
+        const x1 = Math.min(g.startX, g.currentX);
+        const x2 = Math.max(g.startX, g.currentX);
+        const y1 = Math.min(g.startY, g.currentY);
+        const y2 = Math.max(g.startY, g.currentY);
+        // Convert to pixel space. Note canvas Y is up so
+        // higher-y corresponds to smaller pixel-y; the rect's
+        // top in pixel space is toPixelY(y2).
+        const px1 = this.toPixelX(x1);
+        const px2 = this.toPixelX(x2);
+        const py1 = this.toPixelY(y2);
+        const py2 = this.toPixelY(y1);
+        ctx.save();
+        ctx.fillStyle = MARQUEE_DRAG_FILL;
+        ctx.strokeStyle = MARQUEE_DRAG_STROKE;
+        ctx.lineWidth = 1;
+        ctx.fillRect(px1, py1, px2 - px1, py2 - py1);
+        ctx.strokeRect(
+            Math.round(px1) + 0.5,
+            Math.round(py1) + 0.5,
+            Math.round(px2 - px1),
+            Math.round(py2 - py1)
+        );
+        ctx.restore();
+    }
+
+    // --- Mouse events ---
+
+    /**
+     * Translate a MouseEvent into both pixel and canvas
+     * coordinates relative to this canvas's element.
+     * @param {MouseEvent} e
+     */
+    _eventToCanvas(e) {
+        const rect = this.canvasEl.getBoundingClientRect();
+        const px = e.clientX - rect.left;
+        const py = e.clientY - rect.top;
+        return {
+            px, py,
+            x: this.fromPixelX(px),
+            y: this.fromPixelY(py),
+        };
+    }
+
+    /**
+     * Find the topmost sprite under a canvas position, or
+     * null if no sprite is hit. Iterates back-to-front so the
+     * visually-topmost sprite (drawn last) wins ties.
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {number | null}
+     */
+    _hitTestSprite(canvasX, canvasY) {
+        if (this._scene === null) return null;
+        const scale = this._scene.spriteScale;
+        const ppu = this.pixelsPerUnit;
+        if (ppu === 0) return null;
+        for (let i = this._scene.sprites.length - 1; i >= 0; i--) {
+            const s = this._scene.sprites[i];
+            const dx = canvasX - s.x;
+            const dy = canvasY - s.y;
+            const dist = Math.hypot(dx, dy);
+            const visualR = (s.displayDiameter / 2) * scale;
+            // Add a small pixel-space buffer so small sprites
+            // are still selectable without pixel-perfect aim.
+            const hitR = visualR + 4 / ppu;
+            if (dist <= hitR) return i;
+        }
+        return null;
+    }
+
+    /**
+     * Find the topmost trigger under a canvas position, or
+     * null if none. Triggers are point objects displayed as
+     * diamonds; hit-tests as a circle inscribed by the
+     * diamond's diagonal half-length plus a small pixel
+     * buffer.
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {number | null}
+     */
+    _hitTestTrigger(canvasX, canvasY) {
+        if (this._scene === null) return null;
+        const scale = this._scene.triggerScale;
+        const ppu = this.pixelsPerUnit;
+        if (ppu === 0) return null;
+        for (let i = this._scene.triggers.length - 1; i >= 0; i--) {
+            const t = this._scene.triggers[i];
+            const dx = canvasX - t.x;
+            const dy = canvasY - t.y;
+            const dist = Math.hypot(dx, dy);
+            const visualR = t.size * scale;
+            const hitR = visualR + 4 / ppu;
+            if (dist <= hitR) return i;
+        }
+        return null;
+    }
+
+    /**
+     * Find the topmost curve under a canvas position, or
+     * null if none. The curve's geometry is sampled at a
+     * grid of points and the minimum pixel distance from the
+     * click is compared against a small threshold; this
+     * works uniformly across line, circle, and piste shapes
+     * without per-shape closed-form distance code.
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {number | null}
+     */
+    _hitTestCurve(canvasX, canvasY) {
+        if (this._scene === null) return null;
+        const ppu = this.pixelsPerUnit;
+        if (ppu === 0) return null;
+        const HIT_THRESHOLD_PX = 8;
+        const SAMPLES = 64;
+        for (let i = this._scene.curves.length - 1; i >= 0; i--) {
+            const curve = this._scene.curves[i];
+            for (let s = 0; s <= SAMPLES; s++) {
+                const t = s / SAMPLES;
+                const sample = sampleCurve(curve.shape, t);
+                if (sample === null) continue;
+                const dxPx = (canvasX - sample.x) * ppu;
+                const dyPx = (canvasY - sample.y) * ppu;
+                if (Math.hypot(dxPx, dyPx) <= HIT_THRESHOLD_PX) return i;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Hit test against all three object kinds. Returns the
+     * topmost object as { kind, index }, or null. Drawing
+     * order is curves (bottom), triggers, sprites (top); we
+     * test in reverse so the visually-topmost object wins
+     * ties.
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {{kind: "sprite"|"trigger"|"curve", index: number} | null}
+     */
+    _hitTestObject(canvasX, canvasY) {
+        const sIdx = this._hitTestSprite(canvasX, canvasY);
+        if (sIdx !== null) return { kind: "sprite", index: sIdx };
+        const tIdx = this._hitTestTrigger(canvasX, canvasY);
+        if (tIdx !== null) return { kind: "trigger", index: tIdx };
+        const cIdx = this._hitTestCurve(canvasX, canvasY);
+        if (cIdx !== null) return { kind: "curve", index: cIdx };
+        return null;
+    }
+
+    /**
+     * Get the selection set for a given object kind.
+     * @param {"sprite"|"trigger"|"curve"} kind
+     * @returns {Set<number>}
+     */
+    _setForKind(kind) {
+        if (kind === "sprite") return this._selection.sprites;
+        if (kind === "trigger") return this._selection.triggers;
+        return this._selection.curves;
+    }
+
+    /**
+     * Test whether a hit object is currently selected.
+     * @param {{kind: "sprite"|"trigger"|"curve", index: number}} hit
+     * @returns {boolean}
+     */
+    _isInSelection(hit) {
+        return this._setForKind(hit.kind).has(hit.index);
+    }
+
+    /**
+     * Toggle a hit object's membership in the selection.
+     * @param {{kind: "sprite"|"trigger"|"curve", index: number}} hit
+     */
+    _toggleInSelection(hit) {
+        const set = this._setForKind(hit.kind);
+        if (set.has(hit.index)) set.delete(hit.index);
+        else set.add(hit.index);
+    }
+
+    /**
+     * Replace the entire selection with just the given hit
+     * object.
+     * @param {{kind: "sprite"|"trigger"|"curve", index: number}} hit
+     */
+    _selectOnly(hit) {
+        this._selection = {
+            sprites: hit.kind === "sprite" ? new Set([hit.index]) : new Set(),
+            triggers: hit.kind === "trigger" ? new Set([hit.index]) : new Set(),
+            curves: hit.kind === "curve" ? new Set([hit.index]) : new Set(),
+        };
+    }
+
+    /**
+     * Fire a selectionChanged event with the current selection
+     * snapshot. No-op when no edit callback is connected.
+     */
+    _emitSelectionChanged() {
+        if (this._editCallback === null) return;
+        this._editCallback({
+            kind: "selectionChanged",
+            sprites: Array.from(this._selection.sprites),
+            triggers: Array.from(this._selection.triggers),
+            curves: Array.from(this._selection.curves),
+        });
+    }
+
+    /** @param {MouseEvent} e */
+    _onMouseDown(e) {
+        if (e.button !== 0) return;
+        const pos = this._eventToCanvas(e);
+
+        // Tool-armed mode: clicks place a new object instead of
+        // performing selection.
+        if (this._activeTool !== null) {
+            e.preventDefault();
+            if (this._editCallback !== null) {
+                if (this._activeTool === "sprite") {
+                    this._editCallback({
+                        kind: "addSprite",
+                        x: pos.x,
+                        y: pos.y,
+                    });
+                }
+            }
+            if (this._toolbar !== null) {
+                this._toolbar.afterPlacement();
+            }
+            return;
+        }
+
+        const hit = this._hitTestObject(pos.x, pos.y);
+        const wasSelected = hit !== null && this._isInSelection(hit);
+
+        this._gesture = {
+            kind: "pending",
+            startPx: pos.px,
+            startPy: pos.py,
+            startX: pos.x,
+            startY: pos.y,
+            hit,
+            wasSelected,
+            shiftKey: e.shiftKey,
+        };
+
+        const onMove = (/** @type {MouseEvent} */ moveE) => this._onMouseMove(moveE);
+        const onUp = (/** @type {MouseEvent} */ upE) => {
+            window.removeEventListener("mousemove", onMove);
+            window.removeEventListener("mouseup", onUp);
+            this._onMouseUp(upE);
+        };
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+    }
+
+    /** @param {MouseEvent} e */
+    _onMouseMove(e) {
+        if (this._gesture === null) return;
+        const pos = this._eventToCanvas(e);
+        const g = this._gesture;
+
+        if (g.kind === "pending") {
+            const dpx = pos.px - g.startPx;
+            const dpy = pos.py - g.startPy;
+            if ((dpx * dpx + dpy * dpy) < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+
+            // Threshold crossed. The gesture transitions into
+            // a drag (only when the hit object is a sprite —
+            // sprites are the only kind with a move pipeline
+            // wired up at this milestone) or a marquee (for
+            // empty space, triggers, and curves). Starting a
+            // marquee on a trigger or curve is unusual but
+            // not harmful: the rectangle anchors at the
+            // mousedown position and proceeds normally.
+            if (g.hit !== null && g.hit.kind === "sprite") {
+                let dragSet;
+                if (g.wasSelected) {
+                    // Drag the existing sprite selection
+                    // unchanged. Triggers and curves in the
+                    // selection remain selected but don't
+                    // move (no edit pipeline yet).
+                    dragSet = new Set(this._selection.sprites);
+                } else {
+                    // Replace selection with this one sprite,
+                    // then drag it.
+                    dragSet = new Set([g.hit.index]);
+                    this._selection = {
+                        sprites: new Set(dragSet),
+                        triggers: new Set(),
+                        curves: new Set(),
+                    };
+                    this._emitSelectionChanged();
+                }
+                /** @type {Map<number, {x: number, y: number}>} */
+                const initialPositions = new Map();
+                if (this._scene !== null) {
+                    for (const idx of dragSet) {
+                        if (idx < this._scene.sprites.length) {
+                            const s = this._scene.sprites[idx];
+                            initialPositions.set(idx, { x: s.x, y: s.y });
+                        }
+                    }
+                }
+                this._gesture = {
+                    kind: "drag",
+                    startX: g.startX,
+                    startY: g.startY,
+                    dragSet,
+                    initialPositions,
+                };
+            } else {
+                this._gesture = {
+                    kind: "marquee",
+                    startX: g.startX,
+                    startY: g.startY,
+                    currentX: pos.x,
+                    currentY: pos.y,
+                    shiftKey: g.shiftKey,
+                };
+            }
+            this.scheduleDraw();
+            return;
+        }
+
+        if (g.kind === "drag") {
+            const dx = pos.x - g.startX;
+            const dy = pos.y - g.startY;
+            if (this._scene !== null) {
+                for (const [idx, init] of g.initialPositions) {
+                    if (idx < this._scene.sprites.length) {
+                        this._scene.sprites[idx].x = init.x + dx;
+                        this._scene.sprites[idx].y = init.y + dy;
+                    }
+                }
+            }
+            this.scheduleDraw();
+            return;
+        }
+
+        if (g.kind === "marquee") {
+            g.currentX = pos.x;
+            g.currentY = pos.y;
+            this.scheduleDraw();
+            return;
+        }
+    }
+
+    /** @param {MouseEvent} e */
+    _onMouseUp(e) {
+        if (this._gesture === null) return;
+        const g = this._gesture;
+        this._gesture = null;
+
+        if (g.kind === "pending") {
+            // Mousedown + mouseup with no movement past the
+            // threshold — treat as a click on whatever was hit
+            // (or on empty space).
+            if (g.hit !== null) {
+                if (g.shiftKey) {
+                    this._toggleInSelection(g.hit);
+                } else {
+                    this._selectOnly(g.hit);
+                }
+            } else if (!g.shiftKey) {
+                // Plain click on empty space clears everything.
+                // Shift+click on empty space leaves selection alone.
+                this._selection = {
+                    sprites: new Set(),
+                    triggers: new Set(),
+                    curves: new Set(),
+                };
+            }
+            this.scheduleDraw();
+            this._emitSelectionChanged();
+            return;
+        }
+
+        if (g.kind === "drag") {
+            if (this._editCallback !== null && this._scene !== null) {
+                /** @type {Map<number, {x: number, y: number}>} */
+                const positions = new Map();
+                for (const idx of g.dragSet) {
+                    if (idx < this._scene.sprites.length) {
+                        const s = this._scene.sprites[idx];
+                        positions.set(idx, { x: s.x, y: s.y });
+                    }
+                }
+                this._editCallback({ kind: "moveSprites", positions });
+            }
+            return;
+        }
+
+        if (g.kind === "marquee") {
+            const x1 = Math.min(g.startX, g.currentX);
+            const x2 = Math.max(g.startX, g.currentX);
+            const y1 = Math.min(g.startY, g.currentY);
+            const y2 = Math.max(g.startY, g.currentY);
+            /** @type {Set<number>} */
+            const enclosedSprites = new Set();
+            /** @type {Set<number>} */
+            const enclosedTriggers = new Set();
+            /** @type {Set<number>} */
+            const enclosedCurves = new Set();
+            if (this._scene !== null) {
+                // Sprites and triggers: centre inside rect.
+                for (let i = 0; i < this._scene.sprites.length; i++) {
+                    const s = this._scene.sprites[i];
+                    if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2) {
+                        enclosedSprites.add(i);
+                    }
+                }
+                for (let i = 0; i < this._scene.triggers.length; i++) {
+                    const t = this._scene.triggers[i];
+                    if (t.x >= x1 && t.x <= x2 && t.y >= y1 && t.y <= y2) {
+                        enclosedTriggers.add(i);
+                    }
+                }
+                // Curves: any sample point inside rect, so a
+                // marquee that touches any portion of the
+                // curve grabs it. More forgiving than
+                // requiring the whole curve to be enclosed,
+                // which would make selection of long curves
+                // awkward.
+                const SAMPLES = 32;
+                for (let i = 0; i < this._scene.curves.length; i++) {
+                    const curve = this._scene.curves[i];
+                    let touched = false;
+                    for (let s = 0; s <= SAMPLES; s++) {
+                        const t = s / SAMPLES;
+                        const sample = sampleCurve(curve.shape, t);
+                        if (sample === null) continue;
+                        if (sample.x >= x1 && sample.x <= x2 && sample.y >= y1 && sample.y <= y2) {
+                            touched = true;
+                            break;
+                        }
+                    }
+                    if (touched) enclosedCurves.add(i);
+                }
+            }
+            if (g.shiftKey) {
+                // Add to existing selection.
+                for (const i of enclosedSprites) this._selection.sprites.add(i);
+                for (const i of enclosedTriggers) this._selection.triggers.add(i);
+                for (const i of enclosedCurves) this._selection.curves.add(i);
+            } else {
+                this._selection = {
+                    sprites: enclosedSprites,
+                    triggers: enclosedTriggers,
+                    curves: enclosedCurves,
+                };
+            }
+            this.scheduleDraw();
+            this._emitSelectionChanged();
+            return;
         }
     }
 
@@ -755,6 +1446,65 @@ function pixelPerpendicularUnit(tx, ty) {
     const len = Math.hypot(tx, ty);
     if (len === 0) return { x: 0, y: 0 };
     return { x: ty / len, y: tx / len };
+}
+
+/**
+ * Compute the axis-aligned bounding box of a curve shape in
+ * canvas units, or null when the shape is degenerate or not
+ * yet implemented (bezier, helice). Used for selection-marker
+ * rendering: the box is drawn just large enough to enclose
+ * the full geometry.
+ *
+ * @param {import("./scene.js").CurveShape} shape
+ * @returns {{x1: number, y1: number, x2: number, y2: number} | null}
+ */
+function curveBoundingBox(shape) {
+    if (shape.type === "line") {
+        return {
+            x1: Math.min(shape.x1, shape.x2),
+            y1: Math.min(shape.y1, shape.y2),
+            x2: Math.max(shape.x1, shape.x2),
+            y2: Math.max(shape.y1, shape.y2),
+        };
+    }
+    if (shape.type === "circle") {
+        return {
+            x1: shape.cx - shape.r,
+            y1: shape.cy - shape.r,
+            x2: shape.cx + shape.r,
+            y2: shape.cy + shape.r,
+        };
+    }
+    if (shape.type === "piste") {
+        const pts = shape.points;
+        if (pts.length === 0) return null;
+        let minX = pts[0][0], maxX = pts[0][0];
+        let minY = pts[0][1], maxY = pts[0][1];
+        for (let i = 1; i < pts.length; i++) {
+            if (pts[i][0] < minX) minX = pts[i][0];
+            if (pts[i][0] > maxX) maxX = pts[i][0];
+            if (pts[i][1] < minY) minY = pts[i][1];
+            if (pts[i][1] > maxY) maxY = pts[i][1];
+        }
+        return { x1: minX, y1: minY, x2: maxX, y2: maxY };
+    }
+    return null;
+}
+
+/**
+ * Filter a set of array indexes to those still in range.
+ * Used by setScene to prune selection entries that point
+ * past the end of a scene's arrays after a reload.
+ * @param {Set<number>} set
+ * @param {number} max
+ * @returns {Set<number>}
+ */
+function filterIndexSet(set, max) {
+    const result = new Set();
+    for (const i of set) {
+        if (i < max) result.add(i);
+    }
+    return result;
 }
 
 /**

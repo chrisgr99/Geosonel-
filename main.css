@@ -771,3 +771,130 @@ body.focus-canvas #canvas-pane {
     margin-top: 4px;
     line-height: 1.35;
 }
+
+/* --- Settings: Storage category --- */
+
+.settings-storage-intro {
+    margin-top: 0;
+    margin-bottom: 16px;
+    line-height: 1.4;
+}
+
+.settings-storage-status {
+    background-color: #242424;
+    border: 1px solid #555555;
+    padding: 12px;
+    border-radius: 3px;
+}
+
+.settings-storage-folder {
+    color: #f0f0f0;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 13pt;
+    word-break: break-all;
+    margin-top: 4px;
+}
+
+.settings-storage-folder-empty {
+    color: #808080;
+    font-style: italic;
+    font-family: inherit;
+}
+
+.settings-storage-state {
+    color: #a0a0a0;
+    font-size: 12pt;
+    margin-top: 6px;
+}
+
+.settings-storage-buttons {
+    display: flex;
+    gap: 8px;
+    margin: 14px 0;
+    flex-wrap: wrap;
+}
+
+/* --- Canvas toolbar --- */
+
+/* Horizontal strip across the top of the canvas pane that
+ * holds object-creation tool buttons. Sits above the canvas
+ * area so the canvas itself shrinks to make room for it.
+ * Background matches the editor pane's tab bar so the toolbar
+ * reads as a sibling chrome strip rather than as content. */
+#canvas-toolbar {
+    flex: 0 0 auto;
+    height: 40px;
+    background-color: #141414;
+    border-bottom: 1px solid #555555;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+}
+
+/* Tool button: square, icon-only, three states (idle, armed,
+ * locked). Idle uses a clearly visible mid-tone outline so
+ * the button reads as interactive even before the user
+ * hovers. Hover bumps the outline brighter still and adds a
+ * subtle background shift. Armed and locked share the green
+ * accent the wordmark uses; locked is heavier than armed so
+ * it reads as a more committed state. The icon colour
+ * follows currentColor so SVGs change tone with state
+ * without needing per-state assets. */
+.toolbar-tool {
+    width: 32px;
+    height: 32px;
+    background-color: #2a2a2a;
+    border: 1px solid #888888;
+    border-radius: 3px;
+    color: #c0c0c0;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.toolbar-tool:hover {
+    background-color: #3a3a3a;
+    border-color: #c8c8c8;
+    color: #f0f0f0;
+}
+
+.toolbar-tool:focus {
+    outline: none;
+    border-color: #c8c8c8;
+}
+
+/* While the mouse button is held down on a toolbar button,
+ * preview the armed-state green so the user sees the click
+ * landing. After mouseup, the toolbar's own state machine
+ * decides whether to actually arm or lock the tool, and the
+ * .toolbar-tool-armed / .toolbar-tool-locked classes take
+ * over from there — :active just bridges the gap so the
+ * click never feels unacknowledged. Higher specificity than
+ * the armed/locked classes means a click on an already-armed
+ * or locked tool also flashes; that's fine, the visual still
+ * reads as a meaningful click. */
+.toolbar-tool:active {
+    background-color: #1f3a25;
+    border-color: #00ff33;
+    color: #d8f5d8;
+    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+}
+
+.toolbar-tool-armed {
+    background-color: #1f3a25;
+    border-color: #00ff33;
+    color: #d8f5d8;
+    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+}
+
+.toolbar-tool-locked {
+    background-color: #1f3a25;
+    border-color: #00ff33;
+    border-width: 2px;
+    color: #ffffff;
+    box-shadow: 0 0 8px rgba(0, 255, 51, 0.6) inset, 0 0 6px rgba(0, 255, 51, 0.4);
+}

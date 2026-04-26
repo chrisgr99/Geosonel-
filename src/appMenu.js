@@ -20,12 +20,23 @@ import { openAboutDialog } from "./aboutDialog.js";
 import { openSettingsDialog } from "./settingsDialog.js";
 import { APP_NAME } from "./version.js";
 
-export function installAppMenu() {
+/**
+ * @typedef {Object} AppMenuContext
+ * @property {import("./diskMirror.js").DiskMirror} diskMirror
+ * @property {import("./messages.js").MessageArea} messages
+ */
+
+/**
+ * @param {AppMenuContext} ctx
+ */
+export function installAppMenu(ctx) {
     const appItem = findMenuItem(APP_NAME);
     if (appItem === null) {
         console.error(`GXW: ${APP_NAME} menu item not found.`);
         return;
     }
+
+    const settingsCtx = { diskMirror: ctx.diskMirror, messages: ctx.messages };
 
     const dropdown = buildDropdown([
         {
@@ -36,7 +47,7 @@ export function installAppMenu() {
         {
             label: "Settings\u2026",
             shortcut: "\u2318,",
-            action: () => openSettingsDialog(),
+            action: () => openSettingsDialog(settingsCtx),
         },
     ]);
 
@@ -52,7 +63,7 @@ export function installAppMenu() {
         if (!meta) return;
         if (e.key === ",") {
             e.preventDefault();
-            openSettingsDialog();
+            openSettingsDialog(settingsCtx);
         }
     });
 }

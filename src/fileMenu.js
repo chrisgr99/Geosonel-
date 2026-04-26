@@ -29,6 +29,7 @@ import {
  * @property {ScoreSession} session
  * @property {MessageArea} messages
  * @property {ImageImporter} imageImporter
+ * @property {import("./diskMirror.js").DiskMirror} diskMirror
  */
 
 /**
@@ -94,8 +95,52 @@ export function installFileMenu(ctx) {
             label: "Restore Scores from Backup\u2026",
             action: () => actionRestoreFromBackup(actionCtx),
         },
+        { separator: true },
+        {
+            label: "Reload Score from Disk",
+            action: () => actionReloadFromDisk(ctx),
+        },
     ]);
 
     document.body.appendChild(dropdown);
     wireDropdown(fileItem, dropdown);
+}
+
+/**
+ * Manually pull the current score's files from disk and load
+ * them into the editor. The polling watcher already does this
+ * automatically when external changes are detected, but this
+ * action gives the user explicit control — useful when the
+ * watcher missed something or when the user knows the AI
+ * just finished editing and doesn't want to wait the polling
+ * interval.
+ * @param {FileMenuContext} ctx
+ */
+async function actionReloadFromDisk(ctx) {
+    const status = ctx.diskMirror.getStatus();
+    if (!status.hasFolder) {
+        ctx.messages.write(
+            "Disk mirroring isn't configured. Open Settings to choose a folder.",
+            "error"
+        );
+        return;
+    }
+    if (!status.enabled) {
+        ctx.messages.write(
+            "Disk mirroring is paused. Resume it in Settings to reload from disk.",
+            "error"
+        );
+        return;
+    }
+    const name = ctx.session.bundle.name;
+    const bundle = await ctx.diskMirror.pullBundle(name);
+    if (bundle === null) {
+        ctx.messages.write(
+            `No score named "${name}" found on disk, or its files couldn't be read.`,
+            "error"
+        );
+        return;
+    }
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Reloaded "${name}" from disk.`);
 }

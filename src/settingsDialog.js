@@ -1,16 +1,20 @@
 /**
  * Settings dialog.
  *
- * Opens a modal with a left-side category list and a right-side
- * panel showing the controls for the selected category. Each
- * preference is rendered from its schema entry in
- * src/preferences.js \u2014 type, bounds, default, label, and
- * description \u2014 so adding a new setting requires only adding
- * an entry there, not editing this file.
+ * Two kinds of categories:
+ *
+ *   1. Schema-driven: each preference in src/preferences.js
+ *      lives in a category, and renders as a labelled control
+ *      whose type comes from the schema. Adding a new schema
+ *      preference automatically appears here.
+ *
+ *   2. Custom: hard-coded categories with their own render
+ *      function, used for things that don't fit the simple
+ *      schema (Storage, with its folder picker and disk-mirror
+ *      state, is the only one currently).
  *
  * Values save on every change; there is no Apply or OK. The
- * dialog dismisses on Escape, click-outside, or the Close
- * button.
+ * dialog dismisses on Escape, click-outside, or Close.
  */
 
 // @ts-check
@@ -21,29 +25,31 @@ import {
     getPreference,
     setPreference,
 } from "./preferences.js";
+import { loadAllScoreRecords } from "./storage.js";
 
-export function openSettingsDialog() {
+/**
+ * @typedef {{ kind: "schema", name: string, defs: import("./preferences.js").PreferenceDef[] }
+ *         | { kind: "custom", name: string, render: (panel: HTMLElement) => void }} CategoryEntry
+ */
+
+/**
+ * @typedef {Object} SettingsContext
+ * @property {import("./diskMirror.js").DiskMirror} diskMirror
+ * @property {import("./messages.js").MessageArea} messages
+ */
+
+/**
+ * Open the Settings dialog.
+ * @param {SettingsContext} ctx
+ */
+export function openSettingsDialog(ctx) {
     const handle = openDialog({ title: "Settings", width: "640px" });
     const body = handle.body;
     body.classList.add("settings-body");
 
-    // Bucket preferences by category, preserving the schema's
-    // declaration order within each bucket.
-    /** @type {Map<string, import("./preferences.js").PreferenceDef[]>} */
-    const byCategory = new Map();
-    for (const def of PREFERENCES) {
-        const cat = def.category ?? "Display";
-        let bucket = byCategory.get(cat);
-        if (bucket === undefined) {
-            bucket = [];
-            byCategory.set(cat, bucket);
-        }
-        bucket.push(def);
-    }
-    const categories = Array.from(byCategory.keys());
+    /** @type {CategoryEntry[]} */
+    const categories = buildCategories(ctx);
 
-    // Layout: a two-column flex with category list on the left
-    // and a panel of controls on the right.
     const layout = document.createElement("div");
     layout.className = "settings-layout";
     body.appendChild(layout);
@@ -57,13 +63,16 @@ export function openSettingsDialog() {
     panel.className = "settings-panel";
     layout.appendChild(panel);
 
-    let activeCategory = categories[0];
+    let active = categories[0];
 
     const renderPanel = () => {
         panel.innerHTML = "";
-        const defs = byCategory.get(activeCategory) ?? [];
-        for (const def of defs) {
-            panel.appendChild(makeFieldRow(def));
+        if (active.kind === "schema") {
+            for (const def of active.defs) {
+                panel.appendChild(makeFieldRow(def));
+            }
+        } else {
+            active.render(panel);
         }
     };
 
@@ -72,11 +81,11 @@ export function openSettingsDialog() {
         item.className = "settings-category";
         item.setAttribute("role", "tab");
         item.setAttribute("tabindex", "0");
-        item.textContent = cat;
-        if (cat === activeCategory) item.classList.add("selected");
+        item.textContent = cat.name;
+        if (cat === active) item.classList.add("selected");
 
         const select = () => {
-            activeCategory = cat;
+            active = cat;
             for (const sib of sidebar.children) {
                 if (sib instanceof HTMLElement) sib.classList.remove("selected");
             }
@@ -97,6 +106,38 @@ export function openSettingsDialog() {
     renderPanel();
 
     body.appendChild(makeButtonRow(handle));
+}
+
+/**
+ * Build the list of categories: schema-driven from PREFERENCES,
+ * plus the custom Storage category at the end.
+ * @param {SettingsContext} ctx
+ * @returns {CategoryEntry[]}
+ */
+function buildCategories(ctx) {
+    /** @type {Map<string, import("./preferences.js").PreferenceDef[]>} */
+    const byName = new Map();
+    for (const def of PREFERENCES) {
+        const cat = def.category ?? "Display";
+        let bucket = byName.get(cat);
+        if (bucket === undefined) {
+            bucket = [];
+            byName.set(cat, bucket);
+        }
+        bucket.push(def);
+    }
+
+    /** @type {CategoryEntry[]} */
+    const result = [];
+    for (const [name, defs] of byName) {
+        result.push({ kind: "schema", name, defs });
+    }
+    result.push({
+        kind: "custom",
+        name: "Storage",
+        render: (panel) => renderStoragePanel(panel, ctx),
+    });
+    return result;
 }
 
 /**
@@ -132,7 +173,6 @@ function makeFieldRow(def) {
 }
 
 /**
- * Build the input control for a preference definition.
  * @param {import("./preferences.js").PreferenceDef} def
  * @returns {HTMLElement | null}
  */
@@ -145,8 +185,6 @@ function makeControl(def) {
         if (def.max !== undefined) input.max = String(def.max);
         if (def.step !== undefined) input.step = String(def.step);
         input.value = String(getPreference(def.key));
-        // Save on every change, both for arrow-keys (input) and
-        // for direct typing followed by blur (change).
         input.addEventListener("input", () => {
             const n = parseFloat(input.value);
             if (Number.isFinite(n)) setPreference(def.key, n);
@@ -176,6 +214,183 @@ function makeControl(def) {
         return input;
     }
     return null;
+}
+
+/**
+ * Render the Storage category, which controls the disk-mirror
+ * folder choice. Has its own UI because it isn't a simple
+ * scalar value \u2014 it's a folder handle plus a few status bits.
+ *
+ * @param {HTMLElement} panel
+ * @param {SettingsContext} ctx
+ */
+function renderStoragePanel(panel, ctx) {
+    const mirror = ctx.diskMirror;
+
+    // Header explaining the feature, since this is the first
+    // time most users will encounter it.
+    const intro = document.createElement("div");
+    intro.className = "settings-description settings-storage-intro";
+    intro.textContent =
+        "Mirror your scores to a folder on disk so AI assistants " +
+        "(like Claude Desktop's filesystem MCP) can read and edit " +
+        "them. Changes made to the files on disk are picked up by " +
+        "GXW within a second or two.";
+    panel.appendChild(intro);
+
+    // Status row: folder name and current state.
+    const statusRow = document.createElement("div");
+    statusRow.className = "settings-row settings-storage-status";
+    panel.appendChild(statusRow);
+
+    const renderStatus = () => {
+        const status = mirror.getStatus();
+        statusRow.innerHTML = "";
+
+        const labelEl = document.createElement("div");
+        labelEl.className = "settings-label";
+        labelEl.textContent = "GXW Working Storage Folder";
+        statusRow.appendChild(labelEl);
+
+        const valueEl = document.createElement("div");
+        valueEl.className = "settings-storage-folder";
+        if (status.folderName === null) {
+            valueEl.textContent = "(not connected)";
+            valueEl.classList.add("settings-storage-folder-empty");
+        } else {
+            valueEl.textContent = status.folderName;
+        }
+        statusRow.appendChild(valueEl);
+
+        const stateEl = document.createElement("div");
+        stateEl.className = "settings-storage-state";
+        if (!status.hasFolder) {
+            stateEl.textContent = "Not configured.";
+        } else if (!status.enabled) {
+            stateEl.textContent = "Folder chosen but mirroring is paused.";
+        } else {
+            stateEl.textContent = "Mirroring active.";
+        }
+        statusRow.appendChild(stateEl);
+    };
+    renderStatus();
+    const unsubscribe = mirror.subscribeStatus(renderStatus);
+    // The dialog HTML is removed when the user closes it, but
+    // the subscription would leak. We can't easily hook into
+    // the dialog's close event from here, so we bound the
+    // subscription's lifetime to the panel's connection state
+    // via MutationObserver.
+    const observer = new MutationObserver(() => {
+        if (!document.body.contains(panel)) {
+            unsubscribe();
+            observer.disconnect();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Action buttons.
+    const buttonRow = document.createElement("div");
+    buttonRow.className = "settings-storage-buttons";
+    panel.appendChild(buttonRow);
+
+    const chooseBtn = document.createElement("button");
+    chooseBtn.className = "modal-button modal-button-primary";
+    chooseBtn.textContent = "Choose Folder\u2026";
+    chooseBtn.addEventListener("click", async () => {
+        try {
+            await mirror.chooseFolder("GXW Working Storage");
+            ctx.messages.write(`Mirroring scores to "${mirror.getStatus().folderName}".`);
+        } catch (err) {
+            // AbortError is the user dismissing the picker;
+            // not an error worth surfacing.
+            if (err instanceof Error && err.name !== "AbortError") {
+                ctx.messages.write(`Could not choose folder: ${err.message}`, "error");
+            }
+        }
+    });
+    buttonRow.appendChild(chooseBtn);
+
+    const pauseBtn = document.createElement("button");
+    pauseBtn.className = "modal-button";
+    const refreshPauseBtn = () => {
+        const s = mirror.getStatus();
+        if (!s.hasFolder) {
+            pauseBtn.textContent = "Pause";
+            pauseBtn.disabled = true;
+        } else if (s.enabled) {
+            pauseBtn.textContent = "Pause";
+            pauseBtn.disabled = false;
+        } else {
+            pauseBtn.textContent = "Resume";
+            pauseBtn.disabled = false;
+        }
+    };
+    refreshPauseBtn();
+    mirror.subscribeStatus(refreshPauseBtn);
+    pauseBtn.addEventListener("click", async () => {
+        const s = mirror.getStatus();
+        await mirror.setEnabled(!s.enabled);
+        ctx.messages.write(
+            mirror.getStatus().enabled
+                ? "Disk mirroring resumed."
+                : "Disk mirroring paused (folder remembered)."
+        );
+    });
+    buttonRow.appendChild(pauseBtn);
+
+    const disconnectBtn = document.createElement("button");
+    disconnectBtn.className = "modal-button";
+    disconnectBtn.textContent = "Disconnect";
+    const refreshDisconnectBtn = () => {
+        disconnectBtn.disabled = !mirror.getStatus().hasFolder;
+    };
+    refreshDisconnectBtn();
+    mirror.subscribeStatus(refreshDisconnectBtn);
+    disconnectBtn.addEventListener("click", async () => {
+        await mirror.disconnect();
+        ctx.messages.write("Disk mirroring disconnected.");
+    });
+    buttonRow.appendChild(disconnectBtn);
+
+    // Push All button: writes every score from IndexedDB out
+    // to disk. Useful for first-time setup so existing scores
+    // are immediately available to AI tools without having to
+    // open and save each one.
+    const pushAllBtn = document.createElement("button");
+    pushAllBtn.className = "modal-button";
+    pushAllBtn.textContent = "Push All Scores to Disk";
+    const refreshPushAllBtn = () => {
+        const s = mirror.getStatus();
+        pushAllBtn.disabled = !s.ready;
+    };
+    refreshPushAllBtn();
+    mirror.subscribeStatus(refreshPushAllBtn);
+    pushAllBtn.addEventListener("click", async () => {
+        try {
+            const records = await loadAllScoreRecords();
+            for (const record of records) {
+                await mirror.pushRecord(record);
+            }
+            ctx.messages.write(
+                `Pushed ${records.length} score${records.length === 1 ? "" : "s"} to disk.`
+            );
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            ctx.messages.write(`Could not push scores to disk: ${msg}`, "error");
+        }
+    });
+    buttonRow.appendChild(pushAllBtn);
+
+    // Help text below buttons.
+    const help = document.createElement("div");
+    help.className = "settings-description";
+    help.textContent =
+        "Choosing a folder grants GXW permission to read and write " +
+        "in it. The folder's contents are managed by GXW \u2014 each " +
+        "score becomes a subfolder containing scene.json and " +
+        "behaviours.js. Disconnecting just forgets the folder; the " +
+        "files on disk are left in place.";
+    panel.appendChild(help);
 }
 
 /**

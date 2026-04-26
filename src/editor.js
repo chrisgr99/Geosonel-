@@ -277,6 +277,54 @@ export class TabbedEditor {
     }
 
     /**
+     * Re-read the bundle's text-file contents into the editor
+     * without changing the active tab. Used when something
+     * outside the editor (e.g. a disk-mirror external-change
+     * detection) has already updated the bundle's in-memory
+     * file contents and we just need the visible editor view
+     * to catch up. Clears dirty since the bundle and the on-
+     * disk content are now in sync by construction.
+     */
+    reloadFromBundle() {
+        this._renderTabs();
+        const stillExists = this.activeName !== null &&
+            this.bundle.getFile(this.activeName) !== null;
+        if (stillExists) {
+            this.selectTab(/** @type {string} */ (this.activeName));
+        } else if (this.bundle.textFiles.length > 0) {
+            this.selectTab(this.bundle.textFiles[0].name);
+        }
+        this._setDirty(false);
+    }
+
+    /**
+     * Sync the active tab's CodeMirror document with whatever
+     * is currently in the bundle, then mark the editor dirty.
+     * Used when canvas-driven edits (Add Sprite, drag-to-move)
+     * mutate scene.json out from under the editor: the editor
+     * needs to show the new content, and the bundle needs to
+     * reflect that there are unsaved changes the user can
+     * Cmd-S out to disk. The non-active tab's content lives
+     * only in the bundle until the user switches to it; that's
+     * fine since selectTab pulls from the bundle each time.
+     */
+    refreshActiveTabFromBundle() {
+        if (this.activeName === null || this.view === null) return;
+        const file = this.bundle.getFile(this.activeName);
+        if (file === null) return;
+        this._suppressDirty = true;
+        this.view.dispatch({
+            changes: {
+                from: 0,
+                to: this.view.state.doc.length,
+                insert: file.content,
+            },
+        });
+        this._suppressDirty = false;
+        this._setDirty(true);
+    }
+
+    /**
      * Get the current content of a named text file in the
      * bundle — reflects any in-flight edits, since updateContent
      * keeps the bundle in sync on every change even though
