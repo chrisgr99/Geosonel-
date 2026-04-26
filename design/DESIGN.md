@@ -7,15 +7,15 @@ Naming: GXW is the web-based successor to GeoSonix. The W stands for Web. The pr
 
 Revision v2.2 documents several changes that have accumulated since v2.1.
 
-The bundle file layout was split: a score's data and its behaviour now live in two files — scene.json (declarative data: piece-level parameters plus arrays of curves, triggers, and sprites with their declarative properties) and behaviours.js (named JavaScript functions referenced from scene.json by name). The scene loader stitches them together at run time. This split makes scenes editable through structured tooling — a property inspector, AI assistants operating on JSON, a graphical editor — without competing with the JavaScript editor for the same source. See Sections 14 and 15.
+The bundle file layout was split: a score's data and its behaviour now live in two files — scene.json (declarative data: piece-level parameters plus arrays of curves, triggers, and sprites with their declarative properties) and behaviours.js (named JavaScript functions referenced from scene.json by name). The scene loader stitches them together at run time. This split makes scenes editable through structured tooling — a property inspector, AI assistants operating on JSON, a graphical editor — without competing with the JavaScript editor for the same source. See Sections 14 and 16.
 
 Direct manipulation of the scene through a canvas toolbar arrived. A toolbar above the canvas exposes object-creation tools (Add Sprite at this milestone, with Add Trigger and the curve-shape tools to follow), and the canvas itself supports selection (click, shift-click, marquee) across all three object kinds, drag-to-move for sprites, and Delete-key removal across all kinds. Canvas edits flow through scene.json text mutations that respect the existing explicit-save model. See Section 13.
 
-Disk mirroring (the v2.1-era attempt to make scores accessible to AI assistants via a folder on disk that polls for external changes) is now deprecated. The browser permission lifecycle proved too fragile to rely on, the File System Access API doesn't expose absolute paths to assistants, and the round-trip introduced subtle bugs. The code is preserved unchanged but is not actively recommended; the Settings → Storage panel still exposes the controls for users who want to opt in. The future direction for AI authoring is an embedded API key letting Claude operate on score state through the same in-memory pipeline the toolbar and inspector use, eliminating the disk hop entirely. See Section 24.
+Disk mirroring (the v2.1-era attempt to make scores accessible to AI assistants via a folder on disk that polls for external changes) is now deprecated. The browser permission lifecycle proved too fragile to rely on, the File System Access API doesn't expose absolute paths to assistants, and the round-trip introduced subtle bugs. The code is preserved unchanged but is not actively recommended; the Settings → Storage panel still exposes the controls for users who want to opt in. The successor in the v2.3 milestone window is the AI Handoff feature: a simpler user-controlled export-and-reload mechanism for sharing the current score with Claude through a configured folder. The longer-term direction beyond v2.3 is an embedded API key letting Claude operate on score state through the same in-memory pipeline the toolbar and inspector use, eliminating the disk hop entirely. See Section 15 for the AI Handoff design and Section 25 question 17 for the embedded-API-key direction.
 
 Underlying revisions v2.0 and v2.1 remain in effect: the three-object model (Curves, Triggers, Sprites) and the Mover-to-Sprite renaming. No conceptual changes to the object model in v2.2.
 
-The underlying v2.0 rework remains in effect: a substantial reshaping of the object model following detailed comparison with both GeoMaestro and GeoSonix. The v1.0 split between Projectors and Movers has been replaced by a three-object model — Curves, Triggers, and Sprites — that better reflects the compositional vocabulary the composer actually uses. Several v1.0 concepts have been removed or folded in: the separate Projector type, the separate Cursor object, the Distortion Function as a first-class concept, and the cross-paradigm BeatPattern resource. The GeoMaestro projector capability is preserved through the Curve's extended cursor; distortion behavior lives in the Curve's sweep function. See Section 23 for the discussion of what survived from each parent system and why.
+The underlying v2.0 rework remains in effect: a substantial reshaping of the object model following detailed comparison with both GeoMaestro and GeoSonix. The v1.0 split between Projectors and Movers has been replaced by a three-object model — Curves, Triggers, and Sprites — that better reflects the compositional vocabulary the composer actually uses. Several v1.0 concepts have been removed or folded in: the separate Projector type, the separate Cursor object, the Distortion Function as a first-class concept, and the cross-paradigm BeatPattern resource. The GeoMaestro projector capability is preserved through the Curve's extended cursor; distortion behavior lives in the Curve's sweep function. See Section 24 for the discussion of what survived from each parent system and why.
 
 ---
 
@@ -35,16 +35,17 @@ The underlying v2.0 rework remains in effect: a substantial reshaping of the obj
 - [Section 12 — Phrases and the Compositor](#section-12--phrases-and-the-compositor)
 - [Section 13 — User Interface](#section-13--user-interface)
 - [Section 14 — Authoring Workflow](#section-14--authoring-workflow)
-- [Section 15 — Score Bundle](#section-15--score-bundle)
-- [Section 16 — Version Management via Git](#section-16--version-management-via-git)
-- [Section 17 — Auto-Reload](#section-17--auto-reload)
-- [Section 18 — Audio and MIDI Output](#section-18--audio-and-midi-output)
-- [Section 19 — Implementation](#section-19--implementation)
-- [Section 20 — Canvas Coordinate System](#section-20--canvas-coordinate-system)
-- [Section 21 — Sprite Physics Details](#section-21--sprite-physics-details)
-- [Section 22 — Module Overview](#section-22--module-overview)
-- [Section 23 — GeoMaestro and GeoSonix Reference](#section-23--geomaestro-and-geosonix-reference)
-- [Section 24 — Open Questions](#section-24--open-questions)
+- [Section 15 — AI Handoff](#section-15--ai-handoff)
+- [Section 16 — Score Bundle](#section-16--score-bundle)
+- [Section 17 — Version Management via Git](#section-17--version-management-via-git)
+- [Section 18 — Auto-Reload](#section-18--auto-reload)
+- [Section 19 — Audio and MIDI Output](#section-19--audio-and-midi-output)
+- [Section 20 — Implementation](#section-20--implementation)
+- [Section 21 — Canvas Coordinate System](#section-21--canvas-coordinate-system)
+- [Section 22 — Sprite Physics Details](#section-22--sprite-physics-details)
+- [Section 23 — Module Overview](#section-23--module-overview)
+- [Section 24 — GeoMaestro and GeoSonix Reference](#section-24--geomaestro-and-geosonix-reference)
+- [Section 25 — Open Questions](#section-25--open-questions)
 
 ---
 
@@ -348,13 +349,13 @@ Canvas toolbar and direct manipulation. A toolbar strip across the top of the ca
 
 Selection model. With no tool armed, the canvas behaves as a selection surface. Clicking an object selects it (replacing any previous selection); shift-clicking toggles the object's membership in the selection; clicking empty space clears everything. Dragging from empty space draws a marquee — a translucent grey rectangle that follows the mouse — and on release every object the marquee touches joins the selection (or replaces it when shift is not held). Dragging from a selected sprite moves all selected sprites together; dragging from an unselected sprite first replaces the selection with just that sprite, then moves it. Selection is multi-kind: sprites, triggers, and curves can all be selected together, with selection markers as yellow dotted squares around sprites and triggers, and yellow dotted bounding-box rectangles around curves. Hit-testing tries sprites first, then triggers, then curves so the visually-topmost object wins ties. Drag-to-move is sprite-only at this milestone; triggers and curves can be selected and deleted but not moved through the canvas yet.
 
-Edit pipeline. Canvas operations — Add Sprite, drag-to-move sprites, Delete to remove objects of any kind — commit by parsing scene.json, mutating the parsed data, stringifying back, updating the bundle in place, refreshing the editor's Properties (JSON) view, then re-running the scene. Re-running auto-saves first, so each canvas edit also persists through the normal save pipeline. The Delete and Backspace keys remove all currently-selected objects; the listener checks the focus target so typing in the JSON tab still does the obvious thing. Selection is filtered against array lengths after each scene reload so a move-style edit (which preserves indexes) keeps the user's selection through the consequent re-render, while a delete or score switch prunes stale entries.
+Edit pipeline. Canvas operations — Add Sprite, drag-to-move sprites, Delete to remove objects of any kind — commit by parsing scene.json, mutating the parsed data, stringifying back, updating the bundle in place, refreshing the editor's Properties JSON view, then re-running the scene. Re-running auto-saves first, so each canvas edit also persists through the normal save pipeline. The Delete and Backspace keys remove all currently-selected objects; the listener checks the focus target so typing in the JSON tab still does the obvious thing. Selection is filtered against array lengths after each scene reload so a move-style edit (which preserves indexes) keeps the user's selection through the consequent re-render, while a delete or score switch prunes stale entries.
 
-Property inspector. The current v2.2 design anticipates a per-object property inspector — a form-based editor that exposes each object's declarative fields (position, harmony overrides, function-slot references, etc.) as labelled controls — with the existing JSON view becoming a "raw" tab alongside it. The selection model is in place and provides the foundation for an inspector that responds to selection changes. Design and implementation are tracked in Section 24.
+Property inspector. The form-based property inspector ships in v1 form, occupying the Properties tab as the primary editing surface for object properties. It renders six bands sized by their constraint rows (identity; geometry and visual; message functions; auto message interval; beat points; cycle parameters) with selection-driven greying — fields that don't apply to the current selection stay in their fixed positions but lose their green frame and brighten only when active, so the form's layout never reflows when the selection changes. The inspector is blank when nothing is selected, matching GeoSonix's empty-selection convention. v1 is layout-only: fields show placeholder values rather than live data from the selected objects. Live data binding from scene.json into the form, multi-select rendering refinements, function-slot dropdowns sourced from behaviours.js, and the Create button scaffolding stub functions are all next-milestone work tracked in Section 25 question 1. The raw scene.json view that the inspector replaces moves to a Properties JSON tab, kept available as a fallback until the inspector covers every editable field.
 
 AI authoring pane. A conversational pane is available for chatting with Claude. Requests like "add two more triggers near the top right" or "make the sprite wander faster" cause Claude to edit the sketch. The pane is toggleable and can be hidden when not in use. This is described further in Section 14.
 
-No REPL in the initial release. No live-coding during playback initially (edit-and-rerun loop only). A future milestone may expose per-line and per-function evaluation of sketch code into a live workspace, matching the GeoSonix execution model; this is an open question flagged in Section 24.
+No REPL in the initial release. No live-coding during playback initially (edit-and-rerun loop only). A future milestone may expose per-line and per-function evaluation of sketch code into a live workspace, matching the GeoSonix execution model; this is an open question flagged in Section 25.
 
 Keyboard shortcuts: Spacebar toggles play-pause. R rewinds. Cmd-S saves the active tab. Cmd-Shift-S saves all tabs. Cmd-O opens a score. Cmd-N creates a new score.
 
@@ -453,9 +454,9 @@ function wander(ctx) {
 }
 ```
 
-Authoring routes. There are now three ways to modify a score, all of which converge on the same in-memory bundle and the same explicit-save model:
+Authoring routes. The form-based property inspector lives in the Properties tab as a display surface for object properties; in v1 it shows selection-driven layout but is not yet a modification route (data binding from scene.json into the form is the next milestone — see Section 13). Modifications to a score happen through three routes, all of which converge on the same in-memory bundle and the same explicit-save model:
 
-1. The Properties (JSON) tab in the editor lets the composer edit scene.json directly. Standard JSON syntax with linting; saving persists.
+1. The Properties JSON tab in the editor lets the composer edit scene.json directly. Standard JSON syntax with linting; saving persists.
 2. The Behaviours tab lets the composer edit behaviours.js. Standard JavaScript with syntax linting; saving persists.
 3. The canvas toolbar and direct-manipulation gestures let the composer add, move, and delete objects through the canvas. Each operation parses scene.json, mutates it, stringifies back, and refreshes the editor view. The user then sees the same content in the JSON tab and can continue editing there, or save with Cmd-S, or run with Cmd-Enter (which auto-saves first).
 
@@ -465,7 +466,31 @@ AI-assisted authoring. A conversation pane within GXW talks to Claude via the An
 
 ---
 
-## Section 15 — Score Bundle
+## Section 15 — AI Handoff
+
+The AI Handoff is a user-controlled mechanism for sharing a score with Claude (or another AI assistant) for inspection, comment, and editing, without requiring an in-browser API integration. It replaces the deprecated disk-mirror feature with a simpler model: rather than continuously mirroring every score in IndexedDB to disk and polling for external changes, the user explicitly hands off the current score to a configured folder, talks with Claude about it, and explicitly fetches the result back. Two menu items drive the entire interaction: Hand Off to AI and Fetch from AI. Planned for v2.3, after the property inspector ships.
+
+The configured handoff folder. In Settings, the user picks a folder once (the first time the feature is used) — typically something like ~/GXW-handoff or any other location convenient for both GXW and the AI assistant. The folder handle is stored persistently and survives across sessions. The browser revokes the actual filesystem permission on each tab restart, so the first Hand Off or Fetch after launching the browser produces a one-click permission prompt; thereafter the rest of the session runs silently. The folder always holds exactly one score's worth of files — the most recent handoff — with no per-score subfolders or accumulating history. Each Hand Off overwrites whatever was there.
+
+Hand Off to AI. The user invokes Hand Off to AI from the File menu. GXW writes the entire current bundle to the handoff folder as a folder tree: scene.json, behaviours.js, image.png at the top level, and a resources/ folder with whatever modules the score uses, mirroring the bundle's internal structure exactly. Alongside the bundle files, GXW writes three observation-only artefacts. snapshot.png captures the canvas's current pixels at the moment of handoff, showing the actual visual state of the score with cursors, sprites, triggers, and any selection markers visible. snapshot-annotated.png captures the same canvas with object indices labelled next to each sprite, trigger, and curve, so Claude can refer to specific objects by the same indices that scene.json uses. handoff.json is a manifest naming the score, recording the export timestamp and per-file modification times, capturing the transport state (elapsed seconds, total beat count from start of playback, measure number and beat-within-measure given the score's time signature, and the current play state), and flagging which files round-trip on Fetch and which are observation-only. The .git folder and any other GXW-internal metadata are excluded.
+
+Fetch from AI. The user invokes Fetch from AI from the File menu after Claude has made changes. GXW reads handoff.json to verify the folder is a recognised handoff (and warns if it does not look like one — accidental wrong folder), then walks the folder tree comparing every file against the current bundle. Files whose modification time is newer than what handoff.json recorded at handoff time are pulled back into the bundle. Files present at handoff but missing now are removed from the bundle. Files added since handoff are added to the bundle. Snapshots and the manifest itself are never reloaded — they are observation-only, and any "edits" Claude tries to make to them are silently ignored. After the file-level changes are applied, the scene is re-run, just like any other edit. If the editor has unsaved changes when Fetch is invoked, GXW warns the user and offers to discard them or cancel the fetch.
+
+The image as a round-trip artefact. The image (typically image.png) participates in the round-trip the same way scene.json and behaviours.js do. If Claude modifies the image — to brighten a region, mask out a section, generate a fresh background, or rotate or flip the existing one — the modified image is pulled back on Fetch. To keep the implementation simple, GXW expects the image to remain named image.png; if Claude writes image.jpg or any other format, Fetch reports a clear error and asks for the file to be saved as image.png. This avoids format-conversion code in the round-trip path while still allowing image edits as a genuine creative use case.
+
+Snapshots versus the background image. The two snapshot files (snapshot.png and snapshot-annotated.png) are conceptually different from image.png. The background image is part of the score's source material and round-trips. The snapshots are moment-in-time observations, designed to give Claude visual context for conversation: where are the sprites at the current playback position, which triggers have recently fired, what does the cursor on this curve look like in motion. The snapshots reflect simulated state, not source state, and the manifest makes this asymmetry explicit so Claude understands the relationship and can talk about the source layer and the simulated layer separately. A common conversational pattern enabled by this: the composer pauses the score at a musically interesting moment, hands off, and asks where the sprites are tending to drift toward at this point in the piece, or whether the lower-right region is producing too much firing — questions about emergent behaviour that require seeing the snapshot, not just the source.
+
+Workflow shape. The AI Handoff is most ergonomic when paired with Claude Desktop's filesystem MCP, where Claude can read and write the handoff folder directly. The composer hands off, switches to Claude Desktop, points Claude at the handoff folder, has the conversation, switches back to GXW, and fetches. The web-chat workflow is also possible but clunkier: the composer hands off, drags the files into chat, gets edits back as code blocks, manually saves them into the handoff folder, then fetches. The feature is designed for the first workflow but does not preclude the second.
+
+Relationship to other authoring routes. The AI Handoff is a fourth way to modify a score, alongside the JSON tab, the Behaviours tab, and the canvas direct-manipulation toolbar (see Section 14). All four routes converge on the same in-memory bundle, the same explicit-save model, and the same parse-mutate-stringify edit pipeline. Fetch from AI ends up calling the same bundle.updateContent path that the canvas toolbar calls, so the existing dirty-state tracking, auto-save, and re-run mechanics all apply without modification.
+
+Relationship to the deprecated disk mirror. The disk mirror (Section 25, question 17) attempted to make the entire IndexedDB score collection continuously visible on disk, with automatic detection of external changes via polling. It proved too fragile in practice: browser permissions lapse on every reload, the File System Access API cannot expose absolute paths to the assistant, browser module caches mask external edits until a hard reload, and the round-trip introduced subtle formatting bugs. The AI Handoff is the simpler successor: explicit user-driven export and reload, only the current score, only on demand. The complexity that made the disk mirror unworkable is sidestepped because the user controls the timing of every read and write. The disk-mirror code remains in the repository in deprecated state for users who opt in via the Settings → Storage panel, but the AI Handoff is the recommended path going forward.
+
+Timeline placement. The AI Handoff sits in the v2.3 milestone window, coming after the property inspector. The property inspector is the more central daily-use feature and is the next development priority; the AI Handoff is a narrower nice-to-have that becomes increasingly valuable once the inspector exists, because the inspector is the natural place from which to invoke an ask-Claude-about-this-object gesture, and the snapshot in the handoff naturally captures whatever the inspector currently has selected. After the AI Handoff ships, the longer-term direction described in Section 25 question 17 — an embedded Anthropic API key letting Claude operate on score state through the same in-memory pipeline — would render the disk handoff redundant for most use cases. Both can coexist for some time, with the embedded-API-key path covering interactive iteration and the AI Handoff covering deeper inspection sessions where the composer wants to read along with Claude through a longer conversation.
+
+---
+
+## Section 16 — Score Bundle
 
 A GXW score is a bundle — a collection of related files — containing:
 
@@ -475,20 +500,20 @@ MyScore/
     behaviours.js        # named JavaScript functions referenced from scene.json
     image.png            # background image (1000x1000 PNG, optional)
     resources/           # user support files (helper modules, data tables)
-    .git/                # version history (see Section 16)
+    .git/                # version history (see Section 17)
 ```
 
-Bundles are stored in the browser's persistent storage (IndexedDB) by default, with export and import functions to move bundles between machines or share them. The deprecated disk-mirror feature (Section 24) optionally exposed bundles as real folders on disk; the future direction for AI-driven external editing is in-app via an embedded API key rather than through disk round-trips.
+Bundles are stored in the browser's persistent storage (IndexedDB) by default, with export and import functions to move bundles between machines or share them. The deprecated disk-mirror feature (Section 25, question 17) optionally exposed bundles as real folders on disk; the v2.3-planned successor is the AI Handoff feature (see Section 15) and the longer-term direction is in-app via an embedded API key rather than through disk round-trips.
 
 The last opened score name is stored in application settings and reopened on launch.
 
 The bundle is deliberately lean. The data/behaviour split (scene.json plus behaviours.js) replaces the v2.0-era single sketch.js file. No audio assets beyond the background image: GXW synthesises sound internally via Web Audio and optionally sends MIDI. No conversation history as bundle state — conversation history lives with the user session, not with the score.
 
-The resources folder holds user-managed support files. behaviours.js can import from it using standard ES module imports. Custom harmony definitions, data tables, helper modules, alternate tunings — anything the behaviours call on beyond the core GXW API. JavaScript files in the bundle (behaviours.js at the top level and any modules inside resources/) appear as their own tabs in the editor; scene.json appears as the Properties tab.
+The resources folder holds user-managed support files. behaviours.js can import from it using standard ES module imports. Custom harmony definitions, data tables, helper modules, alternate tunings — anything the behaviours call on beyond the core GXW API. JavaScript files in the bundle (behaviours.js at the top level and any modules inside resources/) appear as their own tabs in the editor; scene.json appears as the Properties JSON tab, while the form-based property inspector occupies the Properties tab itself (see Section 13).
 
 ---
 
-## Section 16 — Version Management via Git
+## Section 17 — Version Management via Git
 
 Each GXW bundle contains a git repository. Git operations are performed in the browser by isomorphic-git, a pure-JavaScript git implementation that works against both IndexedDB-backed bundles and File System Access folders.
 
@@ -511,7 +536,7 @@ Pushing to a remote (GitHub, personal git server) is available via isomorphic-gi
 
 ---
 
-## Section 17 — Auto-Reload
+## Section 18 — Auto-Reload
 
 When the active sketch is saved in the editor, GXW re-executes it after a short debounce (a few hundred milliseconds) to absorb multiple rapid writes.
 
@@ -527,7 +552,7 @@ When bundles are stored in the File System Access API and modified externally, G
 
 ---
 
-## Section 18 — Audio and MIDI Output
+## Section 19 — Audio and MIDI Output
 
 GXW produces sound internally via the Web Audio API. The default synthesis is an embedded voice bank sufficient for prototyping and most compositional work. A preferences panel lets the user choose among built-in voice options and adjust output levels.
 
@@ -546,7 +571,7 @@ Reintroducing richer synthesis via embedded engines (SoundFont, wavetable) is a 
 
 ---
 
-## Section 19 — Implementation
+## Section 20 — Implementation
 
 GXW is implemented as a static web application. Source files are HTML, CSS, and JavaScript (with JSDoc type annotations for IDE support). No build step is required for development; files are served directly by a local HTTP server during development and by any static host in production.
 
@@ -568,7 +593,7 @@ The repository is at /Users/chrisgr/ProgrammingProjects/GXW. The earlier Python 
 
 ---
 
-## Section 20 — Canvas Coordinate System
+## Section 21 — Canvas Coordinate System
 
 Canvas coordinates are Cartesian and origin-centred. The origin (0, 0) sits at the centre of the viewport. Positive X points right, positive Y points up. Both axes share the same metric — one unit in X represents the same displayed distance as one unit in Y — so geometry preserves its shape regardless of the viewport's aspect ratio.
 
@@ -590,9 +615,9 @@ Curve rendering uses canvas units directly for geometry. Beat points are drawn a
 
 ---
 
-## Section 21 — Sprite Physics Details
+## Section 22 — Sprite Physics Details
 
-Canvas units are origin-centred with equal metric along both axes (see Section 20).
+Canvas units are origin-centred with equal metric along both axes (see Section 21).
 
 Sprite visual rendering diameter user-settable, default 1.5 canvas units. This is purely a display setting (see Section 6); sprites are points geometrically and have no spatial extent. The only collision sprites participate in is canvas-boundary reflection, which works against the sprite's point position.
 
@@ -625,7 +650,7 @@ Physics may run in a Web Worker so that audio-rate scheduling on the main thread
 
 ---
 
-## Section 22 — Module Overview
+## Section 23 — Module Overview
 
 JavaScript modules in dependency order:
 
@@ -645,18 +670,19 @@ JavaScript modules in dependency order:
 14. Simulation — fixed time step, advances curve cursors, runs sprite physics, detects cursor-trigger collisions, fires functions at the appropriate times.
 15. Bundle — loads, creates, saves, duplicates, and lists the files within score bundles in IndexedDB.
 16. VersionControl — isomorphic-git wrappers, commit on reload, milestone tags, time-based tags, history queries.
-17. UI — top menu bar, canvas pane (with toolbar), tabbed editor (Properties tab for scene.json, Behaviours tab for behaviours.js), bottom message area, AI authoring pane, deferred history panel, deferred property inspector.
+17. UI — top menu bar, canvas pane (with toolbar), tabbed editor (form-based Properties tab via the Inspector module, Behaviours tab for behaviours.js, transitional Properties JSON tab for raw scene.json), bottom message area, AI authoring pane, deferred history panel.
 18. Canvas — the rendering surface plus the gesture machinery: hit-testing, selection state, marquee drag, sprite drag-to-move, click-to-place when a creation tool is armed.
 19. Toolbar — horizontal strip across the top of the canvas pane holding object-creation tools. Owns the idle/armed/locked state machine and the click-versus-double-click disambiguation; communicates outward via an onChange callback consumed by the Canvas.
-20. DiskMirror — deprecated at v2.2 (see Section 24). The module remains in the codebase for users who opt in via Settings, but is not actively recommended.
-21. AIAuthoring — conversation pane, Anthropic API integration, scene.json/behaviours.js edit application.
-22. Compositor — deferred.
+20. Inspector — form-based property inspector for the Properties tab. Subscribes to the canvas's selectionChanged event and renders six bands of fields with selection-driven greying. Blank when nothing is selected. v1 is layout-only; data binding from scene.json into field values is the next milestone.
+21. DiskMirror — deprecated at v2.2 (see Section 25 question 17). The module remains in the codebase for users who opt in via Settings, but is not actively recommended.
+22. AIAuthoring — conversation pane, Anthropic API integration, scene.json/behaviours.js edit application.
+23. Compositor — deferred.
 
-Note that several v1.0 modules have been removed: Event (replaced by Trigger), Projector (folded into Curve), DistortionFunction (folded into Curve's sweep function), BeatPattern (removed; curves own their rhythm intrinsically, sprites and triggers use a simple interval). MessageFunction as a separate module is also gone; functions are plain JavaScript referenced by name from object properties. v2.1 renamed the Mover module to Sprite. v2.2 split SketchRunner into SceneLoader (which reads scene.json and behaviours.js) and added SceneEditor (which writes scene.json) plus Toolbar (object-creation tools).
+Note that several v1.0 modules have been removed: Event (replaced by Trigger), Projector (folded into Curve), DistortionFunction (folded into Curve's sweep function), BeatPattern (removed; curves own their rhythm intrinsically, sprites and triggers use a simple interval). MessageFunction as a separate module is also gone; functions are plain JavaScript referenced by name from object properties. v2.1 renamed the Mover module to Sprite. v2.2 split SketchRunner into SceneLoader (which reads scene.json and behaviours.js) and added SceneEditor (which writes scene.json) plus Toolbar (object-creation tools). v2.3 (in progress) added the Inspector module for the form-based property inspector that now occupies the Properties tab.
 
 ---
 
-## Section 23 — GeoMaestro and GeoSonix Reference
+## Section 24 — GeoMaestro and GeoSonix Reference
 
 GXW succeeds two earlier programs.
 
@@ -676,7 +702,7 @@ Carried forward from GeoMaestro:
 Carried forward from GeoSonix:
 - Moving autonomous agents (called sprites in GXW) that read image colour and wander fields.
 - JavaScript sketch language with named-function references from object properties.
-- Script editor with multi-granularity execution (the specific selection/line/function/all pattern is deferred to a future milestone — see Section 24).
+- Script editor with multi-granularity execution (the specific selection/line/function/all pattern is deferred to a future milestone — see Section 25).
 - Beat-point rhythms intrinsic to curves, authored by Euclidean generator or direct string.
 - Two-string rhythm model (active-beats plus strength) with independent cycling for polyrhythmic drift.
 - Emphasis values 0-9 per firing.
@@ -689,7 +715,7 @@ Carried forward from GeoSonix:
 - Auto-reload of external sketch files.
 - Resources folder for support modules.
 - Scale/chord/tonic/root as score-level musical framework.
-- Property-inspector vocabulary (deferred but informing Section 24).
+- Property-inspector vocabulary (deferred but informing Section 25).
 
 Simplifications in GXW relative to both parents:
 - Three object types (curves, triggers, sprites) replacing GeoSonix's four (curves, cursors, triggers, plus the Score).
@@ -703,19 +729,19 @@ Simplifications in GXW relative to both parents:
 Terminology note. The autonomous-agent object is called "Sprite" in GXW, a term borrowed from game development where it is widely understood. v1.0 and v2.0 called this object "Mover"; v2.1 renamed it to Sprite for vocabulary clarity. No behavioural differences.
 
 Capabilities not yet decided whether to carry forward:
-- 3D positions. GeoSonix had Z coordinates and a 3D rendering mode. GXW currently specifies 2D (with image sampling as a scalar field doing the work 3D was sometimes used for). The screenshots and score files show Z=0 throughout, suggesting 3D was rarely used in practice. Deferring unless demand emerges. See Section 24.
+- 3D positions. GeoSonix had Z coordinates and a 3D rendering mode. GXW currently specifies 2D (with image sampling as a scalar field doing the work 3D was sometimes used for). The screenshots and score files show Z=0 throughout, suggesting 3D was rarely used in practice. Deferring unless demand emerges. See Section 25.
 - Populate-beat-points-with-triggers as an authoring action. GeoSonix offered this and the user found it added friction. The "beats are triggers" property on curves covers the musical capability without requiring the extra trigger objects. Not implemented as an action.
 - Per-object time-shift-in-ticks. Useful compositional capability but adds fields to property editors. Deferred.
 
 ---
 
-## Section 24 — Open Questions
+## Section 25 — Open Questions
 
-1. Property inspector design. v2.2 ships the selection model that an inspector will hook into — sprites, triggers, and curves all support click, shift-click, marquee, and Delete — and the canvas emits a selectionChanged event that the inspector will subscribe to. The form-based editor itself is the next milestone. Open: which fields to expose per object type, how they group visually, how the inspector renders for multi-object selections (locked/unlocked fields, common-vs-divergent values), and how far into advanced fields (function-slot bindings, harmony overrides) the inspector goes before falling back to the JSON tab.
+1. Property inspector design. v2.3 ships v1 of the form-based property inspector as the primary Properties tab: six bands (identity; geometry and visual; message functions; auto message interval; beat points; cycle parameters) sized by their constraint rows, with selection-driven greying based on which kinds appear in the canvas selection, and a blank state when nothing is selected. The natural minimum form width is roughly 500 pixels, set by the Auto Message Interval row and the Cycle Parameters row 2. v1 is layout-only — fields show placeholder values rather than live data. Open and remaining: live data binding from scene.json into the form (the next milestone); a commit pipeline so inspector edits flow through the same parse-mutate-stringify path the canvas toolbar uses; multi-select rendering refinements (varies indicators, tri-state checkboxes for partially-checked Enable/Hide); how function-slot bindings are entered (a dropdown of names sourced from behaviours.js, free text, or both); the Create button scaffolding stub functions in behaviours.js when the named function does not yet exist; how the inspector composes with manual JSON editing when both can modify the same object (see also question 3 below); and how far into advanced fields (harmony overrides, per-object MIDI routing) the inspector goes before falling back to the Properties JSON tab.
 
 2. Object-creation toolbar design. v2.2 ships the first iteration: a toolbar above the canvas with a single tool, Add Sprite. State machine: idle, armed (one-shot), locked (repeating). Single-click arms, double-click locks, Esc disarms, click on the active tool disarms at any state. Add Trigger and the curve-shape tools are the next additions. Open: whether shape variants (line, circle, piste, bezier) are one tool with a dropdown or separate tools — v2.2 leans toward separate tools matching GeoSonix's toolbar, since each shape places differently (single click for circle, click-drag for line, click-click-...-double-click for piste).
 
-3. Editing routes and synchronisation. v2.2 settles the question raised in earlier versions: scene data is its own file (scene.json) separate from behaviour code (behaviours.js), so the historical "sketch versus inspector data store" tension dissolves. There is one source of truth (scene.json) that three routes can edit: the Properties (JSON) tab in the editor, the canvas toolbar and gesture system, and — in future — the property inspector. The canvas's edit pipeline (parse → mutate → stringify → update bundle → refresh editor view → re-run scene) preserves field ordering and approximates the hand-written formatting style of the default template. Open: how the property inspector composes with manual JSON editing when both can modify the same object — inspector edits during JSON dirty state should probably be blocked with a message, the same way canvas edits are blocked when the JSON has a parse error.
+3. Editing routes and synchronisation. v2.2 settled the question raised in earlier versions: scene data is its own file (scene.json) separate from behaviour code (behaviours.js), so the historical "sketch versus inspector data store" tension dissolves. There is one source of truth (scene.json) that three routes will be able to edit: the Properties JSON tab in the editor, the canvas toolbar and gesture system, and the form-based property inspector once data binding ships. The canvas's edit pipeline (parse → mutate → stringify → update bundle → refresh editor view → re-run scene) preserves field ordering and approximates the hand-written formatting style of the default template; the inspector will use the same pipeline when its edits go live. Open: how the property inspector composes with manual JSON editing when both can modify the same object — inspector edits during JSON dirty state should probably be blocked with a message, the same way canvas edits are blocked when the JSON has a parse error.
 
 4. REPL / workspace execution model. GeoSonix maintained a persistent JavaScript workspace and allowed the composer to execute individual lines, selections, functions, or the whole script from within the script editor. This is a valuable pattern for incremental development. GXW currently specifies "save-triggers-reload" which is simpler but less interactive. Whether to add GeoSonix-style workspace execution in a later milestone is open.
 
@@ -743,7 +769,7 @@ Capabilities not yet decided whether to carry forward:
 
 16. Web Worker boundary for physics and simulation.
 
-17. Anthropic API authentication model — direct in browser, lightweight proxy, or user-supplied API key. v2.2 deprecates the disk-mirror approach (which was an attempt to side-step in-browser API access by giving Claude Desktop direct filesystem access through MCP), and pencils in an embedded API key as the future direction. Open questions remain about credential storage (where the key lives, how it's protected from accidental exposure in screenshots and exported bundles), rate limiting, cost transparency, and whether scene-edit operations should run as tool calls (Claude proposes structured edits that GXW applies through the same parse-mutate-stringify pipeline as the canvas toolbar) or as free-form JSON rewrites.
+17. Anthropic API authentication model — direct in browser, lightweight proxy, or user-supplied API key. v2.2 deprecated the disk-mirror approach (which was an attempt to side-step in-browser API access by giving Claude Desktop direct filesystem access through MCP). v2.3 introduces the AI Handoff feature (see Section 15) as a simpler user-controlled successor for sharing scores with Claude through a configured folder. The longer-term direction beyond v2.3 is an embedded API key letting Claude operate on score state through the same in-memory pipeline as the canvas toolbar. Open questions remain about credential storage (where the key lives, how it's protected from accidental exposure in screenshots and exported bundles), rate limiting, cost transparency, and whether scene-edit operations should run as tool calls (Claude proposes structured edits that GXW applies through the same parse-mutate-stringify pipeline as the canvas toolbar) or as free-form JSON rewrites.
 
 18. 3D support. GeoSonix had Z coordinates but in practice kept Z=0 almost everywhere. GXW specifies 2D. Whether to reintroduce Z is open; current decision is to defer.
 
