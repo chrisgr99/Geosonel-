@@ -354,19 +354,31 @@ export class Inspector {
     }
 
     /**
-     * Band 5 — Beat points. Curves-only band. Empty fields
-     * still render their lighter-grey footprint so the
-     * row layout reads as a row of fields even when no curve
-     * is in the selection.
+     * Band 5 — Beat points. Active when the selection contains
+     * curves, sprites, or both — sprites use the same active-
+     * beats and strength strings to gate their auto-timer
+     * firings, with the auto interval providing the metric
+     * pulse and the strings deciding which pulses actually
+     * sound and how strongly. The first row's label tracks the
+     * selection: "Curve / Beat Points" for curves alone,
+     * "Sprite / Auto Beats" for sprites alone, "Beat / Pattern"
+     * when both are present. Triggers in the selection don't
+     * affect this band — they have no beat-pattern feature and
+     * are simply left untouched by edits made here, so a mixed
+     * selection of curves or sprites with triggers still keeps
+     * the band active. Empty fields still render their lighter-
+     * grey footprint so the row layout reads as a row of fields
+     * even when greyed.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandBeatPoints(ctx) {
         const band = document.createElement("div");
         band.className = "insp-band";
-        const dis = !ctx.hasCurves;
+        const dis = !beatBandActive(ctx);
+        const label = beatBandLabel(ctx);
 
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Curve\nBeat Points", { width: W.leftLabel, disabled: dis, multiline: true }));
+        r1.appendChild(mkLabel(label, { width: W.leftLabel, disabled: dis, multiline: true }));
         r1.appendChild(mkCombo({ value: "None", width: W.beatPointsCombo, disabled: dis }));
         band.appendChild(r1);
 
@@ -506,6 +518,37 @@ function functionLabelsFor(ctx) {
     // Multi-kind: row is greyed; default to sprite labels so
     // the row's text content stays the same length.
     return ["Step", "Auto"];
+}
+
+/**
+ * Whether the Beat Points band (band 5) should be active for
+ * the current selection. Curves use the active-beats and
+ * strength strings as their cycle rhythm; sprites use the
+ * same strings to gate their auto-timer firings. Triggers
+ * have no beat-pattern feature — their presence in a mixed
+ * selection neither activates nor deactivates the band.
+ * @param {ReturnType<typeof buildSelectionContext>} ctx
+ */
+function beatBandActive(ctx) {
+    return ctx.hasCurves || ctx.hasSprites;
+}
+
+/**
+ * The first-row label for the Beat Points band, picked from
+ * the kinds present in the selection (ignoring triggers,
+ * which don't participate). Curves alone get the original
+ * "Curve / Beat Points" wording; sprites alone get "Sprite
+ * / Auto Beats"; mixed curves-and-sprites get the neutral
+ * "Beat / Pattern". When neither curves nor sprites are
+ * present (e.g. trigger-only selection) the band is greyed
+ * and the label falls back to the curve wording — the v1
+ * default — so the form's footprint stays consistent.
+ * @param {ReturnType<typeof buildSelectionContext>} ctx
+ */
+function beatBandLabel(ctx) {
+    if (ctx.hasCurves && ctx.hasSprites) return "Beat\nPattern";
+    if (ctx.hasSprites) return "Sprite\nAuto Beats";
+    return "Curve\nBeat Points";
 }
 
 /**
