@@ -366,6 +366,11 @@ export class Canvas {
      * kind. Used by external host code to apply a selection
      * decided elsewhere; internal gesture handling updates
      * the sets directly.
+     *
+     * Emits selectionChanged through the edit callback so
+     * downstream listeners (the property inspector, in
+     * particular) see external selection clears the same way
+     * they see internal mouse-driven changes.
      * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} sel
      */
     setSelection(sel) {
@@ -373,6 +378,7 @@ export class Canvas {
         if (sel.triggers !== undefined) this._selection.triggers = new Set(sel.triggers);
         if (sel.curves !== undefined) this._selection.curves = new Set(sel.curves);
         this.scheduleDraw();
+        this._emitSelectionChanged();
     }
 
     /**

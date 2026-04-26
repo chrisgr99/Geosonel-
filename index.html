@@ -57,8 +57,17 @@
                     <!-- Tabs are rendered dynamically from the bundle; see src/editor.js. -->
                     <div class="tab-bar-filler"></div>
                 </div>
-                <div id="editor-area">
-                    <!-- CodeMirror mounts here. -->
+                <div id="editor-area" class="hidden">
+                    <!-- CodeMirror mounts here. Hidden by default;
+                         the editor swaps which of editor-area and
+                         inspector-area is visible based on the
+                         active tab. -->
+                </div>
+                <div id="inspector-area">
+                    <!-- Form-based property inspector is mounted
+                         here by src/inspector.js (via the editor).
+                         Visible by default since the Properties
+                         tab is the initial landing tab. -->
                 </div>
             </section>
 

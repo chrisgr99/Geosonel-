@@ -123,7 +123,10 @@ async function main() {
     // --- Editor ---
     const tabBarEl = document.querySelector(".tab-bar");
     const editorAreaEl = document.getElementById("editor-area");
-    if (!(tabBarEl instanceof HTMLElement) || !(editorAreaEl instanceof HTMLElement)) {
+    const inspectorAreaEl = document.getElementById("inspector-area");
+    if (!(tabBarEl instanceof HTMLElement) ||
+        !(editorAreaEl instanceof HTMLElement) ||
+        !(inspectorAreaEl instanceof HTMLElement)) {
         console.error("GXW: editor mount points missing.");
         return;
     }
@@ -133,7 +136,7 @@ async function main() {
     /** @type {() => Promise<void>} */
     let runScene = async () => {};
 
-    const editor = new TabbedEditor(tabBarEl, editorAreaEl, bundle, {
+    const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, bundle, {
         onDirtyChange: (dirty) => {
             setSavedIndicator(dirty ? "unsaved" : "saved");
         },
@@ -441,9 +444,21 @@ async function main() {
             await applySceneEdit((data) => addSpriteAt(data, edit.x, edit.y));
         } else if (edit.kind === "moveSprites") {
             await applySceneEdit((data) => setSpritePositions(data, edit.positions));
+        } else if (edit.kind === "selectionChanged") {
+            // Forward selection changes to the property
+            // inspector so the form updates its greying and
+            // its title to reflect what's selected. The
+            // inspector goes blank when all three arrays are
+            // empty, matching GeoSonix's empty-selection
+            // convention.
+            if (editor.inspector) {
+                editor.inspector.setSelection({
+                    sprites: edit.sprites,
+                    triggers: edit.triggers,
+                    curves: edit.curves,
+                });
+            }
         }
-        // selectionChanged is a no-op for now. A future
-        // per-object property inspector will listen here.
     });
 
     // Escape disarms the active tool. Listening at the window

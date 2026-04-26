@@ -405,13 +405,32 @@ html, body {
     z-index: 1;
 }
 
-/* --- CodeMirror editor area --- */
+/* --- CodeMirror editor area & Inspector area --- */
+
+/* Both occupy the same flex slot under the tab bar; only one
+ * is visible at a time. The .hidden helper toggles which.
+ * Shared base rules go on the combined selector; type-specific
+ * styling continues below for each. */
+#editor-area,
+#inspector-area {
+    flex: 1 1 auto;
+    overflow: hidden;
+    min-height: 0;
+    position: relative;
+}
+
+#editor-area.hidden,
+#inspector-area.hidden {
+    display: none;
+}
 
 #editor-area {
-    flex: 1;
     background-color: #141414;
-    overflow: hidden;
-    position: relative;
+}
+
+#inspector-area {
+    background-color: #2a2a2a;
+    overflow-y: auto;
 }
 
 #editor-area .cm-editor {
@@ -430,6 +449,310 @@ html, body {
 #editor-area .cm-gutters {
     background-color: #141414;
     border-right: 1px solid #555555;
+}
+
+/* --- Property inspector --- */
+
+/* The inspector replicates the GeoSonix property editor's look
+ * as closely as possible: dark grey panel, lighter grey field
+ * fills, bright green frames around editable fields, green-
+ * filled checkboxes, green stepper dots on numeric fields, and
+ * green combo-box triangles. Fields that don't apply to the
+ * current selection (multi-select restriction or type-
+ * irrelevance) stay in their fixed positions but lose their
+ * green frame and gain muted text — a single visual signal
+ * for "not editable right now" regardless of cause. */
+
+.inspector-pane {
+    color: #d8d4cc;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+}
+
+.insp-title-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 8px 14px 6px 14px;
+    border-bottom: 2px solid #4a4a4a;
+}
+
+.insp-title-left {
+    color: #ffffff;
+    font-size: 18pt;
+    font-weight: 400;
+    line-height: 1.1;
+}
+
+.insp-title-right {
+    color: #ffffff;
+    font-size: 11pt;
+}
+
+.insp-band {
+    padding: 5px 14px;
+    border-bottom: 2px solid #4a4a4a;
+}
+
+.insp-band:last-child {
+    border-bottom: none;
+}
+
+.insp-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 3px 0;
+    min-height: 24px;
+}
+
+.insp-label {
+    text-align: right;
+    color: #ffffff;
+    font-size: 10pt;
+    line-height: 1.15;
+    flex-shrink: 0;
+}
+
+.insp-label.disabled {
+    color: #888888;
+}
+
+/* Editable text or numeric field. The lighter-grey fill
+ * stays visible whether the field is editable or disabled
+ * — that's how GeoSonix shows empty fields, as a clearly
+ * visible field-shaped rectangle. The .disabled and .locked
+ * variants drop the green frame so the field reads as
+ * non-interactive; .locked also italicises so the read-only
+ * id field looks distinct from a disabled-by-context field. */
+.insp-field {
+    background-color: #4a4a4a;
+    border: 2px solid #46b03e;
+    border-radius: 3px;
+    padding: 0 8px;
+    color: #ffffff;
+    height: 24px;
+    font-size: 11pt;
+    box-sizing: border-box;
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.insp-field.disabled {
+    border-color: transparent;
+    color: #888888;
+}
+
+.insp-field.locked {
+    border-color: transparent;
+    color: #cccccc;
+    font-style: italic;
+}
+
+/* Numeric field: small green stepper dots on the right edge.
+ * Only shown when the field is actually editable; disabled
+ * and locked variants suppress the dots. The dots are
+ * absolutely positioned so they don't push the value text
+ * around. */
+.insp-field-numeric:not(.disabled):not(.locked)::before,
+.insp-field-numeric:not(.disabled):not(.locked)::after {
+    content: '';
+    position: absolute;
+    right: 5px;
+    width: 4px;
+    height: 4px;
+    background-color: #5fc858;
+    border-radius: 50%;
+}
+
+.insp-field-numeric:not(.disabled):not(.locked)::before {
+    top: 5px;
+}
+
+.insp-field-numeric:not(.disabled):not(.locked)::after {
+    bottom: 5px;
+}
+
+/* Round checkbox. Empty by default with a thin grey ring;
+ * checked state fills with the inspector's green and tints
+ * the ring to match. Disabled state mutes the ring and
+ * suppresses any hover affordance. */
+.insp-checkbox {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #777777;
+    border-radius: 50%;
+    background-color: #4a4a4a;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    cursor: pointer;
+}
+
+.insp-checkbox.checked {
+    background-color: #5fc858;
+    border-color: #5fc858;
+}
+
+.insp-checkbox.disabled {
+    border-color: #555555;
+    cursor: default;
+}
+
+.insp-checkbox.disabled.checked {
+    background-color: #555555;
+    border-color: #555555;
+}
+
+/* Combo box. Green triangle indicator on the right. Disabled
+ * variant drops the green frame and mutes the triangle but
+ * keeps the lighter-grey fill so the field's footprint stays
+ * visible. */
+.insp-combo {
+    background-color: #4a4a4a;
+    border: 2px solid #46b03e;
+    border-radius: 3px;
+    padding: 0 24px 0 8px;
+    color: #ffffff;
+    height: 24px;
+    font-size: 11pt;
+    position: relative;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.insp-combo.disabled {
+    border-color: transparent;
+    color: #888888;
+    cursor: default;
+}
+
+.insp-combo::after {
+    content: '';
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    margin-top: -2px;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #5fc858;
+}
+
+.insp-combo.disabled::after {
+    border-top-color: #707070;
+}
+
+/* Create button. Outlined green to match the function-binding
+ * field next to it; disabled variant mutes both border and
+ * text. */
+.insp-btn-create {
+    background-color: transparent;
+    border: 2px solid #46b03e;
+    color: #ffffff;
+    border-radius: 3px;
+    padding: 0 14px;
+    height: 24px;
+    font-size: 10pt;
+    line-height: 1;
+    cursor: pointer;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    font-family: inherit;
+}
+
+.insp-btn-create:hover {
+    background-color: rgba(70, 176, 62, 0.18);
+}
+
+.insp-btn-create.disabled {
+    border-color: #555555;
+    color: #888888;
+    cursor: default;
+    background-color: transparent;
+}
+
+/* Color field: a green-bordered box containing a colour swatch
+ * and the hex code. The swatch fills with the field's value
+ * via inline style. Empty/disabled state still shows the
+ * field's footprint via the lighter-grey fill. */
+.insp-color {
+    background-color: #4a4a4a;
+    border: 2px solid #46b03e;
+    border-radius: 3px;
+    padding: 0 6px;
+    height: 24px;
+    width: 130px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.insp-color.disabled {
+    border-color: transparent;
+    cursor: default;
+}
+
+.insp-color-swatch {
+    width: 32px;
+    height: 14px;
+    border-radius: 1px;
+    border: 1px solid #555555;
+    flex-shrink: 0;
+}
+
+.insp-color-text {
+    color: #ffffff;
+    font-size: 10pt;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+}
+
+.insp-color.disabled .insp-color-text {
+    color: #888888;
+}
+
+/* Units indicator after a field group, e.g. "(X, Y)" after
+ * the position fields. Smaller than labels so it reads as a
+ * tag rather than a primary label. */
+.insp-units {
+    color: #ffffff;
+    font-size: 10pt;
+    flex-shrink: 0;
+}
+
+.insp-units.disabled {
+    color: #888888;
+}
+
+/* Inline single-letter label that sits immediately before a
+ * field, used by the Cursor Size row's R/L prefixes. Tighter
+ * spacing than a regular label so it reads as belonging to
+ * the field that follows. */
+.insp-inline-letter {
+    color: #ffffff;
+    font-size: 11pt;
+    flex-shrink: 0;
+    margin-right: -4px;
+}
+
+.insp-inline-letter.disabled {
+    color: #888888;
+}
+
+/* Flexible spacer for pushing right-side fields to the
+ * right edge of a row. */
+.insp-spacer {
+    flex: 1 1 auto;
 }
 
 /* --- View menu dropdown --- */

@@ -29,6 +29,17 @@ import { linter, lintGutter } from "https://esm.sh/@codemirror/lint@6?deps=@code
 import { oneDark } from "https://esm.sh/@codemirror/theme-one-dark@6?deps=@codemirror/state@6.5.2";
 import { tags as t } from "https://esm.sh/@lezer/highlight@1";
 import * as acorn from "https://esm.sh/acorn@8";
+import { Inspector } from "./inspector.js";
+
+/**
+ * Sentinel name for the virtual Properties tab. The
+ * Properties tab is the form-based property inspector and
+ * does not correspond to any file in the bundle, so its
+ * "name" is a reserved string that will never collide with a
+ * real filename. Selecting this tab hides the CodeMirror
+ * area and shows the inspector area.
+ */
+const VIRTUAL_TAB_INSPECTOR = "__inspector__";
 
 /**
  * Targeted overrides to oneDark. Everything not listed here
@@ -159,9 +170,15 @@ function jsonErrorPosition(message, source) {
  * show that label in the tab bar instead of the raw filename.
  * The filename remains the underlying identifier for storage,
  * disk-mirror, and AI editing.
+ *
+ * scene.json shows as "Properties JSON" rather than
+ * "Properties" because the Properties tab is now a virtual
+ * tab hosting the form-based property inspector. The raw
+ * JSON view stays available as a fallback (and will until
+ * the inspector covers every editable scene field).
  */
 const TAB_LABELS = {
-    "scene.json": "Properties",
+    "scene.json": "Properties JSON",
     "behaviours.js": "Behaviours",
 };
 
@@ -199,12 +216,14 @@ export class TabbedEditor {
     /**
      * @param {HTMLElement} tabBarElement
      * @param {HTMLElement} editorAreaElement
+     * @param {HTMLElement} inspectorAreaElement
      * @param {Bundle} bundle
      * @param {EditorCallbacks} [callbacks]
      */
-    constructor(tabBarElement, editorAreaElement, bundle, callbacks = {}) {
+    constructor(tabBarElement, editorAreaElement, inspectorAreaElement, bundle, callbacks = {}) {
         this.tabBar = tabBarElement;
         this.editorArea = editorAreaElement;
+        this.inspectorArea = inspectorAreaElement;
         this.bundle = bundle;
         this.onDirtyChange = callbacks.onDirtyChange ?? (() => {});
         this.onSaved = callbacks.onSaved ?? (() => {});
@@ -231,11 +250,14 @@ export class TabbedEditor {
         this._linterCompartment = new Compartment();
 
         this._mountEditor();
+        this._mountInspector();
         this._renderTabs();
 
-        if (this.bundle.textFiles.length > 0) {
-            this.selectTab(this.bundle.textFiles[0].name);
-        }
+        // The form-based Properties inspector is the default
+        // landing tab — for most editing the form is what the
+        // composer wants, and the raw JSON view (Properties
+        // JSON) remains a click away when needed.
+        this.selectTab(VIRTUAL_TAB_INSPECTOR);
     }
 
     // --- Bundle lifecycle ---
@@ -252,15 +274,10 @@ export class TabbedEditor {
         this.activeName = null;
         this._setDirty(false);
         this._renderTabs();
-        if (this.bundle.textFiles.length > 0) {
-            this.selectTab(this.bundle.textFiles[0].name);
-        } else if (this.view !== null) {
-            this._suppressDirty = true;
-            this.view.dispatch({
-                changes: { from: 0, to: this.view.state.doc.length, insert: "" },
-            });
-            this._suppressDirty = false;
-        }
+        // Default to the form-based Properties inspector when
+        // switching scores, matching the constructor's initial
+        // landing behaviour.
+        this.selectTab(VIRTUAL_TAB_INSPECTOR);
     }
 
     /**
@@ -287,12 +304,19 @@ export class TabbedEditor {
      */
     reloadFromBundle() {
         this._renderTabs();
+        const isVirtual = this.activeName === VIRTUAL_TAB_INSPECTOR;
         const stillExists = this.activeName !== null &&
+            !isVirtual &&
             this.bundle.getFile(this.activeName) !== null;
-        if (stillExists) {
+        if (isVirtual) {
+            // Inspector is its own surface; reselecting it
+            // keeps the same tab visually highlighted and
+            // (eventually, when bound) re-reads scene data.
+            this.selectTab(VIRTUAL_TAB_INSPECTOR);
+        } else if (stillExists) {
             this.selectTab(/** @type {string} */ (this.activeName));
         } else if (this.bundle.textFiles.length > 0) {
-            this.selectTab(this.bundle.textFiles[0].name);
+            this.selectTab(VIRTUAL_TAB_INSPECTOR);
         }
         this._setDirty(false);
     }
@@ -309,7 +333,19 @@ export class TabbedEditor {
      * fine since selectTab pulls from the bundle each time.
      */
     refreshActiveTabFromBundle() {
-        if (this.activeName === null || this.view === null) return;
+        if (this.activeName === null) return;
+        // Virtual inspector tab does not back onto a file in
+        // CodeMirror, so there's no document to refresh; the
+        // bundle's scene.json content has already been updated
+        // by the caller. We still flip the dirty flag because
+        // the bundle differs from disk now, even though the
+        // form-inspector view doesn't reflect that yet (data
+        // binding comes in a later milestone).
+        if (this.activeName === VIRTUAL_TAB_INSPECTOR) {
+            this._setDirty(true);
+            return;
+        }
+        if (this.view === null) return;
         const file = this.bundle.getFile(this.activeName);
         if (file === null) return;
         this._suppressDirty = true;
@@ -407,16 +443,55 @@ export class TabbedEditor {
         });
     }
 
+    /**
+     * Mount the form-based property inspector into the
+     * inspector area. The Inspector class owns its own DOM
+     * subtree; the editor's job is to show or hide the
+     * inspector area when its tab becomes active.
+     */
+    _mountInspector() {
+        if (this.inspectorArea === null) return;
+        this.inspector = new Inspector(this.inspectorArea);
+    }
+
+    /**
+     * Toggle visibility between the CodeMirror editor area and
+     * the inspector area. Both occupy the same flex slot in the
+     * editor pane and only one is shown at a time.
+     * @param {boolean} showInspector
+     */
+    _setInspectorVisible(showInspector) {
+        if (this.inspectorArea === null) return;
+        if (showInspector) {
+            this.inspectorArea.classList.remove("hidden");
+            this.editorArea.classList.add("hidden");
+        } else {
+            this.inspectorArea.classList.add("hidden");
+            this.editorArea.classList.remove("hidden");
+        }
+    }
+
     // --- Tab selection ---
 
     /**
      * @param {string} name
      */
     selectTab(name) {
+        // Virtual inspector tab. No CodeMirror document swap;
+        // we just toggle which area is visible and update the
+        // tab-bar selection styling.
+        if (name === VIRTUAL_TAB_INSPECTOR) {
+            this.activeName = name;
+            this._setInspectorVisible(true);
+            this._renderTabs();
+            return;
+        }
+
         const file = this.bundle.getFile(name);
         if (file === null || this.view === null) return;
 
         this.activeName = name;
+        this._setInspectorVisible(false);
 
         const exts = extensionsForFile(name);
 
@@ -442,6 +517,10 @@ export class TabbedEditor {
      */
     _onDocChanged(content) {
         if (this.activeName === null) return;
+        // The virtual inspector tab has no file backing; spurious
+        // CodeMirror updates while it's hidden must not flow
+        // through to bundle.updateContent.
+        if (this.activeName === VIRTUAL_TAB_INSPECTOR) return;
         if (this._suppressDirty) return;
         this.bundle.updateContent(this.activeName, content);
         this._setDirty(true);
@@ -458,35 +537,99 @@ export class TabbedEditor {
 
     // --- Tab rendering ---
 
+    /**
+     * Render the tab bar. The Properties tab (form inspector)
+     * is virtual — it has no backing file and is rendered
+     * first regardless of bundle file order. Behaviours
+     * (behaviours.js) follows, then Properties JSON
+     * (scene.json), then any other text files in the bundle
+     * in their natural order. Pinning the order this way means
+     * the form-based Properties tab is always leftmost and
+     * the raw JSON view sits next to its companion Behaviours
+     * tab regardless of how the bundle stores its files.
+     */
     _renderTabs() {
         this.tabBar.innerHTML = "";
 
+        // Virtual Properties tab (form inspector).
+        this.tabBar.appendChild(
+            this._renderVirtualTab(VIRTUAL_TAB_INSPECTOR, "Properties"),
+        );
+
+        // File tabs in display order.
+        const orderedNames = ["behaviours.js", "scene.json"];
+        const renderedNames = new Set();
+        for (const name of orderedNames) {
+            const file = this.bundle.getFile(name);
+            if (file === null) continue;
+            this.tabBar.appendChild(this._renderFileTab(name));
+            renderedNames.add(name);
+        }
+
+        // Any remaining text files (e.g. resources/foo.js) in
+        // their natural bundle order, after the pinned tabs.
         for (const file of this.bundle.textFiles) {
-            const el = document.createElement("div");
-            el.className = "tab";
-            if (file.name === this.activeName) {
-                el.classList.add("tab-selected");
-                el.setAttribute("aria-selected", "true");
-            } else {
-                el.setAttribute("aria-selected", "false");
-            }
-            el.setAttribute("role", "tab");
-            el.setAttribute("tabindex", "0");
-            el.textContent = tabLabelFor(file.name);
-
-            el.addEventListener("click", () => this.selectTab(file.name));
-            el.addEventListener("keydown", (e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    this.selectTab(file.name);
-                }
-            });
-
-            this.tabBar.appendChild(el);
+            if (renderedNames.has(file.name)) continue;
+            this.tabBar.appendChild(this._renderFileTab(file.name));
         }
 
         const filler = document.createElement("div");
         filler.className = "tab-bar-filler";
         this.tabBar.appendChild(filler);
+    }
+
+    /**
+     * Build a tab element for the virtual Properties tab.
+     * @param {string} virtualName
+     * @param {string} label
+     * @returns {HTMLDivElement}
+     */
+    _renderVirtualTab(virtualName, label) {
+        const el = document.createElement("div");
+        el.className = "tab";
+        if (virtualName === this.activeName) {
+            el.classList.add("tab-selected");
+            el.setAttribute("aria-selected", "true");
+        } else {
+            el.setAttribute("aria-selected", "false");
+        }
+        el.setAttribute("role", "tab");
+        el.setAttribute("tabindex", "0");
+        el.textContent = label;
+        el.addEventListener("click", () => this.selectTab(virtualName));
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                this.selectTab(virtualName);
+            }
+        });
+        return el;
+    }
+
+    /**
+     * Build a tab element for a file in the bundle.
+     * @param {string} name
+     * @returns {HTMLDivElement}
+     */
+    _renderFileTab(name) {
+        const el = document.createElement("div");
+        el.className = "tab";
+        if (name === this.activeName) {
+            el.classList.add("tab-selected");
+            el.setAttribute("aria-selected", "true");
+        } else {
+            el.setAttribute("aria-selected", "false");
+        }
+        el.setAttribute("role", "tab");
+        el.setAttribute("tabindex", "0");
+        el.textContent = tabLabelFor(name);
+        el.addEventListener("click", () => this.selectTab(name));
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                this.selectTab(name);
+            }
+        });
+        return el;
     }
 }
