@@ -123,6 +123,12 @@ export class TransportBarView {
         if (tag === "INPUT" || tag === "TEXTAREA") return true;
         // CodeMirror's contenteditable content.
         if (target.closest(".cm-editor") !== null) return true;
+        // Any other contenteditable element — includes the
+        // property inspector's Name field, the inline score-
+        // rename span, and anything similar that lands later.
+        // Without this, R triggers transport rewind and Space
+        // toggles play even while the user is typing.
+        if (target.isContentEditable) return true;
         return false;
     }
 

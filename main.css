@@ -571,6 +571,37 @@ html, body {
     font-style: italic;
 }
 
+/* Squiggly underline for hard validation errors on the Name
+ * field — invalid identifier, reserved word, or a string
+ * matching the auto-generated id format. Red wavy underline
+ * matches the VS Code idiom for diagnostic-level errors;
+ * text-decoration-skip-ink:none keeps the squiggle continuous
+ * under descenders. */
+.insp-field.error-hard {
+    text-decoration: underline wavy #d4564b;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 2px;
+}
+
+/* Squiggly underline for soft conflicts — the name is valid
+ * but already used by another object. Yellow matches the
+ * Unsaved indicator's attention colour; same wavy idiom as
+ * the hard-error case but distinct hue so the two states
+ * read differently at a glance. */
+.insp-field.error-soft {
+    text-decoration: underline wavy #d4a05a;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 2px;
+}
+
+/* Suppress the browser's default focus outline on a
+ * contenteditable Name field. The green border on .insp-field
+ * is already a clear focus and editability signal, and an
+ * extra outline ring on top of it just adds visual noise. */
+.insp-field[contenteditable]:focus {
+    outline: none;
+}
+
 /* Numeric field: small green stepper dots on the right edge.
  * Only shown when the field is actually editable; disabled
  * and locked variants suppress the dots. The dots are

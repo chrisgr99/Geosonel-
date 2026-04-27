@@ -75,6 +75,10 @@ import {
     setSpritePositions,
     removeObjects,
     fillMissingIds,
+    fillEmptyNames,
+    setMuteOnSelection,
+    setHideOnCurves,
+    setNameOnSelection,
 } from "./src/sceneEditor.js";
 
 main();
@@ -251,11 +255,14 @@ async function main() {
         if (editor.isDirty) {
             await editor.save();
         }
-        await ensureSceneIdsAreFilled();
+        await ensureIdentityFieldsAreFilled();
         const result = sceneLoader.load(session.bundle);
         if (result.success && result.scene !== null) {
             canvas.setScene(result.scene);
             applySceneParamsToTransport(result.scene, transport);
+            if (editor.inspector) {
+                editor.inspector.setScene(result.scene);
+            }
             messages.write("Scene updated.");
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
@@ -264,13 +271,16 @@ async function main() {
 
     /**
      * Before loading the scene, scan scene.json for objects
-     * that lack an id and fill them in. Ids are stable and
-     * type-prefixed (sp_xxxxxx, tr_xxxxxx, cv_xxxxxx) and
-     * survive across edits because we write them back to the
-     * bundle's scene.json text after generating them. This is
-     * a no-op when every object already has an id, which is
-     * the steady-state case once a score has been loaded
-     * once.
+     * that lack an id or a name and fill them in. Ids are
+     * stable and type-prefixed (sp_xxxxxx, tr_xxxxxx,
+     * cv_xxxxxx) and survive across edits because we write
+     * them back to the bundle's scene.json text after
+     * generating them. Names are inserted as empty strings
+     * — the same default the constructors apply — so the
+     * user has an obvious place to type a name in the JSON
+     * tab without first remembering the field exists. Both
+     * passes are no-ops once the steady state is reached,
+     * which is the case once a score has been loaded once.
      *
      * Done before sceneLoader.load() so the loader sees the
      * filled scene; done after editor.save() so we don't lose
@@ -278,12 +288,14 @@ async function main() {
      * a parse error we skip silently — sceneLoader will
      * report the error from its own parse.
      */
-    const ensureSceneIdsAreFilled = async () => {
+    const ensureIdentityFieldsAreFilled = async () => {
         const sceneFile = session.bundle.getFile("scene.json");
         if (sceneFile === null) return;
         const parsed = parseScene(sceneFile.content);
         if (!parsed.ok) return;
-        if (!fillMissingIds(parsed.data)) return;
+        const idsChanged = fillMissingIds(parsed.data);
+        const namesChanged = fillEmptyNames(parsed.data);
+        if (!idsChanged && !namesChanged) return;
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();
@@ -489,6 +501,35 @@ async function main() {
             }
         }
     });
+
+    // --- Inspector edit callback ---
+    //
+    // The inspector emits edits when the user toggles Mute or
+    // Hide or commits a Name change. Each edit carries a kind
+    // tag, the new value, and the current selection at the
+    // moment of the click. We translate the edit into the
+    // matching scene.json mutation and route it through
+    // applySceneEdit — the same pipeline the canvas toolbar
+    // uses — so inspector edits and canvas edits share the
+    // dirty-state, auto-save, and re-run mechanics without
+    // either knowing about the other.
+    if (editor.inspector) {
+        editor.inspector.setEditCallback(async (edit) => {
+            if (edit.kind === "setMute") {
+                await applySceneEdit((data) =>
+                    setMuteOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setHide") {
+                await applySceneEdit((data) =>
+                    setHideOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setName") {
+                await applySceneEdit((data) =>
+                    setNameOnSelection(data, edit.selection, edit.value),
+                );
+            }
+        });
+    }
 
     // Escape disarms the active tool. Listening at the window
     // level means it works regardless of whether the canvas,

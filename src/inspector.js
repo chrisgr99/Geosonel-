@@ -16,11 +16,19 @@
  * room to spare. This matches the GeoSonix authoring
  * convention.
  *
- * v1 scope: layout and selection-driven greying. Field values
- * are placeholders — the next milestone wires real values
- * from scene.json into the form. The Inspector exposes
- * setSelection(); main.js calls it from the canvas's
- * selectionChanged event.
+ * v1 scope: selection-driven greying for all bands plus
+ * read-binding and write-binding for Band 1. Identity fields
+ * (Object ID, Name, Mute, Hide) display real values from the
+ * runtime Scene, and edits to Mute, Hide, and Name commit
+ * back through main.js's applyInspectorEdit pipeline. Name
+ * edits validate against JS-identifier rules and the
+ * generated-id pattern with hard-error squiggles for
+ * malformed input and soft-conflict squiggles for duplicate
+ * names. The other bands still show placeholder values
+ * pending their own data-binding work. The Inspector exposes
+ * setSelection(), setScene(), and setEditCallback(); main.js
+ * wires the three together so the inspector tracks selection
+ * changes, scene reloads, and edit commits.
  *
  * Six bands above the (deferred) harmony / global area:
  *   1. Identity (id, name, mute, hide — hide is curve-only)
@@ -65,6 +73,12 @@
  */
 
 // @ts-check
+
+import {
+    validateName,
+    collectOtherNames,
+    nameConflictsInScene,
+} from "./nameValidation.js";
 
 // Width constants. Centralised so layout adjustments touch
 // one set of numbers, not scattered inline styles. The
@@ -127,6 +141,64 @@ export class Inspector {
         this.container.classList.add("inspector-pane");
         /** @type {{sprites: number[], triggers: number[], curves: number[]}} */
         this._selection = { sprites: [], triggers: [], curves: [] };
+        /**
+         * The runtime Scene built by sceneLoader. Field reads
+         * for Band 1 (id, name, mute, hide) come from this.
+         * Null until the first runScene completes; in that
+         * window the inspector falls back to greyed/empty
+         * placeholders instead of crashing on lookup.
+         * @type {import("./scene.js").Scene | null}
+         */
+        this._scene = null;
+        /**
+         * Callback fired when the user commits an inspector
+         * edit. main.js wires this to applyInspectorEdit
+         * which runs the parse-mutate-stringify pipeline and
+         * re-runs the scene. Edits carry a kind tag plus per-
+         * kind payload, with the current selection attached
+         * automatically by _emitEdit.
+         * @type {((edit: any) => void) | null}
+         */
+        this._editCallback = null;
+        this._render();
+    }
+
+    /**
+     * Register the callback that handles inspector edit
+     * commits. main.js installs this once during setup; the
+     * callback is invoked synchronously from the inspector's
+     * event handlers (checkbox clicks, name field commits)
+     * and is expected to be async-safe.
+     * @param {(edit: any) => void} callback
+     */
+    setEditCallback(callback) {
+        this._editCallback = callback;
+    }
+
+    /**
+     * Emit an inspector edit to the registered callback,
+     * attaching the current selection automatically. If the
+     * callback isn't wired yet the edit is dropped silently
+     * — happens in startup ordering edge cases but otherwise
+     * shouldn't.
+     * @param {Object} edit
+     */
+    _emitEdit(edit) {
+        if (typeof this._editCallback === "function") {
+            this._editCallback({ ...edit, selection: this._selection });
+        }
+    }
+
+    /**
+     * Update the inspector's reference to the runtime Scene.
+     * Called by main.js after each successful scene reload.
+     * Triggers a re-render so currently-displayed Band 1
+     * values reflect the new data — important after edits
+     * that change id, name, mute, or hide.
+     * @param {import("./scene.js").Scene | null} scene
+     */
+    setScene(scene) {
+        this._scene = scene;
         this._render();
     }
 
@@ -172,10 +244,13 @@ export class Inspector {
     }
 
     /**
-     * Title bar. Single-select: "{Kind} {index}" (eventually
-     * "{Kind} {name}" when scene.json has names). Multi-select:
-     * the selection breakdown like "1 trigger, 2 sprites" on
-     * the upper left, right side reserved.
+     * Title bar. Single-select shows the kind label always
+     * bright ("Sprite", "Trigger", "Curve") followed by a
+     * handle. The handle is bright when it's a user-typed
+     * name and dimmed-italic when it's a generated-id
+     * placeholder, so a glance at the title bar tells you
+     * whether this object has been named yet. Multi-select
+     * stays uniformly bright with the kind-count breakdown.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildTitleBar(ctx) {
@@ -184,7 +259,19 @@ export class Inspector {
 
         const left = document.createElement("div");
         left.className = "insp-title-left";
-        left.textContent = titleTextFor(ctx);
+
+        if (ctx.isSingle) {
+            const parts = singleSelectTitleParts(ctx, this._scene);
+            left.appendChild(document.createTextNode(parts.kind + " "));
+            const handleEl = document.createElement("span");
+            handleEl.className = "insp-title-handle";
+            if (parts.handleIsPlaceholder) handleEl.classList.add("placeholder");
+            handleEl.textContent = parts.handle;
+            left.appendChild(handleEl);
+        } else {
+            left.textContent = multiSelectTitle(ctx);
+        }
+
         bar.appendChild(left);
 
         const right = document.createElement("div");
@@ -207,15 +294,43 @@ export class Inspector {
         const band = document.createElement("div");
         band.className = "insp-band";
 
-        // Until scene.json has explicit id and name fields, we
-        // surface the array index as a placeholder ID and leave
-        // Name blank. The shapes of the fields and the greying
-        // rules already match the eventual model.
-        const idValue = ctx.isSingle ? String(idOfFirst(ctx)) : "";
-        const nameValue = "";
+        const objs = selectedObjects(this._scene, this._selection);
         const idEditable = ctx.isSingle;
         const nameEditable = ctx.isSingle;
         const hideActive = ctx.hasCurves;
+
+        // ID and name come from the single selected object on
+        // single-select. On multi-select the row is greyed and
+        // the values are blank, since both fields are per-
+        // object unique. Defensive null checks: if the scene
+        // hasn't loaded yet, objs.all is empty and we fall
+        // through to the same blank-greyed presentation.
+        let idValue = "";
+        let nameValue = "";
+        /** @type {string | null} */
+        let singleObjId = null;
+        let nameConflict = false;
+        if (ctx.isSingle && objs.all.length === 1) {
+            const obj = objs.all[0];
+            idValue = typeof obj.id === "string" ? obj.id : "";
+            nameValue = typeof obj.name === "string" ? obj.name : "";
+            singleObjId = idValue !== "" ? idValue : null;
+            if (nameValue !== "") {
+                nameConflict = nameConflictsInScene(
+                    nameValue, this._scene, singleObjId,
+                );
+            }
+        }
+
+        // Mute aggregates across every selected object (any
+        // kind). Hide aggregates across selected curves only,
+        // since hide is curve-only. Both return true / false /
+        // "varies" so a tri-state checkbox can render the
+        // mixed case as a visually distinct "divergent" state.
+        const muteState = aggregateBoolean(objs.all, "mute");
+        const hideState = ctx.hasCurves
+            ? aggregateBoolean(objs.curves, "hide")
+            : false;
 
         const r1 = mkRow();
         r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !idEditable }));
@@ -226,17 +341,153 @@ export class Inspector {
             width: W.idField,
         }));
         r1.appendChild(mkLabel("Mute", { width: W.mute }));
-        r1.appendChild(mkCheckbox({ checked: false }));
+        r1.appendChild(mkCheckbox({
+            checked: muteState === true,
+            varies: muteState === "varies",
+            onClick: () => this._onBooleanCheckboxClick("setMute", muteState),
+        }));
         r1.appendChild(mkLabel("Hide", { width: W.hide, disabled: !hideActive }));
-        r1.appendChild(mkCheckbox({ checked: false, disabled: !hideActive }));
+        r1.appendChild(mkCheckbox({
+            checked: hideState === true,
+            varies: hideState === "varies",
+            disabled: !hideActive,
+            onClick: hideActive
+                ? () => this._onBooleanCheckboxClick("setHide", hideState)
+                : undefined,
+        }));
         band.appendChild(r1);
 
         const r2 = mkRow();
         r2.appendChild(mkLabel("Name", { width: W.leftLabel, disabled: !nameEditable }));
-        r2.appendChild(mkField({ value: nameValue, disabled: !nameEditable, width: W.name }));
+        r2.appendChild(this._buildNameField({
+            value: nameValue,
+            editable: nameEditable,
+            conflict: nameConflict,
+            objId: singleObjId,
+        }));
         band.appendChild(r2);
 
         return band;
+    }
+
+    /**
+     * Translate a Mute or Hide checkbox click into the
+     * appropriate edit. The varies state (multi-select with
+     * divergent values) resolves to true — the declarative
+     * "do this thing" outcome — so the click commits to a
+     * uniform muted-or-hidden state. Other states toggle.
+     *
+     * @param {"setMute" | "setHide"} kind
+     * @param {boolean | "varies"} currentState
+     */
+    _onBooleanCheckboxClick(kind, currentState) {
+        const newValue = (currentState === "varies") ? true : !currentState;
+        this._emitEdit({ kind, value: newValue });
+    }
+
+    /**
+     * Build the Name field. When editable (single-select),
+     * the field is contenteditable and wires keydown and
+     * blur handlers for commit and validation; when not
+     * editable (multi-select), it's a plain greyed display.
+     *
+     * Validation outcomes:
+     *   - ok: clear any error class; emit a setName edit
+     *     (which triggers runScene and a re-render).
+     *   - soft (duplicate name): same commit as ok, but add
+     *     the error-soft class so a yellow squiggle persists
+     *     under the name until the user resolves the
+     *     duplicate.
+     *   - hard (invalid identifier, reserved word, reserved
+     *     id-format pattern): on Enter, add error-hard for
+     *     the red squiggle and keep focus so the user can
+     *     fix it; on blur, silently revert to the saved
+     *     value so an abandoned attempt doesn't carry
+     *     invalid state across navigations.
+     *
+     * Initial render shows the saved value with error-soft
+     * applied iff the saved name conflicts with another
+     * object's name in the scene.
+     *
+     * @param {{ value: string, editable: boolean, conflict: boolean, objId: string | null }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildNameField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-field";
+        el.style.width = `${W.name}px`;
+
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.textContent = opts.value;
+            return el;
+        }
+
+        el.setAttribute("contenteditable", "plaintext-only");
+        el.setAttribute("spellcheck", "false");
+        el.textContent = opts.value;
+        if (opts.conflict) el.classList.add("error-soft");
+
+        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
+            const candidate = el.textContent ?? "";
+            const otherNames = collectOtherNames(this._scene, opts.objId);
+            const result = validateName(candidate, otherNames);
+            if (result.kind === "hard") {
+                if (mode === "blur") {
+                    // Silently revert: an abandoned bad name
+                    // shouldn't carry invalid state forward.
+                    el.textContent = opts.value;
+                    el.classList.remove("error-hard", "error-soft");
+                    if (opts.conflict) el.classList.add("error-soft");
+                    return;
+                }
+                el.classList.remove("error-soft");
+                el.classList.add("error-hard");
+                return;
+            }
+            // ok or soft — commit if the trimmed value differs
+            // from what's currently saved.
+            el.classList.remove("error-hard");
+            if (result.kind === "soft") {
+                el.classList.add("error-soft");
+            } else {
+                el.classList.remove("error-soft");
+            }
+            if (result.value !== opts.value) {
+                this._emitEdit({ kind: "setName", value: result.value });
+            }
+        };
+
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit("enter");
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                el.textContent = opts.value;
+                el.classList.remove("error-hard", "error-soft");
+                if (opts.conflict) el.classList.add("error-soft");
+                el.blur();
+                return;
+            }
+            // Any other keystroke should clear a hard-error
+            // squiggle so the user can see their edits as
+            // they fix the name. queueMicrotask runs after
+            // the character is inserted so the squiggle
+            // disappears in step with the user's typing.
+            if (el.classList.contains("error-hard")) {
+                queueMicrotask(() => {
+                    el.classList.remove("error-hard");
+                });
+            }
+        });
+        el.addEventListener("blur", () => {
+            tryCommit("blur");
+        });
+
+        return el;
     }
 
     /**
@@ -471,19 +722,47 @@ function buildSelectionContext(selection) {
 }
 
 /**
- * Build the title-bar text for the current selection.
- * Single: "Sprite 0" / "Trigger 2" / "Curve 1"
- * Multi same kind: "3 sprites"
- * Multi mixed: "1 sprite, 2 triggers, 1 curve"
+ * Compute the kind label and handle for a single-select
+ * title bar, plus a flag indicating whether the handle is a
+ * generated-id placeholder rather than a user-typed name.
+ * The flag drives the title bar's dim-italic styling so a
+ * glance distinguishes a named object from one still showing
+ * only its id.
+ *
+ * The handle prefers a user-typed name when set, falls back
+ * to the generated id, and falls back further to the array
+ * index when the runtime scene isn't loaded yet (defensive
+ * — in practice setScene runs before any user interaction).
+ *
  * @param {ReturnType<typeof buildSelectionContext>} ctx
+ * @param {import("./scene.js").Scene | null} scene
+ * @returns {{ kind: string, handle: string, handleIsPlaceholder: boolean }}
  */
-function titleTextFor(ctx) {
-    if (ctx.isSingle) {
-        const kind = ctx.kinds[0];
-        const idx = idOfFirst(ctx);
-        const cap = kind.charAt(0).toUpperCase() + kind.slice(1);
-        return `${cap} ${idx}`;
+function singleSelectTitleParts(ctx, scene) {
+    const kind = ctx.kinds[0];
+    const idx = idOfFirst(ctx);
+    const cap = kind.charAt(0).toUpperCase() + kind.slice(1);
+    const obj = lookupSelectedObject(scene, kind, idx);
+    if (obj !== null) {
+        if (typeof obj.name === "string" && obj.name.length > 0) {
+            return { kind: cap, handle: obj.name, handleIsPlaceholder: false };
+        }
+        if (typeof obj.id === "string" && obj.id.length > 0) {
+            return { kind: cap, handle: obj.id, handleIsPlaceholder: true };
+        }
     }
+    return { kind: cap, handle: String(idx), handleIsPlaceholder: true };
+}
+
+/**
+ * Compute the title text for a multi-select. Uniform bright
+ * style throughout, no placeholder distinction (multi-select
+ * doesn't show a single object's identity).
+ *
+ * @param {ReturnType<typeof buildSelectionContext>} ctx
+ * @returns {string}
+ */
+function multiSelectTitle(ctx) {
     const parts = [];
     if (ctx.hasSprites) parts.push(pluralCount(ctx.sprites.length, "sprite"));
     if (ctx.hasTriggers) parts.push(pluralCount(ctx.triggers.length, "trigger"));
@@ -496,6 +775,91 @@ function idOfFirst(ctx) {
     if (ctx.sprites.length > 0) return ctx.sprites[0];
     if (ctx.triggers.length > 0) return ctx.triggers[0];
     return ctx.curves[0];
+}
+
+/**
+ * Resolve a selection index against the runtime scene to
+ * return the actual object (Curve, Trigger, or Sprite). The
+ * scene's array order matches scene.json's array order, so
+ * indexes from the canvas selection map directly. Returns
+ * null defensively when scene is null or the index is out
+ * of range — either condition is rare in practice but cheap
+ * to guard against, and a null return causes the caller to
+ * fall back to the index-only display.
+ *
+ * @param {import("./scene.js").Scene | null} scene
+ * @param {"sprite" | "trigger" | "curve"} kind
+ * @param {number} idx
+ * @returns {any | null}
+ */
+function lookupSelectedObject(scene, kind, idx) {
+    if (scene === null) return null;
+    const arr = kind === "sprite" ? scene.sprites
+              : kind === "trigger" ? scene.triggers
+              : kind === "curve" ? scene.curves
+              : null;
+    if (arr === null || idx < 0 || idx >= arr.length) return null;
+    return arr[idx];
+}
+
+/**
+ * Materialise the selected objects out of a runtime scene.
+ * Returns four arrays: per-kind groupings plus a combined
+ * "all" list useful for cross-kind aggregation (e.g. mute
+ * across the whole selection). Indexes that fall outside
+ * the scene's arrays are silently dropped — the canvas
+ * filters its own stale selection on every reload but a
+ * defensive filter here keeps a transient mismatch from
+ * crashing the inspector.
+ *
+ * @param {import("./scene.js").Scene | null} scene
+ * @param {{sprites: number[], triggers: number[], curves: number[]}} selection
+ * @returns {{ all: any[], sprites: any[], triggers: any[], curves: any[] }}
+ */
+function selectedObjects(scene, selection) {
+    if (scene === null) {
+        return { all: [], sprites: [], triggers: [], curves: [] };
+    }
+    const sprites = selection.sprites
+        .filter((idx) => idx >= 0 && idx < scene.sprites.length)
+        .map((idx) => scene.sprites[idx]);
+    const triggers = selection.triggers
+        .filter((idx) => idx >= 0 && idx < scene.triggers.length)
+        .map((idx) => scene.triggers[idx]);
+    const curves = selection.curves
+        .filter((idx) => idx >= 0 && idx < scene.curves.length)
+        .map((idx) => scene.curves[idx]);
+    return {
+        all: [...sprites, ...triggers, ...curves],
+        sprites, triggers, curves,
+    };
+}
+
+/**
+ * Aggregate a boolean field across a list of objects.
+ * Returns true if every object's field is truthy, false if
+ * every object's field is falsy, or the string "varies" if
+ * the values disagree. Empty list returns false (the field
+ * has no representative value). Used by Band 1 for Mute and
+ * Hide so multi-select can render a tri-state checkbox
+ * indicating divergence.
+ *
+ * @param {any[]} objects
+ * @param {string} fieldName
+ * @returns {boolean | "varies"}
+ */
+function aggregateBoolean(objects, fieldName) {
+    if (objects.length === 0) return false;
+    let value = null;
+    for (const obj of objects) {
+        const v = !!obj[fieldName];
+        if (value === null) {
+            value = v;
+        } else if (value !== v) {
+            return "varies";
+        }
+    }
+    return value === true;
 }
 
 /** @param {ReturnType<typeof buildSelectionContext>} ctx */
@@ -619,13 +983,22 @@ function mkField(opts) {
 }
 
 /**
- * @param {{ checked?: boolean, disabled?: boolean }} [opts]
+ * @param {{ checked?: boolean, varies?: boolean, disabled?: boolean, onClick?: () => void }} [opts]
  */
 function mkCheckbox(opts = {}) {
     const el = document.createElement("div");
     el.className = "insp-checkbox";
     if (opts.checked) el.classList.add("checked");
+    // "varies" is a tri-state for multi-select where the
+    // selected objects disagree on this field's value. The
+    // checkbox renders distinct from both checked and empty:
+    // styled in main.css with a horizontal dash so the
+    // divergence reads at a glance.
+    if (opts.varies) el.classList.add("varies");
     if (opts.disabled) el.classList.add("disabled");
+    if (typeof opts.onClick === "function" && !opts.disabled) {
+        el.addEventListener("click", opts.onClick);
+    }
     return el;
 }
 

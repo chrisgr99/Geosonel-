@@ -207,6 +207,58 @@ export function fillMissingIds(data) {
 }
 
 /**
+ * Walk the parsed scene data and fill in an empty name field
+ * for any object that doesn't already have a name key. Always
+ * inserts the name immediately after id, so the two identity
+ * fields sit together at the top of the formatted entry. The
+ * empty-string default is the same value the constructors
+ * apply for missing names; making it visible in the JSON
+ * just gives the user an obvious place to type the name they
+ * want without first remembering the field exists. Existing
+ * name keys are left alone regardless of their value (empty
+ * string, set string, even null).
+ *
+ * Returns true iff at least one name was added; the caller
+ * uses that signal to decide whether to write the mutated
+ * scene back to the bundle.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function fillEmptyNames(data) {
+    let changed = false;
+    for (const arrayKey of ["curves", "triggers", "sprites"]) {
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (let i = 0; i < arr.length; i++) {
+            const entry = arr[i];
+            if (entry === null ||
+                typeof entry !== "object" ||
+                Array.isArray(entry)) continue;
+            if ("name" in entry) continue;
+            // Walk the existing keys preserving order, and
+            // insert name immediately after id. If id isn't
+            // present (shouldn't happen after fillMissingIds
+            // but defensive), fall back to inserting name
+            // first.
+            /** @type {Record<string, any>} */
+            const newEntry = {};
+            let inserted = false;
+            for (const k of Object.keys(entry)) {
+                newEntry[k] = entry[k];
+                if (k === "id" && !inserted) {
+                    newEntry.name = "";
+                    inserted = true;
+                }
+            }
+            arr[i] = inserted ? newEntry : { name: "", ...entry };
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/**
  * Add a sprite to the parsed scene at canvas position (x, y).
  * The sprite gets a freshly generated id, x, y, and vx/vy=0.
  * Other fields fall through to the constructor defaults (no
@@ -223,6 +275,7 @@ export function addSpriteAt(data, x, y) {
     const id = generateId("sprite", collectExistingIds(data));
     data.sprites.push({
         id,
+        name: "",
         x: roundCoord(x),
         y: roundCoord(y),
         vx: 0,
@@ -274,6 +327,116 @@ export function removeObjects(data, selection) {
     }
     if (Array.isArray(data.curves) && curves.size > 0) {
         data.curves = data.curves.filter((_, i) => !curves.has(i));
+    }
+}
+
+/**
+ * Set the mute field on every object in the given selection,
+ * across all three kinds. Used by the inspector's Band 1
+ * Mute checkbox commit. Mutates `data` in place. Indexes
+ * that fall outside their array are silently ignored —
+ * keeps a transient mismatch between the inspector's cached
+ * scene and the just-edited bundle from breaking the commit.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} value
+ */
+export function setMuteOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "mute", value, true);
+}
+
+/**
+ * Set the hide field on every curve in the given selection.
+ * Sprites and triggers in the selection are ignored — hide
+ * is curve-only per Band 1's design. Mutates `data` in
+ * place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} value
+ */
+export function setHideOnCurves(data, selection, value) {
+    setBooleanFieldOnSelection(data, { curves: selection.curves }, "hide", value, true);
+}
+
+/**
+ * Set the name field on every object in the given selection,
+ * across all three kinds. Used by the inspector's Name field
+ * commit on single-select. Multi-select doesn't reach this
+ * path because the inspector greys the Name field, but if
+ * called with a multi-select the function applies the same
+ * name to every member — the resulting duplicate names
+ * would be soft-blocked at validation. Mutates `data` in
+ * place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setNameOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "name", value);
+}
+
+/**
+ * Generic helper for the boolean-field setters. The
+ * preserveExisting flag keeps the field's slot in the entry
+ * even when the new value matches the default — so a click
+ * that sets mute to false on a previously-true object
+ * leaves "mute": false in the JSON rather than removing the
+ * key, which keeps the field's editing footprint visible.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} fieldName
+ * @param {boolean} value
+ * @param {boolean} _preserveExisting
+ */
+function setBooleanFieldOnSelection(data, selection, fieldName, value, _preserveExisting) {
+    /** @type {Array<[string, Iterable<number> | undefined]>} */
+    const arrays = [
+        ["sprites", selection.sprites],
+        ["triggers", selection.triggers],
+        ["curves", selection.curves],
+    ];
+    for (const [arrayKey, indexes] of arrays) {
+        if (indexes === undefined) continue;
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (const idx of indexes) {
+            if (idx < 0 || idx >= arr.length) continue;
+            const entry = arr[idx];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            entry[fieldName] = value;
+        }
+    }
+}
+
+/**
+ * Generic helper for the string-field setters.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} fieldName
+ * @param {string} value
+ */
+function setStringFieldOnSelection(data, selection, fieldName, value) {
+    /** @type {Array<[string, Iterable<number> | undefined]>} */
+    const arrays = [
+        ["sprites", selection.sprites],
+        ["triggers", selection.triggers],
+        ["curves", selection.curves],
+    ];
+    for (const [arrayKey, indexes] of arrays) {
+        if (indexes === undefined) continue;
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (const idx of indexes) {
+            if (idx < 0 || idx >= arr.length) continue;
+            const entry = arr[idx];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            entry[fieldName] = value;
+        }
     }
 }
 
