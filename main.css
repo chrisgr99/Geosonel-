@@ -483,6 +483,20 @@ html, body {
     line-height: 1.1;
 }
 
+/* The handle portion of a single-select title (the part
+ * after the kind label) renders bright when it's a user-
+ * typed name and dim-italic when it's a generated-id
+ * placeholder. Italic reuses the visual cue used by the
+ * read-only Object ID field in Band 1, so the same
+ * "system-generated, not user-set" signal shows up in both
+ * places. The kind label to the left of the handle stays
+ * white because it's useful information regardless of
+ * whether a name has been assigned. */
+.insp-title-handle.placeholder {
+    color: #909090;
+    font-style: italic;
+}
+
 .insp-title-right {
     color: #ffffff;
     font-size: 11pt;
@@ -547,9 +561,13 @@ html, body {
     color: #888888;
 }
 
+/* Locked: read-only by design (the Object ID field). Same
+ * dim-italic styling as the title-bar handle placeholder, so
+ * the "system-generated, not user-set" signal is consistent
+ * wherever a generated id appears in the inspector. */
 .insp-field.locked {
     border-color: transparent;
-    color: #cccccc;
+    color: #909090;
     font-style: italic;
 }
 
@@ -595,6 +613,29 @@ html, body {
 .insp-checkbox.checked {
     background-color: #5fc858;
     border-color: #5fc858;
+}
+
+/* Tri-state: rendered when a multi-selection's objects
+ * disagree on the boolean. Green ring (so the field still
+ * reads as editable) with a green horizontal dash through
+ * the middle, distinguishing it from both empty (grey ring,
+ * dark fill) and checked (fully green). */
+.insp-checkbox.varies {
+    border-color: #5fc858;
+    background-color: #4a4a4a;
+    position: relative;
+}
+
+.insp-checkbox.varies::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 3px;
+    right: 3px;
+    height: 2px;
+    margin-top: -1px;
+    background-color: #5fc858;
+    border-radius: 1px;
 }
 
 .insp-checkbox.disabled {
