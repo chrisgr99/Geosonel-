@@ -17,15 +17,24 @@
  * convention.
  *
  * v1 scope: selection-driven greying for all bands plus
- * read-binding and write-binding for Band 1. Identity fields
- * (Object ID, Name, Mute, Hide) display real values from the
- * runtime Scene, and edits to Mute, Hide, and Name commit
- * back through main.js's applyInspectorEdit pipeline. Name
- * edits validate against JS-identifier rules and the
- * generated-id pattern with hard-error squiggles for
- * malformed input and soft-conflict squiggles for duplicate
- * names. The other bands still show placeholder values
- * pending their own data-binding work. The Inspector exposes
+ * read-binding and write-binding for Band 1, plus read
+ * binding for Band 5 (Active Beats, Beat Strength) and
+ * Band 6 (Cycle Duration, Cycle Speeds, Stop at Cycle).
+ * Identity fields (Object ID, Name, Mute, Hide) display
+ * real values from the runtime Scene, and edits to Mute,
+ * Hide, and Name commit back through main.js's
+ * applyInspectorEdit pipeline. Name edits validate against
+ * JS-identifier rules and the generated-id pattern with
+ * hard-error squiggles for malformed input and soft-conflict
+ * squiggles for duplicate names. Band 5 and Band 6 read
+ * paths consult curves only — sprites activate Band 5 in
+ * the layout but contribute nothing to the displayed values
+ * yet, pending the sprite-auto-timer model extension. Multi-
+ * select disagreement on a string or numeric field renders
+ * as a blank value for now; a richer divergence indicator
+ * will follow when write binding makes the case actionable.
+ * The other bands still show placeholder values pending
+ * their own data-binding work. The Inspector exposes
  * setSelection(), setScene(), and setEditCallback(); main.js
  * wires the three together so the inspector tracks selection
  * changes, scene reloads, and edit commits.
@@ -631,6 +640,19 @@ export class Inspector {
         const dis = !beatBandActive(ctx);
         const label = beatBandLabel(ctx);
 
+        // Read binding consults curves only. The band
+        // activates for sprites too (see beatBandActive),
+        // but sprites have no activeBeats or strength fields
+        // in their schema or runtime model yet — that's a
+        // future milestone alongside sprite auto-timer
+        // simulation. When sprite-side fields are added,
+        // include objs.sprites in the aggregate sources here
+        // and update the audit doc's Sprite Auto Beats /
+        // Strength entry.
+        const objs = selectedObjects(this._scene, this._selection);
+        const activeBeatsAgg = aggregateString(objs.curves, "activeBeats");
+        const strengthAgg = aggregateString(objs.curves, "strength");
+
         const r1 = mkRow();
         r1.appendChild(mkLabel(label, { width: W.leftLabel, disabled: dis, multiline: true }));
         r1.appendChild(mkCombo({ value: "None", width: W.beatPointsCombo, disabled: dis }));
@@ -638,12 +660,20 @@ export class Inspector {
 
         const r2 = mkRow();
         r2.appendChild(mkLabel("Active Beats", { width: W.leftLabel, disabled: dis }));
-        r2.appendChild(mkField({ value: "", width: W.rhythmString, disabled: dis }));
+        r2.appendChild(mkField({
+            value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
+            width: W.rhythmString,
+            disabled: dis,
+        }));
         band.appendChild(r2);
 
         const r3 = mkRow();
         r3.appendChild(mkLabel("Beat Strength", { width: W.leftLabel, disabled: dis }));
-        r3.appendChild(mkField({ value: "", width: W.rhythmString, disabled: dis }));
+        r3.appendChild(mkField({
+            value: strengthAgg === "varies" ? "" : strengthAgg,
+            width: W.rhythmString,
+            disabled: dis,
+        }));
         band.appendChild(r3);
 
         return band;
@@ -657,11 +687,10 @@ export class Inspector {
      * cycle multipliers cycling through the list cycle by
      * cycle (negative values reverse direction); Stop at
      * Cycle halts the cursor after a specified count (-1
-     * means play forever). Trigger Sync to Beat is a
-     * placeholder pending its own design pass. v1 lays out
-     * the fields; data binding for this band is the next
-     * milestone. The first row here is the other constraint
-     * row driving form width.
+     * means play forever). Read binding is wired for the
+     * three curve fields; the Trigger Sync to Beat combo is
+     * a placeholder pending its own design pass. The first
+     * row is the other constraint row driving form width.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandCycleParams(ctx) {
@@ -669,13 +698,36 @@ export class Inspector {
         band.className = "insp-band";
         const dis = !ctx.hasCurves;
 
+        // Cycle params are curve-only; read binding pulls
+        // from the selected curves with multi-select
+        // disagreement rendered as a blank field per the v1
+        // read-binding decision. cycleDuration and
+        // stopAtCycle are integers at runtime; aggregateString
+        // stringifies them for display. The Trigger Sync to
+        // Beat combo stays a placeholder pending its own
+        // design pass.
+        const objs = selectedObjects(this._scene, this._selection);
+        const cycleDurationAgg = aggregateString(objs.curves, "cycleDuration");
+        const stopAtCycleAgg = aggregateString(objs.curves, "stopAtCycle");
+        const cycleSpeedsAgg = aggregateString(objs.curves, "cycleSpeeds");
+
         const r1 = mkRow();
         r1.appendChild(mkLabel("Cycle\nDuration", { width: W.leftLabel, disabled: dis, multiline: true }));
-        r1.appendChild(mkField({ value: "4", numeric: true, width: W.cycleDurationF, disabled: dis }));
+        r1.appendChild(mkField({
+            value: cycleDurationAgg === "varies" ? "" : cycleDurationAgg,
+            numeric: true,
+            width: W.cycleDurationF,
+            disabled: dis,
+        }));
         r1.appendChild(mkUnits("beats", { disabled: dis }));
         r1.appendChild(mkSpacer());
         r1.appendChild(mkLabel("Stop at\nCycle", { width: W.stopAt, disabled: dis, multiline: true }));
-        r1.appendChild(mkField({ value: "-1", numeric: true, width: W.stopAtF, disabled: dis }));
+        r1.appendChild(mkField({
+            value: stopAtCycleAgg === "varies" ? "" : stopAtCycleAgg,
+            numeric: true,
+            width: W.stopAtF,
+            disabled: dis,
+        }));
         r1.appendChild(mkSpacer());
         r1.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.triggerSync, disabled: dis, multiline: true }));
         r1.appendChild(mkCombo({ value: "Off", width: W.triggerSyncCombo, disabled: dis }));
@@ -683,7 +735,11 @@ export class Inspector {
 
         const r2 = mkRow();
         r2.appendChild(mkLabel("Cycle Speeds", { width: W.leftLabel, disabled: dis }));
-        r2.appendChild(mkField({ value: "1", width: W.cycleSpeeds, disabled: dis }));
+        r2.appendChild(mkField({
+            value: cycleSpeedsAgg === "varies" ? "" : cycleSpeedsAgg,
+            width: W.cycleSpeeds,
+            disabled: dis,
+        }));
         band.appendChild(r2);
 
         return band;
@@ -861,6 +917,34 @@ function aggregateBoolean(objects, fieldName) {
         }
     }
     return value === true;
+}
+
+/**
+ * Aggregate a string-valued (or stringifiable) field across
+ * a list of objects. Returns the common value as a string
+ * when every object's field matches, the literal "varies"
+ * when values disagree, or empty string for an empty list
+ * or a uniformly-null/undefined field. Numeric fields work
+ * too — they're compared by raw value (so number 4 and
+ * string "4" stay distinct) and stringified only on output.
+ *
+ * Read-binding call sites unwrap the "varies" return as an
+ * empty field — the v1 decision is to render divergence
+ * blank for now and revisit a richer indicator once write
+ * binding makes a divergent commit potentially destructive.
+ *
+ * @param {any[]} objects
+ * @param {string} fieldName
+ * @returns {string | "varies"}
+ */
+function aggregateString(objects, fieldName) {
+    if (objects.length === 0) return "";
+    const firstRaw = objects[0][fieldName];
+    for (let i = 1; i < objects.length; i++) {
+        if (objects[i][fieldName] !== firstRaw) return "varies";
+    }
+    if (firstRaw === null || firstRaw === undefined) return "";
+    return String(firstRaw);
 }
 
 /** @param {ReturnType<typeof buildSelectionContext>} ctx */
