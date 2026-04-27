@@ -539,7 +539,7 @@ export class Canvas {
         const inactiveWidth = 1;
 
         const ab = curve.activeBeats;
-        const len = curve.beatsPerCycle;
+        const len = curve.cycleDuration;
         for (let i = 0; i < len && i < ab.length; i++) {
             const ch = ab[i];
             if (ch !== "x" && ch !== ".") continue;

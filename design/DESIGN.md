@@ -13,7 +13,7 @@ Direct manipulation of the scene through a canvas toolbar arrived. A toolbar abo
 
 Disk mirroring (the v2.1-era attempt to make scores accessible to AI assistants via a folder on disk that polls for external changes) is now deprecated. The browser permission lifecycle proved too fragile to rely on, the File System Access API doesn't expose absolute paths to assistants, and the round-trip introduced subtle bugs. The code is preserved unchanged but is not actively recommended; the Settings → Storage panel still exposes the controls for users who want to opt in. The successor in the v2.3 milestone window is the AI Handoff feature: a simpler user-controlled export-and-reload mechanism for sharing the current score with Claude through a configured folder. The longer-term direction beyond v2.3 is an embedded API key letting Claude operate on score state through the same in-memory pipeline the toolbar and inspector use, eliminating the disk hop entirely. See Section 15 for the AI Handoff design and Section 25 question 17 for the embedded-API-key direction.
 
-Curve cycle parameters were simplified. The GeoSonix triplet of cycleBeats, cursorSpeed, and cycleTime collapses to a single stored field — cycleBeats, the cycle's duration in score beats — with cycleSpeeds and stopAtCycle providing per-cycle modulation and finite playback respectively. The Time Lock toggle that GeoSonix needed to disambiguate which of the three was the source of truth disappears with the unification. The active-beats and strength strings both become free-length cycling rather than the active-beats string being pegged to beats-per-cycle, which removes the beatsPerCycle field. See Section 4 for the new cycle-parameter model and Section 10 for the rhythm-string model.
+Curve cycle parameters were simplified. The GeoSonix triplet of cycleDuration, cursorSpeed, and cycleTime collapses to a single stored field — cycleDuration, the cycle's duration in score beats — with cycleSpeeds and stopAtCycle providing per-cycle modulation and finite playback respectively. The Time Lock toggle that GeoSonix needed to disambiguate which of the three was the source of truth disappears with the unification. The active-beats and strength strings both become free-length cycling rather than the active-beats string being pegged to beats-per-cycle, which removes the beatsPerCycle field. See Section 4 for the new cycle-parameter model and Section 10 for the rhythm-string model.
 
 Underlying revisions v2.0 and v2.1 remain in effect: the three-object model (Curves, Triggers, Sprites) and the Mover-to-Sprite renaming. No conceptual changes to the object model in v2.2.
 
@@ -108,7 +108,7 @@ Shape. A curve has a geometric form — line segment, circle, piste (polyline), 
 
 Beat points. A curve's rhythm is defined by two independent free-length strings (full treatment in Section 10). The active-beats string uses "x" and "." to mark which positions fire; the strength string uses digits 0-9 to set the emphasis of each firing. Both strings cycle independently as cycle positions advance, so each can be any length the composer chooses; when the lengths don't share simple ratios with each other or with the cycle, the audible rhythm pattern evolves cycle-to-cycle as the strings drift, which is a generative property the composer can deliberately exploit. Beat points render as tick marks along the curve at the cycle positions corresponding to the active beats, with active positions visually distinguishable from inactive ones. Active beat points pulse briefly when fired, with the pulse's brightness reflecting the firing's current strength. Strength-zero firings do not produce sound and do not pulse.
 
-Cursor. A curve has a visible cursor that advances through its cycle at a rate governed by the curve's cycleBeats field (see "Cycle length and per-cycle modulation" below). The cursor has two extent values, R (right of curve direction) and L (left of curve direction), set independently. When both are zero, the cursor is a single point on the curve — purely a progress indicator with no spatial presence, visible only to the composer watching playback. When either R or L is non-zero, the cursor becomes a line segment of that length perpendicular to the curve's direction, and as the cursor advances, the segment sweeps through space.
+Cursor. A curve has a visible cursor that advances through its cycle at a rate governed by the curve's cycleDuration field (see "Cycle length and per-cycle modulation" below). The cursor has two extent values, R (right of curve direction) and L (left of curve direction), set independently. When both are zero, the cursor is a single point on the curve — purely a progress indicator with no spatial presence, visible only to the composer watching playback. When either R or L is non-zero, the cursor becomes a line segment of that length perpendicular to the curve's direction, and as the cursor advances, the segment sweeps through space.
 
 Extended cursors collide with triggers in the scene. This is the GeoMaestro projector capability preserved as a property of every curve. A line-segment curve with R=5 and L=5 sweeping from A to B over 4 beats is a classic projector. Setting both extents to zero turns the curve back into a pure rhythmic player with no spatial sweep. The extent is continuous property, not a mode switch — any curve can be a projector by setting extent, or stop being one by setting it back to zero.
 
@@ -121,11 +121,11 @@ Either or both slots may be undefined. A curve with only a beat function and a z
 
 Beats-as-triggers property. A curve has a "beats are triggers" property (default false). When true, the curve's active beat points become externally collidable — another curve's extended cursor sweeping across these positions will fire them, with context including which curve was hit and which beat point was struck. See Section 10 for how the strength string cycles under external collisions.
 
-Cycle length and per-cycle modulation. A curve has a single stored field for cycle duration in beats: cycleBeats, an integer with default 4. The cursor takes that many score beats to traverse one full cycle of the curve at the score's current tempo, and the value also defines the cycle's tick-position resolution — one tick per beat. Cycle time in seconds is derived at runtime from cycleBeats and the score's BPM, never stored, so a tempo change rescales every curve's cycle time automatically without per-curve adjustments.
+Cycle length and per-cycle modulation. A curve has a single stored field for cycle duration in beats: cycleDuration, an integer with default 4. The cursor takes that many score beats to traverse one full cycle of the curve at the score's current tempo, and the value also defines the cycle's tick-position resolution — one tick per beat. Cycle time in seconds is derived at runtime from cycleDuration and the score's BPM, never stored, so a tempo change rescales every curve's cycle time automatically without per-curve adjustments.
 
-This collapses the GeoSonix triplet of cycleBeats, cursorSpeed, and cycleTime into one field, which removes the Time Lock checkbox that GeoSonix needed to disambiguate which of the three was the source of truth at any moment. The musical capability that GeoSonix's Cursor Speed field provided — temporal modulation of the cursor's traversal — is preserved through two other fields described below.
+This collapses the GeoSonix triplet of cycleDuration, cursorSpeed, and cycleTime into one field, which removes the Time Lock checkbox that GeoSonix needed to disambiguate which of the three was the source of truth at any moment. The musical capability that GeoSonix's Cursor Speed field provided — temporal modulation of the cursor's traversal — is preserved through two other fields described below.
 
-cycleSpeeds is a string of space-separated numeric multipliers (default "1") applied to cycleBeats cycle by cycle. With cycleSpeeds = "0.4 2 -1", the first cycle takes 0.4×cycleBeats beats, the second takes 2×cycleBeats beats, the third reverses direction (negative values reverse), and the list cycles when it runs out. Single-value lists like "1" or "0.5" produce uniform cycle pacing; multi-value lists produce per-cycle modulation including reverse motion. Fractional values are allowed.
+cycleSpeeds is a string of space-separated numeric multipliers (default "1") applied to cycleDuration cycle by cycle. With cycleSpeeds = "0.4 2 -1", the first cycle takes 0.4×cycleDuration beats, the second takes 2×cycleDuration beats, the third reverses direction (negative values reverse), and the list cycles when it runs out. Single-value lists like "1" or "0.5" produce uniform cycle pacing; multi-value lists produce per-cycle modulation including reverse motion. Fractional values are allowed.
 
 stopAtCycle is an integer (default -1) that halts the cursor after a specified number of cycles. The default -1 means play forever; setting it to 3 means the cursor completes three full cycles and then stops, regardless of what's in cycleSpeeds. Useful for finite-length compositional gestures and for cycle-counted phrases.
 
@@ -230,7 +230,7 @@ When a function fires, it is called with `this` bound to the firing object and a
 
 Curve beat function context. Fires on internal beat points.
 - this: the curve (id, note, channel, port, object-level harmony overrides)
-- ctx.beatIndex: position within the cycle, 0-based, ranging from 0 to cycleBeats-1
+- ctx.beatIndex: position within the cycle, 0-based, ranging from 0 to cycleDuration-1
 - ctx.strength: current strength digit (1-9; zeros do not fire)
 - ctx.cyclePosition: 0-1 fractional position around the curve
 - ctx.r, g, b, lum, hue, sat: image values at the beat point's canvas position
@@ -290,7 +290,7 @@ Active-beats string. Uses "x" for an active position and "." for an inactive pos
 
 Strength string. Uses digits 0 through 9 to specify the emphasis of each firing. A 0 is a silent position (cycle position is consumed but no sound is emitted); 1 through 9 are increasing emphasis. The strength string's length is independent of the active-beats string. If strength is shorter than active-beats, it cycles and produces polyrhythmic drift against the position pattern. A single-digit strength like `9` means all firings at strength 9.
 
-Example of drift. A curve with cycleBeats 16, active-beats `..x...x...x...x.`, and strength `9272` produces firings at cycle positions 2, 6, 10, 14 with strengths 9, 2, 7, 2 — aligned exactly because the strength string length (4) equals the number of active beats. If the strength were `927` instead (length 3), the first cycle would fire 9, 2, 7, 9, the second would fire 2, 7, 9, 2, the third 7, 9, 2, 7, and so on. This drifting-emphasis pattern is a genuine compositional tool and is why the two strings stay independent rather than merging into a single `/9614/9224` form. The same drifting-rhythm logic applies to the active-beats string itself when its length doesn't divide evenly into the cycle.
+Example of drift. A curve with cycleDuration 16, active-beats `..x...x...x...x.`, and strength `9272` produces firings at cycle positions 2, 6, 10, 14 with strengths 9, 2, 7, 2 — aligned exactly because the strength string length (4) equals the number of active beats. If the strength were `927` instead (length 3), the first cycle would fire 9, 2, 7, 9, the second would fire 2, 7, 9, 2, the third 7, 9, 2, 7, and so on. This drifting-emphasis pattern is a genuine compositional tool and is why the two strings stay independent rather than merging into a single `/9614/9224` form. The same drifting-rhythm logic applies to the active-beats string itself when its length doesn't divide evenly into the cycle.
 
 Strength pointer semantics. A curve maintains a pointer into the strength string that advances by one on each firing of an active beat. The pointer wraps when it reaches the end of the string. A strength of 0 still advances the pointer (silent firings consume positions in the cycle). Inactive positions in the active-beats string (`.`) do not advance the strength pointer — they produce no firing, internal or external.
 
@@ -420,7 +420,7 @@ Example scene.json:
   "curves": [
     {
       "shape": { "type": "circle", "cx": 0, "cy": 0, "r": 5 },
-      "cycleBeats": 4,
+      "cycleDuration": 4,
       "cycleSpeeds": "1",
       "stopAtCycle": -1,
       "activeBeats": "x",
@@ -678,7 +678,7 @@ Physics step order:
 6. Sample image colour at final position (for next frame's context).
 7. Check auto-timer firing against transport.
 
-Curve cursor motion is not physics-integrated. Cursors advance along their curve's geometry at the rate set by cycleBeats and the cycleSpeeds modulation list, evaluated against transport time. Continuous-collision detection applies to cursor-trigger interactions: the cursor's sweep segment from its previous position to its current position is tested for intersection against trigger disks.
+Curve cursor motion is not physics-integrated. Cursors advance along their curve's geometry at the rate set by cycleDuration and the cycleSpeeds modulation list, evaluated against transport time. Continuous-collision detection applies to cursor-trigger interactions: the cursor's sweep segment from its previous position to its current position is tested for intersection against trigger disks.
 
 Physics may run in a Web Worker so that audio-rate scheduling on the main thread is not starved. Final architecture of the physics-worker split is to be determined during implementation.
 

@@ -218,12 +218,38 @@ export class Curve {
         this.shape = opts.shape;
 
         // --- Rhythm ---
-        /** Length of one full cycle in beats. */
-        this.cycleBeats = opts.cycleBeats ?? 4;
-        /** Number of slots in the active-beats string. */
-        this.beatsPerCycle = opts.beatsPerCycle ?? 16;
-        /** "x" and "." string of length beatsPerCycle. */
-        this.activeBeats = opts.activeBeats ?? defaultActiveBeats(this.beatsPerCycle);
+        /**
+         * Length of one full cycle in beats. Also defines
+         * the cycle's tick-position resolution at one tick
+         * per beat. Rounded to integer at construction time
+         * so fractional values from JSON are tolerated.
+         */
+        this.cycleDuration = Math.round(opts.cycleDuration ?? 4);
+        /**
+         * Space-separated multipliers applied to
+         * cycleDuration cycle by cycle. Default "1" means
+         * uniform pacing; multi-value lists like "0.4 2 -1"
+         * produce per-cycle modulation including reverse
+         * direction (negative values). Validated by the
+         * inspector when its Cycle Speeds field wires; stored
+         * here as-is.
+         * @type {string}
+         */
+        this.cycleSpeeds = opts.cycleSpeeds ?? "1";
+        /**
+         * Cycle count at which the cursor halts. Default -1
+         * means play forever; positive integers stop the
+         * cursor after that many full cycles. Validated by
+         * the inspector when its Stop at Cycle field wires.
+         * @type {number}
+         */
+        this.stopAtCycle = opts.stopAtCycle ?? -1;
+        /**
+         * Free-length "x" and "." string. Cycles independently
+         * as cycle positions advance; need not match
+         * cycleDuration in length.
+         */
+        this.activeBeats = opts.activeBeats ?? "x";
         /** Digit string 0-9; cycles independently of activeBeats. */
         this.strength = opts.strength ?? "9";
 
@@ -410,17 +436,4 @@ export class Sprite {
         /** @type {("Score" | "Scale" | "Chord" | "None") | null} */
         this.mapNotesTo = opts.mapNotesTo ?? null;
     }
-}
-
-/**
- * Default active-beats string when the sketch doesn't supply
- * one: a downbeat-only pattern. Better than all-active (which
- * would fire on every slot) or all-inactive (which would never
- * fire) as a starting point.
- * @param {number} length
- * @returns {string}
- */
-function defaultActiveBeats(length) {
-    if (length <= 0) return "";
-    return "x" + ".".repeat(length - 1);
 }
