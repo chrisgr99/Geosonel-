@@ -30,6 +30,8 @@
 
 // @ts-check
 
+import { generateId, collectExistingIds } from "./idGen.js";
+
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
 const MULTILINE_ARRAY_KEYS = new Set(["curves"]);
 
@@ -154,10 +156,62 @@ function jsonKey(k) {
 // --- Mutation helpers ---
 
 /**
+ * Walk the parsed scene data and fill in a freshly generated
+ * id for any object whose id field is missing, null, or an
+ * empty string. Ids already present and non-empty are left
+ * alone, even if they don't match the generated pattern — a
+ * user-supplied id from a hand-written scene.json is
+ * respected.
+ *
+ * The id field is inserted as the first key of the entry, so
+ * the formatted JSON output (V8 preserves insertion order)
+ * shows the id on the top line of the entry where a reader
+ * expects to find it.
+ *
+ * Returns true iff at least one id was added; the caller can
+ * use that signal to decide whether to write the mutated
+ * scene back to the bundle.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function fillMissingIds(data) {
+    const existing = collectExistingIds(data);
+    let changed = false;
+    /** @type {Array<["curve" | "trigger" | "sprite", string]>} */
+    const kindAndKey = [
+        ["curve", "curves"],
+        ["trigger", "triggers"],
+        ["sprite", "sprites"],
+    ];
+    for (const [kind, arrayKey] of kindAndKey) {
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (let i = 0; i < arr.length; i++) {
+            const entry = arr[i];
+            if (entry === null ||
+                typeof entry !== "object" ||
+                Array.isArray(entry)) continue;
+            if (typeof entry.id === "string" && entry.id.length > 0) continue;
+            const newId = generateId(kind, existing);
+            existing.add(newId);
+            // Replace the entry with a new object whose id is
+            // the first key. Discard any pre-existing null or
+            // empty id field so it doesn't leak through.
+            const { id: _discard, ...rest } = entry;
+            arr[i] = { id: newId, ...rest };
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/**
  * Add a sprite to the parsed scene at canvas position (x, y).
- * The sprite gets x, y, and vx/vy=0 fields. Other fields fall
- * through to the constructor defaults (no step/auto, default
- * displayDiameter). Mutates `data` in place.
+ * The sprite gets a freshly generated id, x, y, and vx/vy=0.
+ * Other fields fall through to the constructor defaults (no
+ * step/auto, default displayDiameter). Mutates `data` in
+ * place.
  * @param {any} data
  * @param {number} x
  * @param {number} y
@@ -166,7 +220,9 @@ export function addSpriteAt(data, x, y) {
     if (!Array.isArray(data.sprites)) {
         data.sprites = [];
     }
+    const id = generateId("sprite", collectExistingIds(data));
     data.sprites.push({
+        id,
         x: roundCoord(x),
         y: roundCoord(y),
         vx: 0,

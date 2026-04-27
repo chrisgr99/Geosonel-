@@ -74,6 +74,7 @@ import {
     addSpriteAt,
     setSpritePositions,
     removeObjects,
+    fillMissingIds,
 } from "./src/sceneEditor.js";
 
 main();
@@ -250,6 +251,7 @@ async function main() {
         if (editor.isDirty) {
             await editor.save();
         }
+        await ensureSceneIdsAreFilled();
         const result = sceneLoader.load(session.bundle);
         if (result.success && result.scene !== null) {
             canvas.setScene(result.scene);
@@ -258,6 +260,33 @@ async function main() {
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
         }
+    };
+
+    /**
+     * Before loading the scene, scan scene.json for objects
+     * that lack an id and fill them in. Ids are stable and
+     * type-prefixed (sp_xxxxxx, tr_xxxxxx, cv_xxxxxx) and
+     * survive across edits because we write them back to the
+     * bundle's scene.json text after generating them. This is
+     * a no-op when every object already has an id, which is
+     * the steady-state case once a score has been loaded
+     * once.
+     *
+     * Done before sceneLoader.load() so the loader sees the
+     * filled scene; done after editor.save() so we don't lose
+     * pending text edits in the JSON tab. If scene.json has
+     * a parse error we skip silently — sceneLoader will
+     * report the error from its own parse.
+     */
+    const ensureSceneIdsAreFilled = async () => {
+        const sceneFile = session.bundle.getFile("scene.json");
+        if (sceneFile === null) return;
+        const parsed = parseScene(sceneFile.content);
+        if (!parsed.ok) return;
+        if (!fillMissingIds(parsed.data)) return;
+        const newText = stringifyScene(parsed.data);
+        session.bundle.updateContent("scene.json", newText);
+        editor.refreshActiveTabFromBundle();
     };
 
     // --- Score session ---

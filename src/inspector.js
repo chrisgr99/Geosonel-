@@ -23,7 +23,7 @@
  * selectionChanged event.
  *
  * Six bands above the (deferred) harmony / global area:
- *   1. Identity (id, name, enable, hide)
+ *   1. Identity (id, name, mute, hide — hide is curve-only)
  *   2. Geometry / visual (position, curve size, cursor size,
  *      sprite/trigger size, color)
  *   3. Message functions (two function-binding rows with
@@ -37,10 +37,12 @@
  *      cycle time, time lock, sync-to-beat) — curves only
  *
  * Greying rules:
- *   - Universal fields (position, color, enable, hide) are
- *     active for any non-empty selection.
+ *   - Universal fields (position, color, mute) are active
+ *     for any non-empty selection.
  *   - id and name are active only for single-object selections;
  *     greyed for multi-select since they're per-object unique.
+ *   - Hide applies only to curves; it is greyed when the
+ *     selection contains no curves.
  *   - Sprite/Trigger size is active only when the selection is
  *     exclusively sprites or exclusively triggers; the row's
  *     label tracks which.
@@ -82,7 +84,7 @@ const W = {
 
     // Inline labels next to the row's leftmost field group,
     // sized to the shortest text that fits at 10pt.
-    enable: 50,        // "Enable"
+    mute: 36,          // "Mute"
     hide: 36,          // "Hide"
     amiCurve: 32,      // "Curve" in AMI row
     amiTrigger: 42,    // "Trigger"
@@ -195,7 +197,10 @@ export class Inspector {
     /**
      * Band 1 — Identity. ID is read-only and greyed for multi-
      * select; Name is editable for single-select and greyed
-     * for multi-select; Enable and Hide always editable.
+     * for multi-select; Mute is editable for any non-empty
+     * selection and defaults to off (false = not muted); Hide
+     * is curve-only and greyed when the selection contains no
+     * curves.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandIdentity(ctx) {
@@ -210,6 +215,7 @@ export class Inspector {
         const nameValue = "";
         const idEditable = ctx.isSingle;
         const nameEditable = ctx.isSingle;
+        const hideActive = ctx.hasCurves;
 
         const r1 = mkRow();
         r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !idEditable }));
@@ -219,10 +225,10 @@ export class Inspector {
             disabled: !idEditable,
             width: W.idField,
         }));
-        r1.appendChild(mkLabel("Enable", { width: W.enable }));
-        r1.appendChild(mkCheckbox({ checked: true }));
-        r1.appendChild(mkLabel("Hide", { width: W.hide }));
+        r1.appendChild(mkLabel("Mute", { width: W.mute }));
         r1.appendChild(mkCheckbox({ checked: false }));
+        r1.appendChild(mkLabel("Hide", { width: W.hide, disabled: !hideActive }));
+        r1.appendChild(mkCheckbox({ checked: false, disabled: !hideActive }));
         band.appendChild(r1);
 
         const r2 = mkRow();

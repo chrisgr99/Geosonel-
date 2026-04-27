@@ -36,6 +36,8 @@
 
 // @ts-check
 
+import { generateId } from "./idGen.js";
+
 export class Scene {
     constructor() {
         /** @type {Curve[]} */
@@ -86,14 +88,6 @@ export class Scene {
         this.triggerScale = 1;
         /** @type {number} */
         this.spriteScale = 1;
-
-        /**
-         * Per-kind id counters used when the sketch doesn't
-         * supply ids. Scoped to this Scene so ids restart at 1
-         * on every fresh run.
-         * @type {{curve: number, trigger: number, sprite: number}}
-         */
-        this._idCounters = { curve: 0, trigger: 0, sprite: 0 };
     }
 
     /**
@@ -133,12 +127,23 @@ export class Scene {
     }
 
     /**
+     * Generate a fresh id for a new object. Used when an
+     * object is added through scene.addCurve/addTrigger/
+     * addSprite without an explicit id. The fill-in pass in
+     * sceneEditor.fillMissingIds covers the load-time case;
+     * this fallback covers the rare path where an object is
+     * built in memory without going through scene.json (e.g.
+     * tests, or future programmatic-construction APIs).
+     *
      * @param {"curve" | "trigger" | "sprite"} kind
      * @returns {string}
      */
     _nextId(kind) {
-        this._idCounters[kind] += 1;
-        return `${kind}-${this._idCounters[kind]}`;
+        const existing = new Set();
+        for (const c of this.curves) existing.add(c.id);
+        for (const t of this.triggers) existing.add(t.id);
+        for (const s of this.sprites) existing.add(s.id);
+        return generateId(kind, existing);
     }
 }
 
@@ -176,6 +181,37 @@ export class Curve {
     constructor(opts, id) {
         /** @type {string} */
         this.id = id;
+
+        /**
+         * Optional user-typed name. Empty string when unset.
+         * Validated against the JS-identifier rule and the
+         * generated-id pattern by the property inspector
+         * before being committed.
+         * @type {string}
+         */
+        this.name = opts.name ?? "";
+
+        /**
+         * When true the curve is muted: its beat function and
+         * sweep function do not fire. The cursor still
+         * advances visibly so the curve's rhythm structure
+         * stays readable as motion. Wired into the simulation
+         * loop in a later milestone.
+         * @type {boolean}
+         */
+        this.mute = opts.mute ?? false;
+
+        /**
+         * When true the curve is hidden: its geometry and
+         * beat-point tick marks do not render. The cursor
+         * still renders subject to its R and L extents (so a
+         * hidden curve with non-zero cursor extent shows the
+         * cursor as the only visible part). Selection markers
+         * still draw on a hidden curve. Wired into the canvas
+         * render path in a later milestone.
+         * @type {boolean}
+         */
+        this.hide = opts.hide ?? false;
 
         // --- Geometry ---
         /** @type {CurveShape} */
@@ -243,6 +279,21 @@ export class Trigger {
         /** @type {string} */
         this.id = id;
 
+        /**
+         * Optional user-typed name. Empty string when unset.
+         * @type {string}
+         */
+        this.name = opts.name ?? "";
+
+        /**
+         * When true the trigger is muted: its collision
+         * function and auto function do not fire. The trigger
+         * still renders. Wired into the simulation loop in a
+         * later milestone.
+         * @type {boolean}
+         */
+        this.mute = opts.mute ?? false;
+
         this.x = opts.x ?? 0;
         this.y = opts.y ?? 0;
         /**
@@ -297,6 +348,23 @@ export class Sprite {
     constructor(opts, id) {
         /** @type {string} */
         this.id = id;
+
+        /**
+         * Optional user-typed name. Empty string when unset.
+         * @type {string}
+         */
+        this.name = opts.name ?? "";
+
+        /**
+         * When true the sprite is muted: its step function is
+         * still called (so physics, image-sampling, and self-
+         * mutation continue) but its return value is discarded
+         * — no musical event fires. The auto function does not
+         * fire when muted. Wired into the simulation loop in a
+         * later milestone.
+         * @type {boolean}
+         */
+        this.mute = opts.mute ?? false;
 
         this.x = opts.x ?? 0;
         this.y = opts.y ?? 0;

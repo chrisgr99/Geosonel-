@@ -109,6 +109,9 @@ export const SCENE_FIELDS = [
  */
 export const CURVE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
+    { key: "name", label: "Name", type: "string", default: "" },
+    { key: "mute", label: "Mute", type: "boolean", default: false },
+    { key: "hide", label: "Hide", type: "boolean", default: false },
     { key: "shape", label: "Shape", type: "shape", default: null },
     { key: "cycleBeats", label: "Cycle Beats", type: "number", default: 4 },
     { key: "beatsPerCycle", label: "Beats/Cycle", type: "integer", default: 16 },
@@ -128,6 +131,8 @@ export const CURVE_FIELDS = [
  */
 export const TRIGGER_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
+    { key: "name", label: "Name", type: "string", default: "" },
+    { key: "mute", label: "Mute", type: "boolean", default: false },
     { key: "x", label: "X", type: "number", default: 0 },
     { key: "y", label: "Y", type: "number", default: 0 },
     { key: "size", label: "Trigger Size", type: "number", default: 0.35 },
@@ -145,6 +150,8 @@ export const TRIGGER_FIELDS = [
  */
 export const SPRITE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
+    { key: "name", label: "Name", type: "string", default: "" },
+    { key: "mute", label: "Mute", type: "boolean", default: false },
     { key: "x", label: "X", type: "number", default: 0 },
     { key: "y", label: "Y", type: "number", default: 0 },
     { key: "vx", label: "VX", type: "number", default: 0 },
