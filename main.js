@@ -76,6 +76,7 @@ import {
     removeObjects,
     fillMissingIds,
     fillEmptyNames,
+    cleanLegacyCurveFields,
     setMuteOnSelection,
     setHideOnCurves,
     setNameOnSelection,
@@ -271,21 +272,27 @@ async function main() {
 
     /**
      * Before loading the scene, scan scene.json for objects
-     * that lack an id or a name and fill them in. Ids are
-     * stable and type-prefixed (sp_xxxxxx, tr_xxxxxx,
-     * cv_xxxxxx) and survive across edits because we write
-     * them back to the bundle's scene.json text after
-     * generating them. Names are inserted as empty strings
-     * — the same default the constructors apply — so the
-     * user has an obvious place to type a name in the JSON
-     * tab without first remembering the field exists. Both
-     * passes are no-ops once the steady state is reached,
-     * which is the case once a score has been loaded once.
+     * that lack an id or a name and fill them in, and clean
+     * up any vestigial curve fields left over from older
+     * model versions. Ids are stable and type-prefixed
+     * (sp_xxxxxx, tr_xxxxxx, cv_xxxxxx) and survive across
+     * edits because we write them back to the bundle's
+     * scene.json text after generating them. Names are
+     * inserted as empty strings — the same default the
+     * constructors apply — so the user has an obvious place
+     * to type a name in the JSON tab without first
+     * remembering the field exists. Legacy curve fields
+     * (cycleBeats, beatsPerCycle) are cleaned up: cycleBeats
+     * is renamed to cycleDuration to reflect the new model;
+     * beatsPerCycle is dropped entirely since the new model
+     * doesn't use it. All passes are no-ops once the steady
+     * state is reached, which is the case once a score has
+     * been loaded once after these passes were introduced.
      *
      * Done before sceneLoader.load() so the loader sees the
-     * filled scene; done after editor.save() so we don't lose
-     * pending text edits in the JSON tab. If scene.json has
-     * a parse error we skip silently — sceneLoader will
+     * normalised scene; done after editor.save() so we don't
+     * lose pending text edits in the JSON tab. If scene.json
+     * has a parse error we skip silently — sceneLoader will
      * report the error from its own parse.
      */
     const ensureIdentityFieldsAreFilled = async () => {
@@ -295,7 +302,8 @@ async function main() {
         if (!parsed.ok) return;
         const idsChanged = fillMissingIds(parsed.data);
         const namesChanged = fillEmptyNames(parsed.data);
-        if (!idsChanged && !namesChanged) return;
+        const legacyChanged = cleanLegacyCurveFields(parsed.data);
+        if (!idsChanged && !namesChanged && !legacyChanged) return;
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();

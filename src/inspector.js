@@ -10,7 +10,7 @@
  * are present in the selection.
  *
  * Layout is sized by the constraint rows — the Auto Message
- * Interval row (band 4) and the Cycle Parameters row 2 (band
+ * Interval row (band 4) and the Cycle Parameters row 1 (band
  * 6) hold the most fields and effectively set the minimum
  * form width. Every other row fits within that width with
  * room to spare. This matches the GeoSonix authoring
@@ -41,8 +41,8 @@
  *   4. Auto message interval (curve, trigger, sprite columns)
  *   5. Beat points (curve beat-point generator, active beats
  *      string, strength string) — curves only
- *   6. Cycle parameters (cycle speeds, stop, cursor speed,
- *      cycle time, time lock, sync-to-beat) — curves only
+ *   6. Cycle parameters (cycle duration, cycle speeds, stop
+ *      at cycle, sync-to-beat) — curves only
  *
  * Greying rules:
  *   - Universal fields (position, color, mute) are active
@@ -82,11 +82,11 @@ import {
 
 // Width constants. Centralised so layout adjustments touch
 // one set of numbers, not scattered inline styles. The
-// constraint rows (band 4 AMI, band 6 cycle params row 2)
+// constraint rows (band 4 AMI, band 6 cycle params row 1)
 // drive these — every other row fits within the natural
 // width those rows produce.
 const W = {
-    // Left-edge label column. Wide enough for "Cursor Speed"
+    // Left-edge label column. Wide enough for "Cycle Speeds"
     // and "Curve Beat Points" at 10pt; everything narrower
     // gets the same width so the label column aligns down
     // the entire form.
@@ -106,8 +106,6 @@ const W = {
     curveThick: 60,    // "Curve\nThickness" multiline
     cursorThick: 60,   // "Cursor\nThickness" multiline
     stopAt: 50,        // "Stop at\nCycle" multiline
-    cycleTime: 36,     // "Cycle\nTime" multiline
-    timeLock: 32,      // "Time\nLock" multiline
     triggerSync: 78,   // "Trigger Sync\nTo Beat" multiline
 
     // Numeric fields.
@@ -116,8 +114,7 @@ const W = {
     cursorRL: 50,      // Cursor R, L
     thickness: 60,     // Curve/Cursor Thickness
     spriteTriggerSize: 60,
-    cursorSpeed: 60,
-    cycleTimeF: 60,
+    cycleDurationF: 60,
     stopAtF: 50,
 
     // Text fields.
@@ -653,11 +650,18 @@ export class Inspector {
     }
 
     /**
-     * Band 6 — Cycle parameters. Curves-only band. Time Lock
-     * eventually governs which of cursor speed and cycle time
-     * is the authored value and which is derived; v1 just
-     * lays out both fields. The second row here is the other
-     * constraint row driving form width.
+     * Band 6 — Cycle parameters. Curves-only band. Cycle
+     * Duration is the cycle's length in score beats and also
+     * the source of the cycle's tick-position resolution
+     * (one tick per beat); Cycle Speeds is a string of per-
+     * cycle multipliers cycling through the list cycle by
+     * cycle (negative values reverse direction); Stop at
+     * Cycle halts the cursor after a specified count (-1
+     * means play forever). Trigger Sync to Beat is a
+     * placeholder pending its own design pass. v1 lays out
+     * the fields; data binding for this band is the next
+     * milestone. The first row here is the other constraint
+     * row driving form width.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandCycleParams(ctx) {
@@ -666,23 +670,20 @@ export class Inspector {
         const dis = !ctx.hasCurves;
 
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Cycle Speeds", { width: W.leftLabel, disabled: dis }));
-        r1.appendChild(mkField({ value: "1", width: W.cycleSpeeds, disabled: dis }));
+        r1.appendChild(mkLabel("Cycle\nDuration", { width: W.leftLabel, disabled: dis, multiline: true }));
+        r1.appendChild(mkField({ value: "4", numeric: true, width: W.cycleDurationF, disabled: dis }));
+        r1.appendChild(mkUnits("beats", { disabled: dis }));
         r1.appendChild(mkSpacer());
         r1.appendChild(mkLabel("Stop at\nCycle", { width: W.stopAt, disabled: dis, multiline: true }));
         r1.appendChild(mkField({ value: "-1", numeric: true, width: W.stopAtF, disabled: dis }));
+        r1.appendChild(mkSpacer());
+        r1.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.triggerSync, disabled: dis, multiline: true }));
+        r1.appendChild(mkCombo({ value: "Off", width: W.triggerSyncCombo, disabled: dis }));
         band.appendChild(r1);
 
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Cursor Speed", { width: W.leftLabel, disabled: dis }));
-        r2.appendChild(mkField({ value: "1.000", numeric: true, width: W.cursorSpeed, disabled: dis }));
-        r2.appendChild(mkLabel("Cycle\nTime", { width: W.cycleTime, disabled: dis, multiline: true }));
-        r2.appendChild(mkField({ value: "19.09", numeric: true, width: W.cycleTimeF, disabled: dis }));
-        r2.appendChild(mkLabel("Time\nLock", { width: W.timeLock, disabled: dis, multiline: true }));
-        r2.appendChild(mkCheckbox({ checked: false, disabled: dis }));
-        r2.appendChild(mkSpacer());
-        r2.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.triggerSync, disabled: dis, multiline: true }));
-        r2.appendChild(mkCombo({ value: "Off", width: W.triggerSyncCombo, disabled: dis }));
+        r2.appendChild(mkLabel("Cycle Speeds", { width: W.leftLabel, disabled: dis }));
+        r2.appendChild(mkField({ value: "1", width: W.cycleSpeeds, disabled: dis }));
         band.appendChild(r2);
 
         return band;

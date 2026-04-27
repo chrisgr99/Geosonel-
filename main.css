@@ -473,7 +473,7 @@ html, body {
     justify-content: space-between;
     align-items: baseline;
     padding: 8px 14px 6px 14px;
-    border-bottom: 2px solid #4a4a4a;
+    border-bottom: 2px solid #777777;
 }
 
 .insp-title-left {
@@ -504,7 +504,7 @@ html, body {
 
 .insp-band {
     padding: 5px 14px;
-    border-bottom: 2px solid #4a4a4a;
+    border-bottom: 2px solid #777777;
 }
 
 .insp-band:last-child {

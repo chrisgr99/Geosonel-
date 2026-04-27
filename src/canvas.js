@@ -533,6 +533,15 @@ export class Canvas {
         // the rhythm structure is visible without dominating
         // the curve. Lengths are constant in CSS pixels so
         // ticks remain legible at every zoom level.
+        //
+        // The active-beats string is free-length cycling under
+        // the new model: it can be any length the composer
+        // chooses, and indexes wrap modulo its length. With
+        // cycleDuration = 4 and activeBeats = "x", every
+        // position fires; with activeBeats = "x.", every other
+        // position fires; and so on. The rendering loop walks
+        // every cycle position and reads the string at the
+        // wrapped index.
         const activeHalfPx = 5;
         const activeWidth = 2;
         const inactiveHalfPx = 2.5;
@@ -540,8 +549,9 @@ export class Canvas {
 
         const ab = curve.activeBeats;
         const len = curve.cycleDuration;
-        for (let i = 0; i < len && i < ab.length; i++) {
-            const ch = ab[i];
+        if (ab.length === 0 || len === 0) return;
+        for (let i = 0; i < len; i++) {
+            const ch = ab[i % ab.length];
             if (ch !== "x" && ch !== ".") continue;
             const t = i / len;
             const sample = sampleCurve(curve.shape, t);

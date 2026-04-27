@@ -259,6 +259,66 @@ export function fillEmptyNames(data) {
 }
 
 /**
+ * Clean up vestigial curve fields from scores created before
+ * the cycle-parameter simplification. cycleBeats is renamed
+ * to cycleDuration (preserving the stored value, since the
+ * field's meaning carries over: cycle duration in score
+ * beats); beatsPerCycle is dropped entirely. If both
+ * cycleBeats and cycleDuration are present in the same
+ * entry, cycleDuration wins and cycleBeats is dropped.
+ *
+ * Done here so existing scores in IndexedDB clean themselves
+ * up on the next scene load without losing curve timing.
+ * The Curve constructor no longer reads cycleBeats or
+ * beatsPerCycle, so leaving those fields in the JSON would
+ * just be inert clutter — visible in the JSON tab and
+ * confusing to the user.
+ *
+ * Returns true iff at least one entry was changed; the caller
+ * uses that signal to decide whether to write the mutated
+ * scene back to the bundle.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function cleanLegacyCurveFields(data) {
+    const arr = data?.curves;
+    if (!Array.isArray(arr)) return false;
+    let changed = false;
+    for (let i = 0; i < arr.length; i++) {
+        const entry = arr[i];
+        if (entry === null ||
+            typeof entry !== "object" ||
+            Array.isArray(entry)) continue;
+        const hasCycleBeats = "cycleBeats" in entry;
+        const hasCycleDuration = "cycleDuration" in entry;
+        const hasBeatsPerCycle = "beatsPerCycle" in entry;
+        if (!hasCycleBeats && !hasBeatsPerCycle) continue;
+        // Rebuild the entry preserving key order, substituting
+        // cycleBeats → cycleDuration where appropriate and
+        // dropping beatsPerCycle. The position of cycleBeats
+        // in the original entry's key sequence becomes the
+        // position of cycleDuration in the new entry, so the
+        // formatted JSON keeps the cycle field in roughly the
+        // same visual location it occupied before.
+        /** @type {Record<string, any>} */
+        const newEntry = {};
+        for (const k of Object.keys(entry)) {
+            if (k === "beatsPerCycle") continue;
+            if (k === "cycleBeats") {
+                if (hasCycleDuration) continue;
+                newEntry["cycleDuration"] = entry[k];
+                continue;
+            }
+            newEntry[k] = entry[k];
+        }
+        arr[i] = newEntry;
+        changed = true;
+    }
+    return changed;
+}
+
+/**
  * Add a sprite to the parsed scene at canvas position (x, y).
  * The sprite gets a freshly generated id, x, y, and vx/vy=0.
  * Other fields fall through to the constructor defaults (no
