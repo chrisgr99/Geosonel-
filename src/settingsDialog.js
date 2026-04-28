@@ -189,6 +189,7 @@ function makeControl(def) {
             const n = parseFloat(input.value);
             if (Number.isFinite(n)) setPreference(def.key, n);
         });
+        attachScrub(input, def);
         return input;
     }
     if (def.type === "boolean") {
@@ -214,6 +215,98 @@ function makeControl(def) {
         return input;
     }
     return null;
+}
+
+/**
+ * Attach scrub-to-change behaviour to a number input. The
+ * user can press the mouse button anywhere on the input and
+ * drag vertically to adjust the value: drag up increases,
+ * drag down decreases. The native spinner buttons and direct
+ * keyboard editing continue to work unchanged — the scrub
+ * only kicks in after the mouse has moved past a small
+ * threshold, so a quick click on a spinner or to focus the
+ * field for typing is unaffected.
+ *
+ * Sensitivity is fixed at five vertical pixels per declared
+ * step. For the brightness-reduction prefs (step 0.05 over a
+ * 0–1 range, 18 steps) this gives roughly 90 pixels of drag
+ * per full range, comfortable for both coarse and fine
+ * adjustment without needing modifier keys.
+ *
+ * Per-drag mousemove and mouseup listeners are attached to
+ * the window and removed on mouseup, so listeners do not
+ * accumulate across multiple drags or across openings of
+ * the Settings dialog. The mousedown listener stays on the
+ * input itself and is garbage-collected with the input when
+ * the dialog DOM is torn down.
+ *
+ * @param {HTMLInputElement} input
+ * @param {import("./preferences.js").PreferenceDef} def
+ */
+function attachScrub(input, def) {
+    const PIXELS_PER_STEP = 5;
+    const DRAG_THRESHOLD_PX = 3;
+    const step = def.step ?? 1;
+    const min = def.min;
+    const max = def.max;
+    // Number of decimal places implied by the step. Used to
+    // round computed values so a scrub of many small steps
+    // doesn't accumulate floating-point error (e.g. 0.05
+    // multiplied 18 times should land on 0.9, not on
+    // 0.8999999...).
+    const decimals = String(step).includes(".")
+        ? String(step).split(".")[1].length
+        : 0;
+
+    /** @param {MouseEvent} e */
+    const onMouseDown = (e) => {
+        if (e.button !== 0) return;
+        const startY = e.clientY;
+        const v = parseFloat(input.value);
+        const startValue = Number.isFinite(v)
+            ? v
+            : (typeof def.default === "number" ? def.default : 0);
+        let scrubbing = false;
+
+        /** @param {MouseEvent} moveE */
+        const onMouseMove = (moveE) => {
+            const dy = startY - moveE.clientY;  // up is positive
+            if (!scrubbing) {
+                if (Math.abs(dy) < DRAG_THRESHOLD_PX) return;
+                scrubbing = true;
+                document.body.style.cursor = "ns-resize";
+            }
+            // preventDefault during scrub suppresses text
+            // selection that would otherwise extend as the
+            // mouse moves over the input's text content.
+            moveE.preventDefault();
+            const stepDelta = Math.round(dy / PIXELS_PER_STEP);
+            let newValue = startValue + stepDelta * step;
+            if (min !== undefined) newValue = Math.max(min, newValue);
+            if (max !== undefined) newValue = Math.min(max, newValue);
+            newValue = parseFloat(newValue.toFixed(decimals));
+            // Skip the write if the snapped value hasn't
+            // changed from the displayed value — avoids firing
+            // setPreference (and thus the canvas re-transform)
+            // on every mousemove pixel.
+            if (parseFloat(input.value) === newValue) return;
+            input.value = String(newValue);
+            setPreference(def.key, newValue);
+        };
+
+        const onMouseUp = () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
+            if (scrubbing) {
+                document.body.style.cursor = "";
+            }
+        };
+
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+    };
+
+    input.addEventListener("mousedown", onMouseDown);
 }
 
 /**

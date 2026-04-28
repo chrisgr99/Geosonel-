@@ -970,7 +970,7 @@ body.inspector-hidden #canvas-pane {
 .modal-overlay {
     position: fixed;
     inset: 0;
-    background-color: rgba(0, 0, 0, 0.6);
+    background-color: rgba(0, 0, 0, 0);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -995,6 +995,8 @@ body.inspector-hidden #canvas-pane {
     font-size: 18pt;
     font-weight: bold;
     margin-bottom: 16px;
+    cursor: move;
+    user-select: none;
 }
 
 .modal-list {
@@ -1232,6 +1234,22 @@ body.inspector-hidden #canvas-pane {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+}
+
+/* Native checkbox styling for the schema-driven boolean
+ * control. The default macOS checkbox is around 13 pixels
+ * square and reads as a tiny grey square at the inspector's
+ * font size, especially under accessibility zoom; sizing it
+ * to 20 pixels and applying the app's green accent colour
+ * makes it match the visual weight of the number inputs and
+ * the inspector's own checkboxes. accent-color is the modern
+ * standard property that recolours native form controls
+ * without replacing them; supported in all current browsers. */
+.settings-toggle input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: #5fc858;
+    cursor: pointer;
 }
 
 .settings-description {

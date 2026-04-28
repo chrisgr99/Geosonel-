@@ -52,6 +52,53 @@ export function openDialog(options) {
     title.textContent = options.title;
     dialog.appendChild(title);
 
+    // Drag state and handlers. The title bar acts as a drag
+    // handle so the user can move the dialog out of the way
+    // to see canvas content underneath — particularly useful
+    // for the Settings dialog when adjusting controls (such as
+    // the brightness-reduction sliders) whose effect needs to
+    // be evaluated visually against the canvas. The dialog
+    // stays positioned by the overlay's flex centring; drag
+    // adds a CSS transform that offsets from centre and
+    // accumulates across multiple drags. No persistence:
+    // every newly opened dialog starts centred again.
+    let dragAccumDx = 0;
+    let dragAccumDy = 0;
+    let dragStartClientX = 0;
+    let dragStartClientY = 0;
+    let dragging = false;
+
+    /** @param {MouseEvent} e */
+    const onTitleMouseDown = (e) => {
+        if (e.button !== 0) return;
+        dragging = true;
+        dragStartClientX = e.clientX;
+        dragStartClientY = e.clientY;
+        // preventDefault stops text selection inside the title.
+        e.preventDefault();
+    };
+
+    /** @param {MouseEvent} e */
+    const onWindowMouseMove = (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - dragStartClientX;
+        const dy = e.clientY - dragStartClientY;
+        dialog.style.transform =
+            `translate(${dragAccumDx + dx}px, ${dragAccumDy + dy}px)`;
+    };
+
+    /** @param {MouseEvent} e */
+    const onWindowMouseUp = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        dragAccumDx += e.clientX - dragStartClientX;
+        dragAccumDy += e.clientY - dragStartClientY;
+    };
+
+    title.addEventListener("mousedown", onTitleMouseDown);
+    window.addEventListener("mousemove", onWindowMouseMove);
+    window.addEventListener("mouseup", onWindowMouseUp);
+
     const body = document.createElement("div");
     body.className = "modal-body";
     dialog.appendChild(body);
@@ -62,6 +109,9 @@ export function openDialog(options) {
         closed = true;
         document.removeEventListener("keydown", onKeyDown);
         overlay.removeEventListener("click", onOverlayClick);
+        title.removeEventListener("mousedown", onTitleMouseDown);
+        window.removeEventListener("mousemove", onWindowMouseMove);
+        window.removeEventListener("mouseup", onWindowMouseUp);
         if (overlay.parentNode !== null) {
             overlay.parentNode.removeChild(overlay);
         }
