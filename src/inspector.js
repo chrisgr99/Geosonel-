@@ -2,12 +2,12 @@
  * Property Inspector module.
  *
  * Renders the form-based property inspector that lives in the
- * Properties tab. Driven by the canvas selection model: when
- * nothing is selected, the inspector area above the (deferred)
- * global section is entirely blank, matching GeoSonix's
- * convention. When at least one object is selected, all six
- * bands appear, with fields greyed according to which kinds
- * are present in the selection.
+ * Properties tab. The form is always rendered — nothing-
+ * selected state shows every band with all fields greyed and
+ * a "No selection" handle in the title bar. When at least one
+ * object is selected, the same six bands populate with that
+ * object's data and the appropriate fields un-grey based on
+ * which kinds are present in the selection.
  *
  * Layout is sized by the constraint rows — the Auto Message
  * Interval row (band 4) and the Cycle Parameters row 1 (band
@@ -141,11 +141,20 @@ const W = {
     cycleDurationF: 60,
     stopAtF: 50,
 
-    // Text fields.
+    // Text fields. funcBinding and rhythmString are sized
+    // to fill the inspector's content-driven width — each
+    // row reaches roughly the same total width as the
+    // Cycle Parameters constraint row, so the function-
+    // binding fields run nearly to the Create button at
+    // the right margin and the rhythm strings run nearly
+    // to the right edge of the panel. Wider rhythm strings
+    // also help readability for longer active-beats and
+    // strength patterns. If a future row widens the
+    // constraint, lift these in step.
     name: 280,
-    funcBinding: 200,
+    funcBinding: 280,
     cycleSpeeds: 240,
-    rhythmString: 320, // Active Beats / Beat Strength
+    rhythmString: 360, // Active Beats / Beat Strength
 
     // Combos.
     amiCombo: 60,
@@ -242,13 +251,18 @@ export class Inspector {
     _render() {
         this.container.innerHTML = "";
 
+        // The form is always rendered, even when nothing is
+        // selected. Empty-selection state shows every band
+        // with all fields greyed and a "No selection" handle
+        // in the title bar. This is the GeoSonix convention
+        // and is convenient for testing layout, scrolling,
+        // and band greying without first having to click on
+        // an object. The selection-driven greying machinery
+        // (ctx.hasCurves and so on) returns false for every
+        // kind when total === 0, so every band renders with
+        // its dis flag true, which is exactly the visual
+        // outcome we want.
         const ctx = buildSelectionContext(this._selection);
-        if (ctx.total === 0) {
-            // Nothing selected: leave the inspector area blank.
-            // The (deferred) global section will appear at the
-            // bottom of the area when implemented.
-            return;
-        }
 
         const panel = document.createElement("div");
         panel.className = "inspector-panel";
@@ -265,13 +279,18 @@ export class Inspector {
     }
 
     /**
-     * Title bar. Single-select shows the kind label always
-     * bright ("Sprite", "Trigger", "Curve") followed by a
-     * handle. The handle is bright when it's a user-typed
-     * name and dimmed-italic when it's a generated-id
-     * placeholder, so a glance at the title bar tells you
-     * whether this object has been named yet. Multi-select
-     * stays uniformly bright with the kind-count breakdown.
+     * Title bar. Empty selection shows "No selection" in the
+     * dim-italic placeholder style. Single selection of a
+     * named object shows the kind followed by the user-typed
+     * name ("Sprite drum1") since the name is the meaningful
+     * identity. Single selection without a typed name falls
+     * back to count phrasing ("1 Sprite") since the kind
+     * alone with no name doesn't add information that the
+     * Object ID field below isn't already showing. Multi-
+     * select always uses count phrasing ("2 Sprites, 1
+     * Curve") regardless of any names — listing names for
+     * many objects would be long; picking one would be
+     * misleading; the count is the right level of summary.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildTitleBar(ctx) {
@@ -281,16 +300,16 @@ export class Inspector {
         const left = document.createElement("div");
         left.className = "insp-title-left";
 
-        if (ctx.isSingle) {
-            const parts = singleSelectTitleParts(ctx, this._scene);
-            left.appendChild(document.createTextNode(parts.kind + " "));
+        if (ctx.total === 0) {
             const handleEl = document.createElement("span");
-            handleEl.className = "insp-title-handle";
-            if (parts.handleIsPlaceholder) handleEl.classList.add("placeholder");
-            handleEl.textContent = parts.handle;
+            handleEl.className = "insp-title-handle placeholder";
+            handleEl.textContent = "No selection";
             left.appendChild(handleEl);
+        } else if (ctx.isSingle) {
+            const named = singleSelectNamedTitle(ctx, this._scene);
+            left.textContent = named ?? selectionSummaryTitle(ctx);
         } else {
-            left.textContent = multiSelectTitle(ctx);
+            left.textContent = selectionSummaryTitle(ctx);
         }
 
         bar.appendChild(left);
@@ -646,7 +665,6 @@ export class Inspector {
         r2.appendChild(mkField({ value: "0.0000", numeric: true, width: W.sizeWH, disabled: curveDisabled }));
         r2.appendChild(mkField({ value: "0.0000", numeric: true, width: W.sizeWH, disabled: curveDisabled }));
         r2.appendChild(mkUnits("(W, H)", { disabled: curveDisabled }));
-        r2.appendChild(mkSpacer());
         r2.appendChild(mkLabel("Curve\nThickness", { width: W.curveThick, disabled: curveDisabled, multiline: true }));
         r2.appendChild(mkField({ value: "1.0000", numeric: true, width: W.thickness, disabled: curveDisabled }));
         band.appendChild(r2);
@@ -658,7 +676,6 @@ export class Inspector {
         r3.appendChild(mkField({ value: "0.50", numeric: true, width: W.cursorRL, disabled: curveDisabled }));
         r3.appendChild(mkInlineLetter("L", { disabled: curveDisabled }));
         r3.appendChild(mkField({ value: "0.50", numeric: true, width: W.cursorRL, disabled: curveDisabled }));
-        r3.appendChild(mkSpacer());
         r3.appendChild(mkLabel("Cursor\nThickness", { width: W.cursorThick, disabled: curveDisabled, multiline: true }));
         r3.appendChild(mkField({ value: "2.0000", numeric: true, width: W.thickness, disabled: curveDisabled }));
         band.appendChild(r3);
@@ -850,7 +867,6 @@ export class Inspector {
             editKind: "setCycleDuration",
         }));
         r1.appendChild(mkUnits("beats", { disabled: dis }));
-        r1.appendChild(mkSpacer());
         r1.appendChild(mkLabel("Stop at\nCycle", { width: W.stopAt, disabled: dis, multiline: true }));
         r1.appendChild(this._buildEditableField({
             value: stopAtCycleAgg === "varies" ? "" : stopAtCycleAgg,
@@ -860,7 +876,6 @@ export class Inspector {
             validator: validateStopAtCycle,
             editKind: "setStopAtCycle",
         }));
-        r1.appendChild(mkSpacer());
         r1.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.triggerSync, disabled: dis, multiline: true }));
         r1.appendChild(mkCombo({ value: "Off", width: W.triggerSyncCombo, disabled: dis }));
         band.appendChild(r1);
@@ -913,84 +928,52 @@ function buildSelectionContext(selection) {
 }
 
 /**
- * Compute the kind label and handle for a single-select
- * title bar, plus a flag indicating whether the handle is a
- * generated-id placeholder rather than a user-typed name.
- * The flag drives the title bar's dim-italic styling so a
- * glance distinguishes a named object from one still showing
- * only its id.
- *
- * The handle prefers a user-typed name when set, falls back
- * to the generated id, and falls back further to the array
- * index when the runtime scene isn't loaded yet (defensive
- * — in practice setScene runs before any user interaction).
- *
- * @param {ReturnType<typeof buildSelectionContext>} ctx
- * @param {import("./scene.js").Scene | null} scene
- * @returns {{ kind: string, handle: string, handleIsPlaceholder: boolean }}
- */
-function singleSelectTitleParts(ctx, scene) {
-    const kind = ctx.kinds[0];
-    const idx = idOfFirst(ctx);
-    const cap = kind.charAt(0).toUpperCase() + kind.slice(1);
-    const obj = lookupSelectedObject(scene, kind, idx);
-    if (obj !== null) {
-        if (typeof obj.name === "string" && obj.name.length > 0) {
-            return { kind: cap, handle: obj.name, handleIsPlaceholder: false };
-        }
-        if (typeof obj.id === "string" && obj.id.length > 0) {
-            return { kind: cap, handle: obj.id, handleIsPlaceholder: true };
-        }
-    }
-    return { kind: cap, handle: String(idx), handleIsPlaceholder: true };
-}
-
-/**
- * Compute the title text for a multi-select. Uniform bright
- * style throughout, no placeholder distinction (multi-select
- * doesn't show a single object's identity).
+ * Compute the title text for any non-empty selection.
+ * Always a count-and-kinds summary, never per-object
+ * identity — the per-object id and name live in Band 1
+ * below where they can be read and edited. Single-kind
+ * selections read as "N Kind" or "N Kinds" with simple
+ * pluralisation; multi-kind selections join the per-kind
+ * counts with commas ("2 Sprites, 1 Curve").
  *
  * @param {ReturnType<typeof buildSelectionContext>} ctx
  * @returns {string}
  */
-function multiSelectTitle(ctx) {
+function selectionSummaryTitle(ctx) {
     const parts = [];
-    if (ctx.hasSprites) parts.push(pluralCount(ctx.sprites.length, "sprite"));
-    if (ctx.hasTriggers) parts.push(pluralCount(ctx.triggers.length, "trigger"));
-    if (ctx.hasCurves) parts.push(pluralCount(ctx.curves.length, "curve"));
+    if (ctx.hasSprites) parts.push(pluralCount(ctx.sprites.length, "Sprite"));
+    if (ctx.hasTriggers) parts.push(pluralCount(ctx.triggers.length, "Trigger"));
+    if (ctx.hasCurves) parts.push(pluralCount(ctx.curves.length, "Curve"));
     return parts.join(", ");
 }
 
-/** @param {ReturnType<typeof buildSelectionContext>} ctx */
-function idOfFirst(ctx) {
-    if (ctx.sprites.length > 0) return ctx.sprites[0];
-    if (ctx.triggers.length > 0) return ctx.triggers[0];
-    return ctx.curves[0];
-}
-
 /**
- * Resolve a selection index against the runtime scene to
- * return the actual object (Curve, Trigger, or Sprite). The
- * scene's array order matches scene.json's array order, so
- * indexes from the canvas selection map directly. Returns
- * null defensively when scene is null or the index is out
- * of range — either condition is rare in practice but cheap
- * to guard against, and a null return causes the caller to
- * fall back to the index-only display.
+ * If the single selected object has a user-typed name,
+ * compose the title as "Kind name" (e.g. "Sprite drum1").
+ * Returns null when the scene isn't loaded yet, when the
+ * selected object can't be resolved, or when the object
+ * has no typed name — in those cases the caller falls
+ * back to the count-based summary. Multi-select callers
+ * shouldn't reach here; the function bails defensively if
+ * they do.
  *
+ * @param {ReturnType<typeof buildSelectionContext>} ctx
  * @param {import("./scene.js").Scene | null} scene
- * @param {"sprite" | "trigger" | "curve"} kind
- * @param {number} idx
- * @returns {any | null}
+ * @returns {string | null}
  */
-function lookupSelectedObject(scene, kind, idx) {
-    if (scene === null) return null;
+function singleSelectNamedTitle(ctx, scene) {
+    if (scene === null || !ctx.isSingle || ctx.singleKind === null) return null;
+    const kind = ctx.singleKind;
+    const idx = ctx.sprites[0] ?? ctx.triggers[0] ?? ctx.curves[0];
     const arr = kind === "sprite" ? scene.sprites
               : kind === "trigger" ? scene.triggers
-              : kind === "curve" ? scene.curves
-              : null;
-    if (arr === null || idx < 0 || idx >= arr.length) return null;
-    return arr[idx];
+              : scene.curves;
+    if (idx < 0 || idx >= arr.length) return null;
+    const obj = arr[idx];
+    const name = typeof obj.name === "string" ? obj.name : "";
+    if (name.length === 0) return null;
+    const cap = kind.charAt(0).toUpperCase() + kind.slice(1);
+    return `${cap} ${name}`;
 }
 
 /**
@@ -1286,14 +1269,5 @@ function mkInlineLetter(letter, opts = {}) {
     el.className = "insp-inline-letter";
     if (opts.disabled) el.classList.add("disabled");
     el.textContent = letter;
-    return el;
-}
-
-/**
- * @returns {HTMLDivElement}
- */
-function mkSpacer() {
-    const el = document.createElement("div");
-    el.className = "insp-spacer";
     return el;
 }
