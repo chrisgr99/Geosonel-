@@ -1,9 +1,11 @@
 # GXW Design Document
 
-Version 2.2 — Updated April 2026
+Version 2.3 — Updated April 2026
 Status: Living document.
 
 Naming: GXW is the web-based successor to GeoSonix. The W stands for Web. The project folder and repository live at /Users/chrisgr/ProgrammingProjects/GXW. An earlier Python desktop prototype, GXM, exists at /Users/chrisgr/ProgrammingProjects/GX2 and remains preserved as reference; GXW supersedes it as the active development path.
+
+Revision v2.3 introduces an accessibility section (Section 26) and a first feature within it: perceptual brightness reduction for imported background images. The transformation is spatially aware — a base/detail decomposition that pulls down large continuously-bright regions while leaving small bright features and midtones untouched — so that broad bright areas of an imported image stop dominating the canvas while local contrast and detail throughout the image remain readable. The transformation affects only the displayed image; the underlying pixel data used by triggers and sprites for music generation passes through unchanged. Three parameters (blur radius, threshold, maximum attenuation) are exposed as user settings with a bypass toggle for direct comparison. See Section 26.
 
 Revision v2.2 documents several changes that have accumulated since v2.1.
 
@@ -49,6 +51,7 @@ The underlying v2.0 rework remains in effect: a substantial reshaping of the obj
 - [Section 23 — Module Overview](#section-23--module-overview)
 - [Section 24 — GeoMaestro and GeoSonix Reference](#section-24--geomaestro-and-geosonix-reference)
 - [Section 25 — Open Questions](#section-25--open-questions)
+- [Section 26 — Accessibility](#section-26--accessibility)
 
 ---
 
@@ -394,7 +397,7 @@ Keyboard shortcuts: Spacebar toggles play-pause. R rewinds. Cmd-S saves the acti
 
 A version history panel (toggleable visibility) shows the bundle's git history as a scrollable list of versions: milestones prominent, time-based markers next, auto-commits available via a "show all versions" toggle. Each entry has a human-readable timestamp and description. Click to view or restore.
 
-Accessibility. Limited vision is a first-class concern in the UI. Large bold fonts throughout, a dark theme, and visible grey dividers segmenting every window region. No use of colour alone to convey information. Browser ARIA attributes and screen reader compatibility are preserved. Browser zoom composes cleanly with any OS-level zoom.
+Accessibility. Limited vision is a first-class concern in the UI. Large bold fonts throughout, a dark theme, and visible grey dividers segmenting every window region. No use of colour alone to convey information. Browser ARIA attributes and screen reader compatibility are preserved. Browser zoom composes cleanly with any OS-level zoom. Imported background images pass through a perceptual brightness reduction transform before display so that broad bright regions do not dominate the canvas while local contrast and detail are preserved; only the displayed image is affected, the pixel data used for music generation passes through unchanged. The transform's parameters and bypass toggle live in Settings. See Section 26 for the full description.
 
 ---
 
@@ -823,4 +826,37 @@ Capabilities not yet decided whether to carry forward:
 
 ---
 
-*End of design document version 2.2*
+## Section 26 — Accessibility
+
+Limited vision is a first-class design concern for GXW, not an afterthought. Every UI decision is checked against whether it remains usable when accessibility zoom is active and when bright regions cause physical discomfort. This section collects accessibility provisions that are substantial enough to warrant their own design treatment; smaller provisions — large bold fonts, dark theme, visible grey dividers, no colour-alone signalling, ARIA attributes, muted scrollbars — live in Section 13 alongside the rest of the UI specification.
+
+Perceptual brightness reduction for imported images. Imported background images on the canvas pass through a non-linear brightness transformation before display. The goal is to reduce eye strain from large continuously-bright regions while preserving local contrast and detail throughout the image. A simple global brightness or gamma reduction would be insufficient: it darkens dim regions and midtones equally, making the image as a whole hard to read, while still leaving large bright areas relatively dominant in proportion to the rest. The required behaviour is spatially aware — small bright features (a highlight, a specular dot, a thin bright line) sitting in an otherwise dark region must retain their brightness, while large continuously-bright regions (a bright sky, a white wall, a broad light area) must be dimmed substantially. Dimmer regions and midtones are untouched or nearly so.
+
+Approach: base-detail decomposition. A blurred copy of the image serves as an estimate of regional luminance, the base layer. For each pixel of the original image, the regional luminance from the blurred image is read and used to compute an attenuation factor; that factor is multiplied into the original pixel's RGB values to produce the displayed pixel. Because the factor is derived from the blurred neighbourhood but applied to the unblurred pixel, local contrast and fine detail are fully preserved — the dimming responds to broad spatial trends, not to per-pixel intensity. Broad bright regions get pulled down; bright pixels embedded in dark regions stay bright because their neighbourhood is dark.
+
+Attenuation curve. The factor is 1.0 (no attenuation) below a configurable threshold of regional luminance, then rolls off smoothly above the threshold using a smoothstep or similar easing function so the transition does not produce visible banding. At maximum regional luminance the factor reaches the configured maximum-attenuation floor (a value below 1.0; for example 0.5 means the brightest large regions are halved). The smooth roll-off makes the transition between protected and dimmed luminance ranges visually continuous; a hard step would introduce visible contour lines tracking the threshold's iso-luminance curves through the image.
+
+Music generation is unaffected. The transformation runs in the rendering layer only. The pixel-sampling array used by triggers and sprites for image-driven music generation reads from the original, untransformed image data. This is a hard requirement: the visual representation of the image is an accessibility concern, but the image's role as scalar field driving the composition must remain faithful to the source. Two image snapshots are maintained side by side at import time — the original for sampling, the transformed for display — and the canvas renderer always draws the transformed snapshot while `_sampleImageAt` and equivalent paths always read from the original.
+
+When the transform runs. Once at the moment of import, with the result cached. "Import" here covers the full set of paths through which an image arrives in the bundle: user-initiated image import via the file menu or drag-drop, score load from IndexedDB or the AI Handoff folder, and any other event that mutates the bundle's image bytes. Whenever the bundle's image bytes change, the transform re-runs and the cached result is replaced. The transform does not re-run on draw; the canvas just renders the already-transformed bitmap on every frame.
+
+When the user changes the transform parameters in Settings, the currently displayed image re-processes immediately so the user can adjust the sliders and see the effect without restarting or re-importing. The bypass toggle takes the same path: when toggled off, the original image displays directly; when toggled back on, the cached transformed result displays again with no recomputation.
+
+User-exposed parameters. Three numeric controls in Settings, ideally as sliders, with a fourth toggle for bypass:
+
+- Blur radius. The spatial scale that defines "large continuous bright region." Larger values mean only very broad bright areas are affected; smaller values dim more localised bright patches. Default 5–10% of the smaller image dimension. Range roughly 5–200 pixels.
+- Threshold. The regional luminance below which no dimming is applied, on a 0–1 scale. Protects midtones and shadows from being darkened. Default around 0.5; range 0.0–0.9.
+- Maximum attenuation. The multiplier applied to the brightest large regions, on a 0–1 scale. A value of 0.5 halves the brightest large regions; a value of 1.0 disables the effect entirely. Default 0.5; range 0.2–1.0.
+- Bypass toggle. When enabled, displays the original imagery without the transformation. Useful for direct comparison and for cases where the user wants to see the unaltered image briefly. Music generation is unaffected by the bypass setting since it never used the transformed data.
+
+Settings persistence. The four controls persist across sessions and apply to all subsequently imported images. When a score is loaded, its background image is processed using the user's current settings, regardless of which settings were active when the score's image was originally imported. The settings are user-level preferences, not per-score; a user with photophobia or accessibility needs configures them once and they apply to every score the user opens, including scores authored by other users and shared into IndexedDB or via AI Handoff.
+
+Implementation. The HTML Canvas 2D API supports all of this without needing WebGL or shaders. An offscreen canvas with `ctx.filter = 'blur(Npx)'` produces the base layer using hardware-accelerated Gaussian blur; this is well-supported across modern browsers. A per-pixel pass then reads luminance from the blurred canvas using Rec. 709 weights (0.2126 R + 0.7152 G + 0.0722 B), computes the attenuation factor per the curve described above, and writes attenuated RGB to the output canvas. The alpha channel passes through unchanged. The transform runs once at import; no per-frame cost.
+
+Known limitation: halos. Gaussian blur does not respect edges, so very high-contrast boundaries can produce faint halos in the transformed image — a thin band of slight brightening or darkening around the boundary, where the blurred neighbourhood luminance disagrees most strongly with the local pixel's luminance. This is acceptable for the first implementation and is not visually disruptive in most images. If halos prove distracting on imagery the user actually composes with, the Gaussian blur can be replaced with an edge-preserving filter such as the Gastál–Oliveira domain transform, which runs in linear time with separable passes and is implementable in roughly fifty lines of JavaScript. The replacement is a drop-in for the blur step; nothing else in the pipeline changes.
+
+Future additions. Other accessibility provisions worth keeping in mind for this section as they arise: a high-contrast theme variant for the inspector and editor, font-size scaling controls independent of OS-level zoom, text-to-speech integration hooks (the user already drives Apple Speak Selection paragraph-by-paragraph against GXW's UI text), and screen-reader-friendly status announcements for state changes that currently signal only visually (transport play state, dirty indicator, save events). None of these are in scope for v2.3; the perceptual-brightness-reduction feature is the only accessibility provision being introduced this revision.
+
+---
+
+*End of design document version 2.3*
