@@ -39,6 +39,42 @@ html, body {
     color: #d8d4cc;
 }
 
+/* Scrollbars sit in muted dark tones rather than the browser's
+ * default bright white. The thumb stays clearly visible against
+ * the track but no longer dominates the panes it appears in —
+ * important for users with brightness sensitivity or accessibility
+ * zoom, where a tall white thumb in a partially-filled scroll
+ * region is genuinely dazzling. Width is left at the browser
+ * default so the thumb stays comfortably grabbable; only the
+ * colour changes. scrollbar-color is the modern standard
+ * property; the ::-webkit-scrollbar block provides the same
+ * effect for browsers that support the older WebKit pseudo-
+ * elements (Edge, Chrome, Safari all read one or both). The
+ * track sits at the panel background colour so it disappears
+ * into the surface; the thumb at #555 picks up the same mid-
+ * grey used elsewhere in the chrome, with a slight lift on
+ * hover for grab feedback. */
+* {
+    scrollbar-color: #555555 #2a2a2a;
+}
+
+::-webkit-scrollbar-track {
+    background-color: #2a2a2a;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #555555;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: #6a6a6a;
+}
+
+::-webkit-scrollbar-corner {
+    background-color: #2a2a2a;
+}
+
 /* Root app container — fills the viewport. Top row, divider, body. */
 #app {
     display: grid;

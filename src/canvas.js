@@ -7,11 +7,19 @@
  *
  * Drawn elements: the reference grid, the optional background
  * image, and the scene's curves, triggers, and sprites. Curves
- * render as their geometric shape with tick marks at active
- * beat positions and a cursor (a perpendicular segment when
- * the cursor extent is non-zero, a small dot otherwise) at
- * cycle parameter 0 — the cursor will animate around the
- * curve once the simulation loop arrives in a later milestone.
+ * render as their geometric shape with diamond markers at
+ * each beat slot — active beats ("x") drawn as miniature
+ * triggers (image-filled, blue-bordered, rotated so two
+ * opposite vertices lie along the curve's tangent), inactive
+ * beats (".") drawn as small hollow green diamonds at the
+ * same orientation. The Unified Bound-Trigger Model in
+ * DESIGN.md §10.5 treats active beat points as triggers
+ * bound to the curve, so they share the trigger's visual
+ * treatment here. The cursor (a perpendicular segment when
+ * the cursor extent is non-zero, a small dot otherwise)
+ * draws at cycle parameter 0 — it will animate around the
+ * curve once the simulation loop arrives in a later
+ * milestone.
  *
  * Coordinate model (see DESIGN.md sections 20 and 21):
  *   - Origin (0, 0) is at the centre of the visible canvas area.
@@ -50,9 +58,13 @@ const MAJOR_GRID_COLOUR = "#4a4a4a";
 const AXIS_COLOUR = "#606060";
 
 // Colours for scene elements. Curves are soft green, picking
-// up on GeoSonix's accent colour. Beat tick marks are a
-// brighter green so they pop visually against the curve.
-// Cursors are warm amber to stand out from everything else.
+// up on GeoSonix's accent colour. Inactive beat-point markers
+// reuse the same brighter green so they read as a curve
+// detail rather than as content. Active beat points use the
+// trigger's blue boundary colour instead, since under the
+// Bound-Trigger Model (DESIGN.md §10.5) they ARE triggers
+// bound to the curve. Cursors are warm amber to stand out
+// from everything else.
 //
 // Triggers and sprites both fill their interior with the
 // background image's pixel colour at the object's centre
@@ -68,7 +80,10 @@ const AXIS_COLOUR = "#606060";
 // cue that distinguishes a moving sprite from a static
 // trigger once the simulation loop runs.
 const CURVE_COLOUR = "#7dd68a";
-const BEAT_TICK_COLOUR = "#b8e8c0";
+// Used for inactive beat-point diamonds ("." entries in
+// activeBeats). Active beats borrow OBJECT_BOUNDARY_COLOUR
+// since they render as triggers per the Bound-Trigger Model.
+const BEAT_INACTIVE_COLOUR = "#b8e8c0";
 const CURSOR_COLOUR = "#ffb060";
 const OBJECT_BOUNDARY_COLOUR = "#7db8d6";
 const NO_IMAGE_FILL_COLOUR = "#404040";
@@ -487,7 +502,7 @@ export class Canvas {
         if (this._scene === null) return;
         for (const curve of this._scene.curves) {
             this._strokeCurveShape(curve);
-            this._drawCurveBeatTicks(curve);
+            this._drawCurveBeatPoints(curve);
             this._drawCurveCursor(curve);
         }
     }
@@ -523,29 +538,30 @@ export class Canvas {
         ctx.stroke();
     }
 
-    _drawCurveBeatTicks(curve) {
+    _drawCurveBeatPoints(curve) {
         const ctx = this.ctx;
-        ctx.strokeStyle = BEAT_TICK_COLOUR;
 
-        // Tick marks are drawn at every beat slot. Active beats
-        // ("x") are visually prominent — longer and thicker —
-        // while inactive beats (".") get a short, thin mark so
-        // the rhythm structure is visible without dominating
-        // the curve. Lengths are constant in CSS pixels so
-        // ticks remain legible at every zoom level.
+        // Beat slots render as diamonds rotated so two opposite
+        // vertices lie along the curve's tangent at each
+        // sample point. Active beats ("x") render as miniature
+        // triggers — filled with the image pixel under the
+        // beat position, stroked in the trigger boundary
+        // colour — because the Unified Bound-Trigger Model
+        // (DESIGN.md §10.5) treats them as triggers bound to
+        // the curve. Inactive beats (".") render as smaller
+        // hollow diamonds in the inactive-beat green so the
+        // full rhythm pattern is readable on the curve
+        // without inactive positions competing visually with
+        // the active ones.
         //
-        // The active-beats string is free-length cycling under
-        // the new model: it can be any length the composer
-        // chooses, and indexes wrap modulo its length. With
-        // cycleDuration = 4 and activeBeats = "x", every
-        // position fires; with activeBeats = "x.", every other
-        // position fires; and so on. The rendering loop walks
-        // every cycle position and reads the string at the
-        // wrapped index.
-        const activeHalfPx = 5;
-        const activeWidth = 2;
-        const inactiveHalfPx = 2.5;
-        const inactiveWidth = 1;
+        // Sizes are constant in CSS pixels so beat points
+        // stay legible at every zoom level. The active-beats
+        // string cycles modulo its length under the new model:
+        // it can be any length the composer chooses, and
+        // indexes wrap so a string shorter than cycleDuration
+        // repeats and one longer truncates per cycle.
+        const activeHalfPx = 6;
+        const inactiveHalfPx = 3;
 
         const ab = curve.activeBeats;
         const len = curve.cycleDuration;
@@ -558,13 +574,27 @@ export class Canvas {
             if (sample === null) continue;
             const px = this.toPixelX(sample.x);
             const py = this.toPixelY(sample.y);
-            const perp = pixelPerpendicularUnit(sample.tx, sample.ty);
-            const halfPx = ch === "x" ? activeHalfPx : inactiveHalfPx;
-            ctx.lineWidth = ch === "x" ? activeWidth : inactiveWidth;
+            const axes = pixelTangentAndPerp(sample.tx, sample.ty);
+            const r = ch === "x" ? activeHalfPx : inactiveHalfPx;
+
             ctx.beginPath();
-            ctx.moveTo(px - perp.x * halfPx, py - perp.y * halfPx);
-            ctx.lineTo(px + perp.x * halfPx, py + perp.y * halfPx);
-            ctx.stroke();
+            ctx.moveTo(px + axes.tx * r, py + axes.ty * r);
+            ctx.lineTo(px + axes.px * r, py + axes.py * r);
+            ctx.lineTo(px - axes.tx * r, py - axes.ty * r);
+            ctx.lineTo(px - axes.px * r, py - axes.py * r);
+            ctx.closePath();
+
+            if (ch === "x") {
+                ctx.fillStyle = this._sampleImageAt(sample.x, sample.y);
+                ctx.fill();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
+                ctx.stroke();
+            } else {
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = BEAT_INACTIVE_COLOUR;
+                ctx.stroke();
+            }
         }
     }
 
@@ -1443,6 +1473,37 @@ function samplePiste(shape, t) {
         target -= s.length;
     }
     return null; // unreachable, but keeps the type checker happy
+}
+
+/**
+ * Given a canvas-space tangent (tx, ty), return the unit-
+ * length tangent and right-perpendicular vectors in pixel
+ * space. Used by the beat-point diamond renderer, which
+ * needs both axes to place the four vertices around the
+ * sample point: two along the tangent (which makes the
+ * "two opposite vertices lie on the curve" condition hold,
+ * exactly for straight segments and to a close visual
+ * approximation for curved ones), two along the perpendicular.
+ *
+ * Mapping canvas to pixel space flips Y, so the tangent
+ * (tx, ty) becomes (tx, -ty) in pixel space. The right
+ * perpendicular of (tx, -ty) in pixel space (Y down) is
+ * (-(-ty), tx) = (ty, tx), matching the existing
+ * pixelPerpendicularUnit convention.
+ *
+ * @param {number} tx
+ * @param {number} ty
+ * @returns {{tx: number, ty: number, px: number, py: number}}
+ */
+function pixelTangentAndPerp(tx, ty) {
+    const len = Math.hypot(tx, ty);
+    if (len === 0) return { tx: 0, ty: 0, px: 0, py: 0 };
+    return {
+        tx: tx / len,
+        ty: -ty / len,
+        px: ty / len,
+        py: tx / len,
+    };
 }
 
 /**
