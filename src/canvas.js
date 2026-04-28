@@ -41,6 +41,9 @@
 
 // @ts-check
 
+import { applyBrightnessReduction } from "./imageTransform.js";
+import { getPreference, subscribePreference } from "./preferences.js";
+
 const DEFAULT_HALF_WIDTH = 16;   // \u00b116 units horizontally at zoom 1
 const DEFAULT_HALF_HEIGHT = 12;  // \u00b112 units vertically at zoom 1
 
@@ -144,17 +147,53 @@ export class Canvas {
         this.halfHeightUnits = DEFAULT_HALF_HEIGHT;
 
         /**
-         * The decoded image bitmap ready for drawImage, or null
-         * when the bundle has no image.
+         * The as-decoded source bitmap, or null when the
+         * bundle has no image. This is the unmodified imagery
+         * from the bundle and serves two roles: it is the
+         * input to _buildPixelSamplingArray (so triggers and
+         * sprites read music-generation samples from this
+         * bitmap, never from the transformed display bitmap),
+         * and it is the input to applyBrightnessReduction
+         * whenever the displayed bitmap needs to be
+         * re-derived after a settings change.
+         * @type {ImageBitmap | HTMLImageElement | null}
+         */
+        this._imageBitmapOriginal = null;
+
+        /**
+         * The bitmap currently rendered by _drawImage, or
+         * null when the bundle has no image. Equal to
+         * _imageBitmapOriginal when the brightness-reduction
+         * bypass preference is on or when the transform
+         * fails; otherwise it is the result of running
+         * applyBrightnessReduction on the original. The
+         * trigger and sprite sampling path never reads this
+         * bitmap — it reads _imagePixels, built from the
+         * original — so the visual transform can be tuned
+         * freely without affecting the music.
          * @type {ImageBitmap | HTMLImageElement | null}
          */
         this._imageBitmap = null;
 
         /**
+         * Sequence number incremented on each call to
+         * _recomputeDisplayBitmap. Used to detect superseded
+         * in-flight transforms when the user adjusts a
+         * settings slider faster than the transform completes:
+         * a transform whose captured seq no longer matches
+         * the current value discards its result rather than
+         * stomping a newer one.
+         * @type {number}
+         */
+        this._transformSeq = 0;
+
+        /**
          * A 1000×1000 ImageData snapshot of the current image,
          * used for fast pixel sampling under triggers and
-         * sprites. Built once when the image loads, then read
-         * at draw time. Null when no image is loaded.
+         * sprites. Built once when the image loads (always
+         * from the unmodified original bitmap, never from the
+         * transformed display bitmap), then read at draw
+         * time. Null when no image is loaded.
          * @type {ImageData | null}
          */
         this._imagePixels = null;
@@ -211,6 +250,21 @@ export class Canvas {
         // multiple triggers in the same frame (resize + zoom, say)
         // produce a single draw.
         this._drawScheduled = false;
+
+        // Re-derive the displayed bitmap whenever any of the
+        // brightness-reduction preferences changes. The bypass
+        // toggle and the three numeric tuners all run through
+        // the same path; _recomputeDisplayBitmap inspects the
+        // current preference values and decides what to do.
+        // No-op when there is no image loaded.
+        for (const key of [
+            "imageDimBlurRadius",
+            "imageDimThreshold",
+            "imageDimMaxAttenuation",
+            "imageDimBypass",
+        ]) {
+            subscribePreference(key, () => this._recomputeDisplayBitmap());
+        }
 
         // Watch the container for size changes. ResizeObserver
         // catches pane drags, window resize, and focus-mode
@@ -276,12 +330,16 @@ export class Canvas {
      * The bytes are decoded here and cached as an ImageBitmap
      * (or HTMLImageElement fallback) so future draws don't need
      * to decode again. A 1000×1000 pixel-sampling snapshot is
-     * also built so trigger and sprite fills can read the
-     * underlying image colour cheaply at draw time.
+     * built from the decoded original for trigger and sprite
+     * fills, and the displayed bitmap is then computed from
+     * the original via the brightness-reduction transform —
+     * or set equal to the original when the bypass preference
+     * is on, see DESIGN.md Section 26.
      * @param {{ bytes: ArrayBuffer, mimeType: string } | null} image
      */
     async setImage(image) {
         if (image === null) {
+            this._imageBitmapOriginal = null;
             this._imageBitmap = null;
             this._imagePixels = null;
             this.scheduleDraw();
@@ -292,15 +350,29 @@ export class Canvas {
             // createImageBitmap is the modern fast path; falls
             // back to an HTMLImageElement via object URL if
             // unavailable (ancient browsers).
+            let original;
             if (typeof createImageBitmap === "function") {
-                this._imageBitmap = await createImageBitmap(blob);
+                original = await createImageBitmap(blob);
             } else {
-                this._imageBitmap = await imageFromBlob(blob);
+                original = await imageFromBlob(blob);
             }
-            this._imagePixels = this._buildPixelSamplingArray(this._imageBitmap);
-            this.scheduleDraw();
+            this._imageBitmapOriginal = original;
+            // The pixel-sampling array is built from the
+            // unmodified original. This is the music-generation
+            // hard boundary: triggers and sprites must read
+            // source pixel values, not transformed ones, so the
+            // accessibility-driven brightness reduction stays
+            // purely a display concern.
+            this._imagePixels = this._buildPixelSamplingArray(original);
+            // Compute the displayed bitmap. _recomputeDisplayBitmap
+            // looks at the bypass preference and either uses
+            // the original directly or runs the transform with
+            // current settings. It calls scheduleDraw on its
+            // own, so we don't repeat that here.
+            await this._recomputeDisplayBitmap();
         } catch (err) {
             console.error("GXW: failed to decode image:", err);
+            this._imageBitmapOriginal = null;
             this._imageBitmap = null;
             this._imagePixels = null;
             this.scheduleDraw();
@@ -1235,6 +1307,67 @@ export class Canvas {
             this.scheduleDraw();
             this._emitSelectionChanged();
             return;
+        }
+    }
+
+    /**
+     * Recompute the displayed bitmap from the current source
+     * bitmap and the current brightness-reduction preference
+     * values. Called from setImage after a new image is
+     * decoded and from preference subscribers when the user
+     * adjusts a setting in the dialog.
+     *
+     * When the bypass preference is on, sets _imageBitmap
+     * directly to the original. Otherwise runs
+     * applyBrightnessReduction with the current blurRadius,
+     * threshold, and maxAttenuation values, and sets
+     * _imageBitmap to the result.
+     *
+     * Concurrent calls are guarded by _transformSeq: each
+     * call captures the current seq at its start, and on
+     * completion only writes its result if the seq still
+     * matches. This makes it safe to call rapidly from a
+     * slider's input event without an out-of-order
+     * completion of an earlier transform stomping the result
+     * of a later one. The seq counter is bumped on every
+     * call, including bypass-only changes, so an in-flight
+     * transform that finishes after the user has flipped
+     * bypass to on also discards its result.
+     *
+     * Errors from the transform are logged and the displayed
+     * bitmap falls back to the original — the user sees the
+     * unmodified image rather than nothing.
+     *
+     * @returns {Promise<void>}
+     */
+    async _recomputeDisplayBitmap() {
+        const original = this._imageBitmapOriginal;
+        const seq = ++this._transformSeq;
+        if (original === null) {
+            this._imageBitmap = null;
+            this.scheduleDraw();
+            return;
+        }
+        if (getPreference("imageDimBypass")) {
+            this._imageBitmap = original;
+            this.scheduleDraw();
+            return;
+        }
+        try {
+            const result = await applyBrightnessReduction(original, {
+                blurRadius: getPreference("imageDimBlurRadius"),
+                threshold: getPreference("imageDimThreshold"),
+                maxAttenuation: getPreference("imageDimMaxAttenuation"),
+            });
+            // A newer call has superseded us; discard our result.
+            if (seq !== this._transformSeq) return;
+            this._imageBitmap = result;
+            this.scheduleDraw();
+        } catch (err) {
+            console.error("GXW: brightness-reduction transform failed; showing original:", err);
+            if (seq !== this._transformSeq) return;
+            this._imageBitmap = original;
+            this.scheduleDraw();
         }
     }
 
