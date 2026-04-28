@@ -582,6 +582,191 @@ export function setStrengthOnCurves(data, selection, value) {
     setFieldOnSelection(data, { curves: selection.curves }, "strength", value);
 }
 
+// --- Band 2 (Geometry and visual) write paths ---
+//
+// Inspector edits to the Position, Curve W/H, Sprite/Trigger
+// Size, Cursor R/L, Curve Thickness, Cursor Thickness, and
+// Color fields land in the functions below. translateSelection
+// also serves the canvas drag-end gesture once that pipeline
+// is migrated (commit four), so a user moving objects via
+// inspector edit and a user dragging on the canvas converge on
+// one mutation primitive.
+
+/**
+ * Translate every selected object by (dx, dy) in canvas
+ * units. Sprites and triggers shift their top-level x and y;
+ * curves translate the geometry inside their shape sub-object
+ * via translateShape. Indexes that fall outside the relevant
+ * array are silently skipped — keeps a transient mismatch
+ * between the inspector's cached scene and the just-edited
+ * bundle from breaking the commit. Mutates `data` in place.
+ *
+ * Resulting positions are rounded to two decimal places via
+ * roundCoord so floating-point precision noise from repeated
+ * deltas (especially during dragging, once the drag pipeline
+ * migrates here) doesn't accumulate in the JSON. The user's
+ * typed values reach this function as clean two-decimal
+ * numbers anyway, so for inspector edits the rounding is a
+ * no-op.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {number} dx
+ * @param {number} dy
+ */
+export function translateSelection(data, selection, dx, dy) {
+    if (selection.sprites !== undefined && Array.isArray(data?.sprites)) {
+        for (const idx of selection.sprites) {
+            if (idx < 0 || idx >= data.sprites.length) continue;
+            const s = data.sprites[idx];
+            if (s === null || typeof s !== "object" || Array.isArray(s)) continue;
+            s.x = roundCoord((typeof s.x === "number" ? s.x : 0) + dx);
+            s.y = roundCoord((typeof s.y === "number" ? s.y : 0) + dy);
+        }
+    }
+    if (selection.triggers !== undefined && Array.isArray(data?.triggers)) {
+        for (const idx of selection.triggers) {
+            if (idx < 0 || idx >= data.triggers.length) continue;
+            const t = data.triggers[idx];
+            if (t === null || typeof t !== "object" || Array.isArray(t)) continue;
+            t.x = roundCoord((typeof t.x === "number" ? t.x : 0) + dx);
+            t.y = roundCoord((typeof t.y === "number" ? t.y : 0) + dy);
+        }
+    }
+    if (selection.curves !== undefined && Array.isArray(data?.curves)) {
+        for (const idx of selection.curves) {
+            if (idx < 0 || idx >= data.curves.length) continue;
+            const c = data.curves[idx];
+            if (c === null || typeof c !== "object" || Array.isArray(c)) continue;
+            translateShape(c.shape, dx, dy);
+        }
+    }
+}
+
+/**
+ * Scale every selected curve along one axis by the given
+ * factor, keeping the curve's bounding-box centroid fixed in
+ * that axis. Used by the inspector's W and H field commits:
+ * the inspector computes factor as the user's typed value
+ * divided by the field's currently-displayed value, then
+ * emits this edit. Sprites and triggers in the selection are
+ * ignored. The two axes are independent — a W edit emits
+ * scaleCurveAxis("x", ...) and an H edit emits
+ * scaleCurveAxis("y", ...), and either can be applied without
+ * affecting the other, which matches the design decision that
+ * curves can be distorted freely (a circle becomes an ellipse
+ * the moment W and H disagree).
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {"x" | "y"} axis
+ * @param {number} factor
+ */
+export function scaleCurveAxis(data, selection, axis, factor) {
+    if (selection.curves === undefined || !Array.isArray(data?.curves)) return;
+    if (!Number.isFinite(factor) || factor === 0) return;
+    for (const idx of selection.curves) {
+        if (idx < 0 || idx >= data.curves.length) continue;
+        const c = data.curves[idx];
+        if (c === null || typeof c !== "object" || Array.isArray(c)) continue;
+        scaleShape(c.shape, axis, factor);
+    }
+}
+
+/**
+ * Set displayDiameter on every selected sprite. Triggers and
+ * curves in the selection are ignored. Mutates `data` in
+ * place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setSpriteDisplayDiameterOnSelection(data, selection, value) {
+    setFieldOnSelection(data, { sprites: selection.sprites }, "displayDiameter", Number(value));
+}
+
+/**
+ * Set size on every selected trigger. Sprites and curves in
+ * the selection are ignored. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setTriggerSizeOnSelection(data, selection, value) {
+    setFieldOnSelection(data, { triggers: selection.triggers }, "size", Number(value));
+}
+
+/**
+ * Set cursorR on every selected curve. Sprites and triggers
+ * in the selection are ignored. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setCursorROnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "cursorR", Number(value));
+}
+
+/**
+ * Set cursorL on every selected curve. Sprites and triggers
+ * in the selection are ignored. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setCursorLOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "cursorL", Number(value));
+}
+
+/**
+ * Set curveThickness on every selected curve. Sprites and
+ * triggers in the selection are ignored. Mutates `data` in
+ * place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setCurveThicknessOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "curveThickness", Number(value));
+}
+
+/**
+ * Set cursorThickness on every selected curve. Sprites and
+ * triggers in the selection are ignored. Mutates `data` in
+ * place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setCursorThicknessOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "cursorThickness", Number(value));
+}
+
+/**
+ * Set color on every selected sprite and trigger. Curves in
+ * the selection are ignored — curves carry no per-object
+ * colour field at this milestone; their stroke uses the
+ * global CURVE_COLOUR constant. (A curve-colour discussion is
+ * deferred to a future commit.) The value is a CSS hex string
+ * stored as-is. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setColorOnSelection(data, selection, value) {
+    setFieldOnSelection(data, {
+        sprites: selection.sprites,
+        triggers: selection.triggers,
+    }, "color", String(value));
+}
+
 /**
  * Generic helper for the boolean-field setters. The
  * preserveExisting flag keeps the field's slot in the entry
@@ -688,4 +873,107 @@ function setFieldOnSelection(data, selection, fieldName, value) {
  */
 function roundCoord(n) {
     return Math.round(n * 100) / 100;
+}
+
+/**
+ * Translate a curve shape sub-object by (dx, dy) in canvas
+ * units. Per shape type:
+ *   - line: both endpoints shift
+ *   - ellipse: cx and cy shift; w and h are extent fields
+ *     and don't move under translation
+ *   - piste: each point in the points array shifts
+ * Other shape types (bezier, helice) are silently skipped —
+ * they're documented in DESIGN.md §4 but not yet implemented
+ * as geometry-bearing primitives. Mutates the shape in place.
+ * Defensive against missing or non-numeric coordinate fields
+ * so a partially-formed shape from hand-edited JSON doesn't
+ * crash the edit pipeline.
+ *
+ * @param {any} shape
+ * @param {number} dx
+ * @param {number} dy
+ */
+function translateShape(shape, dx, dy) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return;
+    if (shape.type === "line") {
+        shape.x1 = roundCoord((typeof shape.x1 === "number" ? shape.x1 : 0) + dx);
+        shape.y1 = roundCoord((typeof shape.y1 === "number" ? shape.y1 : 0) + dy);
+        shape.x2 = roundCoord((typeof shape.x2 === "number" ? shape.x2 : 0) + dx);
+        shape.y2 = roundCoord((typeof shape.y2 === "number" ? shape.y2 : 0) + dy);
+    } else if (shape.type === "ellipse") {
+        shape.cx = roundCoord((typeof shape.cx === "number" ? shape.cx : 0) + dx);
+        shape.cy = roundCoord((typeof shape.cy === "number" ? shape.cy : 0) + dy);
+    } else if (shape.type === "piste") {
+        if (!Array.isArray(shape.points)) return;
+        for (let i = 0; i < shape.points.length; i++) {
+            const p = shape.points[i];
+            if (!Array.isArray(p) || p.length < 2) continue;
+            p[0] = roundCoord((typeof p[0] === "number" ? p[0] : 0) + dx);
+            p[1] = roundCoord((typeof p[1] === "number" ? p[1] : 0) + dy);
+        }
+    }
+}
+
+/**
+ * Scale a curve shape along one axis ("x" or "y") by a
+ * factor, keeping the bounding-box centroid in that axis
+ * fixed so the shape distorts in place rather than walking
+ * across the canvas. Per shape type:
+ *   - line: each endpoint's coordinate scales around the
+ *     midpoint between the two endpoints
+ *   - ellipse: w (axis x) or h (axis y) scales by factor;
+ *     cx/cy stay put because the bbox centroid is exactly
+ *     (cx, cy) for a centred ellipse
+ *   - piste: bbox centroid in the scaling axis is computed
+ *     from the points array, then each point's coordinate
+ *     in that axis scales around the centroid
+ * Mutates the shape in place. Other shape types skipped.
+ *
+ * @param {any} shape
+ * @param {"x" | "y"} axis
+ * @param {number} factor
+ */
+function scaleShape(shape, axis, factor) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return;
+    if (shape.type === "line") {
+        if (axis === "x") {
+            const x1 = typeof shape.x1 === "number" ? shape.x1 : 0;
+            const x2 = typeof shape.x2 === "number" ? shape.x2 : 0;
+            const mid = (x1 + x2) / 2;
+            shape.x1 = roundCoord(mid + (x1 - mid) * factor);
+            shape.x2 = roundCoord(mid + (x2 - mid) * factor);
+        } else {
+            const y1 = typeof shape.y1 === "number" ? shape.y1 : 0;
+            const y2 = typeof shape.y2 === "number" ? shape.y2 : 0;
+            const mid = (y1 + y2) / 2;
+            shape.y1 = roundCoord(mid + (y1 - mid) * factor);
+            shape.y2 = roundCoord(mid + (y2 - mid) * factor);
+        }
+    } else if (shape.type === "ellipse") {
+        if (axis === "x") {
+            const w = typeof shape.w === "number" ? shape.w : 0;
+            shape.w = roundCoord(w * factor);
+        } else {
+            const h = typeof shape.h === "number" ? shape.h : 0;
+            shape.h = roundCoord(h * factor);
+        }
+    } else if (shape.type === "piste") {
+        if (!Array.isArray(shape.points) || shape.points.length === 0) return;
+        const ai = axis === "x" ? 0 : 1;
+        let min = Infinity;
+        let max = -Infinity;
+        for (const p of shape.points) {
+            if (Array.isArray(p) && typeof p[ai] === "number") {
+                if (p[ai] < min) min = p[ai];
+                if (p[ai] > max) max = p[ai];
+            }
+        }
+        if (!Number.isFinite(min)) return;
+        const mid = (min + max) / 2;
+        for (const p of shape.points) {
+            if (Array.isArray(p) && typeof p[ai] === "number") {
+                p[ai] = roundCoord(mid + (p[ai] - mid) * factor);
+            }
+        }
+    }
 }

@@ -86,6 +86,15 @@ import {
     setStopAtCycleOnCurves,
     setActiveBeatsOnCurves,
     setStrengthOnCurves,
+    translateSelection,
+    scaleCurveAxis,
+    setSpriteDisplayDiameterOnSelection,
+    setTriggerSizeOnSelection,
+    setCursorROnCurves,
+    setCursorLOnCurves,
+    setCurveThicknessOnCurves,
+    setCursorThicknessOnCurves,
+    setColorOnSelection,
 } from "./src/sceneEditor.js";
 
 main();
@@ -565,6 +574,42 @@ async function main() {
             } else if (edit.kind === "setStrength") {
                 await applySceneEdit((data) =>
                     setStrengthOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "translateSelection") {
+                await applySceneEdit((data) =>
+                    translateSelection(data, edit.selection, edit.dx, edit.dy),
+                );
+            } else if (edit.kind === "scaleCurveAxis") {
+                await applySceneEdit((data) =>
+                    scaleCurveAxis(data, edit.selection, edit.axis, edit.factor),
+                );
+            } else if (edit.kind === "setSpriteSize") {
+                await applySceneEdit((data) =>
+                    setSpriteDisplayDiameterOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setTriggerSize") {
+                await applySceneEdit((data) =>
+                    setTriggerSizeOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCursorR") {
+                await applySceneEdit((data) =>
+                    setCursorROnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCursorL") {
+                await applySceneEdit((data) =>
+                    setCursorLOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCurveThickness") {
+                await applySceneEdit((data) =>
+                    setCurveThicknessOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCursorThickness") {
+                await applySceneEdit((data) =>
+                    setCursorThicknessOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setColor") {
+                await applySceneEdit((data) =>
+                    setColorOnSelection(data, edit.selection, edit.value),
                 );
             }
         });
