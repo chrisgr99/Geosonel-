@@ -17,23 +17,31 @@
  * convention.
  *
  * v1 scope: selection-driven greying for all bands plus
- * read-binding and write-binding for Band 1, plus read
- * binding for Band 5 (Active Beats, Beat Strength) and
+ * read- and write-binding for Band 1 (Object ID, Name,
+ * Mute, Hide), Band 5 (Active Beats, Beat Strength), and
  * Band 6 (Cycle Duration, Cycle Speeds, Stop at Cycle).
- * Identity fields (Object ID, Name, Mute, Hide) display
- * real values from the runtime Scene, and edits to Mute,
- * Hide, and Name commit back through main.js's
- * applyInspectorEdit pipeline. Name edits validate against
- * JS-identifier rules and the generated-id pattern with
- * hard-error squiggles for malformed input and soft-conflict
- * squiggles for duplicate names. Band 5 and Band 6 read
- * paths consult curves only — sprites activate Band 5 in
- * the layout but contribute nothing to the displayed values
- * yet, pending the sprite-auto-timer model extension. Multi-
- * select disagreement on a string or numeric field renders
- * as a blank value for now; a richer divergence indicator
- * will follow when write binding makes the case actionable.
- * The other bands still show placeholder values pending
+ * Edits commit back through main.js's applyInspectorEdit
+ * pipeline. Name and the five curve-field write paths share
+ * the same validator-driven edit lifecycle: hard errors
+ * squiggle red and refuse to commit (Enter retains focus,
+ * blur reverts); soft warnings squiggle yellow and commit.
+ * Soft squiggles in v1 are transient — they appear at
+ * commit time and are gone after the scene reloads. A
+ * persistent indicator can be added later by running each
+ * validator on the displayed value at render time, the way
+ * Name's duplicate-name check already does.
+ *
+ * Band 5 read and write paths consult curves only — sprites
+ * activate the band in the layout but neither contribute to
+ * displayed values nor receive edits, pending the sprite-
+ * auto-timer model extension. Multi-select disagreement on
+ * a string or numeric field renders as a blank value for
+ * now; a richer divergence indicator can follow if its
+ * absence becomes a usability problem (an edit into a
+ * varies-blank field propagates to every selected curve —
+ * possible by explicit action, not by accidental slip).
+ *
+ * Bands 2, 3, and 4 still show placeholder values pending
  * their own data-binding work. The Inspector exposes
  * setSelection(), setScene(), and setEditCallback(); main.js
  * wires the three together so the inspector tracks selection
@@ -88,6 +96,13 @@ import {
     collectOtherNames,
     nameConflictsInScene,
 } from "./nameValidation.js";
+import {
+    validateCycleDuration,
+    validateStopAtCycle,
+    validateCycleSpeeds,
+    validateActiveBeats,
+    validateStrength,
+} from "./curveFieldValidation.js";
 
 // Width constants. Centralised so layout adjustments touch
 // one set of numbers, not scattered inline styles. The
@@ -497,6 +512,112 @@ export class Inspector {
     }
 
     /**
+     * Build an editable field with arbitrary validation. Used
+     * by the curve-field write paths in Band 5 (Active Beats,
+     * Beat Strength) and Band 6 (Cycle Duration, Cycle
+     * Speeds, Stop at Cycle). Each call site supplies a
+     * validator function from curveFieldValidation.js plus
+     * an editKind tag identifying the edit; the rest of the
+     * commit lifecycle — hard error red squiggle on Enter
+     * with focus retained, hard error silent revert on blur,
+     * soft warning yellow squiggle on commit, ok commit —
+     * mirrors the Name field's behaviour. Soft squiggles
+     * here are transient (lost on the next render); a
+     * persistent indicator could be reintroduced later by
+     * running the validator on opts.value at render time,
+     * the way Name handles duplicate-name conflicts.
+     *
+     * Multi-select edits propagate the validated value to
+     * every member of the selection's curves array via the
+     * matching sceneEditor function. The varies-blank case
+     * renders an empty field; a typed-and-committed value
+     * will set every selected curve to that value, which is
+     * potentially destructive but only by explicit user
+     * action.
+     *
+     * @param {{
+     *   value: string,
+     *   width: number,
+     *   numeric?: boolean,
+     *   editable: boolean,
+     *   validator: (candidate: string) => { kind: "ok" | "soft" | "hard", value: string, message?: string },
+     *   editKind: string,
+     * }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildEditableField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-field";
+        if (opts.numeric) el.classList.add("insp-field-numeric");
+        el.style.width = `${opts.width}px`;
+
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.textContent = opts.value;
+            return el;
+        }
+
+        el.setAttribute("contenteditable", "plaintext-only");
+        el.setAttribute("spellcheck", "false");
+        el.textContent = opts.value;
+
+        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
+            const candidate = el.textContent ?? "";
+            const result = opts.validator(candidate);
+            if (result.kind === "hard") {
+                if (mode === "blur") {
+                    // Silently revert: an abandoned bad value
+                    // shouldn't carry invalid state forward.
+                    el.textContent = opts.value;
+                    el.classList.remove("error-hard", "error-soft");
+                    return;
+                }
+                el.classList.remove("error-soft");
+                el.classList.add("error-hard");
+                return;
+            }
+            el.classList.remove("error-hard");
+            if (result.kind === "soft") {
+                el.classList.add("error-soft");
+            } else {
+                el.classList.remove("error-soft");
+            }
+            if (result.value !== opts.value) {
+                this._emitEdit({ kind: opts.editKind, value: result.value });
+            }
+        };
+
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit("enter");
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                el.textContent = opts.value;
+                el.classList.remove("error-hard", "error-soft");
+                el.blur();
+                return;
+            }
+            // Clear a hard-error squiggle on the next
+            // keystroke so the user sees their corrections
+            // in step with their typing. queueMicrotask runs
+            // after the character is inserted.
+            if (el.classList.contains("error-hard")) {
+                queueMicrotask(() => {
+                    el.classList.remove("error-hard");
+                });
+            }
+        });
+        el.addEventListener("blur", () => {
+            tryCommit("blur");
+        });
+
+        return el;
+    }
+
+    /**
      * Band 2 — Geometry and visual. Position and color are
      * universal; curve dimensions activate when curves are in
      * the selection; sprite/trigger size activates when the
@@ -660,19 +781,26 @@ export class Inspector {
 
         const r2 = mkRow();
         r2.appendChild(mkLabel("Active Beats", { width: W.leftLabel, disabled: dis }));
-        r2.appendChild(mkField({
+        r2.appendChild(this._buildEditableField({
             value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
             width: W.rhythmString,
-            disabled: dis,
+            // Editable iff curves are in the selection, even
+            // when sprites also activate the band: sprite-side
+            // write is deferred along with sprite-side read.
+            editable: ctx.hasCurves,
+            validator: validateActiveBeats,
+            editKind: "setActiveBeats",
         }));
         band.appendChild(r2);
 
         const r3 = mkRow();
         r3.appendChild(mkLabel("Beat Strength", { width: W.leftLabel, disabled: dis }));
-        r3.appendChild(mkField({
+        r3.appendChild(this._buildEditableField({
             value: strengthAgg === "varies" ? "" : strengthAgg,
             width: W.rhythmString,
-            disabled: dis,
+            editable: ctx.hasCurves,
+            validator: validateStrength,
+            editKind: "setStrength",
         }));
         band.appendChild(r3);
 
@@ -713,20 +841,24 @@ export class Inspector {
 
         const r1 = mkRow();
         r1.appendChild(mkLabel("Cycle\nDuration", { width: W.leftLabel, disabled: dis, multiline: true }));
-        r1.appendChild(mkField({
+        r1.appendChild(this._buildEditableField({
             value: cycleDurationAgg === "varies" ? "" : cycleDurationAgg,
             numeric: true,
             width: W.cycleDurationF,
-            disabled: dis,
+            editable: !dis,
+            validator: validateCycleDuration,
+            editKind: "setCycleDuration",
         }));
         r1.appendChild(mkUnits("beats", { disabled: dis }));
         r1.appendChild(mkSpacer());
         r1.appendChild(mkLabel("Stop at\nCycle", { width: W.stopAt, disabled: dis, multiline: true }));
-        r1.appendChild(mkField({
+        r1.appendChild(this._buildEditableField({
             value: stopAtCycleAgg === "varies" ? "" : stopAtCycleAgg,
             numeric: true,
             width: W.stopAtF,
-            disabled: dis,
+            editable: !dis,
+            validator: validateStopAtCycle,
+            editKind: "setStopAtCycle",
         }));
         r1.appendChild(mkSpacer());
         r1.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.triggerSync, disabled: dis, multiline: true }));
@@ -735,10 +867,12 @@ export class Inspector {
 
         const r2 = mkRow();
         r2.appendChild(mkLabel("Cycle Speeds", { width: W.leftLabel, disabled: dis }));
-        r2.appendChild(mkField({
+        r2.appendChild(this._buildEditableField({
             value: cycleSpeedsAgg === "varies" ? "" : cycleSpeedsAgg,
             width: W.cycleSpeeds,
-            disabled: dis,
+            editable: !dis,
+            validator: validateCycleSpeeds,
+            editKind: "setCycleSpeeds",
         }));
         band.appendChild(r2);
 

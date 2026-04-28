@@ -80,6 +80,11 @@ import {
     setMuteOnSelection,
     setHideOnCurves,
     setNameOnSelection,
+    setCycleDurationOnCurves,
+    setCycleSpeedsOnCurves,
+    setStopAtCycleOnCurves,
+    setActiveBeatsOnCurves,
+    setStrengthOnCurves,
 } from "./src/sceneEditor.js";
 
 main();
@@ -534,6 +539,26 @@ async function main() {
             } else if (edit.kind === "setName") {
                 await applySceneEdit((data) =>
                     setNameOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCycleDuration") {
+                await applySceneEdit((data) =>
+                    setCycleDurationOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCycleSpeeds") {
+                await applySceneEdit((data) =>
+                    setCycleSpeedsOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setStopAtCycle") {
+                await applySceneEdit((data) =>
+                    setStopAtCycleOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setActiveBeats") {
+                await applySceneEdit((data) =>
+                    setActiveBeatsOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setStrength") {
+                await applySceneEdit((data) =>
+                    setStrengthOnCurves(data, edit.selection, edit.value),
                 );
             }
         });

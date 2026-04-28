@@ -439,6 +439,82 @@ export function setNameOnSelection(data, selection, value) {
 }
 
 /**
+ * Set the cycleDuration field on every curve in the
+ * selection. Sprites and triggers in the selection are
+ * ignored — cycleDuration is curve-only. The value is the
+ * canonicalised string from the inspector's validator,
+ * always parseable as a positive integer; this function
+ * parses it for storage. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setCycleDurationOnCurves(data, selection, value) {
+    const n = Math.round(Number(value));
+    setFieldOnSelection(data, { curves: selection.curves }, "cycleDuration", n);
+}
+
+/**
+ * Set the cycleSpeeds field on every curve in the selection.
+ * Sprites and triggers in the selection are ignored. The
+ * value is a whitespace-separated multiplier string and is
+ * stored as-is. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setCycleSpeedsOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "cycleSpeeds", value);
+}
+
+/**
+ * Set the stopAtCycle field on every curve in the selection.
+ * Sprites and triggers in the selection are ignored. The
+ * value is the canonicalised string from the inspector's
+ * validator, always parseable as an integer; this function
+ * parses it for storage. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setStopAtCycleOnCurves(data, selection, value) {
+    const n = Math.round(Number(value));
+    setFieldOnSelection(data, { curves: selection.curves }, "stopAtCycle", n);
+}
+
+/**
+ * Set the activeBeats field on every curve in the selection.
+ * Sprites and triggers in the selection are ignored. The
+ * value is a string of "x" and "." characters (or empty,
+ * which mutes the rhythm) and is stored as-is. Mutates
+ * `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setActiveBeatsOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "activeBeats", value);
+}
+
+/**
+ * Set the strength field on every curve in the selection.
+ * Sprites and triggers in the selection are ignored. The
+ * value is a digit string 0-9 (or empty, which mutes the
+ * beats) and is stored as-is. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setStrengthOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "strength", value);
+}
+
+/**
  * Generic helper for the boolean-field setters. The
  * preserveExisting flag keeps the field's slot in the entry
  * even when the new value matches the default — so a click
@@ -481,6 +557,41 @@ function setBooleanFieldOnSelection(data, selection, fieldName, value, _preserve
  * @param {string} value
  */
 function setStringFieldOnSelection(data, selection, fieldName, value) {
+    /** @type {Array<[string, Iterable<number> | undefined]>} */
+    const arrays = [
+        ["sprites", selection.sprites],
+        ["triggers", selection.triggers],
+        ["curves", selection.curves],
+    ];
+    for (const [arrayKey, indexes] of arrays) {
+        if (indexes === undefined) continue;
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (const idx of indexes) {
+            if (idx < 0 || idx >= arr.length) continue;
+            const entry = arr[idx];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            entry[fieldName] = value;
+        }
+    }
+}
+
+/**
+ * Generic setter used by the curve-only Band 5 / Band 6
+ * write paths (cycleDuration, cycleSpeeds, stopAtCycle,
+ * activeBeats, strength). Type-agnostic: the caller is
+ * responsible for parsing strings to numbers where the
+ * field expects a number. Mirrors the body of the boolean
+ * and string variants above; kept separate to leave the
+ * existing helpers undisturbed while the inspector grows
+ * its write surface.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} fieldName
+ * @param {any} value
+ */
+function setFieldOnSelection(data, selection, fieldName, value) {
     /** @type {Array<[string, Iterable<number> | undefined]>} */
     const arrays = [
         ["sprites", selection.sprites],
