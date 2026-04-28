@@ -75,6 +75,51 @@ export const PREFERENCES = [
         step: 0.1,
         category: "Display",
     },
+    {
+        key: "imageDimBlurRadius",
+        label: "Brightness Reduction: Blur Radius",
+        description:
+            "Pixel scale used to estimate the regional brightness around each pixel of an imported image. Larger values mean only very broad bright regions are dimmed; smaller values also dim more localised bright patches. The default of 50 pixels suits typical reference imagery; raise it for high-resolution photos with large bright skies, lower it to dim smaller bright features such as windows or specular highlights.",
+        type: "number",
+        default: 50,
+        min: 5,
+        max: 200,
+        step: 5,
+        category: "Accessibility",
+    },
+    {
+        key: "imageDimThreshold",
+        label: "Brightness Reduction: Threshold",
+        description:
+            "Regional brightness below which no dimming is applied, on a 0 to 1 scale. Protects midtones and shadows from being darkened. A value of 0.5 leaves the lower half of the brightness range untouched and dims only the upper half; 0 dims everything; 0.9 dims only the very brightest regions.",
+        type: "number",
+        default: 0.5,
+        min: 0.0,
+        max: 0.9,
+        step: 0.05,
+        category: "Accessibility",
+    },
+    {
+        key: "imageDimMaxAttenuation",
+        label: "Brightness Reduction: Maximum Attenuation",
+        description:
+            "Multiplier applied to the brightest large regions, on a 0 to 1 scale. A value of 0.5 halves their brightness; 1.0 disables the effect entirely; values in between scale linearly. Lower values produce stronger dimming where regional brightness is highest.",
+        type: "number",
+        default: 0.5,
+        min: 0.2,
+        max: 1.0,
+        step: 0.05,
+        category: "Accessibility",
+    },
+    {
+        key: "imageDimBypass",
+        label: "Brightness Reduction: Bypass",
+        description:
+            "When enabled, displays imported images without the brightness-reduction transformation. Useful for direct comparison with the original imagery. Music generation is unaffected by this toggle either way \u2014 triggers and sprites always read from the unmodified image data.",
+        type: "boolean",
+        default: false,
+        category: "Accessibility",
+    },
 ];
 
 /**
