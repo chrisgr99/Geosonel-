@@ -582,17 +582,18 @@ export class Canvas {
     _strokeCurveShape(curve) {
         const ctx = this.ctx;
         ctx.strokeStyle = CURVE_COLOUR;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = curve.curveThickness;
         ctx.beginPath();
         const s = curve.shape;
         if (s.type === "line") {
             ctx.moveTo(this.toPixelX(s.x1), this.toPixelY(s.y1));
             ctx.lineTo(this.toPixelX(s.x2), this.toPixelY(s.y2));
-        } else if (s.type === "circle") {
+        } else if (s.type === "ellipse") {
             const cx = this.toPixelX(s.cx);
             const cy = this.toPixelY(s.cy);
-            const r = s.r * this.pixelsPerUnit;
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            const rx = (s.w / 2) * this.pixelsPerUnit;
+            const ry = (s.h / 2) * this.pixelsPerUnit;
+            ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
         } else if (s.type === "piste") {
             const pts = s.points;
             if (pts.length >= 2) {
@@ -699,7 +700,7 @@ export class Canvas {
         const yLeft = py - perp.y * curve.cursorL * ppu;
 
         ctx.strokeStyle = CURSOR_COLOUR;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = curve.cursorThickness;
         ctx.beginPath();
         ctx.moveTo(xLeft, yLeft);
         ctx.lineTo(xRight, yRight);
@@ -738,7 +739,7 @@ export class Canvas {
             ctx.closePath();
             ctx.fillStyle = this._sampleImageAt(t.x, t.y);
             ctx.fill();
-            ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
+            ctx.strokeStyle = t.color;
             ctx.stroke();
         }
     }
@@ -765,7 +766,7 @@ export class Canvas {
             ctx.arc(cx, cy, r, 0, Math.PI * 2);
             ctx.fillStyle = this._sampleImageAt(s.x, s.y);
             ctx.fill();
-            ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
+            ctx.strokeStyle = s.color;
             ctx.stroke();
         }
     }
@@ -1537,11 +1538,20 @@ function sampleCurve(shape, t) {
                 ty: shape.y2 - shape.y1,
             };
         }
-        case "circle": {
+        case "ellipse": {
             const a = 2 * Math.PI * t;
-            const x = shape.cx + shape.r * Math.cos(a);
-            const y = shape.cy + shape.r * Math.sin(a);
-            return { x, y, tx: -Math.sin(a), ty: Math.cos(a) };
+            const rx = shape.w / 2;
+            const ry = shape.h / 2;
+            const x = shape.cx + rx * Math.cos(a);
+            const y = shape.cy + ry * Math.sin(a);
+            // Tangent vector for an ellipse parameterised as
+            // (rx cos a, ry sin a) is (-rx sin a, ry cos a).
+            // The downstream consumers (cursor perpendicular,
+            // beat-point diamond axes) normalise the tangent
+            // before use, so the magnitude varying with a is
+            // not a concern — the direction is what matters
+            // and is correct for any rx, ry.
+            return { x, y, tx: -rx * Math.sin(a), ty: ry * Math.cos(a) };
         }
         case "piste":
             return samplePiste(shape, t);
@@ -1677,12 +1687,12 @@ function curveBoundingBox(shape) {
             y2: Math.max(shape.y1, shape.y2),
         };
     }
-    if (shape.type === "circle") {
+    if (shape.type === "ellipse") {
         return {
-            x1: shape.cx - shape.r,
-            y1: shape.cy - shape.r,
-            x2: shape.cx + shape.r,
-            y2: shape.cy + shape.r,
+            x1: shape.cx - shape.w / 2,
+            y1: shape.cy - shape.h / 2,
+            x2: shape.cx + shape.w / 2,
+            y2: shape.cy + shape.h / 2,
         };
     }
     if (shape.type === "piste") {

@@ -272,7 +272,7 @@ export function makeEmptyBundle(name) {
 
   "curves": [
     {
-      "shape": { "type": "circle", "cx": 0, "cy": 0, "r": 6 },
+      "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 12, "h": 12 },
       "cycleDuration": 4,
       "activeBeats": "x",
       "strength": "9272",

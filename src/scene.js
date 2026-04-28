@@ -157,11 +157,19 @@ export class Scene {
  */
 
 /**
- * @typedef {Object} ShapeCircle
- * @property {"circle"} type
+ * @typedef {Object} ShapeEllipse
+ * @property {"ellipse"} type
  * @property {number} cx
  * @property {number} cy
- * @property {number} r
+ * @property {number} w  Full width in canvas units (horizontal extent).
+ * @property {number} h  Full height in canvas units (vertical extent).
+ *
+ * A circle is an ellipse with w === h. Stored as an ellipse
+ * regardless so that toolbar-created circles and runtime-
+ * distorted ellipses share one geometry primitive — the
+ * inspector's W and H fields can be edited independently and
+ * the shape-type string never has to change as a side effect
+ * of typing in a number.
  */
 
 /**
@@ -171,7 +179,7 @@ export class Scene {
  * @property {boolean} [closed]
  */
 
-/** @typedef {ShapeLine | ShapeCircle | ShapePiste} CurveShape */
+/** @typedef {ShapeLine | ShapeEllipse | ShapePiste} CurveShape */
 
 export class Curve {
     /**
@@ -217,6 +225,16 @@ export class Curve {
         /** @type {CurveShape} */
         this.shape = opts.shape;
 
+        /**
+         * Stroke thickness for the curve's geometric body, in
+         * CSS pixels. The cursor's stroke uses cursorThickness
+         * below; these are kept independent so a thin curve
+         * can have a thick cursor (or vice versa) without
+         * either constraining the other.
+         * @type {number}
+         */
+        this.curveThickness = opts.curveThickness ?? 1;
+
         // --- Rhythm ---
         /**
          * Length of one full cycle in beats. Also defines
@@ -258,6 +276,13 @@ export class Curve {
         this.cursorR = opts.cursorR ?? 0;
         /** Cursor extent left of curve direction, canvas units. */
         this.cursorL = opts.cursorL ?? 0;
+        /**
+         * Stroke thickness for the cursor segment, in CSS
+         * pixels. Independent of curveThickness so a thin
+         * curve can carry a thick cursor for visibility.
+         * @type {number}
+         */
+        this.cursorThickness = opts.cursorThickness ?? 2;
         /**
          * When true, active beats double as collision targets
          * for other curves' extended cursors.
@@ -335,6 +360,17 @@ export class Trigger {
          * value, since size doesn't influence the music.
          */
         this.size = opts.size ?? 0.35;
+        /**
+         * Boundary ring colour, as a CSS hex string. The
+         * trigger's interior fill always shows the image
+         * pixel under its centre (or a placeholder when no
+         * image is loaded); the boundary ring stays at this
+         * stored colour. Default is the system trigger
+         * boundary colour, matching the legacy hardcoded
+         * value before per-object colours were introduced.
+         * @type {string}
+         */
+        this.color = opts.color ?? "#7db8d6";
         /** Optional shorthand note. */
         this.note = opts.note ?? null;
         /** Arbitrary payload available as this.* in functions. */
@@ -411,6 +447,17 @@ export class Sprite {
          * overrides what's stored.
          */
         this.displayDiameter = opts.displayDiameter ?? 1.05;
+
+        /**
+         * Boundary ring colour, as a CSS hex string. The
+         * sprite's interior fill always shows the image
+         * pixel under its centre (or a placeholder when no
+         * image is loaded); the boundary ring stays at this
+         * stored colour. Default matches the legacy hardcoded
+         * sprite boundary colour.
+         * @type {string}
+         */
+        this.color = opts.color ?? "#7db8d6";
 
         // --- Function slots ---
         /** @type {Function | null} */

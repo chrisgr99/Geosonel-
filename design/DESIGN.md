@@ -69,7 +69,7 @@ Sketches are typically constructed and modified through conversation with Claude
 
 A GXW scene holds three kinds of first-class objects — curves, triggers, and sprites — plus an optional background image that acts as a scalar field and a transport that keeps global tempo and time.
 
-Curves are geometric shapes (line, circle, piste, bezier, and other named forms) with intrinsic rhythmic structure. Each curve has a set of beat points distributed around its shape according to an algorithmic generator (primarily Euclidean) or a hand-authored pattern string. Each curve has a visible cursor that advances through its cycle over a settable number of beats. When the cursor reaches an active beat point, the curve's beat function fires. If the cursor has non-zero extent on either side of the curve direction, it sweeps through space as it advances, and any triggers in the swept region fire. Curves combine geometry, rhythm, and projection into one coherent compositional object.
+Curves are geometric shapes (line, ellipse, piste, bezier, and other named forms) with intrinsic rhythmic structure. Each curve has a set of beat points distributed around its shape according to an algorithmic generator (primarily Euclidean) or a hand-authored pattern string. Each curve has a visible cursor that advances through its cycle over a settable number of beats. When the cursor reaches an active beat point, the curve's beat function fires. If the cursor has non-zero extent on either side of the curve direction, it sweeps through space as it advances, and any triggers in the swept region fire. Curves combine geometry, rhythm, and projection into one coherent compositional object.
 
 Triggers are static positions in the scene with optional payload. They do not move. They fire when a curve's extended cursor sweeps over them, or on an optional auto-timer. Triggers are the free-standing musical atoms of the scene — positions the composer places with compositional intent.
 
@@ -107,7 +107,7 @@ The canvas is always live and displays whatever state the model currently holds.
 
 A curve is the most structured object in GXW. It bundles geometry, rhythm, a moving cursor, and up to two functions.
 
-Shape. A curve has a geometric form — line segment, circle, piste (polyline), bezier, or a more elaborate named type (helice, rose, spiral, and other shapes from the GeoMaestro catalogue). The shape defines the curve's spatial presence and the path along which the cursor advances. Shape types in implementation priority order: line segment, circle, piste, bezier, helice.
+Shape. A curve has a geometric form — line segment, ellipse, piste (polyline), bezier, or a more elaborate named type (helice, rose, spiral, and other shapes from the GeoMaestro catalogue). The shape defines the curve's spatial presence and the path along which the cursor advances. Shape types in implementation priority order: line segment, ellipse, piste, bezier, helice. A circle is an ellipse with equal width and height — the two are stored as one shape primitive so that a toolbar-created circle and a runtime-distorted ellipse share one geometry, and the inspector's W and H fields can be edited independently without the shape's type string flipping as a side effect of typing in a number.
 
 Beat points. A curve's rhythm is defined by two independent free-length strings (full treatment in Section 10). The active-beats string uses "x" and "." to mark which positions fire; the strength string uses digits 0-9 to set the emphasis of each firing. Both strings cycle independently as cycle positions advance, so each can be any length the composer chooses; when the lengths don't share simple ratios with each other or with the cycle, the audible rhythm pattern evolves cycle-to-cycle as the strings drift, which is a generative property the composer can deliberately exploit. Beat points render as tick marks along the curve at the cycle positions corresponding to the active beats, with active positions visually distinguishable from inactive ones. Active beat points pulse briefly when fired, with the pulse's brightness reflecting the firing's current strength. Strength-zero firings do not produce sound and do not pulse.
 
@@ -422,7 +422,7 @@ Example scene.json:
   "spriteScale": 1,
   "curves": [
     {
-      "shape": { "type": "circle", "cx": 0, "cy": 0, "r": 5 },
+      "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 10, "h": 10 },
       "cycleDuration": 4,
       "cycleSpeeds": "1",
       "stopAtCycle": -1,

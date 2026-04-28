@@ -77,6 +77,7 @@ import {
     fillMissingIds,
     fillEmptyNames,
     cleanLegacyCurveFields,
+    cleanLegacyShapeFields,
     setMuteOnSelection,
     setHideOnCurves,
     setNameOnSelection,
@@ -312,7 +313,8 @@ async function main() {
         const idsChanged = fillMissingIds(parsed.data);
         const namesChanged = fillEmptyNames(parsed.data);
         const legacyChanged = cleanLegacyCurveFields(parsed.data);
-        if (!idsChanged && !namesChanged && !legacyChanged) return;
+        const shapesChanged = cleanLegacyShapeFields(parsed.data);
+        if (!idsChanged && !namesChanged && !legacyChanged && !shapesChanged) return;
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();

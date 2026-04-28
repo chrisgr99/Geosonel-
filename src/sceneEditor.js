@@ -319,6 +319,74 @@ export function cleanLegacyCurveFields(data) {
 }
 
 /**
+ * Migrate legacy circle-typed curve shapes to the unified
+ * ellipse shape. Old form: { type: "circle", cx, cy, r }.
+ * New form: { type: "ellipse", cx, cy, w, h } where w = h =
+ * 2*r so the visual geometry is preserved exactly. Stored as
+ * an ellipse regardless of whether width and height are
+ * equal, so the inspector's W and H fields can be edited
+ * independently without the shape's type string flipping as
+ * a side effect of typing in a number.
+ *
+ * Done here so existing scores in IndexedDB self-update on
+ * the next scene load. The Curve constructor and the canvas
+ * renderer no longer recognise the "circle" type, so leaving
+ * an old circle in the JSON would render as an empty curve
+ * and confuse the user.
+ *
+ * Key order in the rebuilt shape mirrors the original: the
+ * type field stays first; cx and cy keep their positions; r
+ * is replaced in place by w followed by h. Any extra keys
+ * the original shape carried (none in current usage but
+ * defensive against hand-edited or future-versioned scores)
+ * are preserved.
+ *
+ * Returns true iff at least one curve was migrated; the
+ * caller uses that signal to decide whether to write the
+ * mutated scene back to the bundle.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function cleanLegacyShapeFields(data) {
+    const arr = data?.curves;
+    if (!Array.isArray(arr)) return false;
+    let changed = false;
+    for (let i = 0; i < arr.length; i++) {
+        const entry = arr[i];
+        if (entry === null ||
+            typeof entry !== "object" ||
+            Array.isArray(entry)) continue;
+        const shape = entry.shape;
+        if (shape === null ||
+            typeof shape !== "object" ||
+            Array.isArray(shape)) continue;
+        if (shape.type !== "circle") continue;
+        const r = typeof shape.r === "number" ? shape.r : 0;
+        /** @type {Record<string, any>} */
+        const newShape = {};
+        for (const k of Object.keys(shape)) {
+            if (k === "type") {
+                newShape.type = "ellipse";
+            } else if (k === "r") {
+                newShape.w = 2 * r;
+                newShape.h = 2 * r;
+            } else {
+                newShape[k] = shape[k];
+            }
+        }
+        // Defensive: a circle shape without an r key is
+        // malformed but possible; ensure w and h are present
+        // so the renderer doesn't render a degenerate ellipse.
+        if (!("w" in newShape)) newShape.w = 0;
+        if (!("h" in newShape)) newShape.h = 0;
+        entry.shape = newShape;
+        changed = true;
+    }
+    return changed;
+}
+
+/**
  * Add a sprite to the parsed scene at canvas position (x, y).
  * The sprite gets a freshly generated id, x, y, and vx/vy=0.
  * Other fields fall through to the constructor defaults (no
