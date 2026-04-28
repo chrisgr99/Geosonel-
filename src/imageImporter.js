@@ -65,11 +65,21 @@ export class ImageImporter {
 
     /**
      * Trigger a hidden file input to open a native picker.
+     * The accept attribute combines extensions and MIME types
+     * to give the strongest possible hint to the OS picker.
+     * On macOS the picker is fundamentally a hint rather than
+     * a strict allow-list — the OS is free to retain previous
+     * user filter choices and to show files it thinks the
+     * user might want (PDFs sometimes show up because Preview
+     * advertises image-handling capabilities). There is no
+     * web API that forces the picker to physically hide non-
+     * matching files; runtime MIME-type validation in
+     * _importFromFile is what actually enforces the rule.
      */
     importViaFilePicker() {
         const input = document.createElement("input");
         input.type = "file";
-        input.accept = "image/png,image/jpeg,image/webp";
+        input.accept = ".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp";
         input.addEventListener("change", async () => {
             const file = input.files?.[0];
             if (file) await this._importFromFile(file);

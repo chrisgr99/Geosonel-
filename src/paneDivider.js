@@ -1,16 +1,17 @@
 /**
  * Generic draggable divider.
  *
- * Used for both the vertical divider between the editor and
- * canvas panes and the horizontal divider between the canvas
- * area and the message area. The pointer-event pattern is the
- * same in both cases; only the axis and the pane being resized
- * differ.
+ * Used for the horizontal divider between the canvas area
+ * and the message area. (The body divider between editor
+ * and canvas pane was previously draggable too but became
+ * static once the inspector's fixed natural width made
+ * resizing pointless; this module is unchanged in shape
+ * but only one call site remains.)
  *
  * Minimum sizes prevent either side from collapsing to
- * something unusable. Resizing sets a fixed flex-basis on the
- * first pane; the second pane keeps flex: 1 1 0 so it absorbs
- * whatever space remains.
+ * something unusable. Resizing sets a fixed flex-basis on
+ * the first pane; the second pane keeps flex: 1 1 0 so it
+ * absorbs whatever space remains.
  */
 
 // @ts-check

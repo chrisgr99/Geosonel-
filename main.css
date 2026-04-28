@@ -309,12 +309,22 @@ html, body {
     overflow: hidden;
 }
 
+/* Editor pane sizes itself to its content rather than to a
+ * hardcoded width. flex-basis: max-content makes the pane
+ * exactly as wide as the inspector's widest row needs and
+ * no wider, so the canvas pane gets every remaining pixel
+ * for free. The inspector neither benefits from being wider
+ * (its rows max out at their natural width) nor would
+ * tolerate being narrower without clipping fields, which is
+ * why the body divider is static rather than draggable. Use
+ * View → Hide Inspector (Cmd-\\) to toggle the inspector's
+ * visibility entirely. */
 #editor-pane {
     display: flex;
     flex-direction: column;
     overflow: hidden;
     background-color: #141414;
-    flex: 1 1 50%;
+    flex: 0 0 max-content;
     min-width: 0;
 }
 
@@ -323,7 +333,7 @@ html, body {
     flex-direction: column;
     overflow: hidden;
     background-color: #2a2a2a;
-    flex: 1 1 50%;
+    flex: 1 1 auto;
     min-width: 0;
 }
 
@@ -366,29 +376,30 @@ html, body {
     color: #c8c0b0;
 }
 
-/* Draggable dividers. The same pattern serves both the vertical
- * divider between editor and canvas panes and the horizontal
- * divider between the canvas area and the message area. Width
- * or height stays at 3 pixels to match the static dividers; the
- * hit target is implicitly a bit larger because the cursor
- * resize styling extends to the full element bounds. */
-#body-divider.divider-draggable {
-    flex: 0 0 3px;
-    cursor: col-resize;
-    position: relative;
-}
-
+/* Draggable dividers. Used for the horizontal divider
+ * between the canvas area and the message area. (The body
+ * divider between editor and canvas was previously
+ * draggable too but became static once the inspector's
+ * fixed natural width made resizing pointless.) Width or
+ * height stays at 3 pixels to match the static dividers;
+ * the hit target is implicitly a bit larger because the
+ * cursor resize styling extends to the full element
+ * bounds. */
 #message-divider.divider-draggable {
     flex: 0 0 3px;
     cursor: row-resize;
     position: relative;
 }
 
-#body-divider.divider-draggable:hover,
-#body-divider.divider-draggable.dragging,
 #message-divider.divider-draggable:hover,
 #message-divider.divider-draggable.dragging {
     background-color: #999999;
+}
+
+/* Static body divider, sized like the other dividers so
+ * the boundary between editor and canvas reads clearly. */
+#body-divider {
+    flex: 0 0 3px;
 }
 
 /* --- Editor tab bar --- */
@@ -525,11 +536,14 @@ html, body {
  * placeholder. Italic reuses the visual cue used by the
  * read-only Object ID field in Band 1, so the same
  * "system-generated, not user-set" signal shows up in both
- * places. The kind label to the left of the handle stays
- * white because it's useful information regardless of
- * whether a name has been assigned. */
+ * places. The colour tracks the disabled-state text colour
+ * so the placeholder reads as a sibling of every other
+ * "not-currently-active" element in the inspector. The
+ * kind label to the left of the handle stays white because
+ * it's useful information regardless of whether a name has
+ * been assigned. */
 .insp-title-handle.placeholder {
-    color: #909090;
+    color: #a8a8a8;
     font-style: italic;
 }
 
@@ -564,18 +578,31 @@ html, body {
 }
 
 .insp-label.disabled {
-    color: #888888;
+    color: #a8a8a8;
 }
 
 /* Editable text or numeric field. The lighter-grey fill
  * stays visible whether the field is editable or disabled
  * — that's how GeoSonix shows empty fields, as a clearly
- * visible field-shaped rectangle. The .disabled and .locked
- * variants drop the green frame so the field reads as
- * non-interactive; .locked also italicises so the read-only
- * id field looks distinct from a disabled-by-context field. */
+ * visible field-shaped rectangle. The fill colour is
+ * deliberately a strong step lighter than the panel
+ * background (#6b6b6b vs #2a2a2a) and only slightly darker
+ * than the divider colour #777777, so each field reads as a
+ * distinct rectangle even when its border is suppressed in
+ * the disabled or locked state — important because the
+ * inspector is full of fields and a faint fill would let
+ * the form's structure dissolve into the panel,
+ * particularly under accessibility zoom where small
+ * contrast differences soften further. Disabled-state text
+ * lifts to #a8a8a8 to keep its spread against the brighter
+ * fill comfortable for readability while staying clearly
+ * dimmer than the white of active fields. The .disabled
+ * and .locked variants drop the green frame so the field
+ * reads as non-interactive; .locked also italicises so the
+ * read-only id field looks distinct from a disabled-by-
+ * context field. */
 .insp-field {
-    background-color: #4a4a4a;
+    background-color: #6b6b6b;
     border: 2px solid #46b03e;
     border-radius: 3px;
     padding: 0 8px;
@@ -594,16 +621,18 @@ html, body {
 
 .insp-field.disabled {
     border-color: transparent;
-    color: #888888;
+    color: #a8a8a8;
 }
 
 /* Locked: read-only by design (the Object ID field). Same
  * dim-italic styling as the title-bar handle placeholder, so
  * the "system-generated, not user-set" signal is consistent
- * wherever a generated id appears in the inspector. */
+ * wherever a generated id appears in the inspector. The
+ * colour tracks the disabled-state text colour so the two
+ * read as siblings rather than visually distinct states. */
 .insp-field.locked {
     border-color: transparent;
-    color: #909090;
+    color: #a8a8a8;
     font-style: italic;
 }
 
@@ -671,7 +700,7 @@ html, body {
     height: 18px;
     border: 2px solid #777777;
     border-radius: 50%;
-    background-color: #4a4a4a;
+    background-color: #6b6b6b;
     flex-shrink: 0;
     box-sizing: border-box;
     cursor: pointer;
@@ -689,7 +718,7 @@ html, body {
  * dark fill) and checked (fully green). */
 .insp-checkbox.varies {
     border-color: #5fc858;
-    background-color: #4a4a4a;
+    background-color: #6b6b6b;
     position: relative;
 }
 
@@ -720,7 +749,7 @@ html, body {
  * keeps the lighter-grey fill so the field's footprint stays
  * visible. */
 .insp-combo {
-    background-color: #4a4a4a;
+    background-color: #6b6b6b;
     border: 2px solid #46b03e;
     border-radius: 3px;
     padding: 0 24px 0 8px;
@@ -737,7 +766,7 @@ html, body {
 
 .insp-combo.disabled {
     border-color: transparent;
-    color: #888888;
+    color: #a8a8a8;
     cursor: default;
 }
 
@@ -782,7 +811,7 @@ html, body {
 
 .insp-btn-create.disabled {
     border-color: #555555;
-    color: #888888;
+    color: #a8a8a8;
     cursor: default;
     background-color: transparent;
 }
@@ -792,7 +821,7 @@ html, body {
  * via inline style. Empty/disabled state still shows the
  * field's footprint via the lighter-grey fill. */
 .insp-color {
-    background-color: #4a4a4a;
+    background-color: #6b6b6b;
     border: 2px solid #46b03e;
     border-radius: 3px;
     padding: 0 6px;
@@ -826,7 +855,7 @@ html, body {
 }
 
 .insp-color.disabled .insp-color-text {
-    color: #888888;
+    color: #a8a8a8;
 }
 
 /* Units indicator after a field group, e.g. "(X, Y)" after
@@ -839,7 +868,7 @@ html, body {
 }
 
 .insp-units.disabled {
-    color: #888888;
+    color: #a8a8a8;
 }
 
 /* Inline single-letter label that sits immediately before a
@@ -854,13 +883,7 @@ html, body {
 }
 
 .insp-inline-letter.disabled {
-    color: #888888;
-}
-
-/* Flexible spacer for pushing right-side fields to the
- * right edge of a row. */
-.insp-spacer {
-    flex: 1 1 auto;
+    color: #a8a8a8;
 }
 
 /* --- View menu dropdown --- */
@@ -924,6 +947,21 @@ body.focus-canvas #body-divider {
 }
 
 body.focus-canvas #canvas-pane {
+    flex: 1 1 100% !important;
+}
+
+/* Hide Inspector toggle. Hides the editor pane and the body
+ * divider, but unlike Focus Canvas it does not hide the
+ * canvas pane's message area — the messages console is
+ * useful even when the inspector is out of the way. The two
+ * classes are independent so either can be active without
+ * the other; both share the canvas-fills-body outcome. */
+body.inspector-hidden #editor-pane,
+body.inspector-hidden #body-divider {
+    display: none;
+}
+
+body.inspector-hidden #canvas-pane {
     flex: 1 1 100% !important;
 }
 
@@ -1256,7 +1294,7 @@ body.focus-canvas #canvas-pane {
     flex: 0 0 auto;
     height: 40px;
     background-color: #141414;
-    border-bottom: 1px solid #555555;
+    border-bottom: 3px solid #777777;
     display: flex;
     align-items: center;
     gap: 4px;

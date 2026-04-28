@@ -164,12 +164,16 @@ async function main() {
     new TransportBarView(transport);
 
     // --- Dividers ---
-    installDivider({
-        dividerId: "body-divider",
-        firstPaneId: "editor-pane",
-        containerId: "body",
-        orientation: "vertical",
-    });
+    //
+    // Only the message-area divider is draggable. The body
+    // divider between editor and canvas was previously
+    // draggable but is now a static 3px strip: the inspector
+    // has a fixed natural width matching its narrowest
+    // constraint row (Cycle Parameters row 1, ~560px), and
+    // there is no useful state for the body divider to be in
+    // other than fixed at that width. To gain canvas room
+    // entirely, use View → Hide Inspector (Cmd-\\), which
+    // hides the editor pane and the body divider together.
     installDivider({
         dividerId: "message-divider",
         firstPaneId: "canvas-area",
@@ -607,11 +611,27 @@ async function main() {
     }
 
     // --- Menus ---
+    //
+    // The View menu owns two visibility toggles that share
+    // the same end-result shape (canvas fills the body) but
+    // are conceptually distinct. Focus Canvas hides the
+    // editor pane plus the message area for distraction-free
+    // playback; Hide Inspector hides only the editor pane,
+    // leaving the message area visible, and is the route
+    // users take when they want canvas room without giving
+    // up the messages console. The two toggles are
+    // independent classes so either can be on without the
+    // other.
+    const toggleHideInspector = () => {
+        document.body.classList.toggle("inspector-hidden");
+    };
+
     installViewMenu({
         canvas,
         toggleFocusCanvas: () => {
             document.body.classList.toggle("focus-canvas");
         },
+        toggleHideInspector,
     });
     installFileMenu({ session, messages, imageImporter, diskMirror });
     installRunMenu({ runScene });

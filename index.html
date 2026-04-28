@@ -71,8 +71,13 @@
                 </div>
             </section>
 
-            <!-- Draggable vertical divider between editor and canvas. -->
-            <div id="body-divider" class="divider-vertical divider-draggable" role="separator" aria-orientation="vertical" aria-label="Resize editor and canvas" tabindex="0"></div>
+            <!-- Static vertical divider between editor and canvas. The
+                 inspector has a fixed natural width — it neither
+                 benefits from being wider nor would tolerate being
+                 narrower without clipping fields — so the divider is
+                 not draggable. Use View → Hide Inspector (or Cmd-\)
+                 to toggle the inspector pane visibility. -->
+            <div id="body-divider" class="divider-vertical" role="separator" aria-orientation="vertical"></div>
 
             <!-- Canvas pane splits vertically into canvas area on top
                  and message area below, separated by a draggable
