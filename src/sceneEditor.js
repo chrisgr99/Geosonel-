@@ -644,18 +644,137 @@ export function translateSelection(data, selection, dx, dy) {
 }
 
 /**
+ * Set the X or Y position of every selected object to an
+ * absolute target value. Used by the inspector's Position
+ * field commit. Per-kind semantics:
+ *   - Sprite / trigger: x or y is assigned directly.
+ *   - Curve: a per-curve delta is computed as target minus
+ *     the current bounding-box centroid in the relevant
+ *     axis, then translateShape is applied so the curve's
+ *     centroid lands at the target while preserving the
+ *     curve's geometry around it.
+ * Curves whose shape produces no centroid (degenerate or
+ * not-yet-implemented shape types) are silently skipped.
+ *
+ * Absolute set is the right semantics for inspector edits in
+ * both single-select (typing 5 in a field showing 3 sets X
+ * to 5, the same outcome the previous translate-by-2
+ * approach produced) and multi-select varies (typing 0 in
+ * a blank "varies" field snaps every selected object to
+ * X=0, which the previous delta approach couldn't express
+ * because there was no single starting value to subtract).
+ * Canvas drag still uses translateSelection because drag is
+ * inherently delta-based.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {"x" | "y"} axis
+ * @param {number} value
+ */
+export function setPositionAxisOnSelection(data, selection, axis, value) {
+    if (!Number.isFinite(value)) return;
+    const target = roundCoord(value);
+    if (selection.sprites !== undefined && Array.isArray(data?.sprites)) {
+        for (const idx of selection.sprites) {
+            if (idx < 0 || idx >= data.sprites.length) continue;
+            const s = data.sprites[idx];
+            if (s === null || typeof s !== "object" || Array.isArray(s)) continue;
+            if (axis === "x") s.x = target;
+            else s.y = target;
+        }
+    }
+    if (selection.triggers !== undefined && Array.isArray(data?.triggers)) {
+        for (const idx of selection.triggers) {
+            if (idx < 0 || idx >= data.triggers.length) continue;
+            const t = data.triggers[idx];
+            if (t === null || typeof t !== "object" || Array.isArray(t)) continue;
+            if (axis === "x") t.x = target;
+            else t.y = target;
+        }
+    }
+    if (selection.curves !== undefined && Array.isArray(data?.curves)) {
+        for (const idx of selection.curves) {
+            if (idx < 0 || idx >= data.curves.length) continue;
+            const c = data.curves[idx];
+            if (c === null || typeof c !== "object" || Array.isArray(c)) continue;
+            const centroid = shapeBboxCentroid(c.shape);
+            if (centroid === null) continue;
+            const current = axis === "x" ? centroid.x : centroid.y;
+            const delta = target - current;
+            if (delta === 0) continue;
+            if (axis === "x") translateShape(c.shape, delta, 0);
+            else translateShape(c.shape, 0, delta);
+        }
+    }
+}
+
+/**
+ * Set the W or H bounding-box dimension of every selected
+ * curve to an absolute target value. Used by the inspector's
+ * Curve Size W and H field commits. Per shape type:
+ *   - Ellipse: shape.w (or shape.h) is assigned directly
+ *     since those fields are exactly the bbox extents. This
+ *     allows growing a degenerate axis (w=0) to a non-zero
+ *     value, which factor-based scaling can't do because
+ *     anything times zero is zero.
+ *   - Line / piste: a per-shape factor is computed as
+ *     target divided by the current bbox extent in the axis,
+ *     then scaleShape is applied. A degenerate axis (current
+ *     extent = 0) is silently skipped because there's no
+ *     factor that grows zero into a non-zero value via
+ *     midpoint scaling — the shape would need to acquire
+ *     extent from somewhere, and the right semantics for
+ *     that aren't obvious enough to commit to here.
+ * Sprites and triggers in the selection are ignored.
+ *
+ * Absolute set is the right semantics for inspector edits.
+ * Canvas resize handles, when added, may use either this
+ * primitive or scaleCurveAxis depending on the gesture.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {"x" | "y"} axis
+ * @param {number} value
+ */
+export function setSizeAxisOnSelection(data, selection, axis, value) {
+    if (!Number.isFinite(value) || value < 0) return;
+    const target = roundCoord(value);
+    if (selection.curves === undefined || !Array.isArray(data?.curves)) return;
+    for (const idx of selection.curves) {
+        if (idx < 0 || idx >= data.curves.length) continue;
+        const c = data.curves[idx];
+        if (c === null || typeof c !== "object" || Array.isArray(c)) continue;
+        const shape = c.shape;
+        if (shape === null || typeof shape !== "object" || Array.isArray(shape)) continue;
+        if (shape.type === "ellipse") {
+            if (axis === "x") shape.w = target;
+            else shape.h = target;
+            continue;
+        }
+        const bbox = shapeBbox(shape);
+        if (bbox === null) continue;
+        const current = axis === "x" ? (bbox.x2 - bbox.x1) : (bbox.y2 - bbox.y1);
+        if (current === 0) continue;
+        const factor = target / current;
+        if (!Number.isFinite(factor) || factor === 0) continue;
+        scaleShape(shape, axis, factor);
+    }
+}
+
+/**
  * Scale every selected curve along one axis by the given
  * factor, keeping the curve's bounding-box centroid fixed in
- * that axis. Used by the inspector's W and H field commits:
- * the inspector computes factor as the user's typed value
- * divided by the field's currently-displayed value, then
- * emits this edit. Sprites and triggers in the selection are
- * ignored. The two axes are independent — a W edit emits
- * scaleCurveAxis("x", ...) and an H edit emits
- * scaleCurveAxis("y", ...), and either can be applied without
- * affecting the other, which matches the design decision that
- * curves can be distorted freely (a circle becomes an ellipse
- * the moment W and H disagree).
+ * that axis. Used by the canvas drag pipeline (commit four)
+ * for resize gestures. Sprites and triggers in the selection
+ * are ignored. The two axes are independent — a horizontal
+ * resize emits scaleCurveAxis("x", ...) and a vertical resize
+ * emits scaleCurveAxis("y", ...), and either can be applied
+ * without affecting the other.
+ *
+ * Inspector W/H edits do NOT use this primitive; they use
+ * setSizeAxisOnSelection because absolute-set semantics work
+ * across single-select and multi-select varies cases without
+ * a separate code path.
  *
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
@@ -873,6 +992,80 @@ function setFieldOnSelection(data, selection, fieldName, value) {
  */
 function roundCoord(n) {
     return Math.round(n * 100) / 100;
+}
+
+/**
+ * Compute the axis-aligned bounding box of a curve shape, or
+ * null if the shape is degenerate or not yet implemented.
+ * Used by setPositionAxisOnSelection and
+ * setSizeAxisOnSelection. Mirrors the inspector module's
+ * computeShapeBbox; kept as a separate copy here to avoid
+ * the layering inversion that would result from sceneEditor
+ * importing inspector.
+ *
+ * @param {any} shape
+ * @returns {{ x1: number, y1: number, x2: number, y2: number } | null}
+ */
+function shapeBbox(shape) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return null;
+    if (shape.type === "line") {
+        const x1 = typeof shape.x1 === "number" ? shape.x1 : 0;
+        const y1 = typeof shape.y1 === "number" ? shape.y1 : 0;
+        const x2 = typeof shape.x2 === "number" ? shape.x2 : 0;
+        const y2 = typeof shape.y2 === "number" ? shape.y2 : 0;
+        return {
+            x1: Math.min(x1, x2),
+            y1: Math.min(y1, y2),
+            x2: Math.max(x1, x2),
+            y2: Math.max(y1, y2),
+        };
+    }
+    if (shape.type === "ellipse") {
+        const cx = typeof shape.cx === "number" ? shape.cx : 0;
+        const cy = typeof shape.cy === "number" ? shape.cy : 0;
+        const w = typeof shape.w === "number" ? shape.w : 0;
+        const h = typeof shape.h === "number" ? shape.h : 0;
+        return {
+            x1: cx - w / 2,
+            y1: cy - h / 2,
+            x2: cx + w / 2,
+            y2: cy + h / 2,
+        };
+    }
+    if (shape.type === "piste") {
+        const pts = shape.points;
+        if (!Array.isArray(pts) || pts.length === 0) return null;
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+        for (const p of pts) {
+            if (!Array.isArray(p) || p.length < 2) continue;
+            const px = typeof p[0] === "number" ? p[0] : 0;
+            const py = typeof p[1] === "number" ? p[1] : 0;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+        }
+        if (!Number.isFinite(minX)) return null;
+        return { x1: minX, y1: minY, x2: maxX, y2: maxY };
+    }
+    return null;
+}
+
+/**
+ * Bounding-box centroid of a curve shape, or null if the
+ * shape is degenerate or not yet implemented.
+ *
+ * @param {any} shape
+ * @returns {{ x: number, y: number } | null}
+ */
+function shapeBboxCentroid(shape) {
+    const bbox = shapeBbox(shape);
+    if (bbox === null) return null;
+    return {
+        x: (bbox.x1 + bbox.x2) / 2,
+        y: (bbox.y1 + bbox.y2) / 2,
+    };
 }
 
 /**

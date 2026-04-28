@@ -667,30 +667,6 @@ html, body {
     outline: none;
 }
 
-/* Numeric field: small green stepper dots on the right edge.
- * Only shown when the field is actually editable; disabled
- * and locked variants suppress the dots. The dots are
- * absolutely positioned so they don't push the value text
- * around. */
-.insp-field-numeric:not(.disabled):not(.locked)::before,
-.insp-field-numeric:not(.disabled):not(.locked)::after {
-    content: '';
-    position: absolute;
-    right: 5px;
-    width: 4px;
-    height: 4px;
-    background-color: #5fc858;
-    border-radius: 50%;
-}
-
-.insp-field-numeric:not(.disabled):not(.locked)::before {
-    top: 5px;
-}
-
-.insp-field-numeric:not(.disabled):not(.locked)::after {
-    bottom: 5px;
-}
-
 /* Round checkbox. Empty by default with a thin grey ring;
  * checked state fills with the inspector's green and tints
  * the ring to match. Disabled state mutes the ring and

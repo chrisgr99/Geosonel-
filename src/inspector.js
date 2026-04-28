@@ -18,10 +18,12 @@
  *
  * v1 scope: selection-driven greying for all bands plus
  * read- and write-binding for Band 1 (Object ID, Name,
- * Mute, Hide), Band 5 (Active Beats, Beat Strength), and
+ * Mute, Hide), Band 2 (Position, Curve Size W/H, Curve
+ * Thickness, Cursor R/L, Cursor Thickness, Sprite/Trigger
+ * Size, Color), Band 5 (Active Beats, Beat Strength), and
  * Band 6 (Cycle Duration, Cycle Speeds, Stop at Cycle).
  * Edits commit back through main.js's applyInspectorEdit
- * pipeline. Name and the five curve-field write paths share
+ * pipeline. Name and the curve-field write paths share
  * the same validator-driven edit lifecycle: hard errors
  * squiggle red and refuse to commit (Enter retains focus,
  * blur reverts); soft warnings squiggle yellow and commit.
@@ -30,6 +32,44 @@
  * persistent indicator can be added later by running each
  * validator on the displayed value at render time, the way
  * Name's duplicate-name check already does.
+ *
+ * Band 2 special cases. Position and Curve Size W/H use
+ * absolute-set semantics: typing a value commits that value
+ * as the new coordinate (or dimension) for every applicable
+ * selected object. This works the same way across single-
+ * select, uniform multi-select, and varies multi-select
+ * cases — including snapping multiple objects with
+ * different starting positions to the same X by typing into
+ * the field's blank "varies" state. Position emits
+ * setPositionAxis ({axis, value}); curve W/H emit setSizeAxis
+ * ({axis, value}); the rest emit setX edits with the typed
+ * value as payload. Per-shape geometry inside
+ * setPositionAxisOnSelection and setSizeAxisOnSelection
+ * handles the curve-vs-sprite differences (sprites and
+ * triggers assign x/y directly; curves translate by a per-
+ * shape delta from current centroid to target, or scale by
+ * a per-shape factor from current bbox extent to target).
+ * Curves carry no per-object colour at this milestone — a
+ * curve-color discussion is deferred — so the Color row
+ * activates only when sprites or triggers are in the
+ * selection.
+ *
+ * Numeric fields support scroll-wheel adjustment as well as
+ * text edit. Hovering over a numeric field and rotating the
+ * scroll wheel nudges the value in 0.3 increments — wheel
+ * up to increase, wheel down to decrease. The validator
+ * clamps during scrolling so field-specific bounds act as
+ * soft walls (a Curve W field with min: 0 won't display
+ * negative values mid-scroll). Each wheel event emits a
+ * fresh edit so the canvas, the JSON tab, and any other
+ * scene-derived UI track the value continually as the user
+ * scrolls. Emits bypass the keyboard commit's destruction-
+ * blur guard because wheel scrolling doesn't focus the
+ * field; the guard only matters for focused-field edits
+ * where re-render fires a stray blur on the detached node.
+ * A modifier-key option to alter the step rate is deferred
+ * until after some real use — the current 0.3 rate is the
+ * starting point.
  *
  * Band 5 read and write paths consult curves only — sprites
  * activate the band in the layout but neither contribute to
@@ -41,7 +81,7 @@
  * varies-blank field propagates to every selected curve —
  * possible by explicit action, not by accidental slip).
  *
- * Bands 2, 3, and 4 still show placeholder values pending
+ * Bands 3 and 4 still show placeholder values pending
  * their own data-binding work. The Inspector exposes
  * setSelection(), setScene(), and setEditCallback(); main.js
  * wires the three together so the inspector tracks selection
@@ -102,6 +142,8 @@ import {
     validateCycleSpeeds,
     validateActiveBeats,
     validateStrength,
+    validateNumber,
+    validateHexColor,
 } from "./curveFieldValidation.js";
 
 // Width constants. Centralised so layout adjustments touch
@@ -468,6 +510,31 @@ export class Inspector {
         el.textContent = opts.value;
         if (opts.conflict) el.classList.add("error-soft");
 
+        // Select all on focus so the user's first keystroke
+        // replaces the existing value, the way a standard
+        // <input> works. Without this, typing into a
+        // contenteditable inserts characters at the cursor
+        // position, so a click-and-type on a field showing
+        // "4" produces "48" or "84" depending on where the
+        // cursor landed — which then validates as a
+        // different number than the user intended to enter.
+        el.addEventListener("focus", () => selectAllInElement(el));
+
+        // Track whether this field has already emitted its
+        // edit. After an Enter or successful blur commit,
+        // applySceneEdit's async runScene chain eventually
+        // calls inspector.setScene which clears innerHTML;
+        // the focused element is detached and the browser
+        // fires a blur event on the detached element. That
+        // blur runs tryCommit("blur") which would compute
+        // the same typed-versus-original difference and emit
+        // a second edit — producing visible double-application
+        // of dx/dy translates and double-multiplication of
+        // scale factors. The flag stops the second emit. The
+        // flag is per-closure so a fresh field after re-render
+        // starts uncommitted.
+        let committed = false;
+
         const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
             const candidate = el.textContent ?? "";
             const otherNames = collectOtherNames(this._scene, opts.objId);
@@ -493,7 +560,9 @@ export class Inspector {
             } else {
                 el.classList.remove("error-soft");
             }
+            if (committed) return;
             if (result.value !== opts.value) {
+                committed = true;
                 this._emitEdit({ kind: "setName", value: result.value });
             }
         };
@@ -534,25 +603,29 @@ export class Inspector {
      * Build an editable field with arbitrary validation. Used
      * by the curve-field write paths in Band 5 (Active Beats,
      * Beat Strength) and Band 6 (Cycle Duration, Cycle
-     * Speeds, Stop at Cycle). Each call site supplies a
-     * validator function from curveFieldValidation.js plus
-     * an editKind tag identifying the edit; the rest of the
-     * commit lifecycle — hard error red squiggle on Enter
-     * with focus retained, hard error silent revert on blur,
-     * soft warning yellow squiggle on commit, ok commit —
-     * mirrors the Name field's behaviour. Soft squiggles
-     * here are transient (lost on the next render); a
-     * persistent indicator could be reintroduced later by
-     * running the validator on opts.value at render time,
-     * the way Name handles duplicate-name conflicts.
+     * Speeds, Stop at Cycle), and by every editable field in
+     * Band 2 (Position, sizes, cursor extents, thicknesses,
+     * curve W/H). Each call site supplies a validator function
+     * from curveFieldValidation.js plus either an editKind tag
+     * identifying the edit OR an onCommit callback that
+     * receives the validated value and emits whatever edit
+     * shape it likes — used by Position (translateSelection
+     * with computed delta) and curve W/H (scaleCurveAxis with
+     * computed factor) where the edit isn't a simple
+     * field-equals-value commit. The rest of the commit
+     * lifecycle — hard error red squiggle on Enter with focus
+     * retained, hard error silent revert on blur, soft warning
+     * yellow squiggle on commit, ok commit — mirrors the Name
+     * field's behaviour.
      *
      * Multi-select edits propagate the validated value to
-     * every member of the selection's curves array via the
+     * every member of the appropriate selection slice via the
      * matching sceneEditor function. The varies-blank case
-     * renders an empty field; a typed-and-committed value
-     * will set every selected curve to that value, which is
-     * potentially destructive but only by explicit user
-     * action.
+     * renders an empty field; for fields where editing varies
+     * has well-defined semantics (set all to the typed value)
+     * the call site passes editable=true; for fields where
+     * varies-edit is ambiguous (Position, curve W/H) the call
+     * site passes editable=false so the field is locked.
      *
      * @param {{
      *   value: string,
@@ -560,7 +633,8 @@ export class Inspector {
      *   numeric?: boolean,
      *   editable: boolean,
      *   validator: (candidate: string) => { kind: "ok" | "soft" | "hard", value: string, message?: string },
-     *   editKind: string,
+     *   editKind?: string,
+     *   onCommit?: (value: string) => void,
      * }} opts
      * @returns {HTMLDivElement}
      */
@@ -579,6 +653,72 @@ export class Inspector {
         el.setAttribute("contenteditable", "plaintext-only");
         el.setAttribute("spellcheck", "false");
         el.textContent = opts.value;
+
+        // Numeric fields support scroll-wheel adjustment.
+        // Hovering over the field and rotating the wheel
+        // updates the displayed value in 0.3 increments and
+        // emits an edit on every wheel event so the canvas
+        // and JSON tab track the value continually as the
+        // user scrolls. The validator clamps during
+        // scrolling so bounds (e.g. min: 0 for sizes) act as
+        // soft walls. Wheel-over-field is suppressed while
+        // the field is focused for text edit — normal page-
+        // scrolling and text-cursor behaviour take over.
+        //
+        // Wheel emits go directly through opts.onCommit /
+        // opts.editKind rather than through tryCommit. The
+        // committed flag in tryCommit prevents destruction-
+        // blur double-emit on focused fields after Enter,
+        // and would also block successive wheel commits if
+        // the wheel went through that path. Wheel scrolling
+        // doesn't focus the field, so destruction-blur
+        // doesn't fire, so the guard isn't needed and would
+        // be actively harmful here.
+        if (opts.numeric) {
+            el.addEventListener("wheel", (e) => {
+                if (document.activeElement === el) return;
+                const currentText = el.textContent ?? "";
+                const currentValue = parseFloat(currentText);
+                if (!Number.isFinite(currentValue)) return;
+                e.preventDefault();
+                const direction = e.deltaY < 0 ? 1 : -1;
+                const newValue = currentValue + direction * 0.3;
+                const rounded = Math.round(newValue * 10) / 10;
+                const result = opts.validator(String(rounded));
+                if (result.kind === "hard") return;
+                el.textContent = result.value;
+                // Update opts.value so a subsequent click-blur on
+                // the field doesn't fire a redundant tryCommit
+                // emit — the keyboard path's diff check compares
+                // textContent against opts.value to decide whether
+                // to commit, and without this update the wheel-
+                // modified textContent would always look new
+                // relative to the render-time original.
+                opts.value = result.value;
+                if (typeof opts.onCommit === "function") {
+                    opts.onCommit(result.value);
+                } else if (typeof opts.editKind === "string") {
+                    this._emitEdit({ kind: opts.editKind, value: result.value });
+                }
+            }, { passive: false });
+        }
+
+        // Select all on focus so the user's first keystroke
+        // replaces the existing value rather than inserting
+        // into it. See _buildNameField for the full rationale.
+        el.addEventListener("focus", () => {
+            selectAllInElement(el);
+        });
+
+        // See _buildNameField for the rationale behind this
+        // flag. The destruction-blur double-commit problem
+        // is most visible here because Position emits
+        // translateSelection (delta-based) and Curve W/H
+        // emits scaleCurveAxis (factor-based) — a double-
+        // application of either compounds visibly: a
+        // requested move from y=1.84 to y=0 produces y=-1.84
+        // because the dy=-1.84 delta gets applied twice.
+        let committed = false;
 
         const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
             const candidate = el.textContent ?? "";
@@ -601,8 +741,14 @@ export class Inspector {
             } else {
                 el.classList.remove("error-soft");
             }
+            if (committed) return;
             if (result.value !== opts.value) {
-                this._emitEdit({ kind: opts.editKind, value: result.value });
+                committed = true;
+                if (typeof opts.onCommit === "function") {
+                    opts.onCommit(result.value);
+                } else if (typeof opts.editKind === "string") {
+                    this._emitEdit({ kind: opts.editKind, value: result.value });
+                }
             }
         };
 
@@ -637,10 +783,151 @@ export class Inspector {
     }
 
     /**
-     * Band 2 — Geometry and visual. Position and color are
-     * universal; curve dimensions activate when curves are in
-     * the selection; sprite/trigger size activates when the
-     * selection is exclusively that kind.
+     * Build the Color field, used by the Band 2 Color row.
+     * The field consists of a colour swatch followed by an
+     * editable hex string. As the user types valid hex into
+     * the text portion, the swatch updates live so the user
+     * can see the colour they're approaching before they
+     * commit. Commit and revert lifecycle mirrors
+     * _buildEditableField but is duplicated here because the
+     * field's structure is two-part (swatch + text) rather
+     * than a single contenteditable div.
+     *
+     * Disabled state (no sprites or triggers in the selection,
+     * or curve-only selection) shows a dim swatch and the
+     * stored hex value as plain text. Varies state (multi-
+     * select with mismatched colours) shows a placeholder
+     * neutral swatch and an empty text field; typing a value
+     * and committing sets every selected sprite and trigger
+     * to the typed colour.
+     *
+     * @param {{ hex: string, editable: boolean, varies: boolean }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildColorField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-color";
+        if (!opts.editable) el.classList.add("disabled");
+
+        // Placeholder colour for empty / varies states keeps
+        // the swatch visible as a footprint rather than a
+        // hole in the layout.
+        const placeholderColour = "#444444";
+        const initialHex = opts.hex || "";
+
+        const swatch = document.createElement("div");
+        swatch.className = "insp-color-swatch";
+        swatch.style.backgroundColor = initialHex || placeholderColour;
+        el.appendChild(swatch);
+
+        const text = document.createElement("div");
+        text.className = "insp-color-text";
+
+        if (!opts.editable) {
+            text.textContent = initialHex.toUpperCase();
+            el.appendChild(text);
+            return el;
+        }
+
+        text.setAttribute("contenteditable", "plaintext-only");
+        text.setAttribute("spellcheck", "false");
+        text.textContent = initialHex.toUpperCase();
+
+        // Select all on focus so the user's first keystroke
+        // replaces the existing hex string rather than
+        // inserting into it. See _buildNameField for the
+        // full rationale.
+        text.addEventListener("focus", () => selectAllInElement(text));
+
+        // See _buildNameField for the rationale.
+        let committed = false;
+
+        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
+            const candidate = text.textContent ?? "";
+            const result = validateHexColor(candidate);
+            if (result.kind === "hard") {
+                if (mode === "blur") {
+                    text.textContent = initialHex.toUpperCase();
+                    text.classList.remove("error-hard", "error-soft");
+                    swatch.style.backgroundColor = initialHex || placeholderColour;
+                    return;
+                }
+                text.classList.remove("error-soft");
+                text.classList.add("error-hard");
+                return;
+            }
+            text.classList.remove("error-hard");
+            if (result.kind === "soft") {
+                text.classList.add("error-soft");
+            } else {
+                text.classList.remove("error-soft");
+            }
+            if (committed) return;
+            if (result.value !== initialHex) {
+                committed = true;
+                this._emitEdit({ kind: "setColor", value: result.value });
+            }
+        };
+
+        text.addEventListener("input", () => {
+            // Live swatch preview while the user types valid
+            // hex. Invalid intermediate states (e.g. "#7d")
+            // leave the swatch on its previous colour.
+            const candidate = text.textContent ?? "";
+            const result = validateHexColor(candidate);
+            if (result.kind !== "hard") {
+                swatch.style.backgroundColor = result.value;
+            }
+            if (text.classList.contains("error-hard")) {
+                queueMicrotask(() => {
+                    text.classList.remove("error-hard");
+                });
+            }
+        });
+        text.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit("enter");
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                text.textContent = initialHex.toUpperCase();
+                text.classList.remove("error-hard", "error-soft");
+                swatch.style.backgroundColor = initialHex || placeholderColour;
+                text.blur();
+                return;
+            }
+        });
+        text.addEventListener("blur", () => {
+            tryCommit("blur");
+        });
+
+        el.appendChild(text);
+        return el;
+    }
+
+    /**
+     * Band 2 — Geometry and visual. Position is universal
+     * (any non-empty selection); curve dimensions, cursor
+     * extents, and the two thicknesses activate when curves
+     * are in the selection; sprite/trigger size activates
+     * when the selection is exclusively that kind; colour
+     * activates when sprites or triggers are present (curves
+     * carry no per-object colour at this milestone).
+     *
+     * Position and Curve Size W/H use absolute-set semantics:
+     * the user types a value and every applicable selected
+     * object's coordinate becomes that value. This works for
+     * single-select (typing 5 in a field showing 3 sets X=5),
+     * uniform multi-select (typing 0 sets every selected
+     * object's X to 0), and varies multi-select (typing 0 in
+     * a blank "varies" field snaps every selected object to
+     * X=0 regardless of starting value). The other Band 2
+     * fields (sizes, cursor extents, thicknesses, colour)
+     * also commit their typed value as the new value for
+     * every applicable selected object.
+     *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandGeometry(ctx) {
@@ -650,48 +937,189 @@ export class Inspector {
         const curveDisabled = !ctx.hasCurves;
         const sizeActive = sizeRowActive(ctx);
         const sizeLabel = sizeRowLabel(ctx);
+        const colorActive = ctx.hasSprites || ctx.hasTriggers;
+        const positionActive = ctx.total > 0;
 
-        // Position
+        const objs = selectedObjects(this._scene, this._selection);
+
+        // Position. Reads from sprite/trigger x,y and from
+        // curve bbox centroid; aggregates across kinds. Edits
+        // emit setPositionAxis (absolute) so that single-
+        // select, uniform multi-select, and varies multi-
+        // select all flow through the same primitive: type a
+        // value, every selected object's X (or Y) becomes
+        // that value. For curves the per-shape semantics fall
+        // out automatically — setPositionAxisOnSelection
+        // computes a per-curve translation delta from the
+        // current centroid to the target.
+        const positionXAgg = aggregatePosition(objs, "x");
+        const positionYAgg = aggregatePosition(objs, "y");
+        const positionXEditable = positionActive;
+        const positionYEditable = positionActive;
+
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Position", { width: W.leftLabel }));
-        r1.appendChild(mkField({ value: "0.00", numeric: true, width: W.posXY }));
-        r1.appendChild(mkField({ value: "0.00", numeric: true, width: W.posXY }));
-        r1.appendChild(mkUnits("(X, Y)"));
+        r1.appendChild(mkLabel("Position", { width: W.leftLabel, disabled: !positionActive }));
+        r1.appendChild(this._buildEditableField({
+            value: positionXAgg === "varies" ? "" : positionXAgg,
+            numeric: true,
+            width: W.posXY,
+            editable: positionXEditable,
+            validator: (c) => validateNumber(c, {}),
+            onCommit: (newValue) => {
+                const value = Number(newValue);
+                if (Number.isFinite(value)) {
+                    this._emitEdit({ kind: "setPositionAxis", axis: "x", value });
+                }
+            },
+        }));
+        r1.appendChild(this._buildEditableField({
+            value: positionYAgg === "varies" ? "" : positionYAgg,
+            numeric: true,
+            width: W.posXY,
+            editable: positionYEditable,
+            validator: (c) => validateNumber(c, {}),
+            onCommit: (newValue) => {
+                const value = Number(newValue);
+                if (Number.isFinite(value)) {
+                    this._emitEdit({ kind: "setPositionAxis", axis: "y", value });
+                }
+            },
+        }));
+        r1.appendChild(mkUnits("(X, Y)", { disabled: !positionActive }));
         band.appendChild(r1);
 
-        // Curve Size + Curve Thickness
+        // Curve Size W/H + Curve Thickness. Curves only.
+        // W and H read from each curve's bbox dimensions and
+        // edits emit setSizeAxis (absolute) so single-select,
+        // uniform multi-select, and varies multi-select share
+        // one path. Per-shape semantics inside
+        // setSizeAxisOnSelection: ellipse assigns shape.w or
+        // shape.h directly (so a degenerate axis can be grown
+        // back to non-zero); line/piste compute a per-shape
+        // factor and scale around the bbox-axis midpoint, and
+        // skip silently when their starting extent is zero
+        // because midpoint scaling can't grow zero. Curve
+        // Thickness is a direct field commit.
+        const sizeWAgg = aggregateCurveSize(objs.curves, "x");
+        const sizeHAgg = aggregateCurveSize(objs.curves, "y");
+        const curveThicknessAgg = aggregateString(objs.curves, "curveThickness");
+        const sizeWEditable = !curveDisabled;
+        const sizeHEditable = !curveDisabled;
+
         const r2 = mkRow();
         r2.appendChild(mkLabel("Curve Size", { width: W.leftLabel, disabled: curveDisabled }));
-        r2.appendChild(mkField({ value: "0.0000", numeric: true, width: W.sizeWH, disabled: curveDisabled }));
-        r2.appendChild(mkField({ value: "0.0000", numeric: true, width: W.sizeWH, disabled: curveDisabled }));
+        r2.appendChild(this._buildEditableField({
+            value: sizeWAgg === "varies" ? "" : sizeWAgg,
+            numeric: true,
+            width: W.sizeWH,
+            editable: sizeWEditable,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            onCommit: (newValue) => {
+                const value = Number(newValue);
+                if (Number.isFinite(value) && value >= 0) {
+                    this._emitEdit({ kind: "setSizeAxis", axis: "x", value });
+                }
+            },
+        }));
+        r2.appendChild(this._buildEditableField({
+            value: sizeHAgg === "varies" ? "" : sizeHAgg,
+            numeric: true,
+            width: W.sizeWH,
+            editable: sizeHEditable,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            onCommit: (newValue) => {
+                const value = Number(newValue);
+                if (Number.isFinite(value) && value >= 0) {
+                    this._emitEdit({ kind: "setSizeAxis", axis: "y", value });
+                }
+            },
+        }));
         r2.appendChild(mkUnits("(W, H)", { disabled: curveDisabled }));
         r2.appendChild(mkLabel("Curve\nThickness", { width: W.curveThick, disabled: curveDisabled, multiline: true }));
-        r2.appendChild(mkField({ value: "1.0000", numeric: true, width: W.thickness, disabled: curveDisabled }));
+        r2.appendChild(this._buildEditableField({
+            value: curveThicknessAgg === "varies" ? "" : curveThicknessAgg,
+            numeric: true,
+            width: W.thickness,
+            editable: !curveDisabled,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            editKind: "setCurveThickness",
+        }));
         band.appendChild(r2);
 
-        // Cursor Size + Cursor Thickness
+        // Cursor R/L + Cursor Thickness. Curves only. All
+        // three are direct field commits via setFieldOnSelection.
+        const cursorRAgg = aggregateString(objs.curves, "cursorR");
+        const cursorLAgg = aggregateString(objs.curves, "cursorL");
+        const cursorThicknessAgg = aggregateString(objs.curves, "cursorThickness");
+
         const r3 = mkRow();
         r3.appendChild(mkLabel("Cursor Size", { width: W.leftLabel, disabled: curveDisabled }));
         r3.appendChild(mkInlineLetter("R", { disabled: curveDisabled }));
-        r3.appendChild(mkField({ value: "0.50", numeric: true, width: W.cursorRL, disabled: curveDisabled }));
+        r3.appendChild(this._buildEditableField({
+            value: cursorRAgg === "varies" ? "" : cursorRAgg,
+            numeric: true,
+            width: W.cursorRL,
+            editable: !curveDisabled,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            editKind: "setCursorR",
+        }));
         r3.appendChild(mkInlineLetter("L", { disabled: curveDisabled }));
-        r3.appendChild(mkField({ value: "0.50", numeric: true, width: W.cursorRL, disabled: curveDisabled }));
+        r3.appendChild(this._buildEditableField({
+            value: cursorLAgg === "varies" ? "" : cursorLAgg,
+            numeric: true,
+            width: W.cursorRL,
+            editable: !curveDisabled,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            editKind: "setCursorL",
+        }));
         r3.appendChild(mkLabel("Cursor\nThickness", { width: W.cursorThick, disabled: curveDisabled, multiline: true }));
-        r3.appendChild(mkField({ value: "2.0000", numeric: true, width: W.thickness, disabled: curveDisabled }));
+        r3.appendChild(this._buildEditableField({
+            value: cursorThicknessAgg === "varies" ? "" : cursorThicknessAgg,
+            numeric: true,
+            width: W.thickness,
+            editable: !curveDisabled,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            editKind: "setCursorThickness",
+        }));
         band.appendChild(r3);
 
-        // Sprite/Trigger size — label tracks the active kind,
-        // greyed for mixed selections (both sprites and
-        // triggers) and selections containing curves.
+        // Sprite/Trigger Size. Active only when the selection
+        // is exclusively sprites or exclusively triggers; the
+        // label and edit kind switch to match. Direct field
+        // commit.
+        const sizeFieldAgg = ctx.singleKind === "sprite"
+            ? aggregateString(objs.sprites, "displayDiameter")
+            : ctx.singleKind === "trigger"
+            ? aggregateString(objs.triggers, "size")
+            : "";
+        const sizeEditKind = ctx.singleKind === "trigger" ? "setTriggerSize" : "setSpriteSize";
+
         const r4 = mkRow();
         r4.appendChild(mkLabel(sizeLabel, { width: W.leftLabel, disabled: !sizeActive }));
-        r4.appendChild(mkField({ value: "0.50", numeric: true, width: W.spriteTriggerSize, disabled: !sizeActive }));
+        r4.appendChild(this._buildEditableField({
+            value: sizeFieldAgg === "varies" ? "" : sizeFieldAgg,
+            numeric: true,
+            width: W.spriteTriggerSize,
+            editable: sizeActive,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            editKind: sizeEditKind,
+        }));
         band.appendChild(r4);
 
-        // Color — universal
+        // Color. Sprites and triggers only — curves carry no
+        // per-object colour. Editable when at least one
+        // sprite or trigger is in the selection, including
+        // when the value varies (typing commits the typed
+        // colour to all selected sprites and triggers).
+        const colorAgg = aggregateColor(objs);
+
         const r5 = mkRow();
-        r5.appendChild(mkLabel("Color", { width: W.leftLabel }));
-        r5.appendChild(mkColorField({ hex: "#3A8FDC" }));
+        r5.appendChild(mkLabel("Color", { width: W.leftLabel, disabled: !colorActive }));
+        r5.appendChild(this._buildColorField({
+            hex: colorAgg === "varies" ? "" : colorAgg,
+            editable: colorActive,
+            varies: colorAgg === "varies",
+        }));
         band.appendChild(r5);
 
         return band;
@@ -1064,6 +1492,198 @@ function aggregateString(objects, fieldName) {
     return String(firstRaw);
 }
 
+/**
+ * Aggregate a numeric position coordinate (X or Y) across
+ * every selected sprite, trigger, and curve. For sprites and
+ * triggers the coordinate comes from the object's x/y field;
+ * for curves it comes from the bounding-box centroid via
+ * computeShapeBboxCentroid. Returns the common value as a
+ * stringified number, the literal "varies" when objects
+ * disagree, or empty string for an empty selection or a
+ * curve whose shape produced no centroid.
+ *
+ * Used by the Band 2 Position field's read binding. Edits
+ * commit through translateSelection with the user's typed
+ * value minus this aggregated value as the delta; the
+ * inspector locks the field when this returns "varies"
+ * because translation by a single delta isn't well-defined
+ * across objects with different starting positions.
+ *
+ * @param {{ sprites: any[], triggers: any[], curves: any[] }} objs
+ * @param {"x" | "y"} axis
+ * @returns {string | "varies"}
+ */
+function aggregatePosition(objs, axis) {
+    /** @type {number[]} */
+    const values = [];
+    for (const s of objs.sprites) {
+        const v = axis === "x" ? s.x : s.y;
+        if (typeof v === "number" && Number.isFinite(v)) values.push(v);
+    }
+    for (const t of objs.triggers) {
+        const v = axis === "x" ? t.x : t.y;
+        if (typeof v === "number" && Number.isFinite(v)) values.push(v);
+    }
+    for (const c of objs.curves) {
+        const centroid = computeShapeBboxCentroid(c.shape);
+        if (centroid === null) continue;
+        const v = axis === "x" ? centroid.x : centroid.y;
+        if (Number.isFinite(v)) values.push(v);
+    }
+    if (values.length === 0) return "";
+    const first = values[0];
+    for (let i = 1; i < values.length; i++) {
+        if (values[i] !== first) return "varies";
+    }
+    return String(first);
+}
+
+/**
+ * Aggregate a curve's W or H dimension across every selected
+ * curve. The dimension comes from each curve's bounding box:
+ * for an ellipse the bbox width is shape.w (the field is
+ * already the bbox extent); for a line it is the absolute
+ * difference of endpoint coordinates; for a piste it is the
+ * spread of point coordinates in that axis. Returns the
+ * common value as a stringified number, "varies" when curves
+ * disagree, or empty for an empty curve list.
+ *
+ * Used by the Band 2 Curve Size field's read binding. Edits
+ * commit through scaleCurveAxis with the user's typed value
+ * divided by this aggregated value as the factor; the
+ * inspector locks the field when this returns "varies"
+ * because scaling by a single factor wouldn't preserve the
+ * meaning of "set W to 5" across curves with different
+ * starting widths.
+ *
+ * @param {any[]} curves
+ * @param {"x" | "y"} axis
+ * @returns {string | "varies"}
+ */
+function aggregateCurveSize(curves, axis) {
+    /** @type {number[]} */
+    const values = [];
+    for (const c of curves) {
+        const bbox = computeShapeBbox(c.shape);
+        if (bbox === null) continue;
+        const v = axis === "x" ? (bbox.x2 - bbox.x1) : (bbox.y2 - bbox.y1);
+        if (Number.isFinite(v)) values.push(v);
+    }
+    if (values.length === 0) return "";
+    const first = values[0];
+    for (let i = 1; i < values.length; i++) {
+        if (values[i] !== first) return "varies";
+    }
+    return String(first);
+}
+
+/**
+ * Aggregate the colour field across every selected sprite
+ * and trigger. Curves are excluded — they have no per-object
+ * colour at this milestone (their stroke uses the global
+ * CURVE_COLOUR). Returns the common value as a hex string,
+ * "varies" when objects disagree, or empty for an empty
+ * sprite-and-trigger slice.
+ *
+ * @param {{ sprites: any[], triggers: any[], curves: any[] }} objs
+ * @returns {string | "varies"}
+ */
+function aggregateColor(objs) {
+    /** @type {string[]} */
+    const values = [];
+    for (const s of objs.sprites) {
+        if (typeof s.color === "string") values.push(s.color);
+    }
+    for (const t of objs.triggers) {
+        if (typeof t.color === "string") values.push(t.color);
+    }
+    if (values.length === 0) return "";
+    const first = values[0];
+    for (let i = 1; i < values.length; i++) {
+        if (values[i] !== first) return "varies";
+    }
+    return first;
+}
+
+/**
+ * Compute the axis-aligned bounding box of a curve shape in
+ * canvas units, or null when the shape is degenerate or not
+ * yet implemented (bezier, helice). Used by the Band 2 read
+ * paths to derive Position (centroid) and Curve Size (W, H)
+ * values for curves. Mirrors canvas.js's curveBoundingBox
+ * function but lives here as a separate copy so the
+ * inspector doesn't have to import canvas internals — the
+ * shape grammar is small and stable.
+ *
+ * @param {any} shape
+ * @returns {{ x1: number, y1: number, x2: number, y2: number } | null}
+ */
+function computeShapeBbox(shape) {
+    if (shape === null || typeof shape !== "object") return null;
+    if (shape.type === "line") {
+        const x1 = typeof shape.x1 === "number" ? shape.x1 : 0;
+        const y1 = typeof shape.y1 === "number" ? shape.y1 : 0;
+        const x2 = typeof shape.x2 === "number" ? shape.x2 : 0;
+        const y2 = typeof shape.y2 === "number" ? shape.y2 : 0;
+        return {
+            x1: Math.min(x1, x2),
+            y1: Math.min(y1, y2),
+            x2: Math.max(x1, x2),
+            y2: Math.max(y1, y2),
+        };
+    }
+    if (shape.type === "ellipse") {
+        const cx = typeof shape.cx === "number" ? shape.cx : 0;
+        const cy = typeof shape.cy === "number" ? shape.cy : 0;
+        const w = typeof shape.w === "number" ? shape.w : 0;
+        const h = typeof shape.h === "number" ? shape.h : 0;
+        return {
+            x1: cx - w / 2,
+            y1: cy - h / 2,
+            x2: cx + w / 2,
+            y2: cy + h / 2,
+        };
+    }
+    if (shape.type === "piste") {
+        const pts = shape.points;
+        if (!Array.isArray(pts) || pts.length === 0) return null;
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+        for (const p of pts) {
+            if (!Array.isArray(p) || p.length < 2) continue;
+            const px = typeof p[0] === "number" ? p[0] : 0;
+            const py = typeof p[1] === "number" ? p[1] : 0;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+        }
+        if (!Number.isFinite(minX)) return null;
+        return { x1: minX, y1: minY, x2: maxX, y2: maxY };
+    }
+    return null;
+}
+
+/**
+ * Compute the bounding-box centroid of a curve shape in
+ * canvas units, or null when the shape is degenerate or not
+ * yet implemented. Used by the Band 2 Position read path
+ * for curves — a curve's "position" is its bbox centroid,
+ * matching the visual centre of the selection-marker
+ * rectangle drawn around it.
+ *
+ * @param {any} shape
+ * @returns {{ x: number, y: number } | null}
+ */
+function computeShapeBboxCentroid(shape) {
+    const bbox = computeShapeBbox(shape);
+    if (bbox === null) return null;
+    return {
+        x: (bbox.x1 + bbox.x2) / 2,
+        y: (bbox.y1 + bbox.y2) / 2,
+    };
+}
+
 /** @param {ReturnType<typeof buildSelectionContext>} ctx */
 function sizeRowLabel(ctx) {
     if (ctx.singleKind === "sprite") return "Sprite Size";
@@ -1129,6 +1749,29 @@ function beatBandLabel(ctx) {
  */
 function pluralCount(n, singular) {
     return `${n} ${singular}${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * Programmatically select every character inside a
+ * contenteditable element. Used by the inspector's three
+ * editable field builders (Name, generic editable field,
+ * Color text) on focus, so that the user's first keystroke
+ * replaces the existing value the way a standard <input>
+ * behaves. Without this, contenteditable elements receive
+ * caret-positioned focus and the user's typing inserts
+ * into the existing text — producing surprises like
+ * "4" becoming "48" when the user thought they were typing
+ * a fresh "8".
+ *
+ * @param {HTMLElement} el
+ */
+function selectAllInElement(el) {
+    const sel = window.getSelection();
+    if (sel === null) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
 }
 
 // --- Field-construction helpers ---

@@ -220,3 +220,94 @@ export function validateStrength(candidate) {
     }
     return { kind: "ok", value: trimmed };
 }
+
+/**
+ * General-purpose numeric validator used by Band 2 (Position,
+ * sizes, cursor extents, thicknesses, curve W/H). Empty input
+ * is hard-blocked since every Band 2 field requires a value;
+ * non-numeric input is hard-blocked; out-of-range input
+ * (when min or max are supplied) is hard-blocked. Non-integer
+ * input on an integer-typed field soft-warns and rounds.
+ *
+ * Despite living alongside the curve-specific validators in
+ * this file, validateNumber is general-purpose and is used
+ * across object kinds. The file name reflects history rather
+ * than current scope.
+ *
+ * @param {string} candidate
+ * @param {{ min?: number, max?: number, integer?: boolean }} [opts]
+ * @returns {ValidationResult}
+ */
+export function validateNumber(candidate, opts) {
+    const o = opts || {};
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return {
+            kind: "hard", value: "",
+            message: "A number is required.",
+        };
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is not a number.`,
+        };
+    }
+    if (typeof o.min === "number" && n < o.min) {
+        return {
+            kind: "hard", value: "",
+            message: `Must be at least ${o.min}.`,
+        };
+    }
+    if (typeof o.max === "number" && n > o.max) {
+        return {
+            kind: "hard", value: "",
+            message: `Must be at most ${o.max}.`,
+        };
+    }
+    if (o.integer && n !== Math.round(n)) {
+        const rounded = Math.round(n);
+        return {
+            kind: "soft", value: String(rounded),
+            message: `Rounded to ${rounded}.`,
+        };
+    }
+    return { kind: "ok", value: String(n) };
+}
+
+/**
+ * Validate a CSS hex colour. Accepts "#RRGGBB" form (with or
+ * without the leading #, with case-insensitive hex digits)
+ * and canonicalises to lowercase "#rrggbb". The 3-digit short
+ * form ("#abc") is also accepted and expanded to 6 digits.
+ * Empty input and other formats are hard-blocked.
+ *
+ * @param {string} candidate
+ * @returns {ValidationResult}
+ */
+export function validateHexColor(candidate) {
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return {
+            kind: "hard", value: "",
+            message: "A colour is required.",
+        };
+    }
+    const stripped = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+    if (/^[0-9a-fA-F]{3}$/.test(stripped)) {
+        // Expand short form: "abc" → "aabbcc".
+        const expanded =
+            stripped[0] + stripped[0] +
+            stripped[1] + stripped[1] +
+            stripped[2] + stripped[2];
+        return { kind: "ok", value: "#" + expanded.toLowerCase() };
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(stripped)) {
+        return { kind: "ok", value: "#" + stripped.toLowerCase() };
+    }
+    return {
+        kind: "hard", value: "",
+        message: `"${trimmed}" is not a hex colour (expected #RRGGBB).`,
+    };
+}

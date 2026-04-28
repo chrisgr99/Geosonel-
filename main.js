@@ -88,6 +88,8 @@ import {
     setStrengthOnCurves,
     translateSelection,
     scaleCurveAxis,
+    setPositionAxisOnSelection,
+    setSizeAxisOnSelection,
     setSpriteDisplayDiameterOnSelection,
     setTriggerSizeOnSelection,
     setCursorROnCurves,
@@ -582,6 +584,14 @@ async function main() {
             } else if (edit.kind === "scaleCurveAxis") {
                 await applySceneEdit((data) =>
                     scaleCurveAxis(data, edit.selection, edit.axis, edit.factor),
+                );
+            } else if (edit.kind === "setPositionAxis") {
+                await applySceneEdit((data) =>
+                    setPositionAxisOnSelection(data, edit.selection, edit.axis, edit.value),
+                );
+            } else if (edit.kind === "setSizeAxis") {
+                await applySceneEdit((data) =>
+                    setSizeAxisOnSelection(data, edit.selection, edit.axis, edit.value),
                 );
             } else if (edit.kind === "setSpriteSize") {
                 await applySceneEdit((data) =>
