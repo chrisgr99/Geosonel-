@@ -412,24 +412,6 @@ export function addSpriteAt(data, x, y) {
 }
 
 /**
- * Update positions of multiple sprites in one shot. The
- * `positions` parameter is a Map from sprite index to {x, y}.
- * Mutates `data` in place.
- * @param {any} data
- * @param {Map<number, {x: number, y: number}>} positions
- */
-export function setSpritePositions(data, positions) {
-    if (!Array.isArray(data.sprites)) return;
-    for (const [idx, pos] of positions) {
-        if (idx < 0 || idx >= data.sprites.length) continue;
-        const entry = data.sprites[idx];
-        if (typeof entry !== "object" || entry === null) continue;
-        entry.x = roundCoord(pos.x);
-        entry.y = roundCoord(pos.y);
-    }
-}
-
-/**
  * Remove objects from the scene by kind and index. Indexes
  * refer to positions in the original arrays at the time of
  * the call; the function filters them out and the resulting

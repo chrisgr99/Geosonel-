@@ -1120,40 +1120,60 @@ export class Canvas {
             const dpy = pos.py - g.startPy;
             if ((dpx * dpx + dpy * dpy) < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
 
-            // Threshold crossed. The gesture transitions into
-            // a drag (only when the hit object is a sprite —
-            // sprites are the only kind with a move pipeline
-            // wired up at this milestone) or a marquee (for
-            // empty space, triggers, and curves). Starting a
-            // marquee on a trigger or curve is unusual but
-            // not harmful: the rectangle anchors at the
-            // mousedown position and proceeds normally.
-            if (g.hit !== null && g.hit.kind === "sprite") {
-                let dragSet;
+            // Threshold crossed. The gesture transitions
+            // into a drag (any object hit — sprites,
+            // triggers, and curves all share the unified
+            // translateSelection pipeline) or a marquee
+            // (click on empty space). Hit-on-already-
+            // selected drags the entire current selection
+            // across all three kinds together; hit-on-
+            // unselected replaces the selection with that
+            // one object and drags it.
+            if (g.hit !== null) {
+                /** @type {{sprites: number[], triggers: number[], curves: number[]}} */
+                let dragSelection;
                 if (g.wasSelected) {
-                    // Drag the existing sprite selection
-                    // unchanged. Triggers and curves in the
-                    // selection remain selected but don't
-                    // move (no edit pipeline yet).
-                    dragSet = new Set(this._selection.sprites);
+                    dragSelection = {
+                        sprites: Array.from(this._selection.sprites),
+                        triggers: Array.from(this._selection.triggers),
+                        curves: Array.from(this._selection.curves),
+                    };
                 } else {
-                    // Replace selection with this one sprite,
-                    // then drag it.
-                    dragSet = new Set([g.hit.index]);
+                    dragSelection = {
+                        sprites: g.hit.kind === "sprite" ? [g.hit.index] : [],
+                        triggers: g.hit.kind === "trigger" ? [g.hit.index] : [],
+                        curves: g.hit.kind === "curve" ? [g.hit.index] : [],
+                    };
                     this._selection = {
-                        sprites: new Set(dragSet),
-                        triggers: new Set(),
-                        curves: new Set(),
+                        sprites: new Set(dragSelection.sprites),
+                        triggers: new Set(dragSelection.triggers),
+                        curves: new Set(dragSelection.curves),
                     };
                     this._emitSelectionChanged();
                 }
                 /** @type {Map<number, {x: number, y: number}>} */
-                const initialPositions = new Map();
+                const initialSpritePositions = new Map();
+                /** @type {Map<number, {x: number, y: number}>} */
+                const initialTriggerPositions = new Map();
+                /** @type {Map<number, any>} */
+                const initialCurveShapes = new Map();
                 if (this._scene !== null) {
-                    for (const idx of dragSet) {
+                    for (const idx of dragSelection.sprites) {
                         if (idx < this._scene.sprites.length) {
                             const s = this._scene.sprites[idx];
-                            initialPositions.set(idx, { x: s.x, y: s.y });
+                            initialSpritePositions.set(idx, { x: s.x, y: s.y });
+                        }
+                    }
+                    for (const idx of dragSelection.triggers) {
+                        if (idx < this._scene.triggers.length) {
+                            const t = this._scene.triggers[idx];
+                            initialTriggerPositions.set(idx, { x: t.x, y: t.y });
+                        }
+                    }
+                    for (const idx of dragSelection.curves) {
+                        if (idx < this._scene.curves.length) {
+                            const c = this._scene.curves[idx];
+                            initialCurveShapes.set(idx, snapshotShapeCoords(c.shape));
                         }
                     }
                 }
@@ -1161,8 +1181,10 @@ export class Canvas {
                     kind: "drag",
                     startX: g.startX,
                     startY: g.startY,
-                    dragSet,
-                    initialPositions,
+                    dragSelection,
+                    initialSpritePositions,
+                    initialTriggerPositions,
+                    initialCurveShapes,
                 };
             } else {
                 this._gesture = {
@@ -1182,10 +1204,26 @@ export class Canvas {
             const dx = pos.x - g.startX;
             const dy = pos.y - g.startY;
             if (this._scene !== null) {
-                for (const [idx, init] of g.initialPositions) {
+                for (const [idx, init] of g.initialSpritePositions) {
                     if (idx < this._scene.sprites.length) {
                         this._scene.sprites[idx].x = init.x + dx;
                         this._scene.sprites[idx].y = init.y + dy;
+                    }
+                }
+                for (const [idx, init] of g.initialTriggerPositions) {
+                    if (idx < this._scene.triggers.length) {
+                        this._scene.triggers[idx].x = init.x + dx;
+                        this._scene.triggers[idx].y = init.y + dy;
+                    }
+                }
+                for (const [idx, initShape] of g.initialCurveShapes) {
+                    if (idx < this._scene.curves.length) {
+                        applyShapeCoordsTranslation(
+                            this._scene.curves[idx].shape,
+                            initShape,
+                            dx,
+                            dy,
+                        );
                     }
                 }
             }
@@ -1233,15 +1271,24 @@ export class Canvas {
 
         if (g.kind === "drag") {
             if (this._editCallback !== null && this._scene !== null) {
-                /** @type {Map<number, {x: number, y: number}>} */
-                const positions = new Map();
-                for (const idx of g.dragSet) {
-                    if (idx < this._scene.sprites.length) {
-                        const s = this._scene.sprites[idx];
-                        positions.set(idx, { x: s.x, y: s.y });
-                    }
-                }
-                this._editCallback({ kind: "moveSprites", positions });
+                // Cumulative delta from drag start to the
+                // mouseup position. Live-drag has already
+                // mutated runtime objects in place for
+                // visual feedback; the persisted edit
+                // re-applies the same delta to scene.json
+                // through translateSelection, which is
+                // idempotent with the live mutations
+                // because runScene reloads the scene from
+                // the freshly-written JSON anyway.
+                const pos = this._eventToCanvas(e);
+                const dx = pos.x - g.startX;
+                const dy = pos.y - g.startY;
+                this._editCallback({
+                    kind: "translateSelection",
+                    selection: g.dragSelection,
+                    dx,
+                    dy,
+                });
             }
             return;
         }
@@ -1725,6 +1772,113 @@ function filterIndexSet(set, max) {
         if (i < max) result.add(i);
     }
     return result;
+}
+
+/**
+ * Capture a deep-enough copy of a curve shape's coordinate
+ * fields, used at drag start so the live-drag loop can
+ * translate the shape from its original position each
+ * frame by the cumulative cursor delta. Per shape type:
+ *   - line: { x1, y1, x2, y2 }
+ *   - ellipse: { cx, cy }     (w/h aren't translated)
+ *   - piste: { points: [[x, y], ...] }    (deep copy)
+ *   - other shape types or a degenerate shape: null;
+ *     applyShapeCoordsTranslation silently skips these so
+ *     a curve in a not-yet-implemented shape category
+ *     stays selectable but doesn't move during the drag.
+ *     The authoritative drag-end edit still goes through
+ *     and sceneEditor.translateSelection follows the same
+ *     skip behaviour.
+ *
+ * Coordinate fields are read with defensive defaults so a
+ * partially-formed runtime shape doesn't crash the
+ * snapshot.
+ *
+ * @param {any} shape
+ * @returns {any}
+ */
+function snapshotShapeCoords(shape) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return null;
+    if (shape.type === "line") {
+        return {
+            type: "line",
+            x1: typeof shape.x1 === "number" ? shape.x1 : 0,
+            y1: typeof shape.y1 === "number" ? shape.y1 : 0,
+            x2: typeof shape.x2 === "number" ? shape.x2 : 0,
+            y2: typeof shape.y2 === "number" ? shape.y2 : 0,
+        };
+    }
+    if (shape.type === "ellipse") {
+        return {
+            type: "ellipse",
+            cx: typeof shape.cx === "number" ? shape.cx : 0,
+            cy: typeof shape.cy === "number" ? shape.cy : 0,
+        };
+    }
+    if (shape.type === "piste") {
+        if (!Array.isArray(shape.points)) return null;
+        return {
+            type: "piste",
+            points: shape.points.map((p) =>
+                Array.isArray(p) && p.length >= 2
+                    ? [
+                        typeof p[0] === "number" ? p[0] : 0,
+                        typeof p[1] === "number" ? p[1] : 0,
+                    ]
+                    : [0, 0]
+            ),
+        };
+    }
+    return null;
+}
+
+/**
+ * Translate a runtime curve shape by (dx, dy) in canvas
+ * units, using the captured initial coordinates as the
+ * base so the cumulative delta from drag start applies
+ * cleanly without floating-point drift across many small
+ * mouse-move events. Mirrors the per-type behaviour in
+ * sceneEditor.translateShape but without the roundCoord
+ * step — this is visual feedback only; the authoritative
+ * mutation goes through the translateSelection edit on
+ * drag end.
+ *
+ * If the snapshot is null (degenerate or unsupported
+ * shape type at drag start) or the shape's type changed
+ * between drag start and now (e.g. an external reload
+ * mid-drag), translation is silently skipped. The
+ * drag-end edit fires regardless and operates on whatever
+ * is currently in scene.json.
+ *
+ * @param {any} shape  The runtime shape to mutate.
+ * @param {any} initialCoords  The drag-start snapshot.
+ * @param {number} dx
+ * @param {number} dy
+ */
+function applyShapeCoordsTranslation(shape, initialCoords, dx, dy) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return;
+    if (initialCoords === null) return;
+    if (initialCoords.type !== shape.type) return;
+    if (shape.type === "line") {
+        shape.x1 = initialCoords.x1 + dx;
+        shape.y1 = initialCoords.y1 + dy;
+        shape.x2 = initialCoords.x2 + dx;
+        shape.y2 = initialCoords.y2 + dy;
+    } else if (shape.type === "ellipse") {
+        shape.cx = initialCoords.cx + dx;
+        shape.cy = initialCoords.cy + dy;
+    } else if (shape.type === "piste") {
+        if (!Array.isArray(shape.points)) return;
+        const pts = initialCoords.points;
+        const n = Math.min(shape.points.length, pts.length);
+        for (let i = 0; i < n; i++) {
+            const p = shape.points[i];
+            if (Array.isArray(p) && p.length >= 2) {
+                p[0] = pts[i][0] + dx;
+                p[1] = pts[i][1] + dy;
+            }
+        }
+    }
 }
 
 /**

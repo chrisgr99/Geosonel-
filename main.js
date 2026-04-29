@@ -72,7 +72,6 @@ import {
     parseScene,
     stringifyScene,
     addSpriteAt,
-    setSpritePositions,
     removeObjects,
     fillMissingIds,
     fillEmptyNames,
@@ -513,8 +512,17 @@ async function main() {
     canvas.setEditCallback(async (edit) => {
         if (edit.kind === "addSprite") {
             await applySceneEdit((data) => addSpriteAt(data, edit.x, edit.y));
-        } else if (edit.kind === "moveSprites") {
-            await applySceneEdit((data) => setSpritePositions(data, edit.positions));
+        } else if (edit.kind === "translateSelection") {
+            // Canvas drag-end emits the same edit shape
+            // the inspector emits when its Position field
+            // is committed, so both paths converge on the
+            // same sceneEditor primitive. The selection
+            // travels with the edit (snapshot taken at
+            // drag start) so a partial-redraw race can't
+            // lose objects from the translation.
+            await applySceneEdit((data) =>
+                translateSelection(data, edit.selection, edit.dx, edit.dy),
+            );
         } else if (edit.kind === "selectionChanged") {
             // Forward selection changes to the property
             // inspector so the form updates its greying and
