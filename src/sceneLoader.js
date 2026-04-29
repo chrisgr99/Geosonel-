@@ -10,9 +10,9 @@
  * The loader does three things in sequence:
  *
  *   1. Parse scene.json. Top-level fields become piece-wide
- *      Scene properties (bpm, timeSignature, tonic, etc.).
- *      Arrays of curves, triggers, and sprites are walked and
- *      handed to scene.addCurve / addTrigger / addSprite.
+ *      Scene properties (bpm, tonic, etc.). Arrays of curves,
+ *      triggers, and sprites are walked and handed to
+ *      scene.addCurve / addTrigger / addSprite.
  *
  *   2. Parse behaviours.js with Acorn to find every top-level
  *      function declaration and every const/let bound to a
@@ -174,19 +174,11 @@ export class SceneLoader {
  */
 function applyPieceLevelFields(scene, data) {
     if ("bpm" in data) scene.bpm = data.bpm;
-    if ("timeSignature" in data) {
-        const ts = data.timeSignature;
-        if (ts === null) {
-            scene.timeSignature = null;
-        } else if (
-            Array.isArray(ts) && ts.length === 2 &&
-            typeof ts[0] === "number" && typeof ts[1] === "number"
-        ) {
-            scene.timeSignature = [ts[0], ts[1]];
-        } else {
-            throw new Error('"timeSignature" must be a [numerator, denominator] array.');
-        }
-    }
+    // v2.3 removed score-level timeSignature; if a legacy
+    // scene.json still carries the field, the migration pass
+    // (cleanLegacySceneFields) strips it before this loader
+    // runs, so we silently ignore it here without touching
+    // the Scene object.
     if ("tonic" in data) scene.tonic = data.tonic;
     if ("scaleName" in data) scene.scaleName = data.scaleName;
     if ("root" in data) scene.root = data.root;

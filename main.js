@@ -77,6 +77,8 @@ import {
     fillEmptyNames,
     cleanLegacyCurveFields,
     cleanLegacyShapeFields,
+    fillMissingMusicalTimingFields,
+    cleanLegacySceneFields,
     setMuteOnSelection,
     setHideOnCurves,
     setNameOnSelection,
@@ -324,7 +326,14 @@ async function main() {
         const namesChanged = fillEmptyNames(parsed.data);
         const legacyChanged = cleanLegacyCurveFields(parsed.data);
         const shapesChanged = cleanLegacyShapeFields(parsed.data);
-        if (!idsChanged && !namesChanged && !legacyChanged && !shapesChanged) return;
+        const timingChanged = fillMissingMusicalTimingFields(parsed.data);
+        const sceneFieldsChanged = cleanLegacySceneFields(parsed.data);
+        if (!idsChanged &&
+            !namesChanged &&
+            !legacyChanged &&
+            !shapesChanged &&
+            !timingChanged &&
+            !sceneFieldsChanged) return;
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();
@@ -725,19 +734,15 @@ async function main() {
 }
 
 /**
- * Apply scene-declared bpm and time signature to the Transport
- * if the sketch set them. Preserves null \u2014 a time-based sketch
- * (no bpm declared) hides the musical-position display.
+ * Apply scene-declared bpm to the Transport if the sketch
+ * set one. v2.3 removes score-level time signature; per-curve
+ * beatsPerBar + beatInterval express it instead, so the
+ * transport's time signature stays at its initial null state.
  * @param {import("./src/scene.js").Scene} scene
  * @param {import("./src/transport.js").Transport} transport
  */
 function applySceneParamsToTransport(scene, transport) {
     transport.setBpm(scene.bpm, "sketch");
-    if (scene.timeSignature !== null) {
-        transport.setTimeSignature(scene.timeSignature);
-    } else {
-        transport.setTimeSignature(null);
-    }
 }
 
 /**

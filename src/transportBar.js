@@ -4,19 +4,24 @@
  * Binds the DOM elements in the transport bar to the Transport
  * object. Handles three flows of data:
  *
- *   Transport to UI: when play state or BPM or time signature
- *   changes, redraw the affected controls. An animation-frame
- *   loop drives the elapsed time and musical position displays
- *   while playing.
+ *   Transport to UI: when play state or BPM changes, redraw
+ *   the affected controls. An animation-frame loop drives the
+ *   elapsed time and musical position displays while playing.
  *
  *   UI to Transport: button clicks and BPM field edits call
  *   into the Transport's API. Keyboard shortcuts (spacebar and
  *   R) go through the same paths.
  *
- *   Conditional visibility: when the transport is beat-based,
- *   the musical-position display, BPM field, and time-signature
- *   readout are visible. When time-based (no BPM), they are
- *   hidden and only the wall-clock display shows.
+ *   Conditional visibility: when the transport has a BPM, the
+ *   musical-position display and BPM field are visible. When
+ *   BPM is null (time-based piece), they are hidden and only
+ *   the wall-clock display shows.
+ *
+ * v2.3 removed the score-level time signature display from the
+ * transport bar (per DESIGN.md §13). The Transport class still
+ * tracks an internal time-signature value for the bars.beats
+ * portion of the musical-position readout, but it is no longer
+ * exposed through the UI.
  */
 
 // @ts-check
@@ -47,21 +52,17 @@ export class TransportBarView {
             document.getElementById("bpm-input")
         );
         this.bpmGroup = document.getElementById("bpm-group");
-        this.timeSigGroup = document.getElementById("time-sig-group");
-        this.timeSigEl = document.getElementById("time-signature");
 
         if (!this.playBtn || !this.rewindBtn || !this.elapsedTimeEl ||
-            !this.musicalPositionEl || !this.bpmInput || !this.bpmGroup ||
-            !this.timeSigGroup || !this.timeSigEl) {
+            !this.musicalPositionEl || !this.bpmInput || !this.bpmGroup) {
             console.error("GXW: transport DOM elements missing; view not bound.");
             return;
         }
 
         this._wireEvents();
         this._applyBpmToField();
-        this._applyTimeSignatureDisplay();
         this._applyPlayState();
-        this._applyBeatBasedVisibility();
+        this._applyBpmVisibility();
 
         this._tick = this._tick.bind(this);
         requestAnimationFrame(this._tick);
@@ -105,12 +106,13 @@ export class TransportBarView {
         this.transport.on("play", () => this._applyPlayState());
         this.transport.on("bpm", () => {
             this._applyBpmToField();
-            this._applyBeatBasedVisibility();
+            this._applyBpmVisibility();
         });
-        this.transport.on("timeSignature", () => {
-            this._applyTimeSignatureDisplay();
-            this._applyBeatBasedVisibility();
-        });
+        // Time-signature changes are still emitted by the
+        // Transport but no longer drive any visible UI in v2.3.
+        // The musical-position readout uses the transport's
+        // internal default time signature, which the sketch
+        // loader does not override.
     }
 
     /**
@@ -156,26 +158,21 @@ export class TransportBarView {
         }
     }
 
-    _applyTimeSignatureDisplay() {
-        if (!this.timeSigEl) return;
-        const ts = this.transport.timeSignature;
-        if (ts === null) {
-            this.timeSigEl.textContent = "";
-        } else {
-            this.timeSigEl.textContent = `${ts[0]}/${ts[1]}`;
-        }
-    }
-
-    _applyBeatBasedVisibility() {
-        const show = this.transport.isBeatBased;
+    _applyBpmVisibility() {
+        // BPM field and musical-position display are visible
+        // when the transport has a BPM (beat-based piece) and
+        // hidden when BPM is null (time-based piece). v2.3
+        // removed the time-signature display, so this method
+        // covers only the BPM-driven elements; isBeatBased
+        // (which still requires a non-null time signature) is
+        // not the right gate now that time signature is no
+        // longer surfaced through the UI.
+        const show = this.transport.bpm !== null;
         if (this.musicalPositionEl) {
             this.musicalPositionEl.style.display = show ? "" : "none";
         }
         if (this.bpmGroup) {
             this.bpmGroup.style.display = show ? "" : "none";
-        }
-        if (this.timeSigGroup) {
-            this.timeSigGroup.style.display = show ? "" : "none";
         }
     }
 
@@ -187,7 +184,7 @@ export class TransportBarView {
                 this.transport.elapsedSeconds
             );
         }
-        if (this.musicalPositionEl && this.transport.isBeatBased) {
+        if (this.musicalPositionEl && this.transport.bpm !== null) {
             const pos = this.transport.musicalPosition;
             this.musicalPositionEl.textContent =
                 pos === null ? "" : formatMusicalPosition(pos);

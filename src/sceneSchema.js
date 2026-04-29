@@ -42,6 +42,11 @@
 
 // @ts-check
 
+import {
+    DEFAULT_BEAT_INTERVAL,
+    allBeatIntervalTokens,
+} from "./beatIntervals.js";
+
 /**
  * @typedef {Object} FieldDef
  * @property {string} key
@@ -82,7 +87,6 @@ const HARMONY_OVERRIDE_FIELDS = [
  */
 export const SCENE_FIELDS = [
     { key: "bpm", label: "BPM", type: "integer", default: null, min: 1, max: 1000 },
-    { key: "timeSignature", label: "Time Signature", type: "tuple", default: null },
     { key: "tonic", label: "Tonic", type: "string", default: null },
     { key: "scaleName", label: "Scale", type: "string", default: null },
     { key: "root", label: "Root", type: "string", default: null },
@@ -114,9 +118,28 @@ export const CURVE_FIELDS = [
     { key: "hide", label: "Hide", type: "boolean", default: false },
     { key: "shape", label: "Shape", type: "shape", default: null },
     { key: "curveThickness", label: "Curve Thickness", type: "number", default: 1 },
-    { key: "cycleDuration", label: "Cycle Duration (beats)", type: "integer", default: 4 },
+    { key: "cycleDuration", label: "Beats/Cycle", type: "integer", default: 4, min: 1 },
+    {
+        key: "beatInterval",
+        label: "Beat Interval",
+        type: "enum",
+        default: DEFAULT_BEAT_INTERVAL,
+        enumValues: allBeatIntervalTokens(),
+    },
+    { key: "beatsPerBar", label: "Beats/Bar", type: "integer", default: 4, min: 1 },
+    { key: "beatOffset", label: "Beat Offset", type: "integer", default: 0 },
     { key: "cycleSpeeds", label: "Cycle Speeds", type: "string", default: "1" },
     { key: "stopAtCycle", label: "Stop at Cycle", type: "integer", default: -1 },
+    {
+        key: "beatPointsMode",
+        label: "Curve Beat Points",
+        type: "enum",
+        default: "normal",
+        enumValues: ["normal", "euclidean", "none"],
+    },
+    { key: "activeBeatsCount", label: "Active Beats", type: "integer", default: 0, min: 0 },
+    { key: "beatShift", label: "Beat Shift", type: "integer", default: 0 },
+    { key: "repeats", label: "Repeats", type: "integer", default: 1, min: 1 },
     { key: "activeBeats", label: "Active Beats", type: "beatsString", default: "x" },
     { key: "strength", label: "Beat Strength", type: "strengthString", default: "9" },
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },

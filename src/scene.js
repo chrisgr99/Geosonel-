@@ -50,8 +50,6 @@ export class Scene {
         // --- Transport ---
         /** @type {number | null} */
         this.bpm = null;
-        /** @type {[number, number] | null} */
-        this.timeSignature = null;
 
         // --- Harmony framework (score-level defaults). ---
         /** @type {string | null} */
@@ -237,20 +235,51 @@ export class Curve {
 
         // --- Rhythm ---
         /**
-         * Length of one full cycle in beats. Also defines
-         * the cycle's tick-position resolution at one tick
-         * per beat. Rounded to integer at construction time
-         * so fractional values from JSON are tolerated.
+         * Length of one full cycle in slots. The cursor
+         * advances through the cycle one slot at a time;
+         * each slot's musical duration is given by
+         * beatInterval (below). Rounded to integer at
+         * construction time so fractional values from JSON
+         * are tolerated. See DESIGN.md §10.
          */
         this.cycleDuration = Math.round(opts.cycleDuration ?? 4);
         /**
-         * Space-separated multipliers applied to
-         * cycleDuration cycle by cycle. Default "1" means
-         * uniform pacing; multi-value lists like "0.4 2 -1"
-         * produce per-cycle modulation including reverse
-         * direction (negative values). Validated by the
-         * inspector when its Cycle Speeds field wires; stored
-         * here as-is.
+         * Token naming the musical duration of one slot.
+         * Drawn from the fixed list in beatIntervals.js. The
+         * default "Qtr" preserves pre-v2.3 behaviour, where
+         * one slot was implicitly one quarter-beat. See
+         * DESIGN.md §10's "Per-curve musical-timing fields".
+         * @type {string}
+         */
+        this.beatInterval = opts.beatInterval ?? "Qtr";
+        /**
+         * Numerator of the curve's time signature, with
+         * beatInterval as the denominator. Default 4 yields
+         * 4/4 time when paired with the default "Qtr"
+         * beatInterval. Currently consumed by the inspector
+         * for visual structure of the activeBeats and
+         * strength strings (the pipe-character rule);
+         * reserved for future bar-aware features.
+         * @type {number}
+         */
+        this.beatsPerBar = Math.round(opts.beatsPerBar ?? 4);
+        /**
+         * Slot offset between the curve's slot 0 and the
+         * cursor's position at score-beat zero (and at
+         * rewind). Signed; positive values delay slot 0,
+         * negative values advance into the curve before
+         * score-beat zero. Default 0.
+         * @type {number}
+         */
+        this.beatOffset = Math.round(opts.beatOffset ?? 0);
+        /**
+         * Space-separated multipliers applied to the
+         * cycle's score-time duration cycle by cycle.
+         * Default "1" means uniform pacing; multi-value
+         * lists like "0.4 2 -1" produce per-cycle modulation
+         * including reverse direction (negative values
+         * reverse). Validated by the inspector; stored here
+         * as-is. See DESIGN.md §4.
          * @type {string}
          */
         this.cycleSpeeds = opts.cycleSpeeds ?? "1";
@@ -263,12 +292,59 @@ export class Curve {
          */
         this.stopAtCycle = opts.stopAtCycle ?? -1;
         /**
+         * How the activeBeats string is authored. Default
+         * "normal" matches pre-v2.3 behaviour (the user
+         * types the string directly). "euclidean" generates
+         * the string from the activeBeatsCount, beatShift,
+         * and repeats parameters; "none" suppresses all
+         * firings and renders no beat-point markers. The
+         * mode controls authoring ergonomics in the
+         * inspector; the engine reads only the activeBeats
+         * string regardless of mode. See DESIGN.md §10's
+         * "Beat-points mode".
+         * @type {"normal" | "euclidean" | "none"}
+         */
+        this.beatPointsMode = opts.beatPointsMode ?? "normal";
+        /**
+         * Euclidean parameter — the count of active beats
+         * the generator distributes across cycleDuration
+         * slots. Inert when beatPointsMode is not
+         * "euclidean". Defaults to 0; the inspector picks a
+         * sensible non-zero value when the user first
+         * switches to euclidean mode.
+         * @type {number}
+         */
+        this.activeBeatsCount = Math.round(opts.activeBeatsCount ?? 0);
+        /**
+         * Euclidean parameter — rotational offset that
+         * shifts the generated pattern around the cycle by
+         * N slots. Inert when beatPointsMode is not
+         * "euclidean". Default 0.
+         * @type {number}
+         */
+        this.beatShift = Math.round(opts.beatShift ?? 0);
+        /**
+         * Euclidean parameter — internal repetition count.
+         * The generator produces a Euclidean rhythm of
+         * length cycleDuration / repeats with
+         * activeBeatsCount / repeats actives, then
+         * concatenates `repeats` copies to fill
+         * cycleDuration slots. Inert when beatPointsMode is
+         * not "euclidean". Default 1 (no internal
+         * repetition).
+         * @type {number}
+         */
+        this.repeats = Math.round(opts.repeats ?? 1);
+        /**
          * Free-length "x" and "." string. Cycles independently
          * as cycle positions advance; need not match
-         * cycleDuration in length.
+         * cycleDuration in length. May contain spaces and
+         * pipe characters as display-only formatting; the
+         * engine strips them before cycling. See DESIGN.md
+         * §10 for the full string semantics.
          */
         this.activeBeats = opts.activeBeats ?? "x";
-        /** Digit string 0-9; cycles independently of activeBeats. */
+        /** Digit string 0-9; cycles independently of activeBeats. May contain spaces and pipes; stripped by engine. */
         this.strength = opts.strength ?? "9";
 
         // --- Cursor ---

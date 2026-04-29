@@ -264,7 +264,6 @@ export function makeEmptyBundle(name) {
         "scene.json",
         `{
   "bpm": 120,
-  "timeSignature": [4, 4],
   "tonic": "C",
   "scaleName": "C major",
   "triggerScale": ${triggerScale},
@@ -274,6 +273,10 @@ export function makeEmptyBundle(name) {
     {
       "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 12, "h": 12 },
       "cycleDuration": 4,
+      "beatInterval": "Qtr",
+      "beatsPerBar": 4,
+      "beatOffset": 0,
+      "beatPointsMode": "normal",
       "activeBeats": "x",
       "strength": "9272",
       "cursorR": 2,

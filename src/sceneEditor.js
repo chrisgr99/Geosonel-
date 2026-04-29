@@ -387,6 +387,115 @@ export function cleanLegacyShapeFields(data) {
 }
 
 /**
+ * Add the v2.3 per-curve musical-timing fields
+ * (beatInterval, beatsPerBar, beatOffset) and the
+ * beatPointsMode field to any curve missing them. Defaults
+ * preserve pre-v2.3 audible behaviour: beatInterval "Qtr"
+ * (so cycleDuration N still corresponds to N quarter-notes
+ * of cycle time), beatsPerBar 4 (the most common time-
+ * signature numerator), beatOffset 0 (the cursor still
+ * starts at slot 0 on rewind), beatPointsMode "normal" (the
+ * stored activeBeats string is the source of truth, matching
+ * how pre-v2.3 scores were authored).
+ *
+ * Field positioning is chosen to match the JSON-on-disk
+ * order documented in DESIGN.md §14's example. The timing
+ * fields land directly after cycleDuration; beatPointsMode
+ * lands directly before activeBeats. The Euclidean parameter
+ * fields (activeBeatsCount, beatShift, repeats) are NOT
+ * inserted by this pass, since legacy scores are never in
+ * euclidean mode and adding inert parameters to every curve
+ * would be schema clutter.
+ *
+ * Returns true iff at least one entry was changed; the
+ * caller uses that signal to decide whether to write the
+ * mutated scene back to the bundle.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function fillMissingMusicalTimingFields(data) {
+    const arr = data?.curves;
+    if (!Array.isArray(arr)) return false;
+    let changed = false;
+    for (let i = 0; i < arr.length; i++) {
+        const entry = arr[i];
+        if (entry === null ||
+            typeof entry !== "object" ||
+            Array.isArray(entry)) continue;
+
+        const need = {
+            beatInterval: !("beatInterval" in entry),
+            beatsPerBar: !("beatsPerBar" in entry),
+            beatOffset: !("beatOffset" in entry),
+            beatPointsMode: !("beatPointsMode" in entry),
+        };
+        if (!need.beatInterval &&
+            !need.beatsPerBar &&
+            !need.beatOffset &&
+            !need.beatPointsMode) continue;
+
+        // Walk existing keys preserving order, inserting new
+        // fields at sensible anchor points.
+        /** @type {Record<string, any>} */
+        const newEntry = {};
+        let beatPointsModeInserted = false;
+        for (const k of Object.keys(entry)) {
+            if (k === "activeBeats" && need.beatPointsMode && !beatPointsModeInserted) {
+                newEntry.beatPointsMode = "normal";
+                beatPointsModeInserted = true;
+            }
+            newEntry[k] = entry[k];
+            if (k === "cycleDuration") {
+                if (need.beatInterval) newEntry.beatInterval = "Qtr";
+                if (need.beatsPerBar) newEntry.beatsPerBar = 4;
+                if (need.beatOffset) newEntry.beatOffset = 0;
+            }
+        }
+        // Fallbacks for entries missing the natural anchors.
+        // A curve without cycleDuration is unusual but possible;
+        // a curve without activeBeats likewise. Append in those
+        // cases so the fields still get filled in.
+        if (need.beatInterval && !("beatInterval" in newEntry)) {
+            newEntry.beatInterval = "Qtr";
+        }
+        if (need.beatsPerBar && !("beatsPerBar" in newEntry)) {
+            newEntry.beatsPerBar = 4;
+        }
+        if (need.beatOffset && !("beatOffset" in newEntry)) {
+            newEntry.beatOffset = 0;
+        }
+        if (need.beatPointsMode && !beatPointsModeInserted) {
+            newEntry.beatPointsMode = "normal";
+        }
+
+        arr[i] = newEntry;
+        changed = true;
+    }
+    return changed;
+}
+
+/**
+ * Strip legacy top-level scene fields that no longer have a
+ * place in the v2.3 model. Currently the only such field is
+ * `timeSignature`: v2.3 removes the score-level time signature
+ * in favour of per-curve beatsPerBar and beatInterval (see
+ * DESIGN.md §7 and §10). Existing scores that carry the field
+ * have it discarded silently on next load.
+ *
+ * Returns true iff at least one field was stripped.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function cleanLegacySceneFields(data) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+    if (!("timeSignature" in data)) return false;
+    delete data.timeSignature;
+    return true;
+}
+
+/**
  * Add a sprite to the parsed scene at canvas position (x, y).
  * The sprite gets a freshly generated id, x, y, and vx/vy=0.
  * Other fields fall through to the constructor defaults (no
