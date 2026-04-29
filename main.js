@@ -87,6 +87,11 @@ import {
     setStopAtCycleOnCurves,
     setActiveBeatsOnCurves,
     setStrengthOnCurves,
+    setBeatIntervalOnCurves,
+    setBeatsPerBarOnCurves,
+    setBeatOffsetOnCurves,
+    setBeatPointsModeOnCurves,
+    setEuclideanParameterOnCurves,
     translateSelection,
     scaleCurveAxis,
     setPositionAxisOnSelection,
@@ -593,6 +598,43 @@ async function main() {
             } else if (edit.kind === "setStrength") {
                 await applySceneEdit((data) =>
                     setStrengthOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatInterval") {
+                await applySceneEdit((data) =>
+                    setBeatIntervalOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatsPerBar") {
+                await applySceneEdit((data) =>
+                    setBeatsPerBarOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatOffset") {
+                await applySceneEdit((data) =>
+                    setBeatOffsetOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatPointsMode") {
+                // The inspector handles the per-curve
+                // none-mode stash. When restoring out of
+                // none mode, it passes the stashed
+                // activeBeats string as edit.restoreActiveBeats
+                // (or null/undefined if there's nothing to
+                // restore, in which case the mutator leaves
+                // activeBeats alone).
+                await applySceneEdit((data) =>
+                    setBeatPointsModeOnCurves(
+                        data,
+                        edit.selection,
+                        edit.value,
+                        edit.restoreActiveBeats ?? null,
+                    ),
+                );
+            } else if (edit.kind === "setEuclideanParameter") {
+                await applySceneEdit((data) =>
+                    setEuclideanParameterOnCurves(
+                        data,
+                        edit.selection,
+                        edit.paramName,
+                        edit.value,
+                    ),
                 );
             } else if (edit.kind === "translateSelection") {
                 await applySceneEdit((data) =>

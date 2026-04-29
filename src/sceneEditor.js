@@ -31,6 +31,7 @@
 // @ts-check
 
 import { generateId, collectExistingIds } from "./idGen.js";
+import { generateEuclideanPattern } from "./euclidean.js";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
 const MULTILINE_ARRAY_KEYS = new Set(["curves"]);
@@ -611,7 +612,33 @@ export function setNameOnSelection(data, selection, value) {
  */
 export function setCycleDurationOnCurves(data, selection, value) {
     const n = Math.round(Number(value));
-    setFieldOnSelection(data, { curves: selection.curves }, "cycleDuration", n);
+    const indexes = selection.curves;
+    if (indexes === undefined) return;
+    const arr = data?.curves;
+    if (!Array.isArray(arr)) return;
+    for (const idx of indexes) {
+        if (idx < 0 || idx >= arr.length) continue;
+        const entry = arr[idx];
+        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+        entry.cycleDuration = n;
+        // Clamp Euclidean parameters that depend on cycleDuration
+        // for their valid range. activeBeatsCount cannot exceed
+        // cycleDuration (you can't have more actives than slots);
+        // repeats cannot exceed cycleDuration (you can't have
+        // more repeats than slots). Clamping here matches the
+        // validators' clamp ranges so a programmatic edit and
+        // an inspector edit converge on the same valid state.
+        if (typeof entry.activeBeatsCount === "number" && entry.activeBeatsCount > n) {
+            entry.activeBeatsCount = n;
+        }
+        if (typeof entry.repeats === "number" && entry.repeats > n) {
+            entry.repeats = Math.max(1, n);
+        }
+        // Regenerate activeBeats from Euclidean parameters if
+        // the curve is in euclidean mode — the new cycleDuration
+        // changes how many slots the pattern fills.
+        regenerateActiveBeatsIfEuclidean(entry);
+    }
 }
 
 /**
@@ -671,6 +698,214 @@ export function setActiveBeatsOnCurves(data, selection, value) {
  */
 export function setStrengthOnCurves(data, selection, value) {
     setFieldOnSelection(data, { curves: selection.curves }, "strength", value);
+}
+
+/**
+ * Set the beatInterval field on every curve in the selection.
+ * Sprites and triggers in the selection are ignored. The
+ * value is a token from the fixed list in beatIntervals.js;
+ * the inspector's validator gates the input, so the value is
+ * stored as-is. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeatIntervalOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "beatInterval", String(value));
+}
+
+/**
+ * Set the beatsPerBar field on every curve in the selection,
+ * and recompute the pipe-character placement in each curve's
+ * activeBeats and strength strings to reflect the new bar
+ * size. Sprites and triggers in the selection are ignored.
+ * The value is the canonicalised string from the inspector's
+ * validator, always parseable as a positive integer; this
+ * function parses it for storage. Mutates `data` in place.
+ *
+ * Per DESIGN.md §10's pipe-character rule, pipes are
+ * display-only formatting auto-inserted by the inspector at
+ * positions k×beatsPerBar where the typed-character count is
+ * at least k×beatsPerBar. When beatsPerBar changes, those
+ * positions move, so the stored strings need their pipes
+ * repositioned. The repipeWithBars helper strips existing
+ * pipes (and any spaces) and re-inserts pipes at the new
+ * positions. The engine sees no change since it strips both
+ * before cycling.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeatsPerBarOnCurves(data, selection, value) {
+    const n = Math.max(1, Math.round(Number(value)));
+    const indexes = selection.curves;
+    if (indexes === undefined) return;
+    const arr = data?.curves;
+    if (!Array.isArray(arr)) return;
+    for (const idx of indexes) {
+        if (idx < 0 || idx >= arr.length) continue;
+        const entry = arr[idx];
+        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+        entry.beatsPerBar = n;
+        if (typeof entry.activeBeats === "string") {
+            entry.activeBeats = repipeWithBars(entry.activeBeats, n);
+        }
+        if (typeof entry.strength === "string") {
+            entry.strength = repipeWithBars(entry.strength, n);
+        }
+    }
+}
+
+/**
+ * Set the beatOffset field on every curve in the selection.
+ * Sprites and triggers in the selection are ignored. The
+ * value is the canonicalised string from the inspector's
+ * validator, always parseable as a signed integer; this
+ * function parses it for storage. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeatOffsetOnCurves(data, selection, value) {
+    const n = Math.round(Number(value));
+    setFieldOnSelection(data, { curves: selection.curves }, "beatOffset", n);
+}
+
+/**
+ * Switch every selected curve to a new beat-points mode
+ * ("normal", "euclidean", or "none"). Sprites and triggers
+ * in the selection are ignored. The mode change carries
+ * side effects per DESIGN.md §10's mode-switching rules:
+ *
+ *   - To euclidean: ensure activeBeatsCount, beatShift, and
+ *     repeats are present on the entry (defaulting any
+ *     missing field to 0, 0, and 1 respectively, matching
+ *     the question-3 design that fresh Euclidean mode
+ *     starts with zero actives), then regenerate
+ *     activeBeats from those parameters. Pre-existing
+ *     parameter values from a hand-edited JSON survive the
+ *     transition.
+ *
+ *   - To normal: delete activeBeatsCount, beatShift, and
+ *     repeats so the JSON only carries the parameters when
+ *     the mode actually uses them. If restoreActiveBeats is
+ *     supplied (typically by the inspector restoring its
+ *     none-mode stash), the curve's activeBeats is replaced
+ *     with that string, with pipe-character placement
+ *     applied per beatsPerBar. Otherwise activeBeats is
+ *     left as-is — either the previously-generated string
+ *     from euclidean mode (which becomes the user's
+ *     editable starting content) or whatever was already
+ *     there.
+ *
+ *   - To none: delete the Euclidean parameters as above,
+ *     and replace activeBeats with ".", which the engine
+ *     reads as a single rest cycling forever. The diamond
+ *     beat-point markers don't render in none mode (the
+ *     inspector's render path checks beatPointsMode).
+ *
+ * Curves whose mode already equals newMode are skipped
+ * entirely — no parameter resets, no regeneration, no
+ * activeBeats overwrite.
+ *
+ * Field insertion order: when adding the Euclidean
+ * parameters to an entry that didn't have them, they go
+ * directly after beatPointsMode in the entry's key sequence,
+ * matching the JSON-on-disk layout in DESIGN.md §14's
+ * example for euclidean-mode curves.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} newMode  One of "normal", "euclidean", "none".
+ * @param {string | null} [restoreActiveBeats]  Optional string used as
+ *     the new activeBeats when transitioning to normal mode
+ *     (typically the previous activeBeats stashed by the
+ *     inspector when the user entered none mode).
+ */
+export function setBeatPointsModeOnCurves(data, selection, newMode, restoreActiveBeats = null) {
+    if (newMode !== "normal" && newMode !== "euclidean" && newMode !== "none") return;
+    const indexes = selection.curves;
+    if (indexes === undefined) return;
+    const arr = data?.curves;
+    if (!Array.isArray(arr)) return;
+    for (const idx of indexes) {
+        if (idx < 0 || idx >= arr.length) continue;
+        const entry = arr[idx];
+        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const oldMode = entry.beatPointsMode;
+        if (oldMode === newMode) continue;
+        const beatsPerBar = typeof entry.beatsPerBar === "number" ? entry.beatsPerBar : 4;
+        if (newMode === "euclidean") {
+            ensureFieldsAfter(entry, "beatPointsMode", {
+                activeBeatsCount: 0,
+                beatShift: 0,
+                repeats: 1,
+            });
+            entry.beatPointsMode = "euclidean";
+            regenerateActiveBeatsIfEuclidean(entry);
+        } else if (newMode === "normal") {
+            delete entry.activeBeatsCount;
+            delete entry.beatShift;
+            delete entry.repeats;
+            entry.beatPointsMode = "normal";
+            if (typeof restoreActiveBeats === "string") {
+                entry.activeBeats = repipeWithBars(restoreActiveBeats, beatsPerBar);
+            }
+        } else {
+            // newMode === "none"
+            delete entry.activeBeatsCount;
+            delete entry.beatShift;
+            delete entry.repeats;
+            entry.beatPointsMode = "none";
+            entry.activeBeats = ".";
+        }
+    }
+}
+
+/**
+ * Set one of the three Euclidean parameters
+ * (activeBeatsCount, beatShift, repeats) on every curve in
+ * the selection, then regenerate activeBeats from the new
+ * parameter set for any curve currently in euclidean mode.
+ * Sprites and triggers in the selection are ignored.
+ *
+ * The value is the canonicalised string from the inspector's
+ * validator, always parseable as an integer; this function
+ * parses it for storage. Mutates `data` in place.
+ *
+ * Curves not in euclidean mode are skipped — storing
+ * Euclidean parameter values on a curve in normal or none
+ * mode would clutter the JSON with fields that the engine
+ * does not read, and per our mode-switching design the
+ * params are reset to (0, 0, 1) on the next entry into
+ * euclidean mode anyway, so any pre-populated values would
+ * be lost on transition.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {"activeBeatsCount" | "beatShift" | "repeats"} paramName
+ * @param {string} value
+ */
+export function setEuclideanParameterOnCurves(data, selection, paramName, value) {
+    if (paramName !== "activeBeatsCount" &&
+        paramName !== "beatShift" &&
+        paramName !== "repeats") return;
+    const n = Math.round(Number(value));
+    const indexes = selection.curves;
+    if (indexes === undefined) return;
+    const arr = data?.curves;
+    if (!Array.isArray(arr)) return;
+    for (const idx of indexes) {
+        if (idx < 0 || idx >= arr.length) continue;
+        const entry = arr[idx];
+        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+        if (entry.beatPointsMode !== "euclidean") continue;
+        entry[paramName] = n;
+        regenerateActiveBeatsIfEuclidean(entry);
+    }
 }
 
 // --- Band 2 (Geometry and visual) write paths ---
@@ -1083,6 +1318,118 @@ function setFieldOnSelection(data, selection, fieldName, value) {
  */
 function roundCoord(n) {
     return Math.round(n * 100) / 100;
+}
+
+/**
+ * Strip pipes and whitespace from a beat-string and re-
+ * insert pipes at the bar boundaries determined by
+ * beatsPerBar. Used by setBeatsPerBarOnCurves and
+ * regenerateActiveBeatsIfEuclidean to keep the stored
+ * activeBeats and strength strings consistent with the
+ * curve's current beatsPerBar.
+ *
+ * The pipe placement rule is the one in DESIGN.md §10's
+ * "Pipe characters in displayed strings": a pipe appears at
+ * position k×beatsPerBar if and only if the count of
+ * meaningful (non-pipe non-whitespace) characters in the
+ * input is at least k×beatsPerBar. With a fully-typed
+ * cycleDuration-length string, that's a pipe at every
+ * k×beatsPerBar position less than or equal to the typed
+ * count.
+ *
+ * Spaces are dropped on output. The user-typed-spaces
+ * preservation in DESIGN.md is handled at the inspector's
+ * per-keystroke editing layer, not here — this helper is
+ * called when the inspector commits a beatsPerBar change
+ * or when the Euclidean generator produces a fresh string,
+ * neither of which carry user-spacing intent.
+ *
+ * @param {string} s
+ * @param {number} beatsPerBar
+ * @returns {string}
+ */
+function repipeWithBars(s, beatsPerBar) {
+    if (typeof s !== "string") return "";
+    const stripped = s.replace(/[|\s]/g, "");
+    if (beatsPerBar <= 0) return stripped;
+    let result = "";
+    for (let i = 0; i < stripped.length; i++) {
+        result += stripped[i];
+        if ((i + 1) % beatsPerBar === 0) result += "|";
+    }
+    return result;
+}
+
+/**
+ * If the curve is in euclidean mode, regenerate its
+ * activeBeats string from cycleDuration plus the three
+ * Euclidean parameters (activeBeatsCount, beatShift,
+ * repeats). The newly-generated string is repiped per the
+ * curve's beatsPerBar so the stored JSON stays consistent
+ * with the inspector's display rule.
+ *
+ * No-op for curves in normal or none mode, or for curves
+ * with a missing/unrecognised beatPointsMode. Defensive
+ * defaults read sensibly from the entry so a hand-edited
+ * scene.json with partial Euclidean fields still produces
+ * a valid string rather than crashing.
+ *
+ * @param {any} entry
+ */
+function regenerateActiveBeatsIfEuclidean(entry) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return;
+    if (entry.beatPointsMode !== "euclidean") return;
+    const cycleDuration = typeof entry.cycleDuration === "number" ? entry.cycleDuration : 4;
+    const activeBeatsCount = typeof entry.activeBeatsCount === "number" ? entry.activeBeatsCount : 0;
+    const beatShift = typeof entry.beatShift === "number" ? entry.beatShift : 0;
+    const repeats = typeof entry.repeats === "number" ? entry.repeats : 1;
+    const beatsPerBar = typeof entry.beatsPerBar === "number" ? entry.beatsPerBar : 4;
+    const generated = generateEuclideanPattern(cycleDuration, activeBeatsCount, beatShift, repeats);
+    entry.activeBeats = repipeWithBars(generated, beatsPerBar);
+}
+
+/**
+ * Add zero or more fields to an entry, inserting each
+ * missing field directly after the named anchor key in the
+ * entry's key order. Fields already present on the entry
+ * keep their existing position and value (the helper does
+ * not overwrite). If the anchor key is not present on the
+ * entry, the missing fields are appended at the end.
+ *
+ * Used by setBeatPointsModeOnCurves to add the three
+ * Euclidean parameters (activeBeatsCount, beatShift,
+ * repeats) right after beatPointsMode when transitioning a
+ * curve into euclidean mode, matching the JSON-on-disk
+ * layout in DESIGN.md §14.
+ *
+ * Mutates the entry in place by deleting all keys and
+ * re-adding them in the new order, preserving the entry's
+ * object identity (other code with a reference to the
+ * entry continues to see the same object).
+ *
+ * @param {any} entry
+ * @param {string} anchorKey
+ * @param {Object<string, any>} fieldsToAdd
+ */
+function ensureFieldsAfter(entry, anchorKey, fieldsToAdd) {
+    const additions = Object.keys(fieldsToAdd).filter((k) => !(k in entry));
+    if (additions.length === 0) return;
+    if (!(anchorKey in entry)) {
+        for (const k of additions) entry[k] = fieldsToAdd[k];
+        return;
+    }
+    /** @type {string[]} */
+    const oldKeys = Object.keys(entry);
+    /** @type {Record<string, any>} */
+    const oldValues = {};
+    for (const k of oldKeys) oldValues[k] = entry[k];
+    for (const k of oldKeys) delete entry[k];
+    for (const k of oldKeys) {
+        entry[k] = oldValues[k];
+        if (k === anchorKey) {
+            for (const m of additions) entry[m] = fieldsToAdd[m];
+        }
+    }
 }
 
 /**

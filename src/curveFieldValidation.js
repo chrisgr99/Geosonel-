@@ -29,6 +29,8 @@
 
 // @ts-check
 
+import { isValidBeatInterval } from "./beatIntervals.js";
+
 /**
  * Validation result returned by every validator.
  * @typedef {{ kind: "ok", value: string }
@@ -310,4 +312,276 @@ export function validateHexColor(candidate) {
         kind: "hard", value: "",
         message: `"${trimmed}" is not a hex colour (expected #RRGGBB).`,
     };
+}
+
+/**
+ * Validate Beat Interval. Runtime value is a token from the
+ * fixed list in beatIntervals.js (e.g. "Qtr", "16th",
+ * "Dot 8th"). Empty input is hard-blocked; unknown tokens
+ * are hard-blocked. The validator does no canonicalisation
+ * — tokens are case-sensitive matches against the table.
+ *
+ * @param {string} candidate
+ * @returns {ValidationResult}
+ */
+export function validateBeatInterval(candidate) {
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return {
+            kind: "hard", value: "",
+            message: "Beat Interval is required.",
+        };
+    }
+    if (!isValidBeatInterval(trimmed)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is not a recognised beat interval.`,
+        };
+    }
+    return { kind: "ok", value: trimmed };
+}
+
+/**
+ * Validate Beats/Bar. Runtime value is a positive integer
+ * naming the numerator of the curve's time signature. Non-
+ * integer numeric input is rounded with a soft warning;
+ * zero, negative, non-numeric, and empty input are
+ * hard-blocked. No upper cap (a curve with very large
+ * Beats/Bar is unusual but not invalid; the inspector's
+ * pipe-display rule still works at any value).
+ *
+ * @param {string} candidate
+ * @returns {ValidationResult}
+ */
+export function validateBeatsPerBar(candidate) {
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return {
+            kind: "hard", value: "",
+            message: "Beats/Bar is required.",
+        };
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is not a number.`,
+        };
+    }
+    if (n < 1) {
+        return {
+            kind: "hard", value: "",
+            message: "Beats/Bar must be at least 1.",
+        };
+    }
+    const rounded = Math.round(n);
+    const roundedStr = String(rounded);
+    if (n !== rounded) {
+        return {
+            kind: "soft", value: roundedStr,
+            message: `Beats/Bar must be an integer; rounded to ${rounded}.`,
+        };
+    }
+    return { kind: "ok", value: roundedStr };
+}
+
+/**
+ * Validate Beat Offset. Runtime value is a signed integer
+ * giving the slot offset between the curve's slot 0 and the
+ * cursor's position at score-beat zero. Any integer is
+ * accepted (the engine takes mod cycleDuration); non-integer
+ * numeric input rounds with a soft warning; non-numeric and
+ * empty input are hard-blocked.
+ *
+ * @param {string} candidate
+ * @returns {ValidationResult}
+ */
+export function validateBeatOffset(candidate) {
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return {
+            kind: "hard", value: "",
+            message: "Beat Offset is required (use 0 for no offset).",
+        };
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is not a number.`,
+        };
+    }
+    const rounded = Math.round(n);
+    const roundedStr = String(rounded);
+    if (n !== rounded) {
+        return {
+            kind: "soft", value: roundedStr,
+            message: `Beat Offset must be an integer; rounded to ${rounded}.`,
+        };
+    }
+    return { kind: "ok", value: roundedStr };
+}
+
+/**
+ * Validate Curve Beat Points mode. Runtime value is one of
+ * "normal", "euclidean", or "none". Empty input and
+ * unrecognised values are hard-blocked. Case-sensitive
+ * match against the enum.
+ *
+ * @param {string} candidate
+ * @returns {ValidationResult}
+ */
+export function validateBeatPointsMode(candidate) {
+    const trimmed = candidate.trim();
+    if (trimmed === "normal" || trimmed === "euclidean" || trimmed === "none") {
+        return { kind: "ok", value: trimmed };
+    }
+    return {
+        kind: "hard", value: "",
+        message: `"${trimmed}" is not a recognised beat-points mode (expected normal, euclidean, or none).`,
+    };
+}
+
+/**
+ * Validate Active Beats count (the Euclidean parameter, not
+ * the activeBeats string). Runtime value is an integer in
+ * [0, cycleDuration]. Out-of-range values silently clamp
+ * with a soft warning so the user can type freely without
+ * being rejected; non-integer input rounds with a soft
+ * warning; non-numeric and empty input are hard-blocked.
+ *
+ * The cycleDuration argument provides the upper bound for
+ * clamping; pass the curve's current cycleDuration so the
+ * clamp matches the slot count the count will be
+ * distributed across.
+ *
+ * @param {string} candidate
+ * @param {number} cycleDuration
+ * @returns {ValidationResult}
+ */
+export function validateActiveBeatsCount(candidate, cycleDuration) {
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return {
+            kind: "hard", value: "",
+            message: "Active Beats count is required.",
+        };
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is not a number.`,
+        };
+    }
+    const upper = Math.max(0, Math.round(cycleDuration));
+    const rounded = Math.round(n);
+    const wasIntegerInput = (n === rounded);
+    if (rounded < 0) {
+        return {
+            kind: "soft", value: "0",
+            message: "Active Beats count clamped to 0 (cannot be negative).",
+        };
+    }
+    if (rounded > upper) {
+        return {
+            kind: "soft", value: String(upper),
+            message: `Active Beats count clamped to ${upper} (cannot exceed cycle length).`,
+        };
+    }
+    if (!wasIntegerInput) {
+        return {
+            kind: "soft", value: String(rounded),
+            message: `Active Beats count must be an integer; rounded to ${rounded}.`,
+        };
+    }
+    return { kind: "ok", value: String(rounded) };
+}
+
+/**
+ * Validate Beat Shift (the Euclidean parameter). Runtime
+ * value is a signed integer naming a rotational offset in
+ * slots. Any integer is accepted (the generator takes mod
+ * cycleDuration); non-integer numeric input rounds with a
+ * soft warning; non-numeric and empty input are
+ * hard-blocked.
+ *
+ * @param {string} candidate
+ * @returns {ValidationResult}
+ */
+export function validateBeatShift(candidate) {
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return {
+            kind: "hard", value: "",
+            message: "Beat Shift is required (use 0 for no shift).",
+        };
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is not a number.`,
+        };
+    }
+    const rounded = Math.round(n);
+    const roundedStr = String(rounded);
+    if (n !== rounded) {
+        return {
+            kind: "soft", value: roundedStr,
+            message: `Beat Shift must be an integer; rounded to ${rounded}.`,
+        };
+    }
+    return { kind: "ok", value: roundedStr };
+}
+
+/**
+ * Validate Repeats (the Euclidean parameter). Runtime value
+ * is a positive integer in [1, cycleDuration]. Out-of-range
+ * values silently clamp with a soft warning; non-integer
+ * input rounds with a soft warning; non-numeric and empty
+ * input are hard-blocked. The cycleDuration argument bounds
+ * the clamp.
+ *
+ * @param {string} candidate
+ * @param {number} cycleDuration
+ * @returns {ValidationResult}
+ */
+export function validateRepeats(candidate, cycleDuration) {
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return {
+            kind: "hard", value: "",
+            message: "Repeats is required.",
+        };
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is not a number.`,
+        };
+    }
+    const upper = Math.max(1, Math.round(cycleDuration));
+    const rounded = Math.round(n);
+    const wasIntegerInput = (n === rounded);
+    if (rounded < 1) {
+        return {
+            kind: "soft", value: "1",
+            message: "Repeats clamped to 1 (must be at least 1).",
+        };
+    }
+    if (rounded > upper) {
+        return {
+            kind: "soft", value: String(upper),
+            message: `Repeats clamped to ${upper} (cannot exceed cycle length).`,
+        };
+    }
+    if (!wasIntegerInput) {
+        return {
+            kind: "soft", value: String(rounded),
+            message: `Repeats must be an integer; rounded to ${rounded}.`,
+        };
+    }
+    return { kind: "ok", value: String(rounded) };
 }
