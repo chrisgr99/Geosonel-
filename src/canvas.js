@@ -62,6 +62,28 @@ const MINOR_GRID_COLOUR = "#3a3a3a";
 const MAJOR_GRID_COLOUR = "#4a4a4a";
 const AXIS_COLOUR = "#606060";
 
+// Canvas-region styling. The canvas rectangle is the
+// playable area defined by scene.canvasW × scene.canvasH
+// centred on the origin; sprites bounce off its walls and
+// the image (when one is loaded) stretches to fill it. The
+// area outside the canvas reads as a darker grey so the
+// canvas boundary stands out even at zoom levels where the
+// canvas is much smaller than the viewport.
+//
+// The border colour is deliberately brighter than the
+// splitter lines elsewhere in the UI. At #777 the contrast
+// against the canvas inside (#2a2a2a) was visible but soft
+// — fine when an image was loaded, but easy to lose track
+// of on an empty canvas where #2a2a2a fills the whole
+// region. #b8b8b8 sits at roughly the same perceived
+// brightness as the curve colour (#7dd68a, NTSC-luma
+// ~179) while staying in pure greyscale, so the canvas
+// boundary anchors the eye without competing with content
+// for attention.
+const CANVAS_OUTSIDE_COLOUR = "#181818";
+const CANVAS_BORDER_COLOUR = "#b8b8b8";
+const CANVAS_BORDER_WIDTH_PX = 3;
+
 // Colours for scene elements. Curves are soft green, picking
 // up on GeoSonix's accent colour. Inactive beat-point markers
 // reuse the same brighter green so they read as a curve
@@ -675,14 +697,23 @@ export class Canvas {
         // drawing calls use CSS pixel coordinates.
         ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-        ctx.fillStyle = BG_COLOUR;
+        ctx.fillStyle = CANVAS_OUTSIDE_COLOUR;
         ctx.fillRect(0, 0, this.cssWidth, this.cssHeight);
 
-        // Draw order: image as substrate, grid as reference
-        // overlay, scene elements on top as content. Selection
-        // markers and the marquee rectangle sit on top so they
-        // remain visible against any underlying colour.
+        // Draw order: canvas-region fill (the playable area's
+        // base colour), image as substrate, canvas border
+        // outlining the playable area, grid as reference
+        // overlay, scene elements on top as content.
+        // Selection markers and the marquee rectangle sit on
+        // top so they remain visible against any underlying
+        // colour. The canvas border draws after the image so
+        // it stays visible regardless of the image's edge
+        // colour; the grid draws after the border so the
+        // axis line doesn't break visually where it crosses
+        // the border.
+        this._fillCanvasRegion();
         this._drawImage();
+        this._strokeCanvasBorder();
         this._drawGrid();
         this._drawScene();
         this._drawSelectionMarkers();
@@ -1579,10 +1610,14 @@ export class Canvas {
 
     /**
      * Return the image colour at canvas position (x, y) as a
-     * CSS rgb() string. The image fills the default ±16 by
-     * ±12 viewing region (DESIGN.md §20), so positions outside
-     * that region (or any time no image is loaded) fall back
-     * to the no-image placeholder colour.
+     * CSS rgb() string. The image fills the scene's canvas
+     * region (canvasW × canvasH centred on the origin), so
+     * positions outside that region (or any time no image is
+     * loaded) fall back to the no-image placeholder colour.
+     * Sampling tracks canvas size so a sprite or trigger
+     * placed inside the canvas always reads from the image
+     * pixel beneath it, regardless of how the user has sized
+     * the playable area.
      * @param {number} canvasX
      * @param {number} canvasY
      * @returns {string}
@@ -1590,13 +1625,15 @@ export class Canvas {
     _sampleImageAt(canvasX, canvasY) {
         if (this._imagePixels === null) return NO_IMAGE_FILL_COLOUR;
 
+        const halfW = this._getCanvasW() / 2;
+        const halfH = this._getCanvasH() / 2;
         // Map canvas coordinates to (u, v) in [0, 1]:
-        //   u: x in [-16, 16] → [0, 1] left-to-right
-        //   v: y in [12, -12] → [0, 1] top-to-bottom (flipped
-        //      because image rows go top-down while canvas Y
-        //      goes bottom-up)
-        const u = (canvasX + DEFAULT_HALF_WIDTH) / (2 * DEFAULT_HALF_WIDTH);
-        const v = (DEFAULT_HALF_HEIGHT - canvasY) / (2 * DEFAULT_HALF_HEIGHT);
+        //   u: x in [-halfW, halfW] → [0, 1] left-to-right
+        //   v: y in [halfH, -halfH] → [0, 1] top-to-bottom
+        //      (flipped because image rows go top-down while
+        //      canvas Y goes bottom-up)
+        const u = (canvasX + halfW) / (2 * halfW);
+        const v = (halfH - canvasY) / (2 * halfH);
         if (u < 0 || u >= 1 || v < 0 || v >= 1) return NO_IMAGE_FILL_COLOUR;
 
         const w = this._imagePixels.width;
@@ -1608,17 +1645,96 @@ export class Canvas {
         return `rgb(${data[idx]}, ${data[idx + 1]}, ${data[idx + 2]})`;
     }
 
+    /**
+     * Return the scene's canvas width in canvas units, or
+     * the legacy default (32) when no scene is loaded. The
+     * default matches the pre-canvas-size hardcoded image
+     * region so a freshly-mounted Canvas with no scene yet
+     * renders the same playable rectangle that older
+     * versions drew.
+     * @returns {number}
+     */
+    _getCanvasW() {
+        if (this._scene !== null && typeof this._scene.canvasW === "number" && this._scene.canvasW > 0) {
+            return this._scene.canvasW;
+        }
+        return 32;
+    }
+
+    /**
+     * Return the scene's canvas height in canvas units, or
+     * the legacy default (24) when no scene is loaded.
+     * @returns {number}
+     */
+    _getCanvasH() {
+        if (this._scene !== null && typeof this._scene.canvasH === "number" && this._scene.canvasH > 0) {
+            return this._scene.canvasH;
+        }
+        return 24;
+    }
+
+    /**
+     * Fill the canvas region (the rectangle
+     * canvasW × canvasH centred on the origin) with the
+     * canvas-inside colour. Drawn before the image so an
+     * empty canvas (no image loaded) reads as a slightly-
+     * lighter rectangle against the dark surround. Drawn
+     * after the surround fill so we don't have to compute
+     * the four-rectangle frame around the canvas — just
+     * paint the whole pane dark, then paint the canvas
+     * region back to its lighter tone.
+     */
+    _fillCanvasRegion() {
+        const ctx = this.ctx;
+        const halfW = this._getCanvasW() / 2;
+        const halfH = this._getCanvasH() / 2;
+        const left = this.toPixelX(-halfW);
+        const right = this.toPixelX(halfW);
+        const top = this.toPixelY(halfH);
+        const bottom = this.toPixelY(-halfH);
+        ctx.fillStyle = BG_COLOUR;
+        ctx.fillRect(left, top, right - left, bottom - top);
+    }
+
+    /**
+     * Stroke a border around the canvas region in the same
+     * grey and thickness as the splitter lines elsewhere in
+     * the UI. The stroke is centred on the canvas-region
+     * boundary, so half the line width sits inside the
+     * canvas and half outside; the rectangle's stroked area
+     * therefore frames the canvas precisely. Drawn after the
+     * image so the border isn't covered by image pixels at
+     * the canvas edges.
+     */
+    _strokeCanvasBorder() {
+        const ctx = this.ctx;
+        const halfW = this._getCanvasW() / 2;
+        const halfH = this._getCanvasH() / 2;
+        const left = this.toPixelX(-halfW);
+        const right = this.toPixelX(halfW);
+        const top = this.toPixelY(halfH);
+        const bottom = this.toPixelY(-halfH);
+        ctx.strokeStyle = CANVAS_BORDER_COLOUR;
+        ctx.lineWidth = CANVAS_BORDER_WIDTH_PX;
+        ctx.strokeRect(left, top, right - left, bottom - top);
+    }
+
     _drawImage() {
         if (this._imageBitmap === null) return;
         const ctx = this.ctx;
-        // The image always fills the default ±16 by ±12 region
-        // regardless of the canvas pane's aspect ratio. Any
-        // source aspect ratio is stretched. This matches the
-        // GeoSonix behaviour documented in DESIGN.md Section 20.
-        const left = this.toPixelX(-16);
-        const right = this.toPixelX(16);
-        const top = this.toPixelY(12);
-        const bottom = this.toPixelY(-12);
+        // The image stretches to fill the scene's canvas
+        // region (canvasW × canvasH centred on the origin),
+        // regardless of the canvas pane's aspect ratio or the
+        // source image's true aspect ratio. Mismatched
+        // aspects distort. This keeps the image-pixel-to-
+        // canvas-position mapping (used by trigger and sprite
+        // fills via _sampleImageAt) trivially axis-aligned.
+        const halfW = this._getCanvasW() / 2;
+        const halfH = this._getCanvasH() / 2;
+        const left = this.toPixelX(-halfW);
+        const right = this.toPixelX(halfW);
+        const top = this.toPixelY(halfH);
+        const bottom = this.toPixelY(-halfH);
         ctx.drawImage(
             this._imageBitmap,
             left, top,

@@ -73,6 +73,66 @@ export class Scene {
         /** @type {{target: string, port: string | null} | null} */
         this.output = null;
 
+        // --- Canvas size ---
+        // Width and height of the rectangular play area in
+        // canvas units, centred on the origin. The image
+        // (when one is loaded) stretches to fill this region;
+        // the area outside it draws as a darker grey with a
+        // grey border around the canvas. Sprite walls bounce
+        // at canvas ± W/2 and ± H/2 once sprite physics lands
+        // in milestone 2. Independent of the viewport: the
+        // viewport stays at ±16 × ±12 at zoom 1 regardless of
+        // canvas size, so a small canvas reads as a small
+        // bordered rectangle in the centre of a larger empty
+        // viewport, and a large canvas extends past the
+        // viewport (zoom out to see it all).
+        // Defaults match the legacy hardcoded image region
+        // so scenes loading without canvas-size fields look
+        // identical to before.
+        //
+        // The canvas is a SOFT boundary, not a hard
+        // constraint on what can exist in the scene. Three
+        // concrete jobs depend on the canvas dimensions:
+        //   - Image stretching: the image (when loaded)
+        //     fills exactly canvasW × canvasH centred on the
+        //     origin. Pixel sampling for trigger and sprite
+        //     fills tracks the same region.
+        //   - Sprite walls (milestone 2): sprites bounce off
+        //     the four canvas edges using these dimensions.
+        //   - Visual play-area hint: the canvas border anchors
+        //     the eye on where composition was intended.
+        // Curves and triggers are explicitly NOT clamped to
+        // the canvas. A curve whose geometry extends past
+        // the canvas is fully traced by its cursor; the
+        // cursor visibly leaves the canvas region into the
+        // darker surround when the curve takes it there.
+        // This is by design — a composer might author such
+        // curves intentionally (an off-stage gesture
+        // returning to the canvas) or leave them half-out
+        // accidentally, and a hard clamp would silently
+        // damage the second case while denying the first.
+        //
+        // Off-canvas firing semantics (deferred until the
+        // audio path lands with the Strudel migration).
+        // Intended default: the cursor mutes audio firing
+        // whenever its position is outside the canvas
+        // region, since music-generation samples there
+        // read the no-image fallback colour and would
+        // produce sound the composer didn't paint. A
+        // composer who wants the off-canvas fallback as
+        // part of the piece can override the mute via a
+        // per-scene muteOffCanvas boolean (default true);
+        // a global preference can layer on top later if
+        // useful. The boolean is intentionally NOT added
+        // to the schema here — it lands alongside the
+        // firing path so its semantics and consumer arrive
+        // together rather than sitting as an inert future
+        // hook.
+        /** @type {number} */
+        this.canvasW = 32;
+        /** @type {number} */
+        this.canvasH = 24;
+
         // --- Per-score display scales ---
         // Multipliers applied to every trigger and sprite at
         // draw time. Travel with the score so a piece looks

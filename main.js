@@ -80,6 +80,7 @@ import {
     cleanLegacyShapeFields,
     fillMissingMusicalTimingFields,
     cleanLegacySceneFields,
+    fillMissingCanvasSize,
     setMuteOnSelection,
     setHideOnCurves,
     setNameOnSelection,
@@ -104,6 +105,8 @@ import {
     setCurveThicknessOnCurves,
     setCursorThicknessOnCurves,
     setColorOnSelection,
+    setCanvasW,
+    setCanvasH,
 } from "./src/sceneEditor.js";
 
 main();
@@ -331,6 +334,13 @@ async function main() {
             if (editor.inspector) {
                 editor.inspector.setScene(result.scene);
             }
+            // Sync the toolbar's canvas-size fields to the
+            // scene's current values. Doesn't disturb a
+            // focused field (the user may be mid-edit on
+            // W or H from a different code path), so this
+            // is safe to call unconditionally on every
+            // scene reload.
+            toolbar.setCanvasSize(result.scene.canvasW, result.scene.canvasH);
             messages.write("Scene updated.");
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
@@ -373,12 +383,14 @@ async function main() {
         const shapesChanged = cleanLegacyShapeFields(parsed.data);
         const timingChanged = fillMissingMusicalTimingFields(parsed.data);
         const sceneFieldsChanged = cleanLegacySceneFields(parsed.data);
+        const canvasSizeChanged = fillMissingCanvasSize(parsed.data);
         if (!idsChanged &&
             !namesChanged &&
             !legacyChanged &&
             !shapesChanged &&
             !timingChanged &&
-            !sceneFieldsChanged) return;
+            !sceneFieldsChanged &&
+            !canvasSizeChanged) return;
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();
@@ -529,6 +541,30 @@ async function main() {
     canvas.setToolbar(toolbar);
     toolbar.onChange((tool, locked) => {
         canvas.setActiveTool(tool, locked);
+    });
+    // The toolbar's image-import button surfaces the same
+    // file-picker flow as the File menu's Import Image
+    // command. Routed through this callback rather than
+    // having the toolbar import the imageImporter module
+    // directly, so the toolbar stays decoupled from the
+    // import pipeline's other dependencies.
+    toolbar.onImageImportClick(() => {
+        imageImporter.importViaFilePicker();
+    });
+    // The toolbar's canvas-size fields emit edits with the
+    // same shape inspector and canvas edits use
+    // ({kind, value}). Dispatched through applySceneEdit so
+    // they share the dirty-state, auto-save, and re-run
+    // mechanics. applySceneEdit is declared below this
+    // line; the closure captures the binding and resolves
+    // it at click/wheel time, by which point the variable
+    // is assigned.
+    toolbar.onSceneEdit(async (edit) => {
+        if (edit.kind === "setCanvasW") {
+            await applySceneEdit((data) => setCanvasW(data, edit.value));
+        } else if (edit.kind === "setCanvasH") {
+            await applySceneEdit((data) => setCanvasH(data, edit.value));
+        }
     });
 
     /**

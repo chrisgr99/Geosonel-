@@ -1494,3 +1494,131 @@ body.inspector-hidden #canvas-pane {
     color: #ffffff;
     box-shadow: 0 0 8px rgba(0, 255, 51, 0.6) inset, 0 0 6px rgba(0, 255, 51, 0.4);
 }
+
+/* Spacer between the left tool cluster and the right action
+ * cluster. flex-grow:1 absorbs the leftover horizontal
+ * space so the right cluster sits flush against the
+ * toolbar's right edge regardless of how many tool
+ * buttons live on the left. */
+.toolbar-spacer {
+    flex: 1 1 auto;
+}
+
+/* Right-side cluster: image-import action button followed
+ * by the Canvas: W H controls. The 16-pixel gap separates
+ * the button from the canvas-size group so the two read as
+ * distinct affordances rather than one continuous strip. */
+.toolbar-right-cluster {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex: 0 0 auto;
+}
+
+/* Action button: same square footprint as a tool button so
+ * the toolbar reads as a row of consistent controls, but
+ * without the armed/locked states (an action fires once on
+ * click rather than entering a persistent mode). Hover
+ * brightens the outline and background for click-landing
+ * feedback; :active flashes the same green the tool
+ * buttons use during a click so the visual language stays
+ * consistent across the whole toolbar. */
+.toolbar-action-button {
+    width: 32px;
+    height: 32px;
+    background-color: #2a2a2a;
+    border: 1px solid #888888;
+    border-radius: 3px;
+    color: #c0c0c0;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.toolbar-action-button:hover {
+    background-color: #3a3a3a;
+    border-color: #c8c8c8;
+    color: #f0f0f0;
+}
+
+.toolbar-action-button:focus {
+    outline: none;
+    border-color: #c8c8c8;
+}
+
+.toolbar-action-button:active {
+    background-color: #1f3a25;
+    border-color: #00ff33;
+    color: #d8f5d8;
+    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+}
+
+/* Canvas size controls. Layout: "Canvas:" label, W field, H
+ * field, with a small inter-field gap. The label-to-field
+ * spacing is tight enough that the label reads as a prefix
+ * of the W field rather than as a column heading. */
+.toolbar-canvas-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+
+.toolbar-canvas-label {
+    color: #c8c8c8;
+    font-size: 11pt;
+    margin-right: 2px;
+    user-select: none;
+}
+
+/* Numeric field for canvas W and H. Visually mirrors the
+ * inspector's editable fields (lighter-grey fill, green
+ * border, white text, monospace digits) so the user reads
+ * "editable numeric value" the same way they do in the
+ * inspector. Sized to fit three digits comfortably (the
+ * documented range is 1..200). Contenteditable focus
+ * suppresses the browser's default outline since the green
+ * border is already a clear focus signal; on focus the
+ * border bumps slightly brighter so the active field is
+ * distinguishable when both are visible. The cursor stays
+ * at the default text I-beam when editing and switches to
+ * ns-resize on hover-without-focus to hint at scroll-wheel
+ * scrubbing. */
+.toolbar-canvas-field {
+    background-color: #6b6b6b;
+    border: 2px solid #46b03e;
+    border-radius: 3px;
+    padding: 0 6px;
+    color: #ffffff;
+    height: 24px;
+    min-width: 40px;
+    font-size: 11pt;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: ns-resize;
+    user-select: none;
+}
+
+.toolbar-canvas-field:focus {
+    outline: none;
+    border-color: #5fc858;
+    cursor: text;
+    user-select: text;
+}
+
+/* Hard validation error: red wavy underline matching the
+ * inspector's error-hard convention. Triggers when the user
+ * presses Enter on a value outside 1..200 or non-numeric
+ * input. Cleared on the next keystroke or on a successful
+ * commit. */
+.toolbar-canvas-field.error {
+    text-decoration: underline wavy #d4564b;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 2px;
+}

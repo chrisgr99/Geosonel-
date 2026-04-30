@@ -194,6 +194,12 @@ function applyPieceLevelFields(scene, data) {
     if ("spriteScale" in data && typeof data.spriteScale === "number") {
         scene.spriteScale = data.spriteScale;
     }
+    if ("canvasW" in data && typeof data.canvasW === "number" && data.canvasW > 0) {
+        scene.canvasW = data.canvasW;
+    }
+    if ("canvasH" in data && typeof data.canvasH === "number" && data.canvasH > 0) {
+        scene.canvasH = data.canvasH;
+    }
 }
 
 /**

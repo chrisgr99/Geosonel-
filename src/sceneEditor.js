@@ -497,6 +497,62 @@ export function cleanLegacySceneFields(data) {
 }
 
 /**
+ * Fill in default canvas-size fields for scores that predate
+ * the per-scene canvas size feature. Scenes loaded without
+ * canvasW or canvasH get the legacy hardcoded image-region
+ * dimensions (32 wide × 24 tall) so they look identical
+ * before and after the migration. Each field is inserted
+ * independently — a partially-edited scene that already has
+ * one of the two fields keeps its existing value and only
+ * picks up the missing one.
+ *
+ * Insertion position. The new fields land directly before
+ * the first array key (curves, triggers, or sprites), which
+ * is the conventional place for top-level scalars in a
+ * scene.json. If no array keys are present the fields
+ * append at the end of the object.
+ *
+ * Returns true iff at least one field was added; the caller
+ * uses that signal to decide whether to write the mutated
+ * scene back to the bundle.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function fillMissingCanvasSize(data) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+    const needW = !("canvasW" in data);
+    const needH = !("canvasH" in data);
+    if (!needW && !needH) return false;
+    // Walk existing keys preserving order, inserting the
+    // missing canvas-size fields just before the first array
+    // key encountered (curves, triggers, or sprites). If no
+    // array key is present, fall through to appending at the
+    // end — same effect as plain assignment, but goes through
+    // the same code path for consistency.
+    /** @type {Record<string, any>} */
+    const newData = {};
+    let inserted = false;
+    for (const k of Object.keys(data)) {
+        if (!inserted && ARRAY_KEYS.has(k)) {
+            if (needW) newData.canvasW = 32;
+            if (needH) newData.canvasH = 24;
+            inserted = true;
+        }
+        newData[k] = data[k];
+    }
+    if (!inserted) {
+        if (needW) newData.canvasW = 32;
+        if (needH) newData.canvasH = 24;
+    }
+    // Replace data's keys in place so callers holding a
+    // reference to the same object see the new layout.
+    for (const k of Object.keys(data)) delete data[k];
+    for (const k of Object.keys(newData)) data[k] = newData[k];
+    return true;
+}
+
+/**
  * Add a sprite to the parsed scene at canvas position (x, y).
  * The sprite gets a freshly generated id, x, y, and vx/vy=0.
  * Other fields fall through to the constructor defaults (no
@@ -1210,6 +1266,65 @@ export function setColorOnSelection(data, selection, value) {
         sprites: selection.sprites,
         triggers: selection.triggers,
     }, "color", String(value));
+}
+
+// --- Top-level scene-field write paths ---
+//
+// Mutators for fields that live at the top level of
+// scene.json rather than inside one of the object arrays.
+// Toolbar edits (canvas size, image-import-driven scene
+// updates) come through the inspector edit pipeline and
+// land here.
+
+/**
+ * Set the canvas width field at the top level of scene.json.
+ * Used by the toolbar's Canvas W field commit. The value is
+ * the canonicalised string from the inspector's number
+ * validator, parseable as a positive integer; this function
+ * parses and clamps it to the documented 1..200 range
+ * before storage. If canvasW isn't present in the scene,
+ * the migration pass (fillMissingCanvasSize) will have
+ * inserted a default before this commit ever runs, so we
+ * just assign here.
+ * @param {any} data
+ * @param {string | number} value
+ */
+export function setCanvasW(data, value) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    const n = clampCanvasDimension(value);
+    if (n === null) return;
+    data.canvasW = n;
+}
+
+/**
+ * Set the canvas height field at the top level of scene.json.
+ * Symmetric with setCanvasW; see that function for details.
+ * @param {any} data
+ * @param {string | number} value
+ */
+export function setCanvasH(data, value) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    const n = clampCanvasDimension(value);
+    if (n === null) return;
+    data.canvasH = n;
+}
+
+/**
+ * Parse and clamp a canvas-dimension value to the documented
+ * 1..200 range. Returns null on values that can't be
+ * coerced to a finite number, which the call site treats as
+ * a no-op. Non-integer numeric input rounds to the nearest
+ * integer (the toolbar's validator is integer-only, so this
+ * is mostly defensive against hand-edited scene.json).
+ * @param {string | number} value
+ * @returns {number | null}
+ */
+function clampCanvasDimension(value) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return null;
+    if (n < 1) return 1;
+    if (n > 200) return 200;
+    return n;
 }
 
 /**
