@@ -309,16 +309,17 @@ html, body {
     overflow: hidden;
 }
 
-/* Editor pane sizes itself to its content rather than to a
- * hardcoded width. flex-basis: max-content makes the pane
- * exactly as wide as the inspector's widest row needs and
- * no wider, so the canvas pane gets every remaining pixel
- * for free. The inspector neither benefits from being wider
- * (its rows max out at their natural width) nor would
- * tolerate being narrower without clipping fields, which is
- * why the body divider is static rather than draggable. Use
- * View → Hide Inspector (Cmd-\\) to toggle the inspector's
- * visibility entirely. */
+/* Editor pane width is set at runtime by the body-divider's
+ * installDivider call: it measures the inspector's natural
+ * content width as a hard floor and applies either the
+ * persisted user-drag size (clamped to that floor) or the
+ * floor itself if no size has been persisted. The CSS here
+ * starts with flex-basis: max-content as a defensive default
+ * — if for any reason the divider doesn't install (initial
+ * paint before main.js runs, or an unexpected error path)
+ * the pane still renders at its natural inspector width
+ * rather than collapsing. The runtime value overrides this
+ * the moment the divider is wired. */
 #editor-pane {
     display: flex;
     flex-direction: column;
@@ -377,14 +378,13 @@ html, body {
 }
 
 /* Draggable dividers. Used for the horizontal divider
- * between the canvas area and the message area. (The body
- * divider between editor and canvas was previously
- * draggable too but became static once the inspector's
- * fixed natural width made resizing pointless.) Width or
- * height stays at 3 pixels to match the static dividers;
- * the hit target is implicitly a bit larger because the
- * cursor resize styling extends to the full element
- * bounds. */
+ * between the canvas area and the message area, and for
+ * the vertical body divider between the editor pane and
+ * the canvas pane. Width or height stays at 3 pixels to
+ * match the static dividers; the hit target is implicitly
+ * a bit larger because the cursor resize styling extends
+ * to the full element bounds. Hover and active-drag
+ * states lift the colour so the divider reads as live. */
 #message-divider.divider-draggable {
     flex: 0 0 3px;
     cursor: row-resize;
@@ -396,8 +396,20 @@ html, body {
     background-color: #999999;
 }
 
-/* Static body divider, sized like the other dividers so
- * the boundary between editor and canvas reads clearly. */
+#body-divider.divider-draggable {
+    flex: 0 0 3px;
+    cursor: col-resize;
+    position: relative;
+}
+
+#body-divider.divider-draggable:hover,
+#body-divider.divider-draggable.dragging {
+    background-color: #999999;
+}
+
+/* Static body divider fallback: applies only if the
+ * draggable variant isn't active (defensive against an
+ * older cached HTML referencing the bare class). */
 #body-divider {
     flex: 0 0 3px;
 }
@@ -967,6 +979,20 @@ html, body {
 
 .insp-inline-letter.disabled {
     color: #a8a8a8;
+}
+
+/* Bottom spacer at the end of the inspector content. Pushes
+ * the last band's fields up by roughly two row heights so
+ * the macOS dock doesn't pop over the bottom-most editable
+ * fields when the user mouses near the screen edge while
+ * editing. Lives inside .inspector-panel so it scrolls with
+ * the rest of the form rather than docking to the pane
+ * bottom; that way scrolling all the way down still reveals
+ * the spacer's empty space and the pane never feels as if
+ * it ends abruptly at a field edge. */
+.insp-bottom-spacer {
+    height: 48px;
+    flex-shrink: 0;
 }
 
 /* --- View menu dropdown --- */

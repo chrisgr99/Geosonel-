@@ -68,13 +68,15 @@
                 </div>
             </section>
 
-            <!-- Static vertical divider between editor and canvas. The
-                 inspector has a fixed natural width — it neither
-                 benefits from being wider nor would tolerate being
-                 narrower without clipping fields — so the divider is
-                 not draggable. Use View → Hide Inspector (or Cmd-\)
-                 to toggle the inspector pane visibility. -->
-            <div id="body-divider" class="divider-vertical" role="separator" aria-orientation="vertical"></div>
+            <!-- Draggable vertical divider between editor and canvas.
+                 The editor pane houses the property inspector, whose
+                 widest row sets a hard floor on how narrow the pane
+                 can go (any narrower would clip fields). The divider
+                 honours that floor while letting the user pull the
+                 inspector wider for breathing room; its position is
+                 persisted across sessions. Use View → Hide Inspector
+                 (or Cmd-\) to remove the inspector pane entirely. -->
+            <div id="body-divider" class="divider-vertical divider-draggable" role="separator" aria-orientation="vertical" aria-label="Resize editor and canvas panes" tabindex="0"></div>
 
             <!-- Canvas pane splits vertically into canvas area on top
                  and message area below, separated by a draggable

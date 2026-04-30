@@ -9,19 +9,22 @@
  * object's data and the appropriate fields un-grey based on
  * which kinds are present in the selection.
  *
- * Layout is sized by the constraint rows — the Auto Message
- * Interval row (band 4) and the Cycle Parameters row 1 (band
- * 6) hold the most fields and effectively set the minimum
- * form width. Every other row fits within that width with
- * room to spare. This matches the GeoSonix authoring
- * convention.
+ * Layout is sized by the constraint rows — the Beat Points
+ * timing row (band 5 row 1) and the Cycle Parameters row
+ * (band 6) hold the most fields and effectively set the
+ * minimum form width. Every other row fits within that width
+ * with room to spare. The Auto Beat Interval row (band 4)
+ * also drives the layout but became narrower in v2.3 once
+ * the Curve column was dropped from it (curves get their
+ * beat interval from the band 5 timing row instead). This
+ * matches the GeoSonix authoring convention.
  *
  * v1 scope: selection-driven greying for all bands plus
  * read- and write-binding for Band 1 (Object ID, Name,
  * Mute, Hide), Band 2 (Position, Curve Size W/H, Curve
  * Thickness, Cursor R/L, Cursor Thickness, Sprite/Trigger
  * Size, Color), Band 5 (Active Beats, Beat Strength), and
- * Band 6 (Cycle Duration, Cycle Speeds, Stop at Cycle).
+ * Band 6 (Cycle Speeds, Stop at Cycle, Beat Offset).
  * Edits commit back through main.js's applyInspectorEdit
  * pipeline. Name and the curve-field write paths share
  * the same validator-driven edit lifecycle: hard errors
@@ -81,8 +84,13 @@
  * varies-blank field propagates to every selected curve —
  * possible by explicit action, not by accidental slip).
  *
- * Bands 3 and 4 still show placeholder values pending
- * their own data-binding work. The Inspector exposes
+ * Bands 3 and 4 stay visible as placeholder rows pending
+ * the Strudel migration (DESIGN.md §27), since their
+ * semantics overlap with the pattern model and will be
+ * redesigned alongside Band 5's collapse into a single
+ * Strudel-pattern field. Their fields keep their current
+ * footprint so the form layout stays consistent across
+ * the migration window. The Inspector exposes
  * setSelection(), setScene(), and setEditCallback(); main.js
  * wires the three together so the inspector tracks selection
  * changes, scene reloads, and edit commits.
@@ -95,11 +103,11 @@
  *      Create buttons; labels change by kind: Step/Auto for
  *      sprite, Collision/Auto for trigger, Beat/Sweep for
  *      curve)
- *   4. Auto message interval (curve, trigger, sprite columns)
+ *   4. Auto beat interval (trigger, sprite columns)
  *   5. Beat points (curve beat-point generator, active beats
  *      string, strength string) — curves only
- *   6. Cycle parameters (cycle duration, cycle speeds, stop
- *      at cycle, sync-to-beat) — curves only
+ *   6. Cycle parameters (cycle speeds, stop at cycle, beat
+ *      offset) — curves only
  *
  * Greying rules:
  *   - Universal fields (position, color, mute) are active
@@ -117,8 +125,10 @@
  *   - Function-binding rows are active only when the selection
  *     is single-kind, since the labels carry kind-specific
  *     semantics that don't compose across kinds.
- *   - Auto-interval columns are independent: each kind's
+ *   - Auto-beat-interval columns are independent: each kind's
  *     column is active iff that kind appears in the selection.
+ *     Curves don't have a column on the row — their beat
+ *     interval lives in the Band 5 timing row.
  *
  * Aesthetic tracks GeoSonix closely: dark grey panel, lighter
  * grey field fills (visible even when empty so each field's
@@ -156,9 +166,9 @@ import { allBeatIntervalTokens } from "./beatIntervals.js";
 
 // Width constants. Centralised so layout adjustments touch
 // one set of numbers, not scattered inline styles. The
-// constraint rows (band 4 AMI, band 6 cycle params row 1)
-// drive these — every other row fits within the natural
-// width those rows produce.
+// constraint rows (band 4 ABI, band 5 row 1, band 6 cycle
+// params row) drive these — every other row fits within
+// the natural width those rows produce.
 const W = {
     // Left-edge label column. Wide enough for "Cycle Speeds"
     // and "Curve Beat Points" at 10pt; everything narrower
@@ -174,13 +184,11 @@ const W = {
     // sized to the shortest text that fits at 10pt.
     mute: 36,          // "Mute"
     hide: 36,          // "Hide"
-    amiCurve: 32,      // "Curve" in AMI row
-    amiTrigger: 42,    // "Trigger"
-    amiSprite: 36,     // "Sprite"
+    abiTrigger: 42,    // "Trigger" in Auto Beat Interval row
+    abiSprite: 36,     // "Sprite"
     curveThick: 60,    // "Curve\nThickness" multiline
     cursorThick: 60,   // "Cursor\nThickness" multiline
     stopAt: 50,        // "Stop at\nCycle" multiline
-    triggerSync: 78,   // "Trigger Sync\nTo Beat" multiline
 
     // Numeric fields.
     posXY: 60,         // Position X, Y
@@ -215,16 +223,21 @@ const W = {
     // the right margin and the rhythm strings run nearly
     // to the right edge of the panel. Wider rhythm strings
     // also help readability for longer active-beats and
-    // strength patterns. If a future row widens the
-    // constraint, lift these in step.
+    // strength patterns. cycleSpeeds is sized to keep its
+    // row no wider than the band 5 timing row — 240px was
+    // wider than the typical multiplier list needs and
+    // pushed band 6 out past the other constraint rows;
+    // 200px fits a 12-or-so-character list comfortably
+    // (e.g. "-1 2 0.5 1.5") with room to scroll for longer
+    // ones. If a future row widens the constraint, lift
+    // these in step.
     name: 280,
     funcBinding: 280,
-    cycleSpeeds: 240,
+    cycleSpeeds: 200,
     rhythmString: 360, // Active Beats / Beat Strength
 
     // Combos.
-    amiCombo: 60,
-    triggerSyncCombo: 60,
+    abiCombo: 80,               // Auto Beat Interval token dropdown (matches beatIntervalCombo)
     beatPointsModeCombo: 92,    // Mode dropdown: "Normal" / "Euclidean" / "None"
     beatIntervalCombo: 80,      // Beat Interval token dropdown
 };
@@ -354,6 +367,16 @@ export class Inspector {
         panel.appendChild(this._buildBandAutoInterval(ctx));
         panel.appendChild(this._buildBandBeatPoints(ctx));
         panel.appendChild(this._buildBandCycleParams(ctx));
+
+        // Bottom spacer. Pushes the last band's fields up by
+        // about two row heights so the macOS dock doesn't
+        // pop over them when the user mouses near the screen
+        // edge while editing fields in the lower bands. Lives
+        // inside the panel so it scrolls with the rest of the
+        // form rather than docking to the pane bottom.
+        const spacer = document.createElement("div");
+        spacer.className = "insp-bottom-spacer";
+        panel.appendChild(spacer);
 
         this.container.appendChild(panel);
     }
@@ -1196,11 +1219,25 @@ export class Inspector {
     }
 
     /**
-     * Band 4 — Auto message interval. Three independent
-     * columns; each is active iff the corresponding kind is
-     * in the selection. The Auto Message Interval label
-     * itself stays bright (the row label always applies).
-     * One of the two constraint rows that drives form width.
+     * Band 4 — Auto Beat Interval. Two independent columns,
+     * one for triggers and one for sprites; each is active
+     * iff the corresponding kind is in the selection. The
+     * row label itself stays bright (always applies). The
+     * Curve column was dropped in v2.3: curves carry their
+     * beat interval in the Band 5 timing row, so a separate
+     * Curve column here was redundant and pulled the row
+     * out wider than its sibling constraint rows.
+     *
+     * The two combos are placeholders pending the Strudel
+     * migration (DESIGN.md §27), where the auto-firing
+     * cadence is expected to be expressed by a pattern
+     * rather than a single interval token. They render the
+     * full beat-interval token list plus an "Off" entry as
+     * a UI preview, but their onSelect is a no-op: nothing
+     * commits, and the displayed value stays "Off". When the
+     * Strudel pattern model lands the field will rewire to a
+     * real value (or be replaced wholesale by a pattern
+     * field, in which case this row collapses).
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandAutoInterval(ctx) {
@@ -1208,16 +1245,49 @@ export class Inspector {
         band.className = "insp-band";
 
         const r = mkRow();
-        r.appendChild(mkLabel("Auto Message\nInterval", { width: W.leftLabel, multiline: true }));
-        r.appendChild(mkLabel("Curve", { width: W.amiCurve, disabled: !ctx.hasCurves }));
-        r.appendChild(mkCombo({ value: "Off", width: W.amiCombo, disabled: !ctx.hasCurves }));
-        r.appendChild(mkLabel("Trigger", { width: W.amiTrigger, disabled: !ctx.hasTriggers }));
-        r.appendChild(mkCombo({ value: "Off", width: W.amiCombo, disabled: !ctx.hasTriggers }));
-        r.appendChild(mkLabel("Sprite", { width: W.amiSprite, disabled: !ctx.hasSprites }));
-        r.appendChild(mkCombo({ value: "Off", width: W.amiCombo, disabled: !ctx.hasSprites }));
+        r.appendChild(mkLabel("Auto Beat\nInterval", { width: W.leftLabel, multiline: true }));
+        r.appendChild(mkLabel("Trigger", { width: W.abiTrigger, disabled: !ctx.hasTriggers }));
+        r.appendChild(this._buildAutoBeatIntervalCombo({
+            disabled: !ctx.hasTriggers,
+        }));
+        r.appendChild(mkLabel("Sprite", { width: W.abiSprite, disabled: !ctx.hasSprites }));
+        r.appendChild(this._buildAutoBeatIntervalCombo({
+            disabled: !ctx.hasSprites,
+        }));
         band.appendChild(r);
 
         return band;
+    }
+
+    /**
+     * Build an Auto Beat Interval dropdown for the Band 4
+     * Trigger or Sprite column. Options are "Off" plus the
+     * full beat-interval token list. Selection is a no-op
+     * pending the Strudel migration; the popover opens and
+     * closes normally, but no edit is emitted and the
+     * displayed value remains "Off". A user-visible UI
+     * preview that lets the row's intent be readable from
+     * the inspector.
+     * @param {{ disabled: boolean }} opts
+     */
+    _buildAutoBeatIntervalCombo(opts) {
+        const options = [
+            { value: "off", label: "Off" },
+            ...allBeatIntervalTokens().map((token) => ({ value: token, label: token })),
+        ];
+        return mkPopoverCombo({
+            value: "Off",
+            width: W.abiCombo,
+            disabled: opts.disabled,
+            options,
+            currentValue: "off",
+            onSelect: () => {
+                // Placeholder pending data binding. The
+                // popover closes via closeAllPopovers in the
+                // option-click handler; nothing else needs
+                // to happen here.
+            },
+        });
     }
 
     /**
@@ -1455,10 +1525,12 @@ export class Inspector {
      * Band 6 — Cycle parameters. Curves-only band, sized as
      * one row in v2.3 after Beats/Cycle migrated up to Band 5
      * and Beat Offset joined Cycle Speeds + Stop at Cycle on
-     * the row. The Trigger Sync to Beat combo remains as an
-     * inert placeholder; its semantics, ownership (per-trigger
-     * versus per-curve), and inspector placement are open
-     * questions tracked in DESIGN.md §25 question 26.
+     * the row. The earlier Trigger Sync to Beat placeholder
+     * has been dropped from the row; the question of how
+     * sync-to-beat is expressed (per-trigger versus per-curve,
+     * what its semantics are) is now folded into the Strudel
+     * pattern redesign in DESIGN.md §27 rather than carrying
+     * an inert combo on the band.
      *
      * Field roles. Cycle Speeds is a string of per-cycle
      * multipliers cycling through the list cycle by cycle
@@ -1511,8 +1583,6 @@ export class Inspector {
             validator: validateBeatOffset,
             editKind: "setBeatOffset",
         }));
-        r1.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.triggerSync, disabled: dis, multiline: true }));
-        r1.appendChild(mkCombo({ value: "Off", width: W.triggerSyncCombo, disabled: dis }));
         band.appendChild(r1);
 
         return band;
@@ -2618,18 +2688,22 @@ function mkInlineLetter(letter, opts = {}) {
 
 // --- Popover combo widget ---
 //
-// Used by Band 5's Mode and Beat Interval dropdowns. The
-// trigger looks like a regular mkCombo (lighter-grey fill,
-// green frame, green triangle on the right); clicking opens
-// a popover floating over the page listing the configured
-// options. Clicking outside or pressing Escape closes
-// without selecting; clicking an option fires onSelect and
-// closes. Disabled combos do not open the popover and read
-// as muted matching mkCombo.disabled. The popover is
-// appended to document.body and positioned via fixed
-// coordinates from the trigger's getBoundingClientRect, so
-// it sits over the inspector pane's overflow:auto container
-// without being clipped.
+// Used by Band 4's Auto Beat Interval dropdowns and Band 5's
+// Mode and Beat Interval dropdowns. The trigger looks like a
+// regular mkCombo (lighter-grey fill, green frame, green
+// triangle on the right); clicking opens a popover floating
+// over the page listing the configured options. Clicking
+// outside or pressing Escape closes without selecting;
+// clicking an option fires onSelect and closes. Disabled
+// combos do not open the popover and read as muted matching
+// mkCombo.disabled. The popover is appended to document.body
+// and positioned via fixed coordinates from the trigger's
+// getBoundingClientRect, so it sits over the inspector pane's
+// overflow:auto container without being clipped. The
+// positioning is viewport-aware: the popover's max-height is
+// clamped to the available room, and a popover that would
+// extend past the viewport bottom flips to open above the
+// trigger when above has more room.
 
 /**
  * @param {{
@@ -2665,9 +2739,41 @@ function mkPopoverCombo(opts) {
         const popover = document.createElement("div");
         popover.className = "insp-popover";
         const rect = el.getBoundingClientRect();
+
+        // Viewport-aware positioning. The popover ideally
+        // wants a generous max-height (PREFERRED_MAX_HEIGHT)
+        // so long token lists like Beat Interval's 18-entry
+        // list show as much as possible without scrolling,
+        // but it must stay inside the viewport so its bottom
+        // edge (and its own scrollbar) are reachable. We
+        // compute the available room below the trigger and
+        // above it, then either place the popover below
+        // (the GeoSonix-default direction) when there is
+        // sensible room there, or flip it above when above
+        // has more room. In either case the max-height is
+        // clamped to the available room minus a small
+        // viewport margin so the popover never extends past
+        // the screen edge — inside the popover, the existing
+        // overflow-y: auto then handles overflow naturally.
+        const VIEWPORT_MARGIN = 8;
+        const PREFERRED_MAX_HEIGHT = 380;
+        const MIN_USABLE_HEIGHT = 80;
+        const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
+        const spaceAbove = rect.top - VIEWPORT_MARGIN;
+        const placeBelow =
+            spaceBelow >= PREFERRED_MAX_HEIGHT || spaceBelow >= spaceAbove;
+        const availableHeight = Math.max(
+            MIN_USABLE_HEIGHT,
+            placeBelow ? spaceBelow : spaceAbove,
+        );
+        popover.style.maxHeight = `${Math.min(availableHeight, PREFERRED_MAX_HEIGHT)}px`;
         popover.style.left = `${rect.left}px`;
-        popover.style.top = `${rect.bottom + 1}px`;
         popover.style.minWidth = `${rect.width}px`;
+        // Provisional top: place below until we know the
+        // measured height for the flip-up case. Using the
+        // below position as the initial value avoids any
+        // flicker for the (much more common) below case.
+        popover.style.top = `${rect.bottom + 1}px`;
 
         for (const option of opts.options) {
             const item = document.createElement("div");
@@ -2684,6 +2790,32 @@ function mkPopoverCombo(opts) {
             popover.appendChild(item);
         }
         document.body.appendChild(popover);
+
+        // If we're flipping above, the popover's height is
+        // now known (it has been laid out by the document
+        // append) so we can position its top such that its
+        // bottom sits just above the trigger. Clamp to the
+        // viewport margin so a popover taller than the
+        // window doesn't end up with a negative top.
+        if (!placeBelow) {
+            const popoverHeight = popover.offsetHeight;
+            const desiredTop = rect.top - popoverHeight - 1;
+            popover.style.top = `${Math.max(VIEWPORT_MARGIN, desiredTop)}px`;
+        }
+
+        // Scroll the currently-selected option into view if
+        // it's outside the popover's initial scroll position.
+        // Useful for the Beat Interval combo where the
+        // current value can sit well past the visible range
+        // — without this, the user opens the popover and the
+        // first 16 tokens are visible, but the selected
+        // "Whole" or "4 x Wh" sits below the fold and isn't
+        // obvious as the current value. block: "nearest"
+        // means in-view options stay unscrolled.
+        const selectedItem = popover.querySelector(".insp-popover-option.selected");
+        if (selectedItem instanceof HTMLElement) {
+            selectedItem.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
 
         // Install document-level listeners on the next tick
         // so the click that opened the popover doesn't

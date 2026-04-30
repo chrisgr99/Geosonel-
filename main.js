@@ -199,15 +199,38 @@ async function main() {
 
     // --- Dividers ---
     //
-    // Only the message-area divider is draggable. The body
-    // divider between editor and canvas was previously
-    // draggable but is now a static 3px strip: the inspector
-    // has a fixed natural width matching its narrowest
-    // constraint row (Cycle Parameters row 1, ~560px), and
-    // there is no useful state for the body divider to be in
-    // other than fixed at that width. To gain canvas room
+    // Two draggable dividers: the body divider sits between
+    // the editor pane (housing the property inspector) and
+    // the canvas pane, and the message-area divider sits
+    // between the canvas area and the message area below.
+    //
+    // Body divider floor. The inspector has rows whose total
+    // width is the natural minimum of the editor pane —
+    // narrower than that would clip fields. We capture that
+    // width here by reading editor-pane.offsetWidth while
+    // the CSS still has it at flex: 0 0 max-content (the
+    // initial paint state, which sizes the pane to its
+    // widest content row). The measurement triggers a layout
+    // pass synchronously, so the value reflects the
+    // currently-rendered inspector. We use it as minPanePx
+    // for installDivider; the divider then sets the pane's
+    // style.flex either to a persisted user size or to the
+    // floor, overriding the CSS default. To gain canvas room
     // entirely, use View → Hide Inspector (Cmd-\\), which
     // hides the editor pane and the body divider together.
+    const editorPaneEl = document.getElementById("editor-pane");
+    const inspectorFloor = (editorPaneEl instanceof HTMLElement)
+        ? editorPaneEl.offsetWidth
+        : undefined;
+    installDivider({
+        dividerId: "body-divider",
+        firstPaneId: "editor-pane",
+        containerId: "body",
+        orientation: "vertical",
+        minPanePx: inspectorFloor,
+        persistKey: "gxw.layout.editorPaneWidth",
+        onDrag: () => canvas.scheduleDraw(),
+    });
     installDivider({
         dividerId: "message-divider",
         firstPaneId: "canvas-area",
