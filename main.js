@@ -55,6 +55,7 @@ import {
 } from "./src/storage.js";
 import { TabbedEditor } from "./src/editor.js";
 import { Transport } from "./src/transport.js";
+import { Simulation } from "./src/simulation.js";
 import { TransportBarView } from "./src/transportBar.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
@@ -181,6 +182,21 @@ async function main() {
     const transport = new Transport();
     new TransportBarView(transport);
 
+    // --- Simulation ---
+    //
+    // Advances scene state forward in time during playback.
+    // The Simulation is passive: it has no internal timer and
+    // does not subscribe to transport events. The Canvas owns
+    // the play loop and ticks the simulation from its render
+    // loop. setTransport on the Canvas wires the transport's
+    // play and rewind events to the canvas's loop start/stop
+    // and rewind redraw; setSimulation on the Canvas attaches
+    // the simulation reference. Both are static one-time
+    // wirings; nothing here changes them later.
+    const simulation = new Simulation(transport);
+    canvas.setTransport(transport);
+    canvas.setSimulation(simulation);
+
     // --- Dividers ---
     //
     // Only the message-area divider is draggable. The body
@@ -287,6 +303,7 @@ async function main() {
         const result = sceneLoader.load(session.bundle);
         if (result.success && result.scene !== null) {
             canvas.setScene(result.scene);
+            simulation.setScene(result.scene);
             applySceneParamsToTransport(result.scene, transport);
             if (editor.inspector) {
                 editor.inspector.setScene(result.scene);

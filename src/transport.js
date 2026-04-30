@@ -26,7 +26,7 @@
 // @ts-check
 
 /**
- * @typedef {"play" | "bpm" | "timeSignature"} TransportEvent
+ * @typedef {"play" | "bpm" | "timeSignature" | "rewind"} TransportEvent
  */
 
 /**
@@ -165,8 +165,14 @@ export class Transport {
             const ctx = this._ensureAudioContext();
             this._playStartContextTime = ctx.currentTime;
         }
-        // No play-state change, but listeners watching elapsed
-        // time will see the reset via their animation-frame loop.
+        // Notify listeners. The Canvas needs this so a rewind
+        // while paused triggers a redraw to show the cursor at
+        // the reset position; a rewind while playing is
+        // already handled by the play-driven render loop, but
+        // the event still fires for symmetry. Listeners that
+        // care only about position changes during playback can
+        // ignore this event safely.
+        this._emit("rewind");
     }
 
     /**

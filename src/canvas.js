@@ -17,9 +17,11 @@
  * bound to the curve, so they share the trigger's visual
  * treatment here. The cursor (a perpendicular segment when
  * the cursor extent is non-zero, a small dot otherwise)
- * draws at cycle parameter 0 — it will animate around the
- * curve once the simulation loop arrives in a later
- * milestone.
+ * draws at the position the Simulation reports for that
+ * curve. During playback the canvas runs a render loop
+ * driven by transport's play event so the cursor advances
+ * continuously; while paused, the cursor stays put. See
+ * simulation.js for the cursor advancement model.
  *
  * Coordinate model (see DESIGN.md sections 20 and 21):
  *   - Origin (0, 0) is at the centre of the visible canvas area.
@@ -204,6 +206,39 @@ export class Canvas {
          * @type {import("./scene.js").Scene | null}
          */
         this._scene = null;
+
+        /**
+         * Transport reference. Used to subscribe to the
+         * play and rewind events so the canvas can run a
+         * continuous render loop during playback and
+         * trigger a static redraw on rewind. Null until
+         * setTransport is called from main.js.
+         * @type {import("./transport.js").Transport | null}
+         */
+        this._transport = null;
+
+        /**
+         * Simulation reference. Queried at draw time for
+         * current cursor positions per curve, and ticked
+         * from the render loop to advance state. Null until
+         * setSimulation is called from main.js. The cursor
+         * render gracefully falls back to t = 0 when null,
+         * so the canvas stays usable for static layout work
+         * before main.js wires the simulation in.
+         * @type {import("./simulation.js").Simulation | null}
+         */
+        this._simulation = null;
+
+        /**
+         * requestAnimationFrame handle for the continuous
+         * render loop that runs during playback. Non-null
+         * only while playing. The loop schedules a draw on
+         * every frame so the cursor advances visibly with
+         * the music. cancelAnimationFrame uses this handle
+         * on pause to tear the loop down.
+         * @type {number | null}
+         */
+        this._playLoopId = null;
 
         /**
          * Active toolbar tool, or null if no creation tool is
@@ -425,6 +460,31 @@ export class Canvas {
     }
 
     /**
+     * Attach the transport so the canvas can run a
+     * continuous render loop during playback and react to
+     * rewinds while paused. Subscribes to the transport's
+     * play and rewind events on attachment. Currently
+     * called once at startup from main.js; not re-entrant.
+     * @param {import("./transport.js").Transport} transport
+     */
+    setTransport(transport) {
+        this._transport = transport;
+        transport.on("play", () => this._onTransportPlayStateChange());
+        transport.on("rewind", () => this._onTransportRewind());
+    }
+
+    /**
+     * Attach the simulation so the canvas can advance state
+     * before each draw and query current cursor positions.
+     * Currently called once at startup from main.js after
+     * the simulation is constructed.
+     * @param {import("./simulation.js").Simulation} simulation
+     */
+    setSimulation(simulation) {
+        this._simulation = simulation;
+    }
+
+    /**
      * Subscribe to scene-edit and selection-change events.
      * The callback receives a structured object with a kind
      * field. See _onMouseUp for the event shapes.
@@ -484,6 +544,63 @@ export class Canvas {
         };
     }
 
+    /**
+     * React to a transport play/pause state change. Starts
+     * the continuous render loop on play, tears it down on
+     * pause. Idempotent in either direction so a redundant
+     * event is safe.
+     */
+    _onTransportPlayStateChange() {
+        if (this._transport === null) return;
+        if (this._transport.isPlaying) {
+            this._startPlayLoop();
+        } else {
+            this._stopPlayLoop();
+        }
+    }
+
+    /**
+     * React to a transport rewind. The simulation
+     * auto-detects rewind via tick() observing
+     * elapsedSeconds going backward, so all that's needed
+     * here is a redraw to show the cursor at the reset
+     * position. During playback the play loop already
+     * redraws each frame so this is a coalesced no-op via
+     * scheduleDraw; while paused it triggers the only
+     * redraw that will happen.
+     */
+    _onTransportRewind() {
+        this.scheduleDraw();
+    }
+
+    /**
+     * Start the continuous render loop. Self-rescheduling
+     * via requestAnimationFrame: each frame schedules a
+     * draw and queues the next frame. The loop stops only
+     * when _stopPlayLoop cancels the outstanding handle.
+     * Idempotent: calling start while already running is a
+     * no-op.
+     */
+    _startPlayLoop() {
+        if (this._playLoopId !== null) return;
+        const loop = () => {
+            this._playLoopId = requestAnimationFrame(loop);
+            this.scheduleDraw();
+        };
+        this._playLoopId = requestAnimationFrame(loop);
+    }
+
+    /**
+     * Stop the continuous render loop. Cancels the pending
+     * frame and clears the handle. Idempotent: calling stop
+     * while not running is a no-op.
+     */
+    _stopPlayLoop() {
+        if (this._playLoopId === null) return;
+        cancelAnimationFrame(this._playLoopId);
+        this._playLoopId = null;
+    }
+
     // --- Internals ---
 
     _setZoom(z) {
@@ -539,6 +656,17 @@ export class Canvas {
 
     _draw() {
         const ctx = this.ctx;
+
+        // Advance the simulation to the transport's current
+        // time before drawing. tick() is idempotent within a
+        // single elapsedSeconds value (the no-advance case
+        // when paused costs only the time check), and
+        // detects rewind internally by noticing
+        // elapsedSeconds going backward. Drawing then reads
+        // whatever state the sim is in via getCurveCursorT.
+        if (this._simulation !== null) {
+            this._simulation.tick();
+        }
 
         ctx.save();
 
@@ -672,11 +800,18 @@ export class Canvas {
     }
 
     _drawCurveCursor(curve) {
-        // The cursor is drawn at parameter 0 statically. Once
-        // the simulation loop runs, the same routine will
-        // sample at the live cycle position.
         const ctx = this.ctx;
-        const sample = sampleCurve(curve.shape, 0);
+        // Cursor parameter t comes from the simulation's
+        // per-curve runtime state when wired; falls back to
+        // 0 (start position) before setSimulation is called
+        // or when the curve has no runtime state (transient
+        // during scene reload). The visual default in either
+        // fallback case is the cursor at the curve's start,
+        // which is the right thing to show.
+        const t = this._simulation === null
+            ? 0
+            : this._simulation.getCurveCursorT(curve.id);
+        const sample = sampleCurve(curve.shape, t);
         if (sample === null) return;
         const px = this.toPixelX(sample.x);
         const py = this.toPixelY(sample.y);
