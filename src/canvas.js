@@ -54,13 +54,23 @@ const MAX_ZOOM = 20;
 const MENU_ZOOM_FACTOR = 1.2;    // one menu click / keyboard step
 const WHEEL_ZOOM_FACTOR = 1.08;  // per wheel notch
 
-// Colour palette for the grid. Chosen to sit quietly on the
-// near-black background so the grid reads as reference rather
-// than as content.
+// Colour palette for the grid. Sits quietly on the near-
+// black background so the grid reads as reference rather
+// than as content, but each tone is calibrated to be
+// visible at the viewport sizes and zoom levels users
+// actually compose at — the previous values (#3a/#4a/#60)
+// were perceptually safe but slipped below the threshold
+// where the eye registers structure on a busy canvas, so
+// every tier is bumped one perceptual step. Minor lines
+// stay subtle so a dense grid doesn't dominate; the major
+// 5-unit grid carries enough contrast to anchor distance
+// readings without competing with content; the axis line
+// stays the brightest of the three so the origin is the
+// strongest reference.
 const BG_COLOUR = "#2a2a2a";
-const MINOR_GRID_COLOUR = "#3a3a3a";
-const MAJOR_GRID_COLOUR = "#4a4a4a";
-const AXIS_COLOUR = "#606060";
+const MINOR_GRID_COLOUR = "#484848";
+const MAJOR_GRID_COLOUR = "#5c5c5c";
+const AXIS_COLOUR = "#7c7c7c";
 
 // Canvas-region styling. The canvas rectangle is the
 // playable area defined by scene.canvasW × scene.canvasH
