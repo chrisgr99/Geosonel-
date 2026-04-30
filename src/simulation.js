@@ -3,10 +3,11 @@
  *
  * Advances scene state forward in time. Owns the per-curve
  * runtime state (current cycle parameter, completed cycle
- * count, halt flag) so authored data on Curve instances
- * stays clean. Currently scoped to cursor advancement; sprite
- * physics, beat firing, and pattern-driven event generation
- * are deferred to later milestones.
+ * count, halt flag) and the per-sprite runtime state
+ * (position, velocity) so authored data on Curve and Sprite
+ * instances stays clean. Currently scoped to cursor
+ * advancement and sprite physics; beat firing and pattern-
+ * driven event generation are deferred to later milestones.
  *
  * Architecture:
  *   - Fixed-step simulation at SIM_DT seconds per step
@@ -21,23 +22,43 @@
  *     render loop.
  *   - Going backward in time (elapsedSeconds < previous)
  *     is interpreted as a rewind: every curve's runtime
- *     state resets to t = 0, cycle count zero, and the
- *     accumulator clears. This means rewind detection
- *     happens implicitly through the same entry point as
- *     normal advancement, no separate event needed.
- *   - Per-curve runtime state lives in a Map keyed by
- *     curve id. setScene reconciles by id: matching ids
- *     preserve runtime state so playback continues across
- *     scene edits; new ids start at t = 0; removed ids
- *     drop. This is the same id-based pattern the
- *     inspector uses for the None-mode stash.
+ *     state resets to t = 0, cycle count zero, and every
+ *     sprite's runtime state resets to its authored
+ *     position and velocity. The accumulator clears.
+ *     Rewind detection happens implicitly through the
+ *     same entry point as normal advancement, no separate
+ *     event needed.
+ *   - Per-curve and per-sprite runtime state live in Maps
+ *     keyed by id. setScene reconciles by id: matching
+ *     ids preserve runtime state so playback continues
+ *     across scene edits; new ids start at authored
+ *     values; removed ids drop. For sprites, scene edits
+ *     that change authored x/y/vx/vy (drags, inspector
+ *     edits, hand JSON edits) are detected by comparing
+ *     against the per-state record of last-seen authored
+ *     values, and the matching runtime fields snap to
+ *     the new authored value on detection.
  *
  * The Simulation is passive: no internal timer, no
  * requestAnimationFrame loop, no listeners on transport.
  * The Canvas owns the play loop; the Simulation is queried
- * on demand. Cursor advancement happens during tick(); the
- * Canvas reads each curve's current t via getCurveCursorT
- * at draw time.
+ * on demand. Cursor advancement and sprite integration
+ * happen during tick(); the Canvas reads each curve's
+ * current t via getCurveCursorT and each sprite's current
+ * x/y/vx/vy via getSpriteRuntime at draw time.
+ *
+ * Sprite physics. Each step, every sprite's runtime
+ * position advances by vx*dt and vy*dt. Velocity is
+ * clamped to the sprite's authored maxSpeed at the start
+ * of each step. Walls at x = ±canvasW/2 and y = ±canvasH/2
+ * bounce sprites whose full bounding circle was inside the
+ * canvas at step start — the inside-only rule. A sprite
+ * outside the canvas drifts freely; once entirely inside,
+ * walls act as barriers. This matches the soft-canvas
+ * semantics documented in scene.js: the canvas is a play-
+ * area hint, not a hard constraint, and a sprite that
+ * starts outside (or is moved outside by a drag) can
+ * re-enter freely without being trapped or teleported.
  *
  * cycleSpeeds and stopAtCycle are honoured. Per DESIGN.md
  * §4, cycleSpeeds is a list of per-cycle multipliers cycling
@@ -124,6 +145,48 @@ class CurveRuntimeState {
     }
 }
 
+/**
+ * Per-sprite runtime state. Holds the live position and
+ * velocity that the simulation advances each step, plus a
+ * record of the last-seen authored values so setScene can
+ * detect external edits (drag, inspector, hand JSON) and
+ * snap runtime to the new authored values when they
+ * differ. Lives in the Simulation's id-keyed map; never
+ * serialised, never seen by the inspector.
+ */
+class SpriteRuntimeState {
+    /**
+     * @param {any} sprite
+     */
+    constructor(sprite) {
+        // Live runtime values, advanced by the simulation
+        // and reset by rewind. The Canvas reads these at
+        // draw time and for hit-testing, so they're the
+        // visible position regardless of whether the
+        // simulation is currently advancing. On creation
+        // they take their initial values from the sprite's
+        // authored x/y/vx/vy — same effect as a rewind to
+        // the just-loaded scene.
+        this.x = numberOrZero(sprite.x);
+        this.y = numberOrZero(sprite.y);
+        this.vx = numberOrZero(sprite.vx);
+        this.vy = numberOrZero(sprite.vy);
+        // Authored values as last observed during scene
+        // reconciliation. setScene compares the current
+        // Sprite's authored fields against these to detect
+        // edits that happened outside the simulation
+        // (drags, inspector tweaks, hand JSON edits) and
+        // snaps the matching runtime fields to the new
+        // authored value when they differ. Position and
+        // velocity are tracked independently so a position
+        // edit doesn't reset velocity and vice versa.
+        this._authX = this.x;
+        this._authY = this.y;
+        this._authVx = this.vx;
+        this._authVy = this.vy;
+    }
+}
+
 export class Simulation {
     /**
      * @param {import("./transport.js").Transport} transport
@@ -134,6 +197,8 @@ export class Simulation {
         this._scene = null;
         /** @type {Map<string, CurveRuntimeState>} */
         this._curveState = new Map();
+        /** @type {Map<string, SpriteRuntimeState>} */
+        this._spriteState = new Map();
         /**
          * Last elapsedSeconds value passed to tick. Used to
          * compute the delta for the next tick and to detect
@@ -151,11 +216,24 @@ export class Simulation {
     }
 
     /**
-     * Update the scene reference. Reconciles per-curve
-     * runtime state by id: existing ids preserve their
-     * state so playback continues across edits, new ids
-     * start at t = 0, removed ids drop. Called from main.js
-     * after each scene reload, alongside canvas.setScene.
+     * Update the scene reference. Reconciles per-curve and
+     * per-sprite runtime state by id: existing ids preserve
+     * their state so playback continues across edits, new
+     * ids start at authored values, removed ids drop.
+     *
+     * For sprites, an id that's already in the map gets its
+     * runtime fields compared against the new Sprite's
+     * authored fields and snapped to the new authored value
+     * on any per-field difference. This is what makes drags
+     * and inspector edits visible during playback: the edit
+     * mutates JSON-authored, the new Scene carries the new
+     * authored value, and reconciliation here drags the
+     * runtime to match. Position and velocity are compared
+     * independently so a velocity-only edit doesn't snap
+     * position back to authored mid-flight, and vice versa.
+     *
+     * Called from main.js after each scene reload, alongside
+     * canvas.setScene.
      *
      * @param {import("./scene.js").Scene | null} scene
      */
@@ -163,19 +241,62 @@ export class Simulation {
         this._scene = scene;
         if (scene === null) {
             this._curveState.clear();
+            this._spriteState.clear();
             return;
         }
+        // Curves: reconcile by id. Existing state preserved.
         /** @type {Set<string>} */
-        const seenIds = new Set();
+        const seenCurveIds = new Set();
         for (const c of scene.curves) {
             if (typeof c.id !== "string") continue;
-            seenIds.add(c.id);
+            seenCurveIds.add(c.id);
             if (!this._curveState.has(c.id)) {
                 this._curveState.set(c.id, new CurveRuntimeState());
             }
         }
         for (const id of [...this._curveState.keys()]) {
-            if (!seenIds.has(id)) this._curveState.delete(id);
+            if (!seenCurveIds.has(id)) this._curveState.delete(id);
+        }
+        // Sprites: reconcile by id. Existing state preserved
+        // unless an authored field changed since last seen,
+        // in which case the matching runtime field snaps.
+        /** @type {Set<string>} */
+        const seenSpriteIds = new Set();
+        for (const s of scene.sprites) {
+            if (typeof s.id !== "string") continue;
+            seenSpriteIds.add(s.id);
+            const existing = this._spriteState.get(s.id);
+            if (existing === undefined) {
+                this._spriteState.set(s.id, new SpriteRuntimeState(s));
+                continue;
+            }
+            const authX = numberOrZero(s.x);
+            const authY = numberOrZero(s.y);
+            const authVx = numberOrZero(s.vx);
+            const authVy = numberOrZero(s.vy);
+            // Position-axis snap. Compared per axis so a
+            // single-axis edit doesn't disturb the other
+            // axis's runtime, and the X/Y comparisons stay
+            // independent of any future per-axis edits.
+            if (authX !== existing._authX) {
+                existing.x = authX;
+                existing._authX = authX;
+            }
+            if (authY !== existing._authY) {
+                existing.y = authY;
+                existing._authY = authY;
+            }
+            if (authVx !== existing._authVx) {
+                existing.vx = authVx;
+                existing._authVx = authVx;
+            }
+            if (authVy !== existing._authVy) {
+                existing.vy = authVy;
+                existing._authVy = authVy;
+            }
+        }
+        for (const id of [...this._spriteState.keys()]) {
+            if (!seenSpriteIds.has(id)) this._spriteState.delete(id);
         }
     }
 
@@ -213,9 +334,11 @@ export class Simulation {
 
     /**
      * Reset every curve's runtime state to its rewind
-     * position (t = 0, cycle 0, progress 0, not halted).
-     * The map keys stay registered; only their contained
-     * state resets. Called on detected rewind from tick().
+     * position (t = 0, cycle 0, progress 0, not halted)
+     * and every sprite's runtime state back to its
+     * authored position and velocity. The map keys stay
+     * registered; only their contained state resets.
+     * Called on detected rewind from tick().
      */
     _rewind() {
         for (const state of this._curveState.values()) {
@@ -223,6 +346,19 @@ export class Simulation {
             state.cycleProgress = 0;
             state.cycleCount = 0;
             state.halted = false;
+        }
+        // Sprite rewind copies the per-state record of
+        // last-seen authored values back into the live
+        // runtime fields. The _auth fields stay where they
+        // are — they track the authored values, which the
+        // rewind doesn't change — so a subsequent setScene
+        // that doesn't see new authored values won't snap
+        // again.
+        for (const state of this._spriteState.values()) {
+            state.x = state._authX;
+            state.y = state._authY;
+            state.vx = state._authVx;
+            state.vy = state._authVy;
         }
     }
 
@@ -239,16 +375,22 @@ export class Simulation {
     _step(dt) {
         if (this._scene === null) return;
         const bpm = this._transport.bpm;
-        if (bpm === null || bpm <= 0) return;
-        const beatsPerSecond = bpm / 60;
-        const beatsPerStep = beatsPerSecond * dt;
-        for (const curve of this._scene.curves) {
-            if (typeof curve.id !== "string") continue;
-            const state = this._curveState.get(curve.id);
-            if (state === undefined) continue;
-            if (state.halted) continue;
-            this._stepCurve(curve, state, beatsPerStep);
+        if (bpm !== null && bpm > 0) {
+            const beatsPerSecond = bpm / 60;
+            const beatsPerStep = beatsPerSecond * dt;
+            for (const curve of this._scene.curves) {
+                if (typeof curve.id !== "string") continue;
+                const state = this._curveState.get(curve.id);
+                if (state === undefined) continue;
+                if (state.halted) continue;
+                this._stepCurve(curve, state, beatsPerStep);
+            }
         }
+        // Sprite physics doesn't depend on bpm — sprites
+        // move in canvas units per real second regardless
+        // of musical tempo — so it runs even when the bpm
+        // guard above skips the cursor work.
+        this._stepSprites(dt);
     }
 
     /**
@@ -358,6 +500,180 @@ export class Simulation {
         if (state === undefined) return 0;
         return state.t;
     }
+
+    /**
+     * Look up a sprite's current runtime state. Returns
+     * null when no state exists for this id, which can
+     * happen briefly during a scene reload before setScene
+     * has run with the new scene, or for ids the simulation
+     * has never seen. The Canvas calls this at draw time
+     * for sprite render positions, and for hit-testing
+     * against the visual sprite (so a click on a moving
+     * sprite catches it where the user sees it, not where
+     * its authored position lives in scene.json).
+     *
+     * The returned object is the live runtime state — the
+     * same one the simulation mutates each step — so
+     * callers should treat it as read-only. Mutating it
+     * would silently drift from authored without going
+     * through snapSpriteRuntimeToAuthored or setScene.
+     *
+     * @param {string} spriteId
+     * @returns {SpriteRuntimeState | null}
+     */
+    getSpriteRuntime(spriteId) {
+        const state = this._spriteState.get(spriteId);
+        return state === undefined ? null : state;
+    }
+
+    /**
+     * Copy the sprite's authored x/y into the matching
+     * runtime fields and update the per-state record of
+     * last-seen authored values to match. Used by the
+     * canvas's drag pipeline to keep visual feedback in
+     * sync with the cursor while a sprite is being moved
+     * — the drag mutates the Scene's authored x/y for
+     * the visual round-trip; this method propagates that
+     * mutation into the simulation's runtime so the
+     * Canvas (which reads runtime at draw time) shows the
+     * dragged position.
+     *
+     * Velocity is intentionally NOT copied. A drag is a
+     * positional edit; the sprite's velocity should
+     * continue uninterrupted across the drag so playback
+     * doesn't visually "hitch" when the user grabs and
+     * releases. setScene's reconciliation handles the
+     * full edit settlement, including any velocity
+     * change, after the JSON commit cycle completes.
+     *
+     * No-op when the sprite has no runtime state — the
+     * sprite was added in the same edit cycle and
+     * reconciliation will create the state on the next
+     * setScene with the just-mutated authored values.
+     *
+     * @param {any} sprite
+     */
+    snapSpriteRuntimeToAuthored(sprite) {
+        if (sprite === null || typeof sprite !== "object") return;
+        if (typeof sprite.id !== "string") return;
+        const state = this._spriteState.get(sprite.id);
+        if (state === undefined) return;
+        const authX = numberOrZero(sprite.x);
+        const authY = numberOrZero(sprite.y);
+        state.x = authX;
+        state.y = authY;
+        state._authX = authX;
+        state._authY = authY;
+    }
+
+    /**
+     * Advance every sprite's runtime state by dt seconds.
+     * Each sprite's velocity is clamped to its authored
+     * maxSpeed at the top of the step, then position
+     * integrates by vx*dt and vy*dt, then walls are
+     * resolved under the inside-only rule (a sprite that
+     * wasn't fully inside the canvas at step start drifts
+     * freely; one that was inside bounces off any wall its
+     * post-integration position would have crossed).
+     *
+     * The bounce model is perfectly elastic — velocity
+     * flips with no energy loss — and treats the X and Y
+     * axes independently, so a sprite hitting a corner
+     * bounces in both axes simultaneously. The inside
+     * check uses the sprite's full bounding circle
+     * (radius = displayDiameter/2 × scene.spriteScale)
+     * so a sprite touching a wall from inside,
+     * edge-to-wall, still counts as inside and bounces on
+     * the next outward step.
+     *
+     * Sprite physics doesn't read bpm — motion is in
+     * canvas units per real-time second — so this runs
+     * even when the cursor-advancement path is skipped
+     * for a missing or zero bpm.
+     *
+     * @param {number} dt  Elapsed seconds in this step (always SIM_DT).
+     */
+    _stepSprites(dt) {
+        if (this._scene === null) return;
+        const halfW = numberOrZero(this._scene.canvasW) / 2;
+        const halfH = numberOrZero(this._scene.canvasH) / 2;
+        const spriteScale = (typeof this._scene.spriteScale === "number" && this._scene.spriteScale > 0)
+            ? this._scene.spriteScale
+            : 1;
+        for (const sprite of this._scene.sprites) {
+            if (typeof sprite.id !== "string") continue;
+            const state = this._spriteState.get(sprite.id);
+            if (state === undefined) continue;
+            // Velocity ceiling. Authored maxSpeed is the
+            // expected source; defensive against missing
+            // or non-positive values from hand-edited
+            // JSON.
+            const maxSpeed = (typeof sprite.maxSpeed === "number" && sprite.maxSpeed > 0)
+                ? sprite.maxSpeed
+                : Infinity;
+            const speed = Math.hypot(state.vx, state.vy);
+            if (speed > maxSpeed && speed > 0) {
+                const factor = maxSpeed / speed;
+                state.vx *= factor;
+                state.vy *= factor;
+            }
+            // Integrate.
+            const oldX = state.x;
+            const oldY = state.y;
+            let newX = oldX + state.vx * dt;
+            let newY = oldY + state.vy * dt;
+            // Wall bouncing under the inside-only rule. A
+            // sprite is "inside" iff its full bounding
+            // circle sits within the canvas at step
+            // start; only such sprites can bounce.
+            // Sprites partially or wholly outside drift
+            // freely — they may re-enter the canvas
+            // through any wall, which protects against
+            // the case where the user shrinks the canvas
+            // around a sprite or drags one outside, and
+            // matches the soft-canvas semantics that
+            // curves also follow.
+            const r = Math.max(0,
+                (numberOrZero(sprite.displayDiameter) / 2) * spriteScale);
+            const wasInside =
+                (oldX + r <= halfW) &&
+                (oldX - r >= -halfW) &&
+                (oldY + r <= halfH) &&
+                (oldY - r >= -halfH);
+            if (wasInside && halfW > 0 && halfH > 0) {
+                if (newX + r > halfW) {
+                    newX = halfW - r;
+                    state.vx = -state.vx;
+                } else if (newX - r < -halfW) {
+                    newX = -halfW + r;
+                    state.vx = -state.vx;
+                }
+                if (newY + r > halfH) {
+                    newY = halfH - r;
+                    state.vy = -state.vy;
+                } else if (newY - r < -halfH) {
+                    newY = -halfH + r;
+                    state.vy = -state.vy;
+                }
+            }
+            state.x = newX;
+            state.y = newY;
+        }
+    }
+}
+
+/**
+ * Coerce a value to a finite number, defaulting to 0 for
+ * non-numeric or non-finite input. Used throughout the
+ * simulation's defensive reads of authored fields, since
+ * hand-edited scene.json may carry strings or missing
+ * values that would otherwise propagate NaN through the
+ * physics integration.
+ * @param {any} v
+ * @returns {number}
+ */
+function numberOrZero(v) {
+    return (typeof v === "number" && Number.isFinite(v)) ? v : 0;
 }
 
 /**

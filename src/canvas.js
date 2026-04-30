@@ -931,8 +931,16 @@ export class Canvas {
         // is read here from scene data, not from preferences.
         const scale = this._scene.spriteScale;
         for (const s of this._scene.sprites) {
-            const cx = this.toPixelX(s.x);
-            const cy = this.toPixelY(s.y);
+            // Read the live runtime position from the
+            // simulation when available so a moving sprite
+            // renders where it actually is, not where its
+            // authored x/y in scene.json points. During
+            // pause or before the simulation has built
+            // runtime state for a freshly-added sprite,
+            // the helper falls back to authored values.
+            const pos = this._spritePosition(s);
+            const cx = this.toPixelX(pos.x);
+            const cy = this.toPixelY(pos.y);
             const r = Math.max(4, (s.displayDiameter / 2) * scale * this.pixelsPerUnit);
             // Filled disc with a light-blue boundary — the fill
             // takes the colour of the image pixel under the
@@ -940,11 +948,32 @@ export class Canvas {
             // against any background.
             ctx.beginPath();
             ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.fillStyle = this._sampleImageAt(s.x, s.y);
+            ctx.fillStyle = this._sampleImageAt(pos.x, pos.y);
             ctx.fill();
             ctx.strokeStyle = s.color;
             ctx.stroke();
         }
+    }
+
+    /**
+     * Return the position at which a sprite should render
+     * and hit-test. Reads the simulation's runtime state
+     * when available (so a sprite moving under sprite
+     * physics, or one whose drag has already snapped
+     * runtime via the simulation's snapSpriteRuntimeToAuthored
+     * hook, renders at its visible position) and falls
+     * back to the sprite's authored x/y when the simulation
+     * hasn't yet built runtime state for this id (briefly,
+     * during a scene reload where setScene hasn't run yet).
+     * @param {any} sprite
+     * @returns {{x: number, y: number}}
+     */
+    _spritePosition(sprite) {
+        if (this._simulation !== null && typeof sprite.id === "string") {
+            const rt = this._simulation.getSpriteRuntime(sprite.id);
+            if (rt !== null) return { x: rt.x, y: rt.y };
+        }
+        return { x: sprite.x, y: sprite.y };
     }
 
     // --- Selection rendering ---
@@ -966,8 +995,9 @@ export class Canvas {
         for (const i of sel.sprites) {
             if (i >= this._scene.sprites.length) continue;
             const s = this._scene.sprites[i];
-            const cx = this.toPixelX(s.x);
-            const cy = this.toPixelY(s.y);
+            const pos = this._spritePosition(s);
+            const cx = this.toPixelX(pos.x);
+            const cy = this.toPixelY(pos.y);
             const visualR = Math.max(4, (s.displayDiameter / 2) * spriteScale * this.pixelsPerUnit);
             const half = visualR + 4;
             ctx.strokeRect(
@@ -1090,8 +1120,13 @@ export class Canvas {
         if (ppu === 0) return null;
         for (let i = this._scene.sprites.length - 1; i >= 0; i--) {
             const s = this._scene.sprites[i];
-            const dx = canvasX - s.x;
-            const dy = canvasY - s.y;
+            // Hit-test against the visible position so a
+            // click on a moving sprite catches it where
+            // the user sees it, not where its authored
+            // position lives in scene.json.
+            const pos = this._spritePosition(s);
+            const dx = canvasX - pos.x;
+            const dy = canvasY - pos.y;
             const dist = Math.hypot(dx, dy);
             const visualR = (s.displayDiameter / 2) * scale;
             // Add a small pixel-space buffer so small sprites
@@ -1384,6 +1419,19 @@ export class Canvas {
                     if (idx < this._scene.sprites.length) {
                         this._scene.sprites[idx].x = init.x + dx;
                         this._scene.sprites[idx].y = init.y + dy;
+                        // Push the new authored position into
+                        // the simulation's runtime so the
+                        // visual feedback (which reads runtime
+                        // at draw time) tracks the cursor. The
+                        // sim hook updates only position, not
+                        // velocity, so a sprite mid-flight
+                        // doesn't have its velocity disturbed
+                        // by the drag.
+                        if (this._simulation !== null) {
+                            this._simulation.snapSpriteRuntimeToAuthored(
+                                this._scene.sprites[idx],
+                            );
+                        }
                     }
                 }
                 for (const [idx, init] of g.initialTriggerPositions) {
@@ -1482,9 +1530,13 @@ export class Canvas {
             const enclosedCurves = new Set();
             if (this._scene !== null) {
                 // Sprites and triggers: centre inside rect.
+                // Sprites use their visible position so a
+                // marquee drawn around a moving sprite catches
+                // it where the user sees it.
                 for (let i = 0; i < this._scene.sprites.length; i++) {
                     const s = this._scene.sprites[i];
-                    if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2) {
+                    const pos = this._spritePosition(s);
+                    if (pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
                         enclosedSprites.add(i);
                     }
                 }
