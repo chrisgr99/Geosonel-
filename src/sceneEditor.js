@@ -1328,14 +1328,17 @@ function roundCoord(n) {
  * activeBeats and strength strings consistent with the
  * curve's current beatsPerBar.
  *
- * The pipe placement rule is the one in DESIGN.md §10's
- * "Pipe characters in displayed strings": a pipe appears at
- * position k×beatsPerBar if and only if the count of
- * meaningful (non-pipe non-whitespace) characters in the
- * input is at least k×beatsPerBar. With a fully-typed
- * cycleDuration-length string, that's a pipe at every
- * k×beatsPerBar position less than or equal to the typed
- * count.
+ * Pipes appear strictly between bars: a pipe goes after
+ * the kth typed character whenever k is a positive
+ * multiple of beatsPerBar AND there is at least one more
+ * typed character later in the string. The trailing-pipe
+ * suppression matches the inspector's repipeForDisplay
+ * rule (DESIGN.md §10) so a string that round-trips
+ * through this helper renders identically in the
+ * inspector. Without the suppression a fully-typed last
+ * bar produces a pipe with nothing after it, which the
+ * inspector cannot delete because the input handler
+ * immediately re-inserts it.
  *
  * Spaces are dropped on output. The user-typed-spaces
  * preservation in DESIGN.md is handled at the inspector's
@@ -1355,7 +1358,16 @@ function repipeWithBars(s, beatsPerBar) {
     let result = "";
     for (let i = 0; i < stripped.length; i++) {
         result += stripped[i];
-        if ((i + 1) % beatsPerBar === 0) result += "|";
+        // Pipe goes between bars only — suppress it at the
+        // very end of the string (when this is the last
+        // typed character) so the result has no trailing
+        // pipe to round-trip.
+        if (
+            (i + 1) % beatsPerBar === 0 &&
+            i < stripped.length - 1
+        ) {
+            result += "|";
+        }
     }
     return result;
 }

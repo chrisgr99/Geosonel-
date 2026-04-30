@@ -10,15 +10,22 @@
  * step whenever any of the inputs changes on a curve in
  * euclidean mode. See DESIGN.md §10's "Beat-points mode".
  *
- * Algorithm. The base distribution uses the floor formula:
- * slot i (0-indexed) fires iff
- *   floor((i+1) × k / n) > floor(i × k / n)
+ * Algorithm. The base distribution uses the modulo formula:
+ *   slot i (0-indexed) fires iff (i × k) mod n < k
  * where k is the active count and n is the slot count. This
- * produces the same musical result as Bjorklund's algorithm
- * for most (k, n) pairs — both spread the actives as evenly
- * as the integer slot grid allows. The floor formula is
- * O(n) and avoids the recursion of Bjorklund proper,
- * trading some classical purity for simplicity.
+ * produces the canonical Bjorklund pattern with the first
+ * beat at slot 0, matching how musicians typically read
+ * Euclidean rhythms (E(3,8) is the Cuban tresillo
+ * "x..x..x.", E(5,8) is the cinquillo "x.x.xx.x", E(3,4)
+ * is "x.xx", and so on). The formula is O(n) and avoids
+ * the recursion of Bjorklund proper.
+ *
+ * An equivalent floor formula — floor((i+1)k/n) > floor(ik/n)
+ * — produces the same set of patterns rotated by one slot
+ * (so E(3,6) becomes ".x.x.x" rather than "x.x.x."). The
+ * mod formula is preferred because the canonical zero-shift
+ * placement is what musicians expect; rotation is then
+ * cleanly expressed via the beatShift parameter.
  *
  * Repeats. When repeats > 1, the generator builds a sub-
  * pattern of length floor(cycleDuration / repeats) carrying
@@ -97,9 +104,11 @@ export function generateEuclideanPattern(cycleDuration, activeBeatsCount, beatSh
 }
 
 /**
- * The base Euclidean rhythm using the floor formula. Slot i
- * fires iff floor((i+1)k/n) > floor(ik/n). Returns a string
- * of length `n` containing only "x" and ".".
+ * The base Euclidean rhythm using the modulo formula. Slot
+ * i fires iff (i*k) mod n < k. Returns a string of length
+ * `n` containing only "x" and ".". The first beat lands at
+ * slot 0 (the canonical Bjorklund placement) for any
+ * 0 < k < n.
  *
  * Edge cases. k <= 0 returns all rests; k >= n returns all
  * actives. n <= 0 returns the empty string.
@@ -113,11 +122,8 @@ function euclideanFloorFormula(k, n) {
     if (k <= 0) return ".".repeat(n);
     if (k >= n) return "x".repeat(n);
     let result = "";
-    let prev = 0;
     for (let i = 0; i < n; i++) {
-        const next = Math.floor(((i + 1) * k) / n);
-        result += next > prev ? "x" : ".";
-        prev = next;
+        result += ((i * k) % n) < k ? "x" : ".";
     }
     return result;
 }

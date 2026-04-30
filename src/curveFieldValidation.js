@@ -22,9 +22,13 @@
  *
  * Trim semantics: leading and trailing whitespace are
  * trimmed before validation. Internal whitespace is
- * meaningful only for cycleSpeeds, where it separates
- * tokens. Other fields fail their character-set checks if
- * internal whitespace is present.
+ * meaningful in cycleSpeeds (token separator) and is
+ * tolerated as formatting in activeBeats and strength
+ * (where it is stripped before the character-set check
+ * but preserved in the returned value alongside any
+ * inspector-inserted pipes). Other fields fail their
+ * character-set checks if internal whitespace is
+ * present.
  */
 
 // @ts-check
@@ -172,22 +176,41 @@ export function validateCycleSpeeds(candidate) {
  * Validate Active Beats. Runtime value is a string of "x"
  * (active beat) and "." (inactive beat) characters; the
  * string cycles independently of cycleDuration so its
- * length need not match. Empty string is allowed but soft-
- * warns since it would mute the curve's rhythm. Other
- * characters and internal whitespace are hard-blocked.
+ * length need not match. Pipe characters are inspector-
+ * inserted display formatting and are preserved through
+ * the round-trip per DESIGN.md §10 ("Spaces and pipes are
+ * formatting characters preserved in the JSON exactly as
+ * the inspector renders them"); whitespace is also
+ * tolerated for backward compatibility with legacy data
+ * predating the no-whitespace activeBeats rule. The
+ * character-set check runs against a stripped copy with
+ * pipes and whitespace removed; the returned value is the
+ * trimmed candidate with formatting intact, so re-loading
+ * the score reproduces the same visual structure the
+ * user typed. A candidate that strips to empty (empty
+ * string, or only pipes / whitespace) soft-warns since
+ * the curve's rhythm would be muted, and returns the
+ * empty string as the canonical no-content form. Other
+ * characters are hard-blocked.
  *
  * @param {string} candidate
  * @returns {ValidationResult}
  */
 export function validateActiveBeats(candidate) {
     const trimmed = candidate.trim();
-    if (trimmed === "") {
+    // Strip pipes and whitespace before the character-set
+    // check. Pipes are display-only formatting that the
+    // inspector inserts at bar boundaries; whitespace is
+    // tolerated here for legacy data even though current
+    // inspector input rules keep activeBeats free of it.
+    const stripped = trimmed.replace(/[|\s]/g, "");
+    if (stripped === "") {
         return {
             kind: "soft", value: "",
             message: "Empty Active Beats mutes the curve's rhythm.",
         };
     }
-    if (!/^[x.]+$/.test(trimmed)) {
+    if (!/^[x.]+$/.test(stripped)) {
         return {
             kind: "hard", value: "",
             message: 'Active Beats may contain only "x" (active) and "." (inactive).',
@@ -198,23 +221,37 @@ export function validateActiveBeats(candidate) {
 
 /**
  * Validate Beat Strength. Runtime value is a digit string
- * 0-9, cycling independently of activeBeats. Empty string
- * is allowed but soft-warns since it would mute the
- * curve's beats. Non-digit characters and internal
- * whitespace are hard-blocked.
+ * 0-9, cycling independently of activeBeats. Pipe
+ * characters and single-space separators are tolerated as
+ * inspector-inserted display formatting and pass through
+ * unchanged in the returned value (the inspector's
+ * pipe-display rule and strength canonicalisation
+ * preserve them across round-trip per DESIGN.md §10). The
+ * character-set check runs against a stripped copy with
+ * pipes and whitespace removed; the returned value is the
+ * trimmed candidate with formatting intact. A candidate
+ * that strips to empty soft-warns since the curve's beats
+ * would be muted, and returns the empty string as the
+ * canonical no-content form. Non-digit characters are
+ * hard-blocked.
  *
  * @param {string} candidate
  * @returns {ValidationResult}
  */
 export function validateStrength(candidate) {
     const trimmed = candidate.trim();
-    if (trimmed === "") {
+    // Strip pipes and whitespace before the character-set
+    // check. Pipes are display-only formatting at bar
+    // boundaries; spaces are user-typed visual separators
+    // preserved through the round-trip.
+    const stripped = trimmed.replace(/[|\s]/g, "");
+    if (stripped === "") {
         return {
             kind: "soft", value: "",
             message: "Empty Beat Strength mutes the curve's beats.",
         };
     }
-    if (!/^[0-9]+$/.test(trimmed)) {
+    if (!/^[0-9]+$/.test(stripped)) {
         return {
             kind: "hard", value: "",
             message: "Beat Strength may contain only digits 0-9.",

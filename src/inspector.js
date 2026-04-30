@@ -144,7 +144,15 @@ import {
     validateStrength,
     validateNumber,
     validateHexColor,
+    validateBeatInterval,
+    validateBeatsPerBar,
+    validateBeatOffset,
+    validateBeatPointsMode,
+    validateActiveBeatsCount,
+    validateBeatShift,
+    validateRepeats,
 } from "./curveFieldValidation.js";
+import { allBeatIntervalTokens } from "./beatIntervals.js";
 
 // Width constants. Centralised so layout adjustments touch
 // one set of numbers, not scattered inline styles. The
@@ -180,8 +188,24 @@ const W = {
     cursorRL: 50,      // Cursor R, L
     thickness: 60,     // Curve/Cursor Thickness
     spriteTriggerSize: 60,
-    cycleDurationF: 60,
+    cycleDurationF: 50,  // Beats/Cycle
+    beatsPerBarF: 36,    // Beats/Bar
+    beatOffsetF: 50,     // Beat Offset
+    activeBeatsCountF: 36,
+    beatShiftF: 36,
+    repeatsF: 36,
     stopAtF: 50,
+
+    // Multi-line tight labels for Band 5's timing row, packed
+    // tightly to fit five fields on one row at the inspector's
+    // approximately-700-pixel target width.
+    beatsPerCycleLabel: 38,  // "Beats/\nCycle"
+    beatIntervalLabel: 50,   // "Beat\nInterval"
+    beatsPerBarLabel: 32,    // "Beats/\nBar"
+    activeBeatsLabel: 50,    // "Active\nBeats" (Euclidean param row)
+    beatShiftLabel: 32,      // "Beat\nShift"
+    repeatsLabel: 42,        // "Repeats" (single line; sized to text)
+    beatOffsetLabel: 36,     // "Beat\nOffset"
 
     // Text fields. funcBinding and rhythmString are sized
     // to fill the inspector's content-driven width — each
@@ -201,7 +225,8 @@ const W = {
     // Combos.
     amiCombo: 60,
     triggerSyncCombo: 60,
-    beatPointsCombo: 110,
+    beatPointsModeCombo: 92,    // Mode dropdown: "Normal" / "Euclidean" / "None"
+    beatIntervalCombo: 80,      // Beat Interval token dropdown
 };
 
 export class Inspector {
@@ -232,6 +257,19 @@ export class Inspector {
          * @type {((edit: any) => void) | null}
          */
         this._editCallback = null;
+        /**
+         * Per-curve stash for activeBeats strings when the
+         * user transitions a curve into none mode. Keyed by
+         * curve id; value is the string that was displayed
+         * (with pipes preserved) at the moment of the
+         * transition. Consulted on transition out of none
+         * back to normal mode and dropped after restoration.
+         * Persists across selection changes and scene
+         * reloads; cleared only on inspector destruction
+         * (page reload). See decision 5 of milestone 2.
+         * @type {Map<string, string>}
+         */
+        this._noneStash = new Map();
         this._render();
     }
 
@@ -1183,21 +1221,37 @@ export class Inspector {
     }
 
     /**
-     * Band 5 — Beat points. Active when the selection contains
-     * curves, sprites, or both — sprites use the same active-
-     * beats and strength strings to gate their auto-timer
-     * firings, with the auto interval providing the metric
-     * pulse and the strings deciding which pulses actually
-     * sound and how strongly. The first row's label tracks the
-     * selection: "Curve / Beat Points" for curves alone,
-     * "Sprite / Auto Beats" for sprites alone, "Beat / Pattern"
-     * when both are present. Triggers in the selection don't
-     * affect this band — they have no beat-pattern feature and
-     * are simply left untouched by edits made here, so a mixed
-     * selection of curves or sprites with triggers still keeps
-     * the band active. Empty fields still render their lighter-
-     * grey footprint so the row layout reads as a row of fields
-     * even when greyed.
+     * Band 5 — Beat points. Curves and sprites both activate
+     * the band; sprites contribute layout but not data binding
+     * yet (sprite-side activeBeats and strength fields are
+     * deferred along with sprite-auto-timer simulation).
+     * Triggers in the selection are simply ignored. Empty
+     * fields still render their lighter-grey footprint so the
+     * row layout reads as a row of fields even when greyed.
+     *
+     * Layout in v2.3 (four rows tall, fixed regardless of
+     * mode per the reflow rule in DESIGN.md §13):
+     *
+     *   r1: row label "Curve / Beat Points" + Mode dropdown
+     *       + Beats/Cycle + Beat Interval + Beats/Bar.
+     *   r2: Euclidean parameter row (Active Beats + Beat
+     *       Shift + Repeats). Visible only when mode is
+     *       euclidean. The row's vertical space stays
+     *       reserved in normal and none modes so the
+     *       activeBeats and strength rows below don't shift
+     *       position.
+     *   r3: Active Beats string. Read-only when mode is
+     *       euclidean (string is generator-driven) or none
+     *       (string is conceptually empty).
+     *   r4: Beat Strength string. Editable in normal and
+     *       euclidean modes; read-only in none.
+     *
+     * The activeBeats and strength fields use the rhythm
+     * string variant of the editable-field builder, which
+     * runs per-keystroke pipe insertion and canonicalisation
+     * for live visual feedback as the user types (see
+     * _buildRhythmStringField).
+     *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandBeatPoints(ctx) {
@@ -1216,54 +1270,208 @@ export class Inspector {
         // and update the audit doc's Sprite Auto Beats /
         // Strength entry.
         const objs = selectedObjects(this._scene, this._selection);
+        const modeAgg = aggregateString(objs.curves, "beatPointsMode");
+        const cycleDurationAgg = aggregateString(objs.curves, "cycleDuration");
+        const beatIntervalAgg = aggregateString(objs.curves, "beatInterval");
+        const beatsPerBarAgg = aggregateString(objs.curves, "beatsPerBar");
         const activeBeatsAgg = aggregateString(objs.curves, "activeBeats");
         const strengthAgg = aggregateString(objs.curves, "strength");
+        const activeBeatsCountAgg = aggregateString(objs.curves, "activeBeatsCount");
+        const beatShiftAgg = aggregateString(objs.curves, "beatShift");
+        const repeatsAgg = aggregateString(objs.curves, "repeats");
 
+        // Determine effective mode for visibility decisions.
+        // Multi-select with mismatched modes shows the mode
+        // dropdown blank; the Euclidean parameter row hides
+        // (its visibility requires every selected curve to
+        // be in euclidean mode); the activeBeats and
+        // strength rows are editable.
+        const allEuclidean = ctx.hasCurves &&
+            modeAgg !== "varies" && modeAgg === "euclidean";
+        const allNone = ctx.hasCurves &&
+            modeAgg !== "varies" && modeAgg === "none";
+        // The activeBeats field is read-only whenever every
+        // selected curve is in euclidean or none mode. Mixed-
+        // mode selections (e.g. one normal + one euclidean)
+        // remain editable since some curves can accept
+        // edits; the per-curve mutators decide what to do
+        // with the value (curves in normal mode store it,
+        // curves in euclidean mode have it overridden by the
+        // generator on the next regeneration).
+        const activeBeatsReadOnly = allEuclidean || allNone;
+        // Strength is read-only only in none mode; in
+        // euclidean mode the user still composes velocity
+        // patterns by hand.
+        const strengthReadOnly = allNone;
+
+        // beatsPerBar value parsed for use by the rhythm-
+        // string field's pipe-placement helper. Falls back
+        // to 4 when the aggregate is empty or non-numeric
+        // (varies, no curves selected).
+        const beatsPerBar = parseBeatsPerBar(beatsPerBarAgg);
+
+        // --- Row 1: timing fields ---
         const r1 = mkRow();
         r1.appendChild(mkLabel(label, { width: W.leftLabel, disabled: dis, multiline: true }));
-        r1.appendChild(mkCombo({ value: "None", width: W.beatPointsCombo, disabled: dis }));
+        r1.appendChild(this._buildModeCombo({
+            value: modeAgg === "varies" ? "" : modeAgg,
+            disabled: dis || !ctx.hasCurves,
+            currentActiveBeats: activeBeatsAgg,
+        }));
+        r1.appendChild(mkLabel("Beats/\nCycle", { width: W.beatsPerCycleLabel, disabled: dis || !ctx.hasCurves, multiline: true }));
+        r1.appendChild(this._buildEditableField({
+            value: cycleDurationAgg === "varies" ? "" : cycleDurationAgg,
+            numeric: true,
+            width: W.cycleDurationF,
+            editable: ctx.hasCurves,
+            validator: validateCycleDuration,
+            editKind: "setCycleDuration",
+        }));
+        r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatIntervalLabel, disabled: dis || !ctx.hasCurves, multiline: true }));
+        r1.appendChild(this._buildBeatIntervalCombo({
+            value: beatIntervalAgg === "varies" ? "" : beatIntervalAgg,
+            disabled: dis || !ctx.hasCurves,
+        }));
+        r1.appendChild(mkLabel("Beats/\nBar", { width: W.beatsPerBarLabel, disabled: dis || !ctx.hasCurves, multiline: true }));
+        r1.appendChild(this._buildEditableField({
+            value: beatsPerBarAgg === "varies" ? "" : beatsPerBarAgg,
+            numeric: true,
+            width: W.beatsPerBarF,
+            editable: ctx.hasCurves,
+            validator: validateBeatsPerBar,
+            editKind: "setBeatsPerBar",
+        }));
         band.appendChild(r1);
 
+        // --- Row 2: Euclidean parameters (visible only in euclidean mode) ---
+        // The row's vertical space is reserved unconditionally
+        // by giving the empty row the same min-height as the
+        // populated row (.insp-row's CSS provides this), so
+        // bands below stay in their fixed positions per the
+        // reflow rule. When mode is normal or none, we render
+        // an empty row with no children.
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Active Beats", { width: W.leftLabel, disabled: dis }));
-        r2.appendChild(this._buildEditableField({
-            value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
-            width: W.rhythmString,
-            // Editable iff curves are in the selection, even
-            // when sprites also activate the band: sprite-side
-            // write is deferred along with sprite-side read.
-            editable: ctx.hasCurves,
-            validator: validateActiveBeats,
-            editKind: "setActiveBeats",
-        }));
+        if (allEuclidean) {
+            r2.appendChild(mkLabel("", { width: W.leftLabel }));
+            r2.appendChild(mkLabel("Active\nBeats", { width: W.activeBeatsLabel, multiline: true }));
+            r2.appendChild(this._buildEditableField({
+                value: activeBeatsCountAgg === "varies" ? "" : activeBeatsCountAgg,
+                numeric: true,
+                width: W.activeBeatsCountF,
+                editable: true,
+                validator: (c) => validateActiveBeatsCount(c, parseCycleDuration(cycleDurationAgg)),
+                onCommit: (newValue) => {
+                    this._emitEdit({
+                        kind: "setEuclideanParameter",
+                        paramName: "activeBeatsCount",
+                        value: newValue,
+                    });
+                },
+            }));
+            r2.appendChild(mkLabel("Beat\nShift", { width: W.beatShiftLabel, multiline: true }));
+            r2.appendChild(this._buildEditableField({
+                value: beatShiftAgg === "varies" ? "" : beatShiftAgg,
+                numeric: true,
+                width: W.beatShiftF,
+                editable: true,
+                validator: validateBeatShift,
+                onCommit: (newValue) => {
+                    this._emitEdit({
+                        kind: "setEuclideanParameter",
+                        paramName: "beatShift",
+                        value: newValue,
+                    });
+                },
+            }));
+            r2.appendChild(mkLabel("Repeats", { width: W.repeatsLabel }));
+            r2.appendChild(this._buildEditableField({
+                value: repeatsAgg === "varies" ? "" : repeatsAgg,
+                numeric: true,
+                width: W.repeatsF,
+                editable: true,
+                validator: (c) => validateRepeats(c, parseCycleDuration(cycleDurationAgg)),
+                onCommit: (newValue) => {
+                    this._emitEdit({
+                        kind: "setEuclideanParameter",
+                        paramName: "repeats",
+                        value: newValue,
+                    });
+                },
+            }));
+        }
         band.appendChild(r2);
 
+        // --- Row 3: Active Beats string ---
         const r3 = mkRow();
-        r3.appendChild(mkLabel("Beat Strength", { width: W.leftLabel, disabled: dis }));
-        r3.appendChild(this._buildEditableField({
-            value: strengthAgg === "varies" ? "" : strengthAgg,
+        r3.appendChild(mkLabel("Active Beats", { width: W.leftLabel, disabled: dis }));
+        r3.appendChild(this._buildRhythmStringField({
+            value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
             width: W.rhythmString,
-            editable: ctx.hasCurves,
-            validator: validateStrength,
-            editKind: "setStrength",
+            editable: ctx.hasCurves && !activeBeatsReadOnly,
+            readOnlyHint: activeBeatsReadOnly
+                ? (allEuclidean
+                    ? "Read-only in Euclidean mode \u2014 change the mode to type a custom pattern."
+                    : "Read-only in None mode \u2014 change the mode to type a custom pattern.")
+                : null,
+            validator: validateActiveBeats,
+            editKind: "setActiveBeats",
+            beatsPerBar,
+            stringKind: "activeBeats",
         }));
         band.appendChild(r3);
+
+        // --- Row 4: Beat Strength string ---
+        const r4 = mkRow();
+        r4.appendChild(mkLabel("Beat Strength", { width: W.leftLabel, disabled: dis }));
+        r4.appendChild(this._buildRhythmStringField({
+            // None mode displays an empty strength field even
+            // though the underlying data persists. The
+            // strength string is not consulted by the engine
+            // when no beats fire (None mode's activeBeats is
+            // "."), so showing the previous values would
+            // suggest they're in effect when they aren't. The
+            // data survives the round-trip so switching back
+            // to Normal or Euclidean re-displays the saved
+            // strength pattern.
+            value: strengthAgg === "varies"
+                ? ""
+                : (allNone ? "" : strengthAgg),
+            width: W.rhythmString,
+            editable: ctx.hasCurves && !strengthReadOnly,
+            readOnlyHint: strengthReadOnly
+                ? "Read-only in None mode \u2014 change the mode to type a custom pattern."
+                : null,
+            validator: validateStrength,
+            editKind: "setStrength",
+            beatsPerBar,
+            stringKind: "strength",
+        }));
+        band.appendChild(r4);
 
         return band;
     }
 
     /**
-     * Band 6 — Cycle parameters. Curves-only band. Cycle
-     * Duration is the cycle's length in score beats and also
-     * the source of the cycle's tick-position resolution
-     * (one tick per beat); Cycle Speeds is a string of per-
-     * cycle multipliers cycling through the list cycle by
-     * cycle (negative values reverse direction); Stop at
-     * Cycle halts the cursor after a specified count (-1
-     * means play forever). Read binding is wired for the
-     * three curve fields; the Trigger Sync to Beat combo is
-     * a placeholder pending its own design pass. The first
-     * row is the other constraint row driving form width.
+     * Band 6 — Cycle parameters. Curves-only band, sized as
+     * one row in v2.3 after Beats/Cycle migrated up to Band 5
+     * and Beat Offset joined Cycle Speeds + Stop at Cycle on
+     * the row. The Trigger Sync to Beat combo remains as an
+     * inert placeholder; its semantics, ownership (per-trigger
+     * versus per-curve), and inspector placement are open
+     * questions tracked in DESIGN.md §25 question 26.
+     *
+     * Field roles. Cycle Speeds is a string of per-cycle
+     * multipliers cycling through the list cycle by cycle
+     * (negative values reverse direction). Stop at Cycle
+     * halts the cursor after a specified count (-1 means
+     * play forever). Beat Offset shifts the cursor's
+     * score-beat-zero position by a signed integer slot
+     * count, also defining where rewind sends the cursor.
+     *
+     * Read binding pulls from the selected curves; multi-
+     * select disagreement renders as a blank field per the
+     * v1 read-binding decision.
+     *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandCycleParams(ctx) {
@@ -1271,30 +1479,20 @@ export class Inspector {
         band.className = "insp-band";
         const dis = !ctx.hasCurves;
 
-        // Cycle params are curve-only; read binding pulls
-        // from the selected curves with multi-select
-        // disagreement rendered as a blank field per the v1
-        // read-binding decision. cycleDuration and
-        // stopAtCycle are integers at runtime; aggregateString
-        // stringifies them for display. The Trigger Sync to
-        // Beat combo stays a placeholder pending its own
-        // design pass.
         const objs = selectedObjects(this._scene, this._selection);
-        const cycleDurationAgg = aggregateString(objs.curves, "cycleDuration");
-        const stopAtCycleAgg = aggregateString(objs.curves, "stopAtCycle");
         const cycleSpeedsAgg = aggregateString(objs.curves, "cycleSpeeds");
+        const stopAtCycleAgg = aggregateString(objs.curves, "stopAtCycle");
+        const beatOffsetAgg = aggregateString(objs.curves, "beatOffset");
 
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Cycle\nDuration", { width: W.leftLabel, disabled: dis, multiline: true }));
+        r1.appendChild(mkLabel("Cycle Speeds", { width: W.leftLabel, disabled: dis }));
         r1.appendChild(this._buildEditableField({
-            value: cycleDurationAgg === "varies" ? "" : cycleDurationAgg,
-            numeric: true,
-            width: W.cycleDurationF,
+            value: cycleSpeedsAgg === "varies" ? "" : cycleSpeedsAgg,
+            width: W.cycleSpeeds,
             editable: !dis,
-            validator: validateCycleDuration,
-            editKind: "setCycleDuration",
+            validator: validateCycleSpeeds,
+            editKind: "setCycleSpeeds",
         }));
-        r1.appendChild(mkUnits("beats", { disabled: dis }));
         r1.appendChild(mkLabel("Stop at\nCycle", { width: W.stopAt, disabled: dis, multiline: true }));
         r1.appendChild(this._buildEditableField({
             value: stopAtCycleAgg === "varies" ? "" : stopAtCycleAgg,
@@ -1304,22 +1502,525 @@ export class Inspector {
             validator: validateStopAtCycle,
             editKind: "setStopAtCycle",
         }));
+        r1.appendChild(mkLabel("Beat\nOffset", { width: W.beatOffsetLabel, disabled: dis, multiline: true }));
+        r1.appendChild(this._buildEditableField({
+            value: beatOffsetAgg === "varies" ? "" : beatOffsetAgg,
+            numeric: true,
+            width: W.beatOffsetF,
+            editable: !dis,
+            validator: validateBeatOffset,
+            editKind: "setBeatOffset",
+        }));
         r1.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.triggerSync, disabled: dis, multiline: true }));
         r1.appendChild(mkCombo({ value: "Off", width: W.triggerSyncCombo, disabled: dis }));
         band.appendChild(r1);
 
-        const r2 = mkRow();
-        r2.appendChild(mkLabel("Cycle Speeds", { width: W.leftLabel, disabled: dis }));
-        r2.appendChild(this._buildEditableField({
-            value: cycleSpeedsAgg === "varies" ? "" : cycleSpeedsAgg,
-            width: W.cycleSpeeds,
-            editable: !dis,
-            validator: validateCycleSpeeds,
-            editKind: "setCycleSpeeds",
-        }));
-        band.appendChild(r2);
-
         return band;
+    }
+
+    // --- Custom popover combo widgets (Mode, Beat Interval) ---
+
+    /**
+     * Build the beat-points Mode dropdown for Band 5's row 1.
+     * Three options: Normal, Euclidean, None. Selection emits
+     * a setBeatPointsMode edit; the mutator handles parameter
+     * insertion, activeBeats regeneration, and (for the None
+     * transition) replacement with "." plus the inspector's
+     * stash hand-off described in milestone 2's question 5.
+     *
+     * Stash mechanics. On transition into None, the
+     * inspector captures the current activeBeats string
+     * (with pipes preserved as displayed) into _noneStash
+     * keyed by each affected curve's id. On transition out
+     * of None back to Normal, the stashed string is
+     * forwarded to the mutator as restoreActiveBeats so the
+     * curve's previous activeBeats is restored. On
+     * transition from None to Euclidean, the stash is
+     * cleared without consultation since Euclidean fills
+     * activeBeats from the generator. Stash is keyed by
+     * curve id and persists across selection changes and
+     * scene reloads; cleared only on inspector destruction.
+     *
+     * Disabled state shows the existing value (or empty for
+     * varies-or-no-curves selection) without the dropdown
+     * triangle's full green tint, matching mkCombo's
+     * disabled treatment. Multi-select with mixed modes
+     * shows a blank value; selecting an option from the
+     * popover commits that mode to every selected curve.
+     *
+     * @param {{ value: string, disabled: boolean, currentActiveBeats: string }} opts
+     */
+    _buildModeCombo(opts) {
+        return mkPopoverCombo({
+            value: modeDisplayLabel(opts.value),
+            width: W.beatPointsModeCombo,
+            disabled: opts.disabled,
+            options: [
+                { value: "normal", label: "Normal" },
+                { value: "euclidean", label: "Euclidean" },
+                { value: "none", label: "None" },
+            ],
+            currentValue: opts.value,
+            onSelect: (newMode) => this._onModeSelected(newMode, opts.value, opts.currentActiveBeats),
+        });
+    }
+
+    /**
+     * Handle a Mode dropdown selection. Captures the current
+     * activeBeats into _noneStash for every affected curve
+     * if the new mode is None; consults _noneStash for the
+     * restoreActiveBeats payload if the new mode is Normal
+     * (and the previous mode for that curve was None);
+     * clears stale stash entries on transitions that don't
+     * use them. Then emits the setBeatPointsMode edit.
+     *
+     * Per-curve stash semantics work even across multi-
+     * select: each curve's id is independently keyed in the
+     * Map, so a multi-select transition into None populates
+     * one entry per curve, and a transition back out of
+     * None consults each entry independently. The mutator
+     * receives a single restoreActiveBeats string, so when
+     * multiple curves transition None -> Normal together,
+     * the inspector cannot pass per-curve restore strings
+     * through one edit. We do the most useful thing
+     * possible: if every selected curve has a stash entry
+     * AND every entry holds the same string, pass that
+     * string. Otherwise pass null (no restoration); the
+     * mutator leaves activeBeats alone, which under None
+     * mode is ".". The user gets a single-rest activeBeats
+     * which they can immediately edit. This is acceptable
+     * because mismatched-stash multi-select-out-of-None is
+     * a niche workflow, and nothing about it is
+     * destructive — the user can still type a fresh string.
+     *
+     * @param {string} newMode
+     * @param {string} oldMode  Previous mode aggregate (or "" if varies / unknown).
+     * @param {string} currentActiveBeats  Active-beats aggregate at the moment of the click.
+     */
+    _onModeSelected(newMode, oldMode, currentActiveBeats) {
+        const curveIds = collectSelectedCurveIds(this._scene, this._selection);
+        if (newMode === "none") {
+            // Capture the current activeBeats (per-curve, since
+            // selected curves may differ) into the stash.
+            const objs = selectedObjects(this._scene, this._selection);
+            for (const c of objs.curves) {
+                if (typeof c.id !== "string") continue;
+                const ab = typeof c.activeBeats === "string" ? c.activeBeats : "";
+                this._noneStash.set(c.id, ab);
+            }
+            this._emitEdit({ kind: "setBeatPointsMode", value: "none" });
+            return;
+        }
+        if (newMode === "normal") {
+            // Consult stash. Use a uniform restoreActiveBeats
+            // payload only when every selected curve has a
+            // matching stash entry; clear all consulted
+            // entries afterward.
+            /** @type {string | null} */
+            let restore = null;
+            const stashedValues = curveIds
+                .map((id) => this._noneStash.get(id))
+                .filter((s) => typeof s === "string");
+            if (
+                stashedValues.length > 0 &&
+                stashedValues.length === curveIds.length &&
+                stashedValues.every((s) => s === stashedValues[0])
+            ) {
+                restore = stashedValues[0];
+            }
+            for (const id of curveIds) this._noneStash.delete(id);
+            const edit = { kind: "setBeatPointsMode", value: "normal" };
+            if (restore !== null) edit.restoreActiveBeats = restore;
+            this._emitEdit(edit);
+            return;
+        }
+        if (newMode === "euclidean") {
+            // Stash is dropped without consultation per
+            // milestone 2 question 5: Euclidean populates from
+            // the generator with zero parameters and ignores
+            // any stashed string.
+            for (const id of curveIds) this._noneStash.delete(id);
+            this._emitEdit({ kind: "setBeatPointsMode", value: "euclidean" });
+            return;
+        }
+    }
+
+    /**
+     * Build the Beat Interval dropdown for Band 5's row 1.
+     * The eighteen-entry list comes from beatIntervals.js.
+     * Selection emits a setBeatInterval edit; multi-select
+     * propagates to every selected curve.
+     *
+     * Disabled state shows the existing value (or empty for
+     * varies-or-no-curves) without the dropdown triangle's
+     * full green tint. Empty-value-with-no-curves renders as
+     * a blank greyed combo; users see the field's footprint
+     * but can't open it.
+     *
+     * @param {{ value: string, disabled: boolean }} opts
+     */
+    _buildBeatIntervalCombo(opts) {
+        return mkPopoverCombo({
+            value: opts.value,
+            width: W.beatIntervalCombo,
+            disabled: opts.disabled,
+            options: allBeatIntervalTokens().map((token) => ({ value: token, label: token })),
+            currentValue: opts.value,
+            onSelect: (newToken) => {
+                this._emitEdit({ kind: "setBeatInterval", value: newToken });
+            },
+        });
+    }
+
+    /**
+     * Build the rhythm-string field used for activeBeats and
+     * strength in Band 5. Mostly mirrors _buildEditableField's
+     * commit lifecycle (Enter to commit with red squiggle on
+     * hard error, blur to silently revert hard errors,
+     * commit-once flag to suppress destruction-blur double-
+     * emit), but adds two pieces of behaviour specific to
+     * the rhythm strings: per-keystroke pipe insertion at
+     * Beats/Bar boundaries, and per-keystroke canonicalisation.
+     * The activeBeats field accepts only x and . as
+     * meaningful content; whitespace (space, tab, newline)
+     * maps to "." as a typing shortcut; every other
+     * character is rejected silently. The strength field
+     * accepts digits 0-9 plus single-space separators;
+     * non-digit non-whitespace characters are rejected.
+     * Whitespace collapse applies only to the strength
+     * field since activeBeats does not display whitespace
+     * at all.
+     *
+     * The pipe handling treats pipes as zero-width to the
+     * cursor: when computing the cursor's "position in typed
+     * content" the pipe is invisible, and after a re-pipe
+     * pass the cursor lands at the same typed-character
+     * offset in the new displayed string. Backspace deletes
+     * the typed character to the left of the cursor; if a
+     * pipe sat between the cursor and that character, the
+     * pipe is reabsorbed by the post-deletion re-pipe pass
+     * (which puts pipes only where the new typed-character
+     * count earns them).
+     *
+     * Read-only mode (mode === euclidean for activeBeats,
+     * or mode === none for either string) accepts focus and
+     * allows text selection plus copy-to-clipboard but
+     * rejects all keystrokes that would mutate content. The
+     * field's frame is muted to read as not-currently-
+     * editable; a focus hint near the field describes how to
+     * unlock editing.
+     *
+     * Backwards-compatible with non-pipe strings: when
+     * beatsPerBar is 0 (which can't happen at runtime, but
+     * the parsed-value helper falls back to 4 in that case)
+     * the field renders without auto-inserted pipes.
+     *
+     * @param {{
+     *   value: string,
+     *   width: number,
+     *   editable: boolean,
+     *   readOnlyHint: string | null,
+     *   validator: (candidate: string) => { kind: "ok" | "soft" | "hard", value: string, message?: string },
+     *   editKind: string,
+     *   beatsPerBar: number,
+     *   stringKind: "activeBeats" | "strength",
+     * }} opts
+     */
+    _buildRhythmStringField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-field insp-rhythm-string";
+        el.style.width = `${opts.width}px`;
+        el.textContent = opts.value;
+
+        if (!opts.editable) {
+            // Read-only treatment: accepts focus and allows
+            // text selection + copy, but rejects mutating
+            // keystrokes. Visual styling drops the bright
+            // green frame for the muted readonly look.
+            el.classList.add("readonly");
+            el.setAttribute("contenteditable", "true");
+            el.setAttribute("spellcheck", "false");
+            // Block keystrokes that would mutate content.
+            // Modifier-held combinations (Cmd-A, Cmd-C) pass
+            // through so select-all and copy still work.
+            el.addEventListener("keydown", (e) => {
+                if (e.metaKey || e.ctrlKey) return;
+                // Allow arrow keys, Home, End, Tab, Escape
+                // for navigation and focus changes.
+                const navKeys = [
+                    "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+                    "Home", "End", "Tab", "Escape", "Shift",
+                ];
+                if (navKeys.includes(e.key)) return;
+                e.preventDefault();
+            });
+            // Block paste and drag-drop too.
+            el.addEventListener("paste", (e) => e.preventDefault());
+            el.addEventListener("drop", (e) => e.preventDefault());
+            el.addEventListener("beforeinput", (e) => {
+                // beforeinput fires for any content-mutating
+                // input event including IME composition. The
+                // keydown handler catches single keystrokes
+                // but composition events can slip through.
+                e.preventDefault();
+            });
+            // Hint shown on focus, removed on blur.
+            if (typeof opts.readOnlyHint === "string") {
+                /** @type {HTMLElement | null} */
+                let hintEl = null;
+                el.addEventListener("focus", () => {
+                    if (hintEl !== null) return;
+                    hintEl = document.createElement("div");
+                    hintEl.className = "insp-readonly-hint";
+                    hintEl.textContent = opts.readOnlyHint;
+                    const rect = el.getBoundingClientRect();
+                    hintEl.style.left = `${rect.left}px`;
+                    hintEl.style.top = `${rect.bottom + 2}px`;
+                    document.body.appendChild(hintEl);
+                });
+                el.addEventListener("blur", () => {
+                    if (hintEl !== null) {
+                        hintEl.remove();
+                        hintEl = null;
+                    }
+                });
+            }
+            return el;
+        }
+
+        // Editable path.
+        el.setAttribute("contenteditable", "plaintext-only");
+        el.setAttribute("spellcheck", "false");
+
+        // Per-keystroke handler: re-canonicalise + re-pipe the
+        // string after every input event, restoring cursor
+        // position to the same typed-character offset. The
+        // input event fires after the browser has applied the
+        // user's keystroke (or paste, or composition end), so
+        // the field's textContent already contains the new
+        // raw text including any uncanonical characters and
+        // any out-of-place pipes.
+        const beatsPerBar = opts.beatsPerBar;
+        const stringKind = opts.stringKind;
+        el.addEventListener("input", () => {
+            const sel = window.getSelection();
+            // Count typed (non-pipe, non-whitespace) chars
+            // before cursor in the current display. Whitespace
+            // counts because the user might be in the middle
+            // of a multi-space run that hasn't collapsed yet.
+            // Actually: count non-pipe characters because
+            // pipes are the only zero-width formatting; spaces
+            // are real characters that may or may not still be
+            // there after canonicalisation.
+            let typedBefore = 0;
+            const display = el.textContent ?? "";
+            if (sel !== null && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+                const range = sel.getRangeAt(0);
+                const offset = getCaretOffsetInElement(el, range.endContainer, range.endOffset);
+                for (let i = 0; i < offset && i < display.length; i++) {
+                    if (display[i] !== "|") typedBefore++;
+                }
+            }
+            // Strip pipes from the display, leaving spaces
+            // and meaningful chars. Run canonicalisation, then
+            // re-pipe.
+            const stripped = display.replace(/\|/g, "");
+            const canonical = canonicaliseRhythmString(stripped, stringKind);
+            // Adjust typed-before to reflect canonicalisation.
+            // Canonicalisation may shrink the input — for
+            // activeBeats by dropping rejected characters
+            // (digits, letters like q, symbols), for
+            // strength by dropping non-digits and collapsing
+            // consecutive whitespace — so typedBefore
+            // (counted in the pre-canonical string) might
+            // now exceed the canonical length. Clamp to
+            // canonical length.
+            const canonicalTypedBefore = Math.min(
+                typedBefore, canonical.length,
+            );
+            const repiped = repipeForDisplay(canonical, beatsPerBar);
+            if (repiped !== display) {
+                el.textContent = repiped;
+                // Restore cursor: find the position in repiped
+                // such that there are canonicalTypedBefore
+                // non-pipe characters before it.
+                const newOffset = findOffsetAfterTypedChars(
+                    repiped, canonicalTypedBefore,
+                );
+                placeCaretAtOffset(el, newOffset);
+            }
+        });
+
+        // No select-all on focus for rhythm-string fields,
+        // unlike the Name and numeric editable fields. The
+        // user is editing positions within an existing
+        // pattern — "set the third beat to a rest", "swap an
+        // x for a ." — not replacing the whole pattern with a
+        // new one. Selecting all on focus would suggest the
+        // entire string is about to be overwritten, which is
+        // misleading. The cursor lands wherever the user
+        // clicked, which is what they expect for in-place
+        // editing.
+
+        // Commit-once flag against destruction-blur double-
+        // emit. See _buildEditableField's flag for full
+        // rationale.
+        let committed = false;
+
+        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
+            const candidate = el.textContent ?? "";
+            const result = opts.validator(candidate);
+            if (result.kind === "hard") {
+                if (mode === "blur") {
+                    el.textContent = opts.value;
+                    el.classList.remove("error-hard", "error-soft");
+                    return;
+                }
+                el.classList.remove("error-soft");
+                el.classList.add("error-hard");
+                return;
+            }
+            el.classList.remove("error-hard");
+            if (result.kind === "soft") {
+                el.classList.add("error-soft");
+            } else {
+                el.classList.remove("error-soft");
+            }
+            if (committed) return;
+            if (result.value !== opts.value) {
+                committed = true;
+                this._emitEdit({ kind: opts.editKind, value: result.value });
+            }
+        };
+
+        // Overwrite mode for printable keystrokes. The user's
+        // mental model for rhythm-string editing is "this
+        // string has a fixed length and I'm editing positions
+        // within it" — typing 'x' at position 3 should set
+        // position 3 to 'x', not insert a new beat that pushes
+        // everything right. The exception is typing past the
+        // end of typed content, which still extends the
+        // string (so users can grow a pattern when they
+        // genuinely want to). Backspace and Delete still work
+        // as default browser behaviour, deleting one character
+        // and shrinking the string — letting the input handler
+        // canonicalise and re-pipe afterward. Invalid keys
+        // (e.g. "q" in strength) are silently rejected
+        // without changing the field, both in overwrite
+        // position and at end-of-content.
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit("enter");
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                el.textContent = opts.value;
+                el.classList.remove("error-hard", "error-soft");
+                el.blur();
+                return;
+            }
+
+            // Printable single-char key, no modifiers, with a
+            // collapsed selection (caret only) inside this
+            // field: candidate for overwrite mode. Any other
+            // case (modifier-held, multi-char key like Tab
+            // or Backspace, selection range, focus elsewhere)
+            // falls through to default browser behaviour and
+            // the input handler's canonicalise+repipe pass.
+            if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                const sel = window.getSelection();
+                if (sel !== null && sel.rangeCount > 0) {
+                    const range = sel.getRangeAt(0);
+                    if (range.collapsed && el.contains(range.endContainer)) {
+                        const display = el.textContent ?? "";
+                        const cursorOffset = getCaretOffsetInElement(
+                            el, range.endContainer, range.endOffset,
+                        );
+                        // Count typed (non-pipe) characters
+                        // before cursor and total. Pipes are
+                        // zero-width to the cursor; everything
+                        // else (x, ., digit, space) counts as a
+                        // typed-content position.
+                        let typedBefore = 0;
+                        let typedTotal = 0;
+                        for (let i = 0; i < display.length; i++) {
+                            if (display[i] !== "|") {
+                                typedTotal++;
+                                if (i < cursorOffset) typedBefore++;
+                            }
+                        }
+
+                        if (typedBefore < typedTotal) {
+                            // Cursor is in the middle of typed
+                            // content — overwrite the char at
+                            // typedBefore with the new one.
+                            e.preventDefault();
+                            const canonicalKey = canonicaliseSingleChar(
+                                e.key, stringKind,
+                            );
+                            if (canonicalKey === null) {
+                                // Rejected (e.g. "q" in
+                                // strength). Leave the field
+                                // unchanged.
+                                return;
+                            }
+                            const stripped = display.replace(/\|/g, "");
+                            const newStripped =
+                                stripped.substring(0, typedBefore) +
+                                canonicalKey +
+                                stripped.substring(typedBefore + 1);
+                            // Run the full canonicaliser on
+                            // the new string. For activeBeats
+                            // this normalises a typed space
+                            // into a dot if it slipped past
+                            // the single-char step (defensive
+                            // for paste paths). For strength
+                            // it handles the edge case where
+                            // the new character is a space
+                            // adjacent to an existing space,
+                            // which collapses.
+                            const canonical = canonicaliseRhythmString(
+                                newStripped, stringKind,
+                            );
+                            const repiped = repipeForDisplay(
+                                canonical, beatsPerBar,
+                            );
+                            el.textContent = repiped;
+                            const newTypedBefore = Math.min(
+                                typedBefore + 1, canonical.length,
+                            );
+                            const newOffset = findOffsetAfterTypedChars(
+                                repiped, newTypedBefore,
+                            );
+                            placeCaretAtOffset(el, newOffset);
+                            if (el.classList.contains("error-hard")) {
+                                queueMicrotask(() => {
+                                    el.classList.remove("error-hard");
+                                });
+                            }
+                            return;
+                        }
+                        // Cursor at end of typed content — fall
+                        // through to default insert. Browser
+                        // inserts the char; input handler
+                        // canonicalises and re-pipes after.
+                    }
+                }
+            }
+
+            if (el.classList.contains("error-hard")) {
+                queueMicrotask(() => {
+                    el.classList.remove("error-hard");
+                });
+            }
+        });
+        el.addEventListener("blur", () => {
+            tryCommit("blur");
+        });
+
+        return el;
     }
 }
 
@@ -1913,4 +2614,516 @@ function mkInlineLetter(letter, opts = {}) {
     if (opts.disabled) el.classList.add("disabled");
     el.textContent = letter;
     return el;
+}
+
+// --- Popover combo widget ---
+//
+// Used by Band 5's Mode and Beat Interval dropdowns. The
+// trigger looks like a regular mkCombo (lighter-grey fill,
+// green frame, green triangle on the right); clicking opens
+// a popover floating over the page listing the configured
+// options. Clicking outside or pressing Escape closes
+// without selecting; clicking an option fires onSelect and
+// closes. Disabled combos do not open the popover and read
+// as muted matching mkCombo.disabled. The popover is
+// appended to document.body and positioned via fixed
+// coordinates from the trigger's getBoundingClientRect, so
+// it sits over the inspector pane's overflow:auto container
+// without being clipped.
+
+/**
+ * @param {{
+ *   value: string,
+ *   width: number,
+ *   disabled: boolean,
+ *   options: Array<{ value: string, label: string }>,
+ *   currentValue: string,
+ *   onSelect: (value: string) => void,
+ * }} opts
+ * @returns {HTMLDivElement}
+ */
+function mkPopoverCombo(opts) {
+    const el = document.createElement("div");
+    el.className = "insp-combo";
+    if (opts.disabled) el.classList.add("disabled");
+    el.style.width = `${opts.width}px`;
+    el.textContent = opts.value;
+    if (opts.disabled) return el;
+
+    el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        // Toggle: if a popover for this combo is already
+        // open, close it. Otherwise close any other open
+        // popover anywhere first, then open ours.
+        if (el.classList.contains("insp-combo-open")) {
+            closeAllPopovers();
+            return;
+        }
+        closeAllPopovers();
+        el.classList.add("insp-combo-open");
+
+        const popover = document.createElement("div");
+        popover.className = "insp-popover";
+        const rect = el.getBoundingClientRect();
+        popover.style.left = `${rect.left}px`;
+        popover.style.top = `${rect.bottom + 1}px`;
+        popover.style.minWidth = `${rect.width}px`;
+
+        for (const option of opts.options) {
+            const item = document.createElement("div");
+            item.className = "insp-popover-option";
+            if (option.value === opts.currentValue) {
+                item.classList.add("selected");
+            }
+            item.textContent = option.label;
+            item.addEventListener("click", (ev) => {
+                ev.stopPropagation();
+                closeAllPopovers();
+                opts.onSelect(option.value);
+            });
+            popover.appendChild(item);
+        }
+        document.body.appendChild(popover);
+
+        // Install document-level listeners on the next tick
+        // so the click that opened the popover doesn't
+        // immediately dismiss it through the outside-click
+        // handler. The pair gets removed inside
+        // closeAllPopovers (set up here so the closure
+        // captures the listeners we install).
+        const outsideListener = () => closeAllPopovers();
+        const keyListener = (/** @type {KeyboardEvent} */ ev) => {
+            if (ev.key === "Escape") {
+                ev.preventDefault();
+                closeAllPopovers();
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener("click", outsideListener);
+            document.addEventListener("keydown", keyListener);
+        }, 0);
+        // Remember how to undo the listeners on close.
+        // closeAllPopovers reads this map to clean up.
+        _popoverCleanups.push(() => {
+            document.removeEventListener("click", outsideListener);
+            document.removeEventListener("keydown", keyListener);
+        });
+    });
+
+    return el;
+}
+
+/**
+ * Cleanup callbacks for currently-open popovers. Each
+ * mkPopoverCombo click pushes one entry; closeAllPopovers
+ * runs and clears the entire stack. Module-scoped so the
+ * stack survives across multiple combo instances and across
+ * inspector re-renders (which would otherwise orphan
+ * dangling event listeners on document).
+ * @type {Array<() => void>}
+ */
+const _popoverCleanups = [];
+
+/**
+ * Close every open popover anywhere on the page and run
+ * each cleanup callback exactly once. Used both by combo
+ * triggers when toggling and by outside-click / Escape
+ * handlers to dismiss.
+ */
+function closeAllPopovers() {
+    document.querySelectorAll(".insp-popover").forEach((n) => n.remove());
+    document.querySelectorAll(".insp-combo-open").forEach((n) => {
+        n.classList.remove("insp-combo-open");
+    });
+    while (_popoverCleanups.length > 0) {
+        const fn = _popoverCleanups.pop();
+        if (typeof fn === "function") fn();
+    }
+}
+
+// --- Beat-points helpers ---
+
+/**
+ * Convert a beatPointsMode field value to its display
+ * label. The runtime / JSON value is "normal",
+ * "euclidean", or "none"; the inspector displays "Normal",
+ * "Euclidean", "None". An empty value (varies multi-select
+ * or no curves) renders as an empty string so the combo's
+ * footprint stays without displaying a value.
+ * @param {string} value
+ * @returns {string}
+ */
+function modeDisplayLabel(value) {
+    if (value === "normal") return "Normal";
+    if (value === "euclidean") return "Euclidean";
+    if (value === "none") return "None";
+    return "";
+}
+
+/**
+ * Parse a beatsPerBar aggregate string into a positive
+ * integer, falling back to 4 when empty, "varies", or
+ * unparseable. Used by the rhythm-string fields' pipe-
+ * placement helpers.
+ * @param {string} agg
+ * @returns {number}
+ */
+function parseBeatsPerBar(agg) {
+    if (agg === "" || agg === "varies") return 4;
+    const n = Math.round(Number(agg));
+    if (!Number.isFinite(n) || n < 1) return 4;
+    return n;
+}
+
+/**
+ * Parse a cycleDuration aggregate string into a positive
+ * integer, falling back to 4 when empty, "varies", or
+ * unparseable. Used by the Euclidean parameter validators
+ * that need cycleDuration as their clamp range.
+ * @param {string} agg
+ * @returns {number}
+ */
+function parseCycleDuration(agg) {
+    if (agg === "" || agg === "varies") return 4;
+    const n = Math.round(Number(agg));
+    if (!Number.isFinite(n) || n < 1) return 4;
+    return n;
+}
+
+/**
+ * Canonicalise a single character about to be inserted
+ * into a rhythm string. Returns the canonical replacement
+ * character, or null if the character is rejected (drop,
+ * no insertion). Used by the overwrite-mode keystroke
+ * handler in _buildRhythmStringField, where rejection
+ * needs to be detected up front so the existing string
+ * can be left unchanged rather than producing a shrunken
+ * result.
+ *
+ * For activeBeats: x and . pass through; whitespace
+ * (space, tab, newline) maps to "." as a typing shortcut
+ * since space is easier to reach than the period key when
+ * laying down a rhythm pattern; every other character is
+ * rejected (returns null). The field never displays
+ * whitespace; spaces in the user's keystroke are
+ * substituted with dots before they enter the field.
+ *
+ * For strength: digits pass through; whitespace returns a
+ * single space (visual separator preserved); every other
+ * character is rejected (returns null).
+ *
+ * @param {string} ch
+ * @param {"activeBeats" | "strength"} kind
+ * @returns {string | null}
+ */
+function canonicaliseSingleChar(ch, kind) {
+    if (kind === "activeBeats") {
+        if (ch === "x" || ch === ".") return ch;
+        // Space is a shortcut for typing a dot. Tab,
+        // newline, and the non-breaking space (which
+        // contenteditable elements may insert in place of
+        // a regular space, especially at end-of-content)
+        // get the same treatment for paste-from-text and
+        // browser-quirk consistency.
+        if (ch === " " || ch === "\t" || ch === "\n" || ch === "\u00A0") return ".";
+        // Every other character (q, digits, letters,
+        // symbols) is rejected silently.
+        return null;
+    }
+    // strength
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\u00A0") return " ";
+    if (ch >= "0" && ch <= "9") return ch;
+    return null;
+}
+
+/**
+ * Canonicalise a rhythm string per the v2.3 spec.
+ *
+ * For activeBeats: x and . pass through; whitespace
+ * (space, tab, newline) maps to "." as a typing
+ * shortcut; every other character is dropped silently.
+ * The field never displays whitespace, so any spaces in
+ * incoming text (paste, legacy data) are converted to
+ * dots and the displayed string ends up composed only
+ * of x, ., and the auto-inserted pipes.
+ *
+ * For strength: digits pass through; consecutive
+ * whitespace collapses to a single space; every other
+ * character is dropped. Dropped non-digit non-whitespace
+ * characters do not reset the run-of-spaces state, so
+ * "9 q 5" canonicalises to "9 5" rather than "9  5" —
+ * the dropped char is treated as if it never existed in
+ * the input, and the spaces around it collapse normally.
+ *
+ * The input must already have pipes stripped — pipes are
+ * display-only formatting handled separately by
+ * repipeForDisplay.
+ *
+ * @param {string} input
+ * @param {"activeBeats" | "strength"} kind
+ * @returns {string}
+ */
+function canonicaliseRhythmString(input, kind) {
+    let out = "";
+    if (kind === "activeBeats") {
+        for (const ch of input) {
+            if (ch === "x" || ch === ".") {
+                out += ch;
+            } else if (
+                ch === " " ||
+                ch === "\t" ||
+                ch === "\n" ||
+                ch === "\u00A0"
+            ) {
+                // Whitespace is the typing-shortcut form of
+                // a dot. Each whitespace character maps to
+                // one dot — no collapsing, since dots are
+                // meaningful content the user wants to keep.
+                // Non-breaking space (\u00A0) is handled
+                // alongside regular space because
+                // contenteditable elements sometimes insert
+                // the nbsp form on a space keystroke.
+                out += ".";
+            }
+            // Everything else (digits, q, other letters,
+            // symbols) is dropped silently.
+        }
+        return out;
+    }
+    // strength: keep digits, drop everything else.
+    // Dropped characters intentionally do NOT reset
+    // prevSpace, so that "9 q 5" canonicalises to
+    // "9 5" rather than "9  5" — the dropped char is
+    // treated as if it never existed in the input,
+    // and the spaces around it collapse normally.
+    let prevSpace = false;
+    for (const ch of input) {
+        if (
+            ch === " " ||
+            ch === "\t" ||
+            ch === "\n" ||
+            ch === "\u00A0"
+        ) {
+            if (!prevSpace) out += " ";
+            prevSpace = true;
+            continue;
+        }
+        if (ch >= "0" && ch <= "9") {
+            out += ch;
+            prevSpace = false;
+        }
+    }
+    return out;
+}
+
+/**
+ * Re-insert pipe characters into a stripped rhythm string
+ * per Beats/Bar boundaries. Pipes appear strictly between
+ * bars: a pipe goes after the kth typed character whenever
+ * k is a positive multiple of beatsPerBar AND there is at
+ * least one more typed character later in the string.
+ * Whitespace passes through unchanged at its original
+ * position; pipes are not counted toward the typed-char
+ * total.
+ *
+ * The "more typed characters later" clause is what keeps
+ * the trailing pipe from sticking to the end of a string
+ * whose length is an exact multiple of beatsPerBar. Without
+ * it, a fully-typed bar produces a pipe with nothing after
+ * it, and the input handler's repipe pass would re-insert
+ * that pipe immediately after a Backspace deleted it,
+ * making the pipe undeletable.
+ *
+ * Pipe placement examples with beatsPerBar = 3:
+ *   "x"      → "x"
+ *   "xxx"    → "xxx"          (no trailing pipe)
+ *   "xxxx"   → "xxx|x"
+ *   "xxxxxx" → "xxx|xxx"      (no trailing pipe)
+ *   "xxxxxxx" → "xxx|xxx|x"
+ *
+ * @param {string} input  Canonicalised, pipe-free rhythm string (may contain spaces).
+ * @param {number} beatsPerBar  The bar size in beat slots.
+ * @returns {string}
+ */
+function repipeForDisplay(input, beatsPerBar) {
+    if (beatsPerBar <= 0) return input;
+    // First pass: count total typed (non-whitespace)
+    // characters so the second pass can suppress a pipe at
+    // the very end of the string. Without this two-pass
+    // structure we would have to look ahead from each
+    // position to decide whether to emit the pipe, which
+    // amounts to the same work.
+    let totalTyped = 0;
+    for (let i = 0; i < input.length; i++) {
+        const ch = input[i];
+        if (ch !== " " && ch !== "\t" && ch !== "\n") totalTyped++;
+    }
+    let out = "";
+    let typedCount = 0;
+    for (let i = 0; i < input.length; i++) {
+        const ch = input[i];
+        out += ch;
+        if (ch !== " " && ch !== "\t" && ch !== "\n") {
+            typedCount++;
+            if (typedCount % beatsPerBar === 0 && typedCount < totalTyped) {
+                out += "|";
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * Find the offset within `displayed` such that there are
+ * exactly `n` non-pipe characters before that offset, with
+ * the cursor positioned past any auto-inserted pipe trailing
+ * the nth typed character. If `n` exceeds the count of non-
+ * pipe characters, returns displayed.length. Used by the
+ * rhythm-string field's input handler to restore cursor
+ * position after re-piping.
+ * @param {string} displayed
+ * @param {number} n
+ * @returns {number}
+ */
+function findOffsetAfterTypedChars(displayed, n) {
+    if (n <= 0) return 0;
+    let count = 0;
+    for (let i = 0; i < displayed.length; i++) {
+        if (displayed[i] !== "|") count++;
+        if (count === n) {
+            // Position immediately after this character. If
+            // the next character is a pipe, skip past it so
+            // the cursor sits between typed-content runs and
+            // not between content and a decoration pipe.
+            let pos = i + 1;
+            while (pos < displayed.length && displayed[pos] === "|") pos++;
+            return pos;
+        }
+    }
+    return displayed.length;
+}
+
+/**
+ * Compute the flat offset within `el` corresponding to a
+ * Selection range's (node, offset). Walks `el`'s descendants
+ * counting characters until reaching the named node, then
+ * adds the offset within that node. Returns 0 if the node
+ * isn't a descendant. Plaintext-only contenteditable
+ * elements typically have a single text-node child, in
+ * which case the result equals offsetWithinTextNode, but
+ * the walk handles browser-inserted intermediate elements
+ * defensively.
+ * @param {HTMLElement} el
+ * @param {Node} targetNode
+ * @param {number} targetOffset
+ * @returns {number}
+ */
+function getCaretOffsetInElement(el, targetNode, targetOffset) {
+    let total = 0;
+    let found = false;
+    /** @param {Node} node */
+    function walk(node) {
+        if (found) return;
+        if (node === targetNode) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                total += targetOffset;
+            } else {
+                for (let i = 0; i < targetOffset && i < node.childNodes.length; i++) {
+                    total += node.childNodes[i].textContent?.length ?? 0;
+                }
+            }
+            found = true;
+            return;
+        }
+        if (node.nodeType === Node.TEXT_NODE) {
+            total += node.textContent?.length ?? 0;
+            return;
+        }
+        for (const child of node.childNodes) {
+            walk(child);
+            if (found) return;
+        }
+    }
+    walk(el);
+    return total;
+}
+
+/**
+ * Place the caret at flat offset `offset` within `el`.
+ * Walks descendant text nodes counting characters until
+ * reaching the target offset, then sets a Selection range
+ * to that position. If the offset exceeds total text
+ * length, the caret lands at the end. Plaintext-only
+ * contenteditable elements typically have a single text-
+ * node child but the walking version handles browser-
+ * inserted intermediate elements.
+ * @param {HTMLElement} el
+ * @param {number} offset
+ */
+function placeCaretAtOffset(el, offset) {
+    const sel = window.getSelection();
+    if (sel === null) return;
+    const range = document.createRange();
+    let consumed = 0;
+    let placed = false;
+    /** @type {Text | null} */
+    let lastTextNode = null;
+    /** @param {Node} node */
+    function walk(node) {
+        if (placed) return;
+        if (node.nodeType === Node.TEXT_NODE) {
+            const text = /** @type {Text} */ (node);
+            const length = text.textContent?.length ?? 0;
+            lastTextNode = text;
+            if (consumed + length >= offset) {
+                range.setStart(text, offset - consumed);
+                range.setEnd(text, offset - consumed);
+                placed = true;
+                return;
+            }
+            consumed += length;
+            return;
+        }
+        for (const child of node.childNodes) {
+            walk(child);
+            if (placed) return;
+        }
+    }
+    walk(el);
+    if (!placed) {
+        if (lastTextNode !== null) {
+            const length = lastTextNode.textContent?.length ?? 0;
+            range.setStart(lastTextNode, length);
+            range.setEnd(lastTextNode, length);
+        } else {
+            range.setStart(el, 0);
+            range.setEnd(el, 0);
+        }
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+}
+
+/**
+ * Collect the curve ids from the current selection in scene
+ * order. Used by the mode-switch stash machinery to address
+ * stash entries by curve id rather than by selection index
+ * (indices change when curves are added or removed; ids do
+ * not). Returns an empty array when scene is null or no
+ * curves are selected.
+ * @param {import("./scene.js").Scene | null} scene
+ * @param {{ curves: number[] }} selection
+ * @returns {string[]}
+ */
+function collectSelectedCurveIds(scene, selection) {
+    if (scene === null) return [];
+    /** @type {string[]} */
+    const out = [];
+    for (const idx of selection.curves) {
+        if (idx >= 0 && idx < scene.curves.length) {
+            const id = scene.curves[idx].id;
+            if (typeof id === "string") out.push(id);
+        }
+    }
+    return out;
 }

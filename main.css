@@ -763,6 +763,113 @@ html, body {
     border-top-color: #707070;
 }
 
+/* When a popover is open, the trigger combo retains its
+ * styling but the dropdown triangle inverts to a downward-
+ * pointing chevron equivalent. The simplest visual
+ * indication that the popover is live: a brighter outline
+ * on the combo itself. Pure styling — the popover element
+ * exists separately and handles its own positioning. */
+.insp-combo.insp-combo-open {
+    border-color: #5fc858;
+    background-color: #767676;
+}
+
+/* --- Popover dropdown --- */
+
+/* Floats over the page in fixed positioning, set by the
+ * combo's click handler from getBoundingClientRect. Lighter-
+ * grey fill matching the combo trigger so the popover reads
+ * as a continuation of the field; subtle border so it sits
+ * cleanly over the inspector without a heavy frame. Z-index
+ * keeps it above the inspector pane and above the canvas
+ * pane's selection markers. */
+.insp-popover {
+    position: fixed;
+    z-index: 3000;
+    background-color: #6b6b6b;
+    border: 2px solid #5fc858;
+    border-radius: 3px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    padding: 2px 0;
+    color: #ffffff;
+    font-size: 11pt;
+    max-height: 380px;
+    overflow-y: auto;
+}
+
+.insp-popover-option {
+    padding: 4px 14px;
+    cursor: pointer;
+    line-height: 1.2;
+    user-select: none;
+}
+
+.insp-popover-option:hover {
+    background-color: rgba(95, 200, 88, 0.25);
+}
+
+/* Currently-selected option carries a green tint so the
+ * user sees their existing value when the popover opens.
+ * The styling is distinct from hover so the two states
+ * coexist (selected option, currently-hovered option). */
+.insp-popover-option.selected {
+    background-color: #46b03e;
+    color: #ffffff;
+}
+
+.insp-popover-option.selected:hover {
+    background-color: #5fc858;
+}
+
+/* --- Read-only rhythm-string field --- */
+
+/* Rhythm-string fields (activeBeats, strength) display a
+ * monospace font so each character is visually equal-width
+ * — important for reading rhythm patterns at a glance,
+ * since the columns of x/dot/digit characters carry the
+ * pattern's structural meaning. The inspector's default
+ * sans-serif font would let typography squash the structure. */
+.insp-rhythm-string {
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 11pt;
+    letter-spacing: 0.5px;
+}
+
+/* Read-only state for an editable field: the field accepts
+ * focus, allows text selection and copy, but rejects
+ * mutating keystrokes. Visually, the green frame is
+ * replaced with a muted grey so the field reads as not-
+ * currently-editable. The cursor changes to a text I-beam
+ * on hover so users see the field is still selectable. */
+.insp-field.readonly {
+    border-color: #777777;
+    cursor: text;
+}
+
+.insp-field.readonly:focus {
+    border-color: #999999;
+    outline: none;
+}
+
+/* Hint shown on focus of a read-only rhythm-string field.
+ * Positioned via the inspector's JS using fixed coordinates
+ * derived from getBoundingClientRect of the focused field.
+ * Styled as a small unobtrusive tooltip explaining how to
+ * unlock editing. */
+.insp-readonly-hint {
+    position: fixed;
+    z-index: 3000;
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 3px;
+    padding: 6px 10px;
+    color: #d8d4cc;
+    font-size: 10pt;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+    max-width: 360px;
+    pointer-events: none;
+}
+
 /* Create button. Outlined green to match the function-binding
  * field next to it; disabled variant mutes both border and
  * text. */
