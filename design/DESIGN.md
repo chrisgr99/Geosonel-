@@ -1,9 +1,11 @@
 # GXW Design Document
 
-Version 2.3 — Updated April 2026
+Version 2.4 — Updated April 2026
 Status: Living document.
 
 Naming: GXW is the web-based successor to GeoSonix. The W stands for Web. The project folder and repository live at /Users/chrisgr/ProgrammingProjects/GXW. An earlier Python desktop prototype, GXM, exists at /Users/chrisgr/ProgrammingProjects/GX2 and remains preserved as reference; GXW supersedes it as the active development path.
+
+Revision v2.4 specifies the message-function model that drives sprite motion and event firing across all three object kinds. Section 9 is rewritten to reflect the resolved callback names (Motion Update and Auto on sprites, Collision and Auto on triggers, Hit Beat and Hit Trigger on curves), the acceleration-return shape for sprite Motion Update, the shared-default rule that has every sprite running one common Motion Update function unless the composer creates a per-sprite override, and the auto-generated function-naming convention that combines callback role with object name (hitTrigger_drum, auto_kick) to produce sensible defaults the composer can accept with a single click. The behaviours.js file in the score bundle carries these named functions; it is edited in the same CodeMirror tab as the score's other text files. Section 9 also documents the simulation tick order through which Motion Update integrates: clamp velocity to maxSpeed, run Motion Update for acceleration, apply acceleration to velocity, clamp again, integrate position, resolve walls under the inside-only rule from Section 22.
 
 Revision v2.3 introduces an accessibility section (Section 26) and a first feature within it: perceptual brightness reduction for imported background images. The transformation is spatially aware — a base/detail decomposition that pulls down large continuously-bright regions while leaving small bright features and midtones untouched — so that broad bright areas of an imported image stop dominating the canvas while local contrast and detail throughout the image remain readable. The transformation affects only the displayed image; the underlying pixel data used by triggers and sprites for music generation passes through unchanged. Three parameters (blur radius, threshold, maximum attenuation) are exposed as user settings with a bypass toggle for direct comparison. See Section 26.
 
@@ -21,7 +23,7 @@ Curve cycle parameters were simplified. The GeoSonix triplet of cycleDuration, c
 
 Underlying revisions v2.0 and v2.1 remain in effect: the three-object model (Curves, Triggers, Sprites) and the Mover-to-Sprite renaming. No conceptual changes to the object model in v2.2.
 
-The underlying v2.0 rework remains in effect: a substantial reshaping of the object model following detailed comparison with both GeoMaestro and GeoSonix. The v1.0 split between Projectors and Movers has been replaced by a three-object model — Curves, Triggers, and Sprites — that better reflects the compositional vocabulary the composer actually uses. Several v1.0 concepts have been removed or folded in: the separate Projector type, the separate Cursor object, the Distortion Function as a first-class concept, and the cross-paradigm BeatPattern resource. The GeoMaestro projector capability is preserved through the Curve's extended cursor; distortion behavior lives in the Curve's sweep function. See Section 24 for the discussion of what survived from each parent system and why.
+The underlying v2.0 rework remains in effect: a substantial reshaping of the object model following detailed comparison with both GeoMaestro and GeoSonix. The v1.0 split between Projectors and Movers has been replaced by a three-object model — Curves, Triggers, and Sprites — that better reflects the compositional vocabulary the composer actually uses. Several v1.0 concepts have been removed or folded in: the separate Projector type, the separate Cursor object, the Distortion Function as a first-class concept, and the cross-paradigm BeatPattern resource. The GeoMaestro projector capability is preserved through the Curve's extended cursor; distortion behaviour lives in the Curve's Hit Trigger function (called the sweep function in earlier revisions; renamed in v2.4 along with the broader callback-naming review). See Section 24 for the discussion of what survived from each parent system and why.
 
 ---
 
@@ -72,11 +74,11 @@ Sketches are typically constructed and modified through conversation with Claude
 
 A GXW scene holds three kinds of first-class objects — curves, triggers, and sprites — plus an optional background image that acts as a scalar field and a transport that keeps global tempo and time.
 
-Curves are geometric shapes (line, ellipse, piste, bezier, and other named forms) with intrinsic rhythmic structure. Each curve has a set of beat points distributed around its shape according to an algorithmic generator (primarily Euclidean) or a hand-authored pattern string. Each curve has a visible cursor that advances through its cycle over a settable number of beats. When the cursor reaches an active beat point, the curve's beat function fires. If the cursor has non-zero extent on either side of the curve direction, it sweeps through space as it advances, and any triggers in the swept region fire. Curves combine geometry, rhythm, and projection into one coherent compositional object.
+Curves are geometric shapes (line, ellipse, piste, bezier, and other named forms) with intrinsic rhythmic structure. Each curve has a set of beat points distributed around its shape according to an algorithmic generator (primarily Euclidean) or a hand-authored pattern string. Each curve has a visible cursor that advances through its cycle over a settable number of beats. When the cursor reaches an active beat point, the curve's Hit Beat function fires. If the cursor has non-zero extent on either side of the curve direction, it sweeps through space as it advances, and any triggers in the swept region fire the curve's Hit Trigger function. Curves combine geometry, rhythm, and projection into one coherent compositional object.
 
 Triggers are static positions in the scene with optional payload. They do not move. They fire when a curve's extended cursor sweeps over them, or on an optional auto-timer. Triggers are the free-standing musical atoms of the scene — positions the composer places with compositional intent.
 
-Sprites are autonomous agents that move through the scene under their own logic. Each sprite has a step function called every physics step, in which it reads its environment (image colour under its position, vector field forces, transport state) and can mutate its own velocity and position and fire musical events directly. Sprites do not collide with anything; they only initiate musical events from inside their own step logic or on an optional auto-timer. The sprite is the autonomous-creature-in-a-field idea from GeoSonix, made first-class.
+Sprites are autonomous agents that move through the scene under their own logic. Each sprite has a Motion Update function called every physics step, in which it reads its environment (image colour under its position, vector field forces, transport state) and returns an acceleration vector that the simulation adds to its velocity before integrating position. Sprites do not collide with anything; they fire musical events through an Auto function on a beat-aligned timer or by side effects inside their Motion Update logic. The sprite is the autonomous-creature-in-a-field idea from GeoSonix, made first-class.
 
 The transport is global: tempo, time signature, beat position, play state. All objects reference it. Curves advance their cycles from transport time. Triggers tick their auto timers from transport time. Sprites integrate physics against transport time. One shared clock keeps everything rhythmically locked by default.
 
@@ -88,7 +90,7 @@ Three object types, each with a clear compositional role. Two collision particip
 
 A scene's data model:
 
-- An optional image, resampled to 1000x1000. The image is a scalar field: at any 2D position it provides r, g, b, luminance, hue, saturation. Consulted by sprites (via their step functions) and available as context fields in all other functions.
+- An optional image, resampled to 1000x1000. The image is a scalar field: at any 2D position it provides r, g, b, luminance, hue, saturation. Consulted by sprites (via their Motion Update functions) and available as context fields in all other functions.
 
 - A collection of curves, each with a geometric shape, a set of beat points, a cursor, and zero to two functions.
 
@@ -120,10 +122,10 @@ Extended cursors collide with triggers in the scene. This is the GeoMaestro proj
 
 Functions. A curve has two optional function slots:
 
-- The beat function fires when the curve's cursor reaches an active beat point during internal cycle advancement. It does not fire on external collisions.
-- The sweep function fires when the curve's extended cursor collides with a trigger in the scene (either a free-standing trigger or a beat-as-trigger on another curve). It does not fire on internal beat points.
+- The Hit Beat function fires when the curve's cursor reaches an active beat point during internal cycle advancement. It does not fire on external collisions — hits on the curve's beats from other curves' cursors fire the curve's Hit Trigger function instead, since under the bound-trigger model (Section 10.5) those beats are external triggers from the colliding curve's perspective.
+- The Hit Trigger function fires when the curve's extended cursor collides with a trigger in the scene (a free-standing trigger or a beat-as-trigger on another curve). It does not fire on internal beat points.
 
-Either or both slots may be undefined. A curve with only a beat function and a zero-extent cursor is a rhythmic player. A curve with only a sweep function is a projector that doesn't play its own beat points. A curve with both is a rhythmic projector that simultaneously plays its own rhythm and sweeps other objects. A curve with neither is pure visual scaffolding, drawn but silent.
+Either or both slots may be undefined. A curve with only a Hit Beat function and a zero-extent cursor is a rhythmic player. A curve with only a Hit Trigger function is a projector that doesn't play its own beat points. A curve with both is a rhythmic projector that simultaneously plays its own rhythm and sweeps other objects. A curve with neither is pure visual scaffolding, drawn but silent.
 
 Beats-as-triggers property. A curve has a "beats are triggers" property (default false). When true, the curve's active beat points become externally collidable — another curve's extended cursor sweeping across these positions will fire them, with context including which curve was hit and which beat point was struck. See Section 10 for how the strength string cycles under external collisions.
 
@@ -145,10 +147,10 @@ A trigger is a static musical position in the scene. It has:
 - A size, which serves as the collision radius for cursor-sweep detection.
 - Optional payload — a note specification, controller value, parameter set, pre-rendered phrase, or callback function. Used by the firing function as this.note, this.cc, etc.
 - Up to two optional function slots:
-  - A collision function fires when a curve's extended cursor sweeps over the trigger. Context includes the curve that hit it and the hit geometry.
-  - An auto function fires on the trigger's own timer at an interval set in the trigger's properties.
+  - A Collision function fires when a curve's extended cursor sweeps over the trigger. Context includes the curve that hit it and the hit geometry.
+  - An Auto function fires on the trigger's own timer at an interval set in the trigger's properties.
 
-Both functions are optional. A trigger can be pure data — position and payload with no functions — in which case nothing fires when the trigger is hit. This is specifically useful when the composer wants the colliding curve's sweep function to do all the musical work, reading the trigger's payload as context. See Section 8 for the collision resolution rule that makes this pattern work.
+Both functions are optional. A trigger can be pure data — position and payload with no functions — in which case nothing fires when the trigger is hit. This is specifically useful when the composer wants the colliding curve's Hit Trigger function to do all the musical work, reading the trigger's payload as context. See Section 8 for the collision resolution rule that makes this pattern work.
 
 Triggers do not move. They do not observe the scene. They do not carry per-step logic. They sit at their position and fire when hit or when their auto timer ticks.
 
@@ -158,26 +160,18 @@ Triggers do not move. They do not observe the scene. They do not carry per-step 
 
 A sprite is an autonomous agent that moves through the scene under its own logic.
 
-Geometry. A sprite is a point. It has a position and a velocity but no spatial extent. This falls out of the collision model: since sprites do not collide with anything (see Section 8), they have no need for geometric size. Visual rendering draws the sprite as a small filled circle so the composer can see it, but the circle's size is purely a rendering concern — the sprite itself is the moving point at its current position.
+Geometry. A sprite has a position, a velocity, and a visible disc rendered at its position with a configurable display diameter. The disc is the sprite's visual presence on the canvas; the display diameter combined with the score's spriteScale also defines the bounding circle the simulation uses for canvas-wall collision under the inside-only rule (Section 22). Sprites do not collide with triggers, curves, or other sprites — see Section 8 — so the disc plays no role in object-to-object collision; it serves only the wall-bounce check and the visual identity of the sprite on the canvas.
 
-Motion. Sprites move freely in the scene. They are not path-constrained — if the composer wants sweep-along-a-path behavior, that is handled by a curve with an extended cursor, not by a sprite. Sprites have a position and velocity, sample the vector field at each step, integrate forces, and bounce off canvas boundaries (see Section 21 for physics details).
-
-Per physics step:
-
-1. The sprite's step function is called (if defined). Inside it the sprite reads its environment and may mutate its velocity, position, or other properties, and may emit musical events.
-2. The vector field force at current position is sampled and added to velocity.
-3. Velocity is capped at maxSpeed and absoluteMaxSpeed.
-4. Position updates from velocity × dt.
-5. Boundary collisions with the canvas's implicit bounding box are resolved via continuous collision detection.
+Motion. Sprites move freely in the scene. They are not path-constrained — if the composer wants sweep-along-a-path behaviour, that is handled by a curve with an extended cursor, not by a sprite. Each sprite has authored x, y, vx, vy, and maxSpeed fields in scene.json that define its initial state at score-beat zero and its rewind state. At runtime the simulation maintains a separate per-sprite runtime state holding the live position and velocity; the canvas reads this runtime state for rendering and hit-testing, while the inspector continues to display the authored fields for editing. See Section 22 for the integration step, the inside-only wall rule, and the runtime/authored split.
 
 Functions. A sprite has two optional function slots:
 
-- The step function is called every physics step, before physics integration. Inside the function the sprite has access to its current state, the image colour under its position, the vector field force, region membership, and transport state. The function can mutate the sprite's properties (velocity is the most common case, producing image-driven wandering) and can fire musical events — emit notes, trigger phrases, send controller messages — on any condition the composer expresses in code. The step function is the richest authoring surface in GXW and is the heart of what makes sprites expressive. A sprite that fires "every time luminance crosses 0.5 upward" produces non-rhythmic event streams driven purely by the scene's scalar field; a sprite that fires "on any red value above 0.8" produces color-triggered events; a sprite that integrates image-gradient into its velocity and fires on position-over-time conditions produces behaviors unique to the scene.
-- The auto function fires on the sprite's own timer at an interval set in the sprite's properties. This is the rhythmic emission slot — useful for sprites that play on a beat clock regardless of where they are or what they're doing.
+- The Motion Update function is called every physics step before integration. It receives a context object describing the sprite's current state and environment (Section 9) and returns an acceleration vector `{ ax, ay }` that the simulation adds to velocity before integrating position. This is where image-driven wandering, gradient-following, viscosity, and other continuous physics responses are expressed. Motion Update does not fire musical events — it shapes trajectory only. Multiple sprites typically share one Motion Update function (the conventional default behaviour, see Section 9) since they share the same image and force field; per-sprite overrides are available when a sprite needs distinct physics.
+- The Auto function fires on the sprite's own timer at an interval set in the sprite's properties. This is the rhythmic emission slot, used for sprites that play on a beat clock regardless of where they are or what they're doing. Auto returns musical-event parameters or undefined for silence; it does not affect motion.
 
-Either or both slots may be undefined. A sprite with only a step function is a pure autonomous agent. A sprite with only an auto function is a drifting metronome. A sprite with both does both. A sprite with neither is a position reference that moves under pure physics without playing.
+Either or both slots may be undefined. A sprite with only a Motion Update function is a pure autonomous wanderer that produces no sound on its own — visible motion only. A sprite with only an Auto function is a metronome moving inertially under whatever initial velocity it was authored with. A sprite with both is the typical case: image-driven motion with rhythmic events. A sprite with neither is a position reference that drifts under pure inertia and walls.
 
-Sprites do not have a collision function. They do not collide with triggers, curves, or other sprites. If a sprite wants to fire triggers based on proximity, its step function reads scene state and does so explicitly — "is there a trigger within 2 units of me, and did I just enter that radius?" is a three-line check in the step function. This asymmetry — sprites only initiate, never receive — keeps the collision model single-directional and simple. See Section 8.
+Sprites do not have a collision function. They do not collide with triggers, curves, or other sprites. If a sprite wants to fire triggers based on proximity, its Motion Update or Auto function reads scene state and does so explicitly — "is there a trigger within 2 units of me, and did I just enter that radius?" is a three-line check inside the function body. This asymmetry — sprites only initiate, never receive — keeps the collision model single-directional and simple. See Section 8.
 
 Soft UI convention: six sprites in the default palette, based on empirical experience from GeoSonix that parameter management past six becomes overwhelming. Not a data-model limit.
 
@@ -207,86 +201,169 @@ GXW has exactly one collision rule, applying to exactly one participant pair.
 
 The collider. An extended cursor — a curve's cursor with non-zero R or L extent — is the only thing that initiates collisions. Cursors with zero extent are pure progress indicators and do not collide.
 
-The collidee. A trigger is the only thing that can be collided with. Curves with the "beats are triggers" property true also expose their active beat points as collidees for this purpose, firing using the curve's beat-function context augmented with external-collision information.
+The collidee. A trigger is the only thing that can be collided with. Curves with the "beats are triggers" property true also expose their active beat points as collidees for this purpose, firing using the curve's Hit Beat function context augmented with external-collision information.
 
 The rule. When a curve's extended cursor sweeps through a trigger's collision radius during a physics step, a collision event fires. Continuous collision detection within each step ensures a fast-moving cursor cannot skip past a small trigger between frames.
 
-Functions fired on collision. Both the trigger's collision function and the curve's sweep function fire, in that order, if both are defined. If only one is defined, only it fires. The composer chooses per object which function to define, which enables several compositional patterns:
+Functions fired on collision. Both the trigger's Collision function and the curve's Hit Trigger function fire, in that order, if both are defined. If only one is defined, only it fires. The composer chooses per object which function to define, which enables several compositional patterns:
 
-- Define only the trigger's collision function: the trigger controls its own firing regardless of which curve hit it. Each trigger sounds the same way no matter how it was struck. The classical trigger-as-sound-emitter pattern.
-- Define only the curve's sweep function: triggers are pure data (position plus payload); the curve decides how to interpret each hit. This is the GeoMaestro distortion-function pattern — centralized firing logic reading trigger data as context. A single function with distance-based pitch and angle-based pan, applied uniformly to every trigger the curve sweeps.
+- Define only the trigger's Collision function: the trigger controls its own firing regardless of which curve hit it. Each trigger sounds the same way no matter how it was struck. The classical trigger-as-sound-emitter pattern.
+- Define only the curve's Hit Trigger function: triggers are pure data (position plus payload); the curve decides how to interpret each hit. This is the GeoMaestro distortion-function pattern — centralised firing logic reading trigger data as context. A single function with distance-based pitch and angle-based pan, applied uniformly to every trigger the curve sweeps.
 - Define both: two things fire per collision. Useful when one function emits a note and the other logs, animates, or triggers a secondary effect.
 - Define neither: silent hit. Rarely useful except as a placeholder during authoring.
 
-What does not collide. Sprites do not collide — not with triggers, not with curves, not with other sprites. If a sprite wants to fire a trigger by proximity, its step function reads scene state and does so explicitly. Curves do not collide with other curves (except via the beats-as-triggers mechanism, which makes beat points collidable as triggers, not the curve itself). Triggers do not collide with other triggers.
+What does not collide. Sprites do not collide — not with triggers, not with curves, not with other sprites. If a sprite wants to fire a trigger by proximity, its Motion Update or Auto function reads scene state and does so explicitly. Curves do not collide with other curves (except via the beats-as-triggers mechanism, which makes beat points collidable as triggers, not the curve itself). Triggers do not collide with other triggers.
 
-This one-rule model replaces the five firing types of GeoSonix (cursor-auto, curve-auto, curve-beat, trigger-auto, trigger-collision) with an architecture where firing situations map one-to-one onto named function slots on the relevant object. Beat points fire on internal curve cycles via the curve's beat function. Triggers fire on auto timers via their auto function or on cursor-sweep collisions via their collision function (or the colliding curve's sweep function). Sprites fire on auto timers via their auto function or from inside their step function. Each firing situation has its own named function slot, so no source-switching logic inside functions is needed.
+This one-rule model replaces the five firing types of GeoSonix (cursor-auto, curve-auto, curve-beat, trigger-auto, trigger-collision) with an architecture where firing situations map one-to-one onto named function slots on the relevant object. Beat points fire on internal curve cycles via the curve's Hit Beat function. Triggers fire on auto timers via their Auto function or on cursor-sweep collisions via their Collision function (or the colliding curve's Hit Trigger function). Sprites fire on auto timers via their Auto function or by side effects from inside their Motion Update function. Each firing situation has its own named function slot, so no source-switching logic inside functions is needed.
 
 ---
 
 ## Section 9 — Function Slots and Context Objects
 
-Each object type has a fixed set of optional function slots. Defining a function means writing a named JavaScript function in the sketch and referencing it by name in the object's property.
+Each object kind has a fixed set of optional function slots whose names appear in the property inspector and whose semantics are described below. Defining a function means writing a named JavaScript function in the score's behaviours.js file and referencing it by name in the object's matching slot field; an empty slot leaves the corresponding event unhandled.
 
-- Curve: beat, sweep.
-- Trigger: collision, auto.
-- Sprite: step, auto.
+### Slot inventory
 
-All slots are optional. An object with no defined functions is visually and structurally present but musically silent.
+- Sprite: Motion Update, Auto.
+- Trigger: Collision, Auto.
+- Curve: Hit Beat, Hit Trigger.
 
-When a function fires, it is called with `this` bound to the firing object and a `ctx` argument carrying additional fields specific to the firing reason. Single-purpose functions mean no source-switching is required — each function has a fixed context shape.
+The names describe the event from the firing object's perspective. Sprite Motion Update updates the sprite's motion every physics tick. Sprite Auto fires on the sprite's own beat-aligned timer. Trigger Collision fires when something collides with the trigger (currently only a curve's extended cursor; sprite-trigger collisions are a future milestone). Trigger Auto fires on the trigger's own timer. Curve Hit Beat fires when the curve's cursor reaches one of its own active beat points during cycle advancement. Curve Hit Trigger fires when the curve's extended cursor sweeps across a trigger or a beats-as-trigger position on another curve.
 
-Curve beat function context. Fires on internal beat points.
-- this: the curve (id, note, channel, port, object-level harmony overrides)
-- ctx.beatIndex: position within the cycle, 0-based, ranging from 0 to cycleDuration-1
-- ctx.strength: current strength digit (1-9; zeros do not fire)
-- ctx.cyclePosition: 0-1 fractional position around the curve
-- ctx.r, g, b, lum, hue, sat: image values at the beat point's canvas position
-- ctx.scale, root, chord, tonic, bpm, timeSignature: current harmony and transport state
+The pair Curve Hit Trigger and Trigger Collision describe the same physical event from the two participants' perspectives — the curve hit something, and the trigger was hit. Both functions fire when both are defined; the order is documented under Section 8 and Section 10.5. The asymmetric naming reflects the asymmetric perspective: "hit" is what the curve's cursor does, "collision" is what happens to the trigger. When the unified bound-trigger model in Section 10.5 lands, beat points become triggers themselves and the same Hit Trigger / Collision pair fires for cursor-on-beat events; Curve Hit Beat continues to fire only when the curve's own cursor reaches its own beats internally, never on external collision.
 
-Curve sweep function context. Fires when the extended cursor collides with a trigger.
-- this: the curve
-- ctx.trigger: the trigger hit (full object access — this.note from the trigger, its payload, position)
-- ctx.d: perpendicular distance from curve to trigger
-- ctx.side: +1 or -1 indicating which side of the curve the trigger lies on
-- ctx.angle: the curve's local direction angle at the hit point
-- ctx.cursorParam: 0-1 position along the curve at the moment of hit
-- ctx.r, g, b, lum, hue, sat: image values at the trigger's canvas position
-- Harmony and transport fields
+### The behaviours.js file
 
-Trigger collision function context. Fires when a curve's extended cursor sweeps the trigger.
-- this: the trigger (position, payload, id)
-- ctx.curve: the curve whose cursor hit it
-- ctx.d, side, angle, cursorParam: the geometry of the hit, as in the curve sweep context
-- ctx.r, g, b, lum, hue, sat: image values at this trigger's position
-- Harmony and transport fields
+Callback functions live in a behaviours.js file inside the score bundle, alongside scene.json. The file is a regular bundle text file edited in the same CodeMirror tab system that hosts scene.json: full JavaScript syntax highlighting, parser-driven error squiggles, undo, and the existing explicit-save model. Edits to behaviours.js trigger a scene reload through the same pipeline that reloads on scene.json edits, so a saved behaviour change takes effect on the next runScene cycle without restarting playback.
 
-Trigger auto function context. Fires on the trigger's own timer.
-- this: the trigger
-- ctx.beatNumber: position in the trigger's auto cycle
-- ctx.r, g, b, lum, hue, sat: image values at this trigger's position
-- Harmony and transport fields
+The file's content is plain top-level function declarations:
 
-Sprite step function context. Fires every physics step before integration.
-- this: the sprite (position, velocity, id, payload)
-- ctx.x, y: current position (also accessible as this.x, this.y)
-- ctx.vx, vy: current velocity
-- ctx.v: scalar speed sqrt(vx² + vy²)
-- ctx.r, g, b, lum, hue, sat: image values under the sprite's current position
-- ctx.fx, fy: vector field force at current position (before physics applies it)
-- ctx.region: region membership (if regions defined)
-- ctx.transport: beat, bar, time signature, BPM
-- Mutation: the step function can assign to this.vx, this.vy, this.x, this.y, and other sprite properties — mutations take effect before physics integration runs for this step. Returning a musical-params object fires an event.
+```
+function motionUpdate(ctx) {
+    const c = ctx.imageColor;
+    const brightness = (c.r + c.g + c.b) / 3;
+    return { ax: (brightness - 128) * 0.5, ay: 0 };
+}
 
-Sprite auto function context. Fires on the sprite's own timer.
-- this: the sprite
-- ctx.beatNumber: position in the auto cycle
-- ctx.r, g, b, lum, hue, sat: image values under the sprite's current position
-- Harmony and transport fields
+function auto_kick(ctx) {
+    return { note: 36, velocity: 96, duration: 0.1 };
+}
+```
 
-Firing behavior. Functions return an object with musical parameters (`{ note, velocity, duration, channel, port }`) to fire a musical event, or return null/undefined to remain silent. Sprite step functions can fire events and separately mutate sprite state in the same invocation — the returned object only affects audio; mutations happen via assignment to this.*.
+No export statements, no module wrapper. The simulation evaluates the file once per reload and indexes its top-level function declarations by name; objects in scene.json reference functions by exact name in their slot fields. A name in scene.json that does not resolve to a function in behaviours.js is a soft error — the slot stays inert for that object, and the inspector renders the field's content with a warning indicator. The scene continues to run.
 
-Pre-loaded helpers available globally to all functions: scaleMap, rangeMap, chordMap, harmonyMap, listMap. Plus Math. The helpers will gain Tonal as their underlying engine in a phase documented in Section 27, expanding their vocabulary substantially without changing existing call sites.
+behaviours.js may also contain helper functions that are not bound to any slot; objects' slot bindings reference only the top-level functions, but the body of a slot function may call any helper defined elsewhere in the file. Helpers are typical for shared math or for response curves the composer wants to tune in one place across multiple slots.
+
+### Auto-generated function names
+
+When the composer clicks the Create button next to a slot field in the property inspector, the inspector generates a stub function in behaviours.js with a default name and binds the slot to it. The default name combines the slot's role with the object's typed name using the convention `role_objectName`, where `role` is one of `motionUpdate`, `auto`, `collision`, `hitBeat`, `hitTrigger`, and `objectName` is whatever the composer typed into the object's Name field. A trigger named `kick` with an empty Auto slot offers `auto_kick` as the default; clicking Create writes a stub `function auto_kick(ctx) { ... }` to behaviours.js and sets the slot field to `auto_kick`. The composer can edit the field before clicking Create to override the default name.
+
+When the object has no typed name, the default falls back to `role_<id>` using the object's generated id (e.g. `auto_sp_a3f7`). The composer can rename the function and the field separately afterward; the binding is by name, so renaming the function in behaviours.js without updating the slot field breaks the binding and produces the soft error described above.
+
+If the named function already exists in behaviours.js when the composer clicks Create, the button does nothing and is rendered disabled. The composer can either choose a different name (typing in the field changes the proposed default) or accept the existing function as the binding (in which case the field is left as-is, since the function is already there). This protects against accidental overwrites of behaviours the composer has already authored.
+
+### Shared default for Sprite Motion Update
+
+Sprite Motion Update is the one slot that defaults to a shared function across all sprites in the score. The convention is that all sprites typically inhabit the same image and respond to the same compositional intent (the same force field, the same colour-driven physics), so one function describing how a sprite responds to its environment usually suffices. The shared default function is named `motionUpdate` (no underscore suffix, no per-object qualifier) so its identity as the score-wide motion behaviour is encoded in its name.
+
+The rule for the inspector's Motion Update field on a sprite:
+
+- When the field is empty, the simulation looks up `motionUpdate` in behaviours.js. If it exists, every sprite with an empty field uses it. If it does not exist, every sprite with an empty field has no Motion Update and runs pure inertial physics (Section 22's milestone-2 behaviour: integrate by velocity, bounce off walls).
+- The inspector field renders the implicit `motionUpdate` name as a placeholder hint when the slot is empty, so the composer can see what would be invoked.
+- The Create button on an empty Motion Update field offers `motionUpdate` as the default name. Clicking Create when `motionUpdate` does not yet exist creates the shared function. Clicking Create when `motionUpdate` already exists is disabled (the function is already there; the empty field is already bound to it through the convention).
+- The composer overrides the default for a single sprite by typing a different name into the field. The inspector then offers that name as the Create default — if the name is `motionUpdate_specialSprite`, clicking Create scaffolds that function. The override takes precedence over the shared default for that sprite only; other sprites still resolve through `motionUpdate`.
+
+No other slot has a shared-default convention. Curve Hit Beat, Curve Hit Trigger, Trigger Collision, Trigger Auto, and Sprite Auto all default to per-object names like `hitBeat_kick` or `auto_drum`, on the principle that each curve plays its own beat pattern, each trigger represents a different musical event, and each sprite that has its own Auto handler is firing different events than its peers. Composers who do want shared functions for these slots can achieve it by typing the same name into multiple objects' fields — the binding is by name, so two triggers both bound to `auto_kick` share that function.
+
+### Sprite Motion Update context and return shape
+
+The Motion Update function receives a context object and returns an acceleration vector. The acceleration is added to the sprite's velocity before position integration, with the maxSpeed clamp applied both before Motion Update runs and again after the acceleration has been applied. The simulation's per-sprite per-tick order is:
+
+1. Clamp velocity to the sprite's authored maxSpeed.
+2. Call Motion Update if a function is bound (either through the per-sprite override or the shared `motionUpdate` default). Receive `{ ax, ay }` or `null`/`undefined` for no acceleration this tick.
+3. Apply acceleration: `vx += ax * dt`, `vy += ay * dt`.
+4. Clamp velocity to maxSpeed again, so Motion Update cannot push velocity past the ceiling.
+5. Integrate position: `x += vx * dt`, `y += vy * dt`.
+6. Resolve canvas walls under the inside-only rule (Section 22).
+
+The acceleration semantics mean Motion Update expresses physics in the natural language of force fields: "image brightness pulls me harder" reads as a larger acceleration value, not as a velocity delta. Sprites have no defined mass, so the distinction between acceleration and force is uninteresting — the value the function returns is whatever the composer wants the rate of velocity change to be, in canvas-units-per-second-squared. The simulation handles the dt multiplication; the composer reasons about acceleration directly.
+
+Motion Update does not fire musical events. Returning `{ note: ..., velocity: ... }` is meaningless in this slot — the simulation reads only `ax` and `ay` from the return value. Composers who want sprite motion to also drive events use the Auto slot for rhythmic events, or compute event-firing conditions inside Motion Update and emit them through a side channel (a future capability; in v2.4 Motion Update is purely physics).
+
+The context object on every Motion Update call carries:
+
+- `ctx.dt`: the simulation time step in real seconds (currently 1/240 s; see Section 22).
+- `ctx.x`, `ctx.y`: the sprite's current runtime position in canvas units.
+- `ctx.vx`, `ctx.vy`: the sprite's current runtime velocity, after the maxSpeed clamp at the top of the tick.
+- `ctx.imageColor`: the image pixel colour at the sprite's current position as `{ r, g, b }` in 0–255. Returns the no-image fill colour `{ r: 64, g: 64, b: 64 }` when no image is loaded or when the sprite is outside the canvas region.
+- `ctx.imageColorAt(x, y)`: a function returning the image colour at an arbitrary canvas-unit position. Used for gradient sampling — "what colour is one unit ahead of me?" — and for any pattern where the sprite reads multiple positions per tick. Same fallback when out of canvas or no image.
+- Harmony and transport state will be added in Section 11's harmony milestone; in v2.4 the context covers physics-relevant fields only.
+
+### Other slots' context shapes
+
+The other five slots' context objects are documented here as the v2.4 plan; the simulation hooks for them land in subsequent milestones. The Motion Update slot is the first message-function slot to ship (milestone 3 of the v2.4 development cycle), with Sprite Auto, Trigger Auto, and Curve Hit Beat following once the Strudel-driven beat-firing path lands (Section 27). Trigger Collision and Curve Hit Trigger arrive with the trigger-collision implementation milestone.
+
+Sprite Auto. Fires on the sprite's beat-aligned timer.
+- `this`: the sprite (id, position, payload).
+- `ctx.beatNumber`: the index of this firing within the score's overall beat sequence.
+- `ctx.imageColor`, `ctx.imageColorAt(x, y)`: as in Motion Update, sampled at the sprite's current runtime position.
+- Harmony and transport fields.
+- Returns `{ note, velocity, duration, channel, port }` to fire a musical event, or `null`/`undefined` for silence.
+
+Trigger Collision. Fires when a curve's extended cursor sweeps over the trigger.
+- `this`: the trigger (position, payload, id).
+- `ctx.curve`: the curve whose cursor hit it.
+- `ctx.d`, `ctx.side`, `ctx.angle`, `ctx.cursorParam`: the geometry of the hit — perpendicular distance, side of the curve, local curve direction, position along the curve.
+- `ctx.imageColor`, `ctx.imageColorAt(x, y)`: image samples at the trigger's position.
+- Harmony and transport fields.
+- Returns musical-event parameters.
+
+Trigger Auto. Fires on the trigger's beat-aligned timer.
+- `this`: the trigger.
+- `ctx.beatNumber`: as in Sprite Auto.
+- `ctx.imageColor`, `ctx.imageColorAt(x, y)`: image samples at the trigger's position.
+- Harmony and transport fields.
+- Returns musical-event parameters.
+
+Curve Hit Beat. Fires when the curve's cursor reaches an active beat point during cycle advancement.
+- `this`: the curve (id, cycle parameters, harmony overrides).
+- `ctx.beatIndex`: the slot index of the firing beat, 0-based, in [0, cycleDuration).
+- `ctx.strength`: the velocity digit from the strength string, 0–9.
+- `ctx.cyclePosition`: the cursor's position around the curve as a fraction in [0, 1).
+- `ctx.imageColor`, `ctx.imageColorAt(x, y)`: image samples at the beat point's canvas position.
+- Harmony and transport fields.
+- Returns musical-event parameters.
+
+Curve Hit Trigger. Fires when the curve's extended cursor collides with a trigger (or with a beats-as-trigger position on another curve).
+- `this`: the curve.
+- `ctx.trigger`: the trigger that was hit (full object access, including its own payload and position).
+- `ctx.d`, `ctx.side`, `ctx.angle`, `ctx.cursorParam`: hit geometry as in Trigger Collision.
+- `ctx.imageColor`, `ctx.imageColorAt(x, y)`: image samples at the trigger's position.
+- Harmony and transport fields.
+- Returns musical-event parameters.
+
+When both ends of a Curve Hit Trigger / Trigger Collision pair are bound, both fire — the trigger's Collision first, then the curve's Hit Trigger — and each runs with its own context object. Coordination between the two functions, if needed, happens through composer-managed shared state (a payload field on the trigger that the curve reads, a global counter, a side-channel object); the simulation does not enforce a precedence model. Section 10.5 expands on the case where beat points become triggers under the unified bound-trigger model.
+
+### Helpers and globals
+
+The pre-v2.4 helper functions — scaleMap, rangeMap, chordMap, harmonyMap, listMap — remain available globally to all callbacks, alongside Math. The harmony helpers will be reimplemented over Tonal in the phase documented in Section 27; existing call sites will continue to work unchanged.
+
+All slot functions also have access to the score-level scene object through a `scene` global, which lets a callback read other objects' positions, payloads, and runtime state. Use is by convention rather than enforcement — the scene is mutable, and a callback that modifies scene state outside its bound object's properties is doing something unusual that the simulation will faithfully execute. This power is occasionally useful (a Motion Update function that reads other sprites' positions to implement flocking, for instance) and is the usual escape hatch for any compositional pattern not covered by a single object's context fields.
+
+### Simulation tick rate
+
+Motion Update fires at the simulation's fixed-step rate, currently 1/240 s per step (~4.17 ms, 240 Hz). At this rate even naive Euler-style physics produce smooth motion, and the per-tick cost is bounded — a hundred sprites running non-trivial Motion Update functions consume a small fraction of the per-frame budget. The other slots fire on event boundaries (beat points reached, collisions detected, auto timers expiring) rather than per tick, and their cost is therefore proportional to event density rather than to the simulation rate.
+
+### Authoring workflow summary
+
+The end-to-end flow for adding a behaviour to a score is:
+
+1. Select the object in the canvas. The property inspector shows the object's slots in band 3.
+2. Click Create on the desired slot's row, or type a custom name into the slot field first and then click Create. The inspector creates a stub function in behaviours.js using the default name (or the typed name) and binds the slot field to that name.
+3. Switch to the behaviours.js tab and edit the function body. Save when ready.
+4. The simulation reload picks up the new function; the next time the slot's event fires, the new behaviour runs.
+
+Binding multiple objects to one shared function is a matter of typing the same name into each object's slot field; deleting an object does not remove its bound functions from behaviours.js, on the principle that the composer may want to reuse them. Cleanup of orphaned functions is manual.
 
 ---
 
@@ -408,9 +485,9 @@ Visual rendering. Each active beat point on a curve renders as a diamond — a s
 
 Inheritance model. Every property of a bound trigger lives on the parent curve, not on the individual diamond. The bound-trigger function (the slot that fires when any cursor sweeps the bound trigger), the visual styling, the visibility setting described below, and any other declarative properties are all curve-level. The individual diamonds have no separately editable state; they are visual manifestations of the curve's beat pattern, with positions derived from the curve's parameterisation. This dodges the multi-select-across-many-beats problem in the property inspector: editing "this curve's bound-trigger function" is one edit on the curve, not one edit per diamond, and the alternative of multi-selecting all the bound triggers on a curve would be awkward when other unrelated objects sit between them on the canvas. It also avoids the orphaning problem that per-beat property overrides would cause whenever the active-beats string is rewritten. Per-beat differentiation — accenting every fourth beat, for instance — is achieved by the bound-trigger function reading its beat-index argument from context and varying its behaviour accordingly. The function is shared; the data feeding it is per-beat. The strength string is one such per-beat data channel today; richer per-beat data is discussed under "Future direction" below.
 
-External visibility. A curve has a visibility property controlling whether its bound triggers are exposed to other curves' cursors. The default is bound-only: bound triggers respond only to their parent curve's cursor, matching the typical case of a curve playing its own rhythm. When externally visible, the bound triggers become collidable by any cursor in the scene, including the parent's, and the existing one-and-only collision rule (extended cursor hits trigger) handles cross-curve sweep without modification. When an external cursor sweeps an externally-visible bound trigger, the parent curve's bound-trigger function fires — not the visiting curve's sweep function. The bound trigger remains the source of truth for what happens when it is hit, regardless of who hit it, matching how standalone triggers already behave. The strength-pointer dual described in Section 10 (one pointer for internal cycles, a separate pointer for external collisions) carries forward into this model unchanged. Inspector label wording is to be settled when the inspector exposes the field; "Visible to other curves" and "Externally triggerable" are candidates.
+External visibility. A curve has a visibility property controlling whether its bound triggers are exposed to other curves' cursors. The default is bound-only: bound triggers respond only to their parent curve's cursor, matching the typical case of a curve playing its own rhythm. When externally visible, the bound triggers become collidable by any cursor in the scene, including the parent's, and the existing one-and-only collision rule (extended cursor hits trigger) handles cross-curve sweep without modification. When an external cursor sweeps an externally-visible bound trigger, the parent curve's bound-trigger function fires — not the visiting curve's Hit Trigger function. The bound trigger remains the source of truth for what happens when it is hit, regardless of who hit it, matching how standalone triggers already behave. The strength-pointer dual described in Section 10 (one pointer for internal cycles, a separate pointer for external collisions) carries forward into this model unchanged. Inspector label wording is to be settled when the inspector exposes the field; "Visible to other curves" and "Externally triggerable" are candidates.
 
-Function precedence with sweep functions. When a cursor with a defined sweep function hits a trigger that also has a defined function (whether a standalone trigger's collision function or a curve's bound-trigger function), two conceptual models compete. Cursor-as-actor treats the cursor as the player and the trigger as a position-only target. Trigger-as-actor treats the trigger as the locus of musical content and the cursor as the playhead. Compositions may legitimately want either. The rule is whichever-has-a-function wins when only one is defined: if only the trigger has a function, the trigger fires; if only the cursor's curve has a sweep function, the cursor's sweep function fires. When both are defined, both fire in defined order: the trigger's function fires first, then the cursor's sweep function. Each runs with its normal context object as documented in Section 9; neither knows about the other. Two musical events per collision is the expected outcome and is treated as a feature — the trigger's function might emit a note while the cursor's sweep function emits a controller change, logs the hit, animates a secondary effect, or fires its own note. A composer who wants the cursor's sweep function alone to control the collision response defines only that function and leaves the trigger's function undefined; a composer who wants the trigger to fire identically regardless of which cursor hits it defines only the trigger's function. The data shape declares the conceptual model: defined-ness is the switch, both-defined means both run, and there is no third hidden mode where the runtime chooses between the two. If the trigger's function and the cursor's sweep function need to coordinate (for instance, suppressing the cursor's emission when the trigger has already handled the hit), they do so through shared context state the composer reads and writes, not through a precedence rule the runtime enforces.
+Function precedence with Hit Trigger functions. When a cursor with a defined Hit Trigger function hits a trigger that also has a defined function (whether a standalone trigger's Collision function or a curve's bound-trigger function), two conceptual models compete. Cursor-as-actor treats the cursor as the player and the trigger as a position-only target. Trigger-as-actor treats the trigger as the locus of musical content and the cursor as the playhead. Compositions may legitimately want either. The rule is whichever-has-a-function wins when only one is defined: if only the trigger has a function, the trigger fires; if only the cursor's curve has a Hit Trigger function, the cursor's Hit Trigger function fires. When both are defined, both fire in defined order: the trigger's function fires first, then the cursor's Hit Trigger function. Each runs with its normal context object as documented in Section 9; neither knows about the other. Two musical events per collision is the expected outcome and is treated as a feature — the trigger's function might emit a note while the cursor's Hit Trigger function emits a controller change, logs the hit, animates a secondary effect, or fires its own note. A composer who wants the cursor's Hit Trigger function alone to control the collision response defines only that function and leaves the trigger's function undefined; a composer who wants the trigger to fire identically regardless of which cursor hits it defines only the trigger's function. The data shape declares the conceptual model: defined-ness is the switch, both-defined means both run, and there is no third hidden mode where the runtime chooses between the two. If the trigger's function and the cursor's Hit Trigger function need to coordinate (for instance, suppressing the cursor's emission when the trigger has already handled the hit), they do so through shared context state the composer reads and writes, not through a precedence rule the runtime enforces.
 
 Compositional value. The strongest argument for the unification is the cross-curve case. Today there is no clean way to have one curve's cursor play a rhythmic pattern derived from another curve's geometry; bound triggers with the visibility setting checked make this work as a special case of the existing one-and-only collision rule, with no extra mechanism required. The pattern-laying ergonomics are the second argument: typing a pattern string is much faster than placing many triggers individually, and the pattern can be shifted along the curve by editing parameterisation, with the diamond positions following automatically.
 
@@ -420,7 +497,7 @@ Visualisation. The composer's working vision for how a pasted MIDI phrase render
 
 Implementation note. The model change is larger than the code change. The collision pipeline today already runs every cursor against every trigger; under the proposed model it runs every cursor against the same set augmented by all bound triggers belonging to its own curve plus all externally-visible bound triggers from other curves. That augmentation applies during existing collision detection — the structural pipeline does not change. The bound triggers themselves are computed from each curve's active-beats string and parameterisation, either on demand or with a cache invalidated when the string or geometry changes.
 
-Status. Captured for future work; not in the v2.3 milestone. The property inspector currently in progress does not need to anticipate this change. Section 13's existing description of the Beat Points band continues to apply during v2.3, editing active-beats and strength strings and the cycle parameters as it does today. When the unified model lands, the inspector's behaviour for curves gains the bound-trigger function slot and the visibility setting alongside the existing fields, and the standalone triggers' inspector treatment is unchanged. The "beats are triggers" property described in Sections 4 and 10 disappears, replaced by the visibility setting described above.
+Status. Captured for future work; not in the v2.4 milestone. The property inspector currently in progress does not need to anticipate this change. Section 13's existing description of the Beat Points band continues to apply during v2.4, editing active-beats and strength strings and the cycle parameters as it does today. When the unified model lands, the inspector's behaviour for curves gains the bound-trigger function slot and the visibility setting alongside the existing fields, and the standalone triggers' inspector treatment is unchanged. The "beats are triggers" property described in Sections 4 and 10 disappears, replaced by the visibility setting described above.
 
 ---
 
@@ -536,17 +613,17 @@ Example scene.json:
       "strength": "9",
       "cursorR": 3,
       "cursorL": 0,
-      "beat": "circleBeat",
-      "sweep": "projectorSweep"
+      "hitBeat": "hitBeat_circle",
+      "hitTrigger": "hitTrigger_circle"
     }
   ],
   "triggers": [
-    { "x": 3, "y": 4, "note": 60, "collision": "triggerHit" },
-    { "x": -4, "y": 2, "note": 64, "collision": "triggerHit" },
-    { "x": 2, "y": -3, "note": 67, "collision": "triggerHit" }
+    { "x": 3, "y": 4, "note": 60, "collision": "collision_node" },
+    { "x": -4, "y": 2, "note": 64, "collision": "collision_node" },
+    { "x": 2, "y": -3, "note": 67, "collision": "collision_node" }
   ],
   "sprites": [
-    { "x": 0, "y": 0, "vx": 1, "vy": 0, "step": "wander" }
+    { "x": 0, "y": 0, "vx": 1, "vy": 0, "motionUpdate": "" }
   ]
 }
 ```
@@ -555,7 +632,7 @@ Corresponding behaviours.js:
 
 ```javascript
 // Curve functions.
-function circleBeat(ctx) {
+function hitBeat_circle(ctx) {
     // An arpeggio keyed to which beat of the cycle fired.
     const degrees = [0, 2, 4, 5];
     const note = scaleMap(degrees[ctx.beatIndex % 4] / 7,
@@ -563,7 +640,7 @@ function circleBeat(ctx) {
     return { note, velocity: ctx.strength * 14, duration: 200 };
 }
 
-function projectorSweep(ctx) {
+function hitTrigger_circle(ctx) {
     // Distance-based pitch — GeoMaestro distortion pattern.
     return {
         note: ctx.trigger.note - Math.floor(ctx.d),
@@ -573,27 +650,21 @@ function projectorSweep(ctx) {
 }
 
 // Trigger functions.
-function triggerHit(ctx) {
+function collision_node(ctx) {
     return { note: this.note, velocity: 100, duration: 300 };
 }
 
-// Sprite functions.
-function wander(ctx) {
-    // Image colour drives velocity — red pushes right, blue pushes left.
-    this.vx += (ctx.r - ctx.b) * 0.1;
-    this.vy += (ctx.g - 0.5) * 0.1;
-    // Fire a note when luminance crosses into a bright region.
-    if (ctx.lum > 0.7 && this.wasDark) {
-        this.wasDark = false;
-        return {
-            note: scaleMap(ctx.hue, { scale: ctx.scale, root: ctx.root }),
-            velocity: 80,
-            duration: 150,
-        };
-    } else if (ctx.lum < 0.3) {
-        this.wasDark = true;
-    }
-    return null;  // no firing this step
+// Sprite functions. The shared Motion Update default — every sprite
+// with an empty motionUpdate field invokes this function.
+function motionUpdate(ctx) {
+    // Image colour drives acceleration — red pulls right, blue pulls
+    // left, the green channel pushes vertically. The simulation adds
+    // the returned ax/ay to velocity before integrating position.
+    const c = ctx.imageColor;
+    return {
+        ax: (c.r - c.b) * 0.05,
+        ay: (c.g - 128) * 0.05,
+    };
 }
 ```
 
