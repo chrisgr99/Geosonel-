@@ -84,13 +84,27 @@
  * varies-blank field propagates to every selected curve —
  * possible by explicit action, not by accidental slip).
  *
- * Bands 3 and 4 stay visible as placeholder rows pending
- * the Strudel migration (DESIGN.md §27), since their
- * semantics overlap with the pattern model and will be
- * redesigned alongside Band 5's collapse into a single
- * Strudel-pattern field. Their fields keep their current
- * footprint so the form layout stays consistent across
- * the migration window. The Inspector exposes
+ * Bands 3 and 4 — message-function slots and Auto Beat
+ * Interval — are functional in v2.4. Each Band 3 row reads
+ * a slot field (motionUpdate / hitBeat / hitTrigger /
+ * collision / auto) by string name and commits typed edits
+ * via validateFunctionName, with the same hard-error red /
+ * soft-warn yellow squiggle lifecycle the other editable
+ * fields use. The Create button next to each field
+ * scaffolds a stub function in behaviors.js using the
+ * row's auto-name convention (slotKey_objectName, falling
+ * back to slotKey_id, with bare `motionUpdate` as the
+ * shared default for sprite Motion Update) and binds the
+ * slot to it. Band 4's two combos read autoBeatInterval
+ * from the selected sprites and triggers respectively and
+ * emit setAutoBeatInterval edits on selection. Resolution
+ * of slot names against actual functions happens at fire
+ * time, not commit time — a name that doesn't yet exist in
+ * behaviors.js still passes validation here, with the
+ * loader's soft-error model leaving the slot inert until
+ * the function appears.
+ *
+ * The Inspector exposes
  * setSelection(), setScene(), and setEditCallback(); main.js
  * wires the three together so the inspector tracks selection
  * changes, scene reloads, and edit commits.
@@ -100,9 +114,9 @@
  *   2. Geometry / visual (position, curve size, cursor size,
  *      sprite/trigger size, color)
  *   3. Message functions (two function-binding rows with
- *      Create buttons; labels change by kind: Step/Auto for
- *      sprite, Collision/Auto for trigger, Beat/Sweep for
- *      curve)
+ *      Create buttons; labels change by kind: Motion Update /
+ *      Auto for sprite, Collision / Auto for trigger,
+ *      Hit Beat / Hit Trigger for curve)
  *   4. Auto beat interval (trigger, sprite columns)
  *   5. Beat points (curve beat-point generator, active beats
  *      string, strength string) — curves only
@@ -161,6 +175,7 @@ import {
     validateActiveBeatsCount,
     validateBeatShift,
     validateRepeats,
+    validateFunctionName,
 } from "./curveFieldValidation.js";
 import { allBeatIntervalTokens } from "./beatIntervals.js";
 
@@ -1187,12 +1202,34 @@ export class Inspector {
     }
 
     /**
-     * Band 3 — Message functions. Active only when the
-     * selection is single-kind (since the labels carry kind-
-     * specific semantics). Labels: Step/Auto for sprites,
-     * Collision/Auto for triggers, Beat/Sweep for curves.
-     * Multi-kind selections see the default sprite labels,
-     * greyed.
+     * Band 3 — Message functions. Two function-binding rows,
+     * each holding a slot field plus a Create button. Slots
+     * carry kind-specific semantics (DESIGN.md §9):
+     * Motion Update / Auto for sprites; Collision / Auto
+     * for triggers; Hit Beat / Hit Trigger for curves. The
+     * row labels switch by kind; multi-kind selections see
+     * the default sprite labels with the row greyed.
+     *
+     * Slot fields hold STRING NAMES that resolve at fire
+     * time against scene.functionMap (built by the loader
+     * from behaviors.js). Empty string is the unbound
+     * state. The shared-default rule applies only to
+     * Sprite Motion Update: an empty motionUpdate slot
+     * invokes the conventional `motionUpdate` function in
+     * behaviors.js, which the field surfaces as a
+     * placeholder hint when the field is empty.
+     *
+     * Create button. Single-object selection only. The
+     * proposed name is whatever the user has typed in the
+     * field, falling back to the same auto-name the
+     * placeholder shows when the field is empty. Click
+     * scaffolds a stub function with that name into
+     * behaviors.js (if not already present) and binds the
+     * slot to the name. The button is greyed when the
+     * proposed name already lives in scene.functionMap
+     * (avoiding duplicate declarations) or when the
+     * selection isn't a single object.
+     *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandMessageFunctions(ctx) {
@@ -1200,22 +1237,359 @@ export class Inspector {
         band.className = "insp-band";
 
         const labels = functionLabelsFor(ctx);
+        const slotKeys = functionSlotKeysFor(ctx);
         const active = ctx.singleKind !== null;
         const dis = !active;
 
-        const r1 = mkRow();
-        r1.appendChild(mkLabel(labels[0], { width: W.leftLabel, disabled: dis }));
-        r1.appendChild(mkField({ value: "", width: W.funcBinding, disabled: dis }));
-        r1.appendChild(mkCreateButton({ disabled: dis }));
-        band.appendChild(r1);
+        // Read binding consults the selected objects of the
+        // single kind; multi-kind selections produce empty
+        // arrays here, which means aggregateString returns
+        // "" and the field renders blank with the row greyed.
+        const objs = selectedObjects(this._scene, this._selection);
+        /** @type {any[]} */
+        const kindObjs = ctx.singleKind === "sprite" ? objs.sprites
+            : ctx.singleKind === "trigger" ? objs.triggers
+            : ctx.singleKind === "curve" ? objs.curves
+            : [];
 
-        const r2 = mkRow();
-        r2.appendChild(mkLabel(labels[1], { width: W.leftLabel, disabled: dis }));
-        r2.appendChild(mkField({ value: "", width: W.funcBinding, disabled: dis }));
-        r2.appendChild(mkCreateButton({ disabled: dis }));
-        band.appendChild(r2);
+        // Create is only sensible for single-object
+        // selections — multi-object Create would either
+        // assign the same name to every object (likely
+        // wrong) or produce per-object names with no clear
+        // disambiguation. Single-object also gives us a
+        // concrete `obj` to derive the proposed name from.
+        const createSensible = ctx.isSingle && active && kindObjs.length === 1;
+        const obj = createSensible ? kindObjs[0] : null;
+
+        for (let row = 0; row < 2; row++) {
+            const slotKey = slotKeys[row];
+            const label = labels[row];
+
+            // Aggregate the slot's stored value across the
+            // selection. Empty string is the unbound state
+            // (the field shows a placeholder hint instead);
+            // "varies" is multi-object disagreement
+            // (rendered blank for now).
+            const slotAgg = aggregateString(kindObjs, slotKey);
+            const fieldValue = slotAgg === "varies" ? "" : slotAgg;
+
+            // Placeholder text is the proposed name for this
+            // slot, computed against the single selected
+            // object when present. Multi-select within kind
+            // doesn't surface a placeholder — the field is
+            // editable but blank, since proposed names
+            // differ per object.
+            const placeholder = createSensible
+                ? proposedFunctionName(slotKey, ctx.singleKind, obj)
+                : "";
+
+            // Render-time proposed name. Drives both the
+            // button's enable/disable gate and its label
+            // (Create vs Go to). Empty when the selection
+            // isn't a single object.
+            const proposedAtRender = createSensible
+                ? (fieldValue.length > 0 ? fieldValue : placeholder)
+                : "";
+
+            // Button gating and labelling. Disabled only
+            // when the proposed name can't be resolved
+            // (multi-object selection or empty proposed
+            // name); never disabled merely because the
+            // function exists. When the function exists,
+            // the button switches to a Go-to label and the
+            // click navigates to the declaration in
+            // behaviors.js instead of trying to scaffold a
+            // duplicate. The label decision happens here at
+            // render time using the current field value (or
+            // its placeholder fall-back); the click handler
+            // re-evaluates against the field's text at that
+            // moment so the action stays consistent even if
+            // the user has typed but not yet committed.
+            const buttonDisabled =
+                !createSensible ||
+                proposedAtRender === "";
+            const buttonLabel =
+                !buttonDisabled &&
+                this._functionExistsInScene(proposedAtRender)
+                    ? "Go to"
+                    : "Create";
+
+            const r = mkRow();
+            r.appendChild(mkLabel(label, { width: W.leftLabel, disabled: dis }));
+            r.appendChild(this._buildSlotField({
+                value: fieldValue,
+                placeholder,
+                width: W.funcBinding,
+                editable: active,
+                slotKey,
+                kind: ctx.singleKind,
+            }));
+            r.appendChild(this._buildSlotCreateButton({
+                disabled: buttonDisabled,
+                label: buttonLabel,
+                slotKey,
+                kind: ctx.singleKind,
+                obj,
+            }));
+            band.appendChild(r);
+        }
 
         return band;
+    }
+
+    /**
+     * Build a slot field for one Band 3 row. Mirrors the
+     * commit lifecycle of _buildEditableField (Enter
+     * commits, blur silently reverts hard errors, soft
+     * warnings squiggle yellow) but adds placeholder-hint
+     * display: when the field is empty and unfocused, the
+     * proposed function name shows in muted text via the
+     * .placeholder-shown class. Focus clears the placeholder
+     * for editing; blur restores it iff the field is empty.
+     *
+     * The slot field uses validateFunctionName, which
+     * accepts empty (the unbound state) and any
+     * JS-identifier string that isn't a reserved word.
+     * Resolution against scene.functionMap happens at fire
+     * time, not commit time — a name that doesn't yet exist
+     * in behaviors.js still passes validation here, and the
+     * loader's soft-error model lets the slot stay inert
+     * until the function appears.
+     *
+     * @param {{
+     *   value: string,
+     *   placeholder: string,
+     *   width: number,
+     *   editable: boolean,
+     *   slotKey: string,
+     *   kind: "sprite" | "trigger" | "curve" | null,
+     * }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildSlotField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-field insp-slot-field";
+        el.style.width = `${opts.width}px`;
+
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.textContent = opts.value;
+            return el;
+        }
+
+        el.setAttribute("contenteditable", "plaintext-only");
+        el.setAttribute("spellcheck", "false");
+
+        // Placeholder display when the value is empty. The
+        // .placeholder-shown class styles the text muted so
+        // the user can tell the displayed string is a hint
+        // rather than a stored value.
+        const showPlaceholder = () => {
+            el.textContent = opts.placeholder;
+            el.classList.add("placeholder-shown");
+        };
+        const clearPlaceholder = () => {
+            el.textContent = "";
+            el.classList.remove("placeholder-shown");
+        };
+        if (opts.value !== "") {
+            el.textContent = opts.value;
+        } else if (opts.placeholder !== "") {
+            showPlaceholder();
+        }
+
+        el.addEventListener("focus", () => {
+            if (el.classList.contains("placeholder-shown")) {
+                clearPlaceholder();
+            } else {
+                selectAllInElement(el);
+            }
+        });
+
+        let committed = false;
+        const editKind = editKindForSlot(opts.slotKey);
+        const objectKind = opts.kind;
+
+        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
+            const candidate = el.textContent ?? "";
+            const result = validateFunctionName(candidate);
+            if (result.kind === "hard") {
+                if (mode === "blur") {
+                    // Silently revert: an abandoned bad
+                    // name shouldn't carry invalid state.
+                    el.classList.remove("error-hard", "error-soft");
+                    if (opts.value !== "") {
+                        el.textContent = opts.value;
+                    } else if (opts.placeholder !== "") {
+                        showPlaceholder();
+                    } else {
+                        el.textContent = "";
+                    }
+                    return;
+                }
+                el.classList.remove("error-soft");
+                el.classList.add("error-hard");
+                return;
+            }
+            el.classList.remove("error-hard");
+            if (result.kind === "soft") {
+                el.classList.add("error-soft");
+            } else {
+                el.classList.remove("error-soft");
+            }
+            if (committed) return;
+            if (result.value !== opts.value) {
+                committed = true;
+                /** @type {any} */
+                const edit = { kind: editKind, value: result.value };
+                if (editKind === "setAuto") edit.objectKind = objectKind;
+                this._emitEdit(edit);
+            }
+        };
+
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit("enter");
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                el.classList.remove("error-hard", "error-soft");
+                if (opts.value !== "") {
+                    el.textContent = opts.value;
+                } else if (opts.placeholder !== "") {
+                    showPlaceholder();
+                } else {
+                    el.textContent = "";
+                }
+                el.blur();
+                return;
+            }
+            if (el.classList.contains("error-hard")) {
+                queueMicrotask(() => {
+                    el.classList.remove("error-hard");
+                });
+            }
+        });
+        el.addEventListener("blur", () => {
+            tryCommit("blur");
+            // Restore placeholder if the field is now empty
+            // and we didn't blur into a hard-error state.
+            if (
+                el.textContent === "" &&
+                !el.classList.contains("error-hard") &&
+                opts.placeholder !== ""
+            ) {
+                showPlaceholder();
+            }
+        });
+
+        return el;
+    }
+
+    /**
+     * Build the slot button for one Band 3 row. The button
+     * carries one of two labels: "Create" when the
+     * proposed function name doesn't yet exist in
+     * behaviors.js, or "Go to" when it does. Both labels
+     * use the same green button styling for now; the
+     * action differs by what the proposed name resolves
+     * to at click time.
+     *
+     * Click-time evaluation. The button reads the field's
+     * text directly out of the DOM, so a mid-flight typing
+     * pass that hasn't blurred yet still gets the user's
+     * latest intent. The typed value is then run through
+     * validateFunctionName — a hard error (invalid
+     * identifier, reserved word) silently no-ops, since a
+     * field showing a red squiggle should not navigate to
+     * or scaffold a stub for a name the user is still
+     * editing. With a valid name in hand, an existence
+     * check against the scene's functionMap picks the
+     * action: Go to emits a goToFunction edit, Create
+     * emits createFunctionStub. The render-time label may
+     * be stale relative to the click-time decision (typing
+     * a new name without committing), but the click action
+     * always matches what the field actually contains.
+     *
+     * @param {{
+     *   disabled: boolean,
+     *   label: string,
+     *   slotKey: string,
+     *   kind: "sprite" | "trigger" | "curve" | null,
+     *   obj: any,
+     * }} opts
+     */
+    _buildSlotCreateButton(opts) {
+        const el = document.createElement("button");
+        el.className = "insp-btn-create";
+        if (opts.disabled) el.classList.add("disabled");
+        el.textContent = opts.label;
+        if (opts.disabled || opts.kind === null || opts.obj === null) return el;
+
+        el.addEventListener("click", () => {
+            // Read the row's slot field by walking the
+            // sibling chain. Each row has the field directly
+            // before the button (mkLabel + slot field +
+            // button), so previousElementSibling is the
+            // field we want.
+            const fieldEl = el.previousElementSibling;
+            let typed = "";
+            if (fieldEl instanceof HTMLElement &&
+                !fieldEl.classList.contains("placeholder-shown")) {
+                typed = (fieldEl.textContent ?? "").trim();
+            }
+            const placeholder = proposedFunctionName(opts.slotKey, opts.kind, opts.obj);
+            const proposed = typed.length > 0 ? typed : placeholder;
+            if (proposed.length === 0) return;
+
+            // Validate the proposed name. A hard error means
+            // the field is showing the red squiggle right
+            // now — the click should be a silent no-op
+            // rather than scaffold a stub for or navigate
+            // to a malformed name.
+            const result = validateFunctionName(proposed);
+            if (result.kind === "hard") return;
+            const name = result.value;
+
+            // Re-evaluate existence at click time so the
+            // action matches the field's current text even
+            // if the user has typed without committing
+            // since the button last rendered.
+            if (this._functionExistsInScene(name)) {
+                this._emitEdit({
+                    kind: "goToFunction",
+                    functionName: name,
+                });
+                return;
+            }
+            this._emitEdit({
+                kind: "createFunctionStub",
+                slotKey: opts.slotKey,
+                objectKind: opts.kind,
+                proposedName: name,
+            });
+        });
+        return el;
+    }
+
+    /**
+     * Whether a top-level function with the given name
+     * already exists in the current scene's functionMap.
+     * Used by the Create button's enable/disable gate to
+     * prevent scaffolding a duplicate declaration in
+     * behaviors.js. A null scene (no scene yet loaded) or
+     * empty name treats the function as not-existing so
+     * the gate doesn't fire spuriously.
+     * @param {string} name
+     * @returns {boolean}
+     */
+    _functionExistsInScene(name) {
+        if (this._scene === null || name === "") return false;
+        return Object.prototype.hasOwnProperty.call(
+            this._scene.functionMap, name,
+        );
     }
 
     /**
@@ -1228,31 +1602,41 @@ export class Inspector {
      * Curve column here was redundant and pulled the row
      * out wider than its sibling constraint rows.
      *
-     * The two combos are placeholders pending the Strudel
-     * migration (DESIGN.md §27), where the auto-firing
-     * cadence is expected to be expressed by a pattern
-     * rather than a single interval token. They render the
-     * full beat-interval token list plus an "Off" entry as
-     * a UI preview, but their onSelect is a no-op: nothing
-     * commits, and the displayed value stays "Off". When the
-     * Strudel pattern model lands the field will rewire to a
-     * real value (or be replaced wholesale by a pattern
-     * field, in which case this row collapses).
+     * Each combo reads the autoBeatInterval field across
+     * the relevant kind's selection slice (aggregated).
+     * "Off" suppresses Auto firings entirely; the other
+     * options come from the fixed beat-interval token list.
+     * Selection emits a setAutoBeatInterval edit with an
+     * objectKind disambiguator so main.js can dispatch to
+     * the sprite-only or trigger-only mutator. Multi-
+     * select disagreement renders the combo blank; picking
+     * a value from the popover propagates that value to
+     * every selected object of that kind.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandAutoInterval(ctx) {
         const band = document.createElement("div");
         band.className = "insp-band";
 
+        const objs = selectedObjects(this._scene, this._selection);
+        const triggerAgg = aggregateString(objs.triggers, "autoBeatInterval");
+        const spriteAgg = aggregateString(objs.sprites, "autoBeatInterval");
+        const triggerValue = triggerAgg === "varies" ? "" : triggerAgg;
+        const spriteValue = spriteAgg === "varies" ? "" : spriteAgg;
+
         const r = mkRow();
         r.appendChild(mkLabel("Auto Beat\nInterval", { width: W.leftLabel, multiline: true }));
         r.appendChild(mkLabel("Trigger", { width: W.abiTrigger, disabled: !ctx.hasTriggers }));
         r.appendChild(this._buildAutoBeatIntervalCombo({
+            value: triggerValue,
             disabled: !ctx.hasTriggers,
+            objectKind: "trigger",
         }));
         r.appendChild(mkLabel("Sprite", { width: W.abiSprite, disabled: !ctx.hasSprites }));
         r.appendChild(this._buildAutoBeatIntervalCombo({
+            value: spriteValue,
             disabled: !ctx.hasSprites,
+            objectKind: "sprite",
         }));
         band.appendChild(r);
 
@@ -1262,30 +1646,29 @@ export class Inspector {
     /**
      * Build an Auto Beat Interval dropdown for the Band 4
      * Trigger or Sprite column. Options are "Off" plus the
-     * full beat-interval token list. Selection is a no-op
-     * pending the Strudel migration; the popover opens and
-     * closes normally, but no edit is emitted and the
-     * displayed value remains "Off". A user-visible UI
-     * preview that lets the row's intent be readable from
-     * the inspector.
-     * @param {{ disabled: boolean }} opts
+     * full beat-interval token list. Selection emits a
+     * setAutoBeatInterval edit tagged with objectKind so
+     * main.js routes it to the sprite-only or trigger-only
+     * mutator.
+     * @param {{ value: string, disabled: boolean, objectKind: "sprite" | "trigger" }} opts
      */
     _buildAutoBeatIntervalCombo(opts) {
         const options = [
-            { value: "off", label: "Off" },
+            { value: "Off", label: "Off" },
             ...allBeatIntervalTokens().map((token) => ({ value: token, label: token })),
         ];
         return mkPopoverCombo({
-            value: "Off",
+            value: opts.value,
             width: W.abiCombo,
             disabled: opts.disabled,
             options,
-            currentValue: "off",
-            onSelect: () => {
-                // Placeholder pending data binding. The
-                // popover closes via closeAllPopovers in the
-                // option-click handler; nothing else needs
-                // to happen here.
+            currentValue: opts.value,
+            onSelect: (newValue) => {
+                this._emitEdit({
+                    kind: "setAutoBeatInterval",
+                    objectKind: opts.objectKind,
+                    value: newValue,
+                });
             },
         });
     }
@@ -2475,12 +2858,81 @@ function sizeRowActive(ctx) {
 
 /** @param {ReturnType<typeof buildSelectionContext>} ctx */
 function functionLabelsFor(ctx) {
-    if (ctx.singleKind === "sprite") return ["Step", "Auto"];
+    if (ctx.singleKind === "sprite") return ["Motion Update", "Auto"];
     if (ctx.singleKind === "trigger") return ["Collision", "Auto"];
-    if (ctx.singleKind === "curve") return ["Beat", "Sweep"];
+    if (ctx.singleKind === "curve") return ["Hit Beat", "Hit Trigger"];
     // Multi-kind: row is greyed; default to sprite labels so
     // the row's text content stays the same length.
-    return ["Step", "Auto"];
+    return ["Motion Update", "Auto"];
+}
+
+/**
+ * The two slot keys (camelCase JSON field names) for the
+ * Band 3 rows on a single-kind selection. Mirrors
+ * functionLabelsFor; both arrays line up so labels[i] is
+ * the label for the slot stored under slotKeys[i].
+ * @param {ReturnType<typeof buildSelectionContext>} ctx
+ * @returns {["motionUpdate" | "hitBeat" | "collision", "hitTrigger" | "auto"]}
+ */
+function functionSlotKeysFor(ctx) {
+    if (ctx.singleKind === "sprite") return ["motionUpdate", "auto"];
+    if (ctx.singleKind === "trigger") return ["collision", "auto"];
+    if (ctx.singleKind === "curve") return ["hitBeat", "hitTrigger"];
+    return ["motionUpdate", "auto"];
+}
+
+/**
+ * The edit kind a slot field commit emits, given the slot
+ * key. The Auto slot (shared between sprite and trigger)
+ * uses a single edit kind disambiguated by an objectKind
+ * field on the edit; main.js dispatches accordingly.
+ * @param {string} slotKey
+ * @returns {string}
+ */
+function editKindForSlot(slotKey) {
+    if (slotKey === "motionUpdate") return "setMotionUpdate";
+    if (slotKey === "hitBeat") return "setHitBeat";
+    if (slotKey === "hitTrigger") return "setHitTrigger";
+    if (slotKey === "collision") return "setCollision";
+    return "setAuto"; // disambiguated by edit.objectKind
+}
+
+/**
+ * Compute the proposed function name for a slot's Create
+ * button (and the placeholder hint shown when the field is
+ * empty). Naming convention from DESIGN.md §9's auto-name
+ * rule:
+ *
+ *   - Sprite Motion Update with empty field shows the bare
+ *     shared-default name `motionUpdate`. The Create button
+ *     sees this as the proposed name; since the shared
+ *     default already exists in behaviors.js (template-
+ *     seeded), Create is gated off in that case. A user
+ *     who wants a per-sprite override types a different
+ *     name into the field.
+ *   - Every other slot uses `slotKey_objectName` when the
+ *     object has a typed name, falling back to
+ *     `slotKey_id` when the name field is empty.
+ *
+ * Names that pass the inspector's validateName check are
+ * already valid JS identifiers so the join with underscore
+ * is safe; ids are generated as `<kind>_<sixhex>` which is
+ * also identifier-safe.
+ *
+ * @param {string} slotKey
+ * @param {"sprite" | "trigger" | "curve"} kind
+ * @param {any} obj
+ * @returns {string}
+ */
+function proposedFunctionName(slotKey, kind, obj) {
+    if (slotKey === "motionUpdate" && kind === "sprite") {
+        return "motionUpdate";
+    }
+    const name = (typeof obj.name === "string" && obj.name.length > 0) ? obj.name : null;
+    const id = typeof obj.id === "string" ? obj.id : "";
+    const suffix = name !== null ? name : id;
+    if (suffix === "") return slotKey;
+    return `${slotKey}_${suffix}`;
 }
 
 /**

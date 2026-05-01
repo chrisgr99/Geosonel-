@@ -34,6 +34,7 @@
 // @ts-check
 
 import { isValidBeatInterval } from "./beatIntervals.js";
+import { IDENTIFIER_PATTERN, RESERVED_WORDS } from "./nameValidation.js";
 
 /**
  * Validation result returned by every validator.
@@ -621,4 +622,50 @@ export function validateRepeats(candidate, cycleDuration) {
         };
     }
     return { kind: "ok", value: String(rounded) };
+}
+
+/**
+ * Validate a function-name binding for Band 3's slot fields
+ * (Sprite Motion Update / Auto, Trigger Collision / Auto,
+ * Curve Hit Beat / Hit Trigger). Runtime value is either
+ * the empty string (slot unbound) or a valid JavaScript
+ * identifier matching a top-level function in the score's
+ * behaviors.js file. The validator checks identifier syntax
+ * and reserved-word membership; resolution against
+ * functionMap happens at fire time, not commit time, so a
+ * name that doesn't yet exist in behaviors.js still passes
+ * validation here — the soft-error model in the loader
+ * (DESIGN.md §9) lets the slot stay inert until the user
+ * types the function body, without blocking the bind.
+ *
+ * Empty string is valid (the unbound state). Names that
+ * fail the identifier check or match a reserved word are
+ * hard-blocked. Names that match the auto-generated id
+ * pattern (sp_xxxxxx etc.) are accepted here but soft-warn
+ * — they're legal identifiers and would work as function
+ * names, but they're easy to confuse with object ids in
+ * the JSON, so the yellow squiggle cues the user to pick a
+ * less ambiguous name.
+ *
+ * @param {string} candidate
+ * @returns {ValidationResult}
+ */
+export function validateFunctionName(candidate) {
+    const trimmed = candidate.trim();
+    if (trimmed === "") {
+        return { kind: "ok", value: "" };
+    }
+    if (!IDENTIFIER_PATTERN.test(trimmed)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is not a valid JavaScript identifier (letters, digits, underscore, dollar sign; can't start with a digit).`,
+        };
+    }
+    if (RESERVED_WORDS.has(trimmed)) {
+        return {
+            kind: "hard", value: "",
+            message: `"${trimmed}" is a JavaScript reserved word and can't be used as a function name.`,
+        };
+    }
+    return { kind: "ok", value: trimmed };
 }

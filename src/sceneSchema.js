@@ -146,8 +146,8 @@ export const CURVE_FIELDS = [
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
     { key: "cursorThickness", label: "Cursor Thickness", type: "number", default: 2 },
     { key: "beatsAreTriggers", label: "Beats Are Triggers", type: "boolean", default: false },
-    { key: "beat", label: "Beat Function", type: "functionRef", default: null },
-    { key: "sweep", label: "Sweep Function", type: "functionRef", default: null },
+    { key: "hitBeat", label: "Hit Beat Function", type: "functionRef", default: "" },
+    { key: "hitTrigger", label: "Hit Trigger Function", type: "functionRef", default: "" },
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 
@@ -165,9 +165,16 @@ export const TRIGGER_FIELDS = [
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
     { key: "note", label: "Note", type: "integer", default: null },
     { key: "payload", label: "Payload", type: "object", default: null },
-    { key: "collision", label: "Collision Function", type: "functionRef", default: null },
-    { key: "auto", label: "Auto Function", type: "functionRef", default: null },
+    { key: "collision", label: "Collision Function", type: "functionRef", default: "" },
+    { key: "auto", label: "Auto Function", type: "functionRef", default: "" },
     { key: "autoInterval", label: "Auto Interval", type: "number", default: 1 },
+    {
+        key: "autoBeatInterval",
+        label: "Auto Beat Interval",
+        type: "enum",
+        default: "Off",
+        enumValues: ["Off", ...allBeatIntervalTokens()],
+    },
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 
@@ -186,9 +193,16 @@ export const SPRITE_FIELDS = [
     { key: "maxSpeed", label: "Max Speed", type: "number", default: 16 },
     { key: "displayDiameter", label: "Display Diameter", type: "number", default: 1.05 },
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
-    { key: "step", label: "Step Function", type: "functionRef", default: null },
-    { key: "auto", label: "Auto Function", type: "functionRef", default: null },
+    { key: "motionUpdate", label: "Motion Update Function", type: "functionRef", default: "" },
+    { key: "auto", label: "Auto Function", type: "functionRef", default: "" },
     { key: "autoInterval", label: "Auto Interval", type: "number", default: 1 },
+    {
+        key: "autoBeatInterval",
+        label: "Auto Beat Interval",
+        type: "enum",
+        default: "Off",
+        enumValues: ["Off", ...allBeatIntervalTokens()],
+    },
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 

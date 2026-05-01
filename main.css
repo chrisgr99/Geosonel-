@@ -882,6 +882,20 @@ html, body {
     pointer-events: none;
 }
 
+/* Slot field (Band 3 message-function bindings):
+ * placeholder-hint display when the field is empty. The
+ * placeholder text itself is in the field's textContent so
+ * a screen reader / accessibility-zoom user sees the same
+ * proposed-name hint a sighted user does, but it's styled
+ * muted-italic to read as a hint rather than a stored
+ * value. Focus clears the placeholder for editing; blur
+ * restores it iff the field is empty. The two transitions
+ * are managed by inspector.js's _buildSlotField helper. */
+.insp-field.placeholder-shown {
+    color: #a8a8a8;
+    font-style: italic;
+}
+
 /* Create button. Outlined green to match the function-binding
  * field next to it; disabled variant mutes both border and
  * text. */

@@ -4,7 +4,7 @@
  * Wires up every component and owns the score session. The
  * current score's data and behaviour are kept in two files
  * inside the bundle \u2014 scene.json (declarative data) and
- * behaviours.js (named functions) \u2014 which the scene loader
+ * behaviors.js (named functions) \u2014 which the scene loader
  * stitches together on demand (Cmd-Enter or Run menu) to
  * produce a Scene that the canvas renders on top of the grid.
  *
@@ -24,10 +24,10 @@
  * Current milestone scope:
  *   - Scene data model (Scene, Curve, Trigger, Sprite).
  *   - Scene loader that builds a Scene from scene.json plus
- *     behaviours.js, with named function references resolved
- *     against the behaviours' top-level declarations.
+ *     behaviors.js, with named function references resolved
+ *     against the behavior file's top-level declarations.
  *   - Canvas rendering of scenes (static).
- *   - Editor with Properties (JSON) and Behaviours (JS) tabs,
+ *   - Editor with Properties (JSON) and Behaviors (JS) tabs,
  *     each with its own syntax highlighting and linter.
  *   - Disk mirroring for scores; auto-reload on external edits.
  *   - Explicit save (Cmd-S); no autosave timer.
@@ -81,6 +81,8 @@ import {
     fillMissingMusicalTimingFields,
     cleanLegacySceneFields,
     fillMissingCanvasSize,
+    renameFunctionSlotFields,
+    migrateBehaviorsFilename,
     setMuteOnSelection,
     setHideOnCurves,
     setNameOnSelection,
@@ -105,6 +107,15 @@ import {
     setCurveThicknessOnCurves,
     setCursorThicknessOnCurves,
     setColorOnSelection,
+    setMotionUpdateOnSprites,
+    setAutoOnSprites,
+    setCollisionOnTriggers,
+    setAutoOnTriggers,
+    setHitBeatOnCurves,
+    setHitTriggerOnCurves,
+    setAutoBeatIntervalOnSprites,
+    setAutoBeatIntervalOnTriggers,
+    scaffoldFunctionInBehaviors,
     setCanvasW,
     setCanvasH,
 } from "./src/sceneEditor.js";
@@ -325,6 +336,7 @@ async function main() {
         if (editor.isDirty) {
             await editor.save();
         }
+        await runBundleMigrations();
         await ensureIdentityFieldsAreFilled();
         const result = sceneLoader.load(session.bundle);
         if (result.success && result.scene !== null) {
@@ -344,6 +356,44 @@ async function main() {
             messages.write("Scene updated.");
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
+        }
+    };
+
+    /**
+     * Run bundle-level migrations on the active score's
+     * files. Currently the only migration here renames a
+     * legacy behaviours.js file to behaviors.js (DESIGN.md
+     * v2.4 spelling change). Done before the scene-level
+     * fill pass below so the loader's behaviors.js lookup
+     * succeeds on a freshly-migrated bundle, and so the
+     * editor's tab bar refreshes to show the new label.
+     * Returns once any necessary migration has been
+     * applied. Steady-state (already-migrated) bundles are
+     * a no-op.
+     *
+     * Persistence: the rename is committed to IndexedDB
+     * inside this function so the migrated state survives
+     * a reload. Without an explicit save here the bundle
+     * would be re-migrated every page load, since
+     * editor.reloadFromBundle resets the dirty flag and
+     * runScene's later save check sees nothing to persist.
+     */
+    const runBundleMigrations = async () => {
+        const renamed = migrateBehaviorsFilename(session.bundle);
+        if (renamed) {
+            // Re-render the editor so the tab bar picks up
+            // the new filename label, and so the renamed
+            // file is reachable through selectTab. The
+            // active tab survives the call iff its name
+            // didn't change — if it was "behaviours.js" the
+            // editor falls back to the inspector tab.
+            editor.reloadFromBundle();
+            // Persist the migrated bundle so the next page
+            // load doesn't re-run the rename pass. save()
+            // also clears the dirty flag, leaving runScene's
+            // subsequent dirty-driven save paths to handle
+            // any further mutation in this same cycle.
+            await editor.save();
         }
     };
 
@@ -384,13 +434,15 @@ async function main() {
         const timingChanged = fillMissingMusicalTimingFields(parsed.data);
         const sceneFieldsChanged = cleanLegacySceneFields(parsed.data);
         const canvasSizeChanged = fillMissingCanvasSize(parsed.data);
+        const slotFieldsRenamed = renameFunctionSlotFields(parsed.data);
         if (!idsChanged &&
             !namesChanged &&
             !legacyChanged &&
             !shapesChanged &&
             !timingChanged &&
             !sceneFieldsChanged &&
-            !canvasSizeChanged) return;
+            !canvasSizeChanged &&
+            !slotFieldsRenamed) return;
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();
@@ -756,6 +808,112 @@ async function main() {
                 await applySceneEdit((data) =>
                     setColorOnSelection(data, edit.selection, edit.value),
                 );
+            } else if (edit.kind === "setMotionUpdate") {
+                await applySceneEdit((data) =>
+                    setMotionUpdateOnSprites(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setHitBeat") {
+                await applySceneEdit((data) =>
+                    setHitBeatOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setHitTrigger") {
+                await applySceneEdit((data) =>
+                    setHitTriggerOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCollision") {
+                await applySceneEdit((data) =>
+                    setCollisionOnTriggers(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setAuto") {
+                // Sprite Auto and Trigger Auto share an edit
+                // kind because the inspector's Band 3 row
+                // labels both as just "Auto". The objectKind
+                // disambiguator on the edit picks the right
+                // mutator; falling through silently when it's
+                // missing keeps a malformed edit from
+                // crashing the dispatch chain.
+                if (edit.objectKind === "sprite") {
+                    await applySceneEdit((data) =>
+                        setAutoOnSprites(data, edit.selection, edit.value),
+                    );
+                } else if (edit.objectKind === "trigger") {
+                    await applySceneEdit((data) =>
+                        setAutoOnTriggers(data, edit.selection, edit.value),
+                    );
+                }
+            } else if (edit.kind === "setAutoBeatInterval") {
+                if (edit.objectKind === "sprite") {
+                    await applySceneEdit((data) =>
+                        setAutoBeatIntervalOnSprites(data, edit.selection, edit.value),
+                    );
+                } else if (edit.objectKind === "trigger") {
+                    await applySceneEdit((data) =>
+                        setAutoBeatIntervalOnTriggers(data, edit.selection, edit.value),
+                    );
+                }
+            } else if (edit.kind === "createFunctionStub") {
+                // Two-file commit: scaffold a stub function
+                // declaration into behaviors.js for the
+                // proposed name (a no-op if the function
+                // already exists), then bind the slot in
+                // scene.json to that name. Both changes flow
+                // through one runScene cycle so the user
+                // sees one re-render with the new state
+                // applied. After the binding lands, switch
+                // the editor to the behaviors.js tab so the
+                // user sees the new stub ready for editing.
+                const behaviorsFile = session.bundle.getFile("behaviors.js");
+                if (behaviorsFile === null) {
+                    messages.write("No behaviors.js in this score.", "error");
+                    return;
+                }
+                const { newContent, alreadyExists } = scaffoldFunctionInBehaviors(
+                    behaviorsFile.content,
+                    edit.proposedName,
+                    edit.slotKey,
+                );
+                if (!alreadyExists) {
+                    session.bundle.updateContent("behaviors.js", newContent);
+                }
+                // Apply the slot binding in scene.json. The
+                // mutator picks up by (objectKind, slotKey)
+                // pair so a single dispatch table handles
+                // every Band 3 row.
+                /** @type {Record<string, (d: any, s: any, v: string) => void>} */
+                const setterByKindAndSlot = {
+                    "sprite|motionUpdate": setMotionUpdateOnSprites,
+                    "sprite|auto": setAutoOnSprites,
+                    "trigger|collision": setCollisionOnTriggers,
+                    "trigger|auto": setAutoOnTriggers,
+                    "curve|hitBeat": setHitBeatOnCurves,
+                    "curve|hitTrigger": setHitTriggerOnCurves,
+                };
+                const setter = setterByKindAndSlot[`${edit.objectKind}|${edit.slotKey}`];
+                if (typeof setter === "function") {
+                    await applySceneEdit((data) =>
+                        setter(data, edit.selection, edit.proposedName),
+                    );
+                }
+                // Switch to behaviors.js and scroll the
+                // new (or pre-existing) function to the
+                // top of the editor's visible region so the
+                // user can immediately edit its body. The
+                // selectTabAndScrollToFunction call pulls
+                // fresh content from the bundle (so any
+                // updateContent above is reflected in
+                // CodeMirror's view) before locating the
+                // function declaration.
+                editor.selectTabAndScrollToFunction("behaviors.js", edit.proposedName);
+            } else if (edit.kind === "goToFunction") {
+                // Slot's bound function already exists in
+                // behaviors.js — switch to that tab and
+                // scroll the declaration to the top of the
+                // visible region. Mirrors the
+                // createFunctionStub flow's tail step,
+                // skipping the scaffold and slot-bind work
+                // since both are no-ops when the function
+                // and binding already exist.
+                editor.selectTabAndScrollToFunction("behaviors.js", edit.functionName);
             }
         });
     }

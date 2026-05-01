@@ -236,10 +236,11 @@ export class Bundle {
  * Produce the contents of a freshly-created score. The score
  * holds two text files: scene.json (declarative data, edited
  * via the Properties tab and a future property panel) and
- * behaviours.js (named function definitions, edited via the
- * Behaviours tab). The scene loader stitches them together
- * at run time. See DESIGN.md v2.1 for the data and behaviour
- * split.
+ * behaviors.js (named function definitions, edited via the
+ * Behaviors tab). The scene loader stitches them together
+ * at run time. See DESIGN.md v2.4 for the data and behaviour
+ * split, and §9 for the slot-naming convention used in the
+ * template below.
  *
  * @param {string} name
  * @returns {Bundle}
@@ -281,20 +282,20 @@ export function makeEmptyBundle(name) {
       "strength": "9272",
       "cursorR": 2,
       "cursorL": 0,
-      "beat": "circleBeat",
-      "sweep": "curveSweep"
+      "hitBeat": "hitBeat_circle",
+      "hitTrigger": "hitTrigger_circle"
     }
   ],
 
   "triggers": [
-    { "x":  9, "y":  0, "note": 60, "collision": "triggerHit" },
-    { "x": -9, "y":  0, "note": 64, "collision": "triggerHit" },
-    { "x":  0, "y":  9, "note": 67, "collision": "triggerHit" },
-    { "x":  0, "y": -9, "note": 72, "collision": "triggerHit" }
+    { "x":  9, "y":  0, "note": 60, "collision": "collision_node" },
+    { "x": -9, "y":  0, "note": 64, "collision": "collision_node" },
+    { "x":  0, "y":  9, "note": 67, "collision": "collision_node" },
+    { "x":  0, "y": -9, "note": 72, "collision": "collision_node" }
   ],
 
   "sprites": [
-    { "x": 0, "y": 0, "vx": 1, "vy": 0, "step": "wander" }
+    { "x": 0, "y": 0, "vx": 1, "vy": 0, "motionUpdate": "" }
   ]
 }
 `,
@@ -302,26 +303,36 @@ export function makeEmptyBundle(name) {
     );
 
     bundle.addTextFile(
-        "behaviours.js",
-        `// behaviours.js — object behaviour definitions for this
+        "behaviors.js",
+        `// behaviors.js — object behaviour definitions for this
 // score.
 //
 // This file holds the named functions that scene.json's
 // objects refer to by name. Each function slot in scene.json
-// (beat, sweep, collision, step, auto) takes the string name
-// of one of the functions below. The two files together —
-// declarative data plus named behaviours — make up a score.
+// (hitBeat, hitTrigger, collision, motionUpdate, auto) takes
+// the string name of one of the functions below. The two
+// files together — declarative data plus named behaviours —
+// make up a score.
 //
-// Function bodies aren't yet invoked — the simulation loop
-// arrives in a later milestone. Until then this file just
-// needs to parse and execute without errors. The bodies
-// reference helpers (scaleMap, etc.) that will be wired up
-// when audio output lands; until then, any reference inside
-// a function body is harmless because nothing calls these
-// functions yet.
+// Sprite Motion Update has a shared-default convention: any
+// sprite with an empty motionUpdate slot field invokes the
+// conventional function named \`motionUpdate\` below. Per-
+// sprite overrides are available by typing a different name
+// into the slot field. No other slot has a shared default;
+// curves, triggers, and sprite Auto slots default to per-
+// object names like hitBeat_circle, collision_node,
+// auto_drum. See DESIGN.md §9 for the full naming
+// convention.
+//
+// Function bodies aren't yet invoked — the simulation hook
+// for Motion Update lands in a follow-up commit. Until then
+// this file just needs to parse and execute without errors.
+// References inside function bodies to helpers (scaleMap,
+// etc.) are harmless because nothing calls these functions
+// yet.
 
 // --- Curve behaviours ---
-function circleBeat(ctx) {
+function hitBeat_circle(ctx) {
     const degrees = [0, 2, 4, 5];
     return {
         note: scaleMap(degrees[ctx.beatIndex % 4] / 7,
@@ -331,7 +342,7 @@ function circleBeat(ctx) {
     };
 }
 
-function curveSweep(ctx) {
+function hitTrigger_circle(ctx) {
     return {
         note: ctx.trigger.note - Math.floor(ctx.d),
         velocity: Math.max(20, 127 - Math.floor(ctx.d * 8)),
@@ -340,16 +351,20 @@ function curveSweep(ctx) {
 }
 
 // --- Trigger behaviours ---
-function triggerHit(ctx) {
+function collision_node(ctx) {
     return { note: this.note, velocity: 100, duration: 300 };
 }
 
 // --- Sprite behaviours ---
-function wander(ctx) {
-    // No-op for now — the sprite drifts under its initial
-    // velocity. Once the simulation loop runs, this is where
-    // image-driven behaviour will live.
-    return null;
+// Shared Motion Update default. Every sprite with an empty
+// motionUpdate slot field invokes this function each physics
+// tick. Returns an acceleration vector { ax, ay } that the
+// simulation adds to the sprite's velocity before integrating
+// position. No-op for now — returns zero acceleration so
+// sprites drift under their initial velocity until the
+// composer fills in image-driven physics.
+function motionUpdate(ctx) {
+    return { ax: 0, ay: 0 };
 }
 `
     );

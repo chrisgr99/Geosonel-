@@ -12,20 +12,33 @@
  * receiving a single options object with declarative
  * properties.
  *
- * Object types follow DESIGN.md v2.1:
+ * Object types follow DESIGN.md v2.4:
  *   - Curves carry geometry, intrinsic rhythm (beat points via
  *     activeBeats and strength strings), a cursor with
- *     left/right extents, and beat/sweep function slots.
+ *     left/right extents, and Hit Beat / Hit Trigger function
+ *     slots.
  *   - Triggers are static positions with optional payload and
- *     collision/auto function slots.
- *   - Sprites are autonomous point agents with step/auto
- *     function slots.
+ *     Collision / Auto function slots.
+ *   - Sprites are autonomous point agents with Motion Update /
+ *     Auto function slots.
  *
- * At this milestone the Scene is a static data structure.
- * Function slots are stored as references but not yet invoked
- * — the simulation loop comes in a later milestone. The canvas
- * renders the scene statically so the composer gets immediate
- * visual feedback on their declared structure.
+ * Function slot fields hold STRING NAMES, not function
+ * references. The named functions live in behaviors.js inside
+ * the score bundle. The Scene also carries a functionMap
+ * built by the scene loader at load time, mapping each
+ * top-level function name in behaviors.js to its function
+ * reference; the simulation looks up names against this map
+ * when firing. Empty-string slot fields mean "no binding".
+ * A non-empty slot whose name doesn't resolve in the map is
+ * a soft error — the slot stays inert for that object and
+ * the inspector eventually surfaces a warning, but the scene
+ * still runs.
+ *
+ * At this milestone the Scene is mostly a static data
+ * structure; the simulation hook for Motion Update lands in
+ * a follow-up commit. The canvas renders the scene
+ * statically so the composer gets immediate visual feedback
+ * on their declared structure.
  *
  * Per-object harmony override fields (tonic, scaleName, root,
  * chordName, range, rangeLow, mapNotesTo) default to null
@@ -146,6 +159,23 @@ export class Scene {
         this.triggerScale = 1;
         /** @type {number} */
         this.spriteScale = 1;
+
+        // --- Function map ---
+        // Map of top-level function names in behaviors.js to
+        // their function references. Built by the scene loader
+        // at load time and attached here for the simulation to
+        // consult when firing a slot. Slot fields on Curve,
+        // Trigger, and Sprite hold name strings; the simulation
+        // resolves them against this map at fire time. An
+        // unresolved name (typo, function deleted from
+        // behaviors.js without unbinding) is a soft error —
+        // the slot stays inert for that object and the
+        // inspector surfaces a warning, but the scene runs.
+        // Empty by default; populated only for scenes loaded
+        // through SceneLoader.load() with a behaviors.js file
+        // present.
+        /** @type {Object<string, Function>} */
+        this.functionMap = {};
     }
 
     /**
@@ -426,18 +456,26 @@ export class Curve {
         this.beatsAreTriggers = opts.beatsAreTriggers ?? false;
 
         // --- Function slots ---
+        // String names of functions defined in the bundle's
+        // behaviors.js file. Empty string is the unbound
+        // state. Resolution to a function reference happens
+        // through Scene.functionMap at fire time. See
+        // DESIGN.md §9 for the slot model.
         /**
-         * Fires on internal beat. Receives (ctx) with `this`
-         * bound to this curve. Stored as a reference; not
-         * invoked at this milestone.
-         * @type {Function | null}
+         * Hit Beat — fires when the curve's cursor reaches
+         * an active beat point during internal cycle
+         * advancement. Empty string means no binding.
+         * @type {string}
          */
-        this.beat = opts.beat ?? null;
+        this.hitBeat = opts.hitBeat ?? "";
         /**
-         * Fires when the extended cursor sweeps a trigger.
-         * @type {Function | null}
+         * Hit Trigger — fires when the curve's extended
+         * cursor sweeps a trigger or a beats-as-trigger
+         * position on another curve. Empty string means no
+         * binding.
+         * @type {string}
          */
-        this.sweep = opts.sweep ?? null;
+        this.hitTrigger = opts.hitTrigger ?? "";
 
         // --- Harmony overrides (null = inherit from score). ---
         /** @type {string | null} */
@@ -513,12 +551,34 @@ export class Trigger {
         this.payload = opts.payload ?? null;
 
         // --- Function slots ---
-        /** @type {Function | null} */
-        this.collision = opts.collision ?? null;
-        /** @type {Function | null} */
-        this.auto = opts.auto ?? null;
+        // String names of functions defined in the bundle's
+        // behaviors.js file. Empty string is the unbound
+        // state. See DESIGN.md §9.
+        /**
+         * Collision — fires when a curve's extended cursor
+         * sweeps over this trigger. Empty string means no
+         * binding.
+         * @type {string}
+         */
+        this.collision = opts.collision ?? "";
+        /**
+         * Auto — fires on the trigger's beat-aligned timer.
+         * Empty string means no binding.
+         * @type {string}
+         */
+        this.auto = opts.auto ?? "";
         /** Beats between auto firings (when auto is defined). */
         this.autoInterval = opts.autoInterval ?? 1;
+        /**
+         * Auto Beat Interval token controlling the cadence
+         * at which the Auto function fires. Drawn from the
+         * fixed beat-interval list (Section 10) plus the
+         * sentinel "Off" which suppresses Auto firings
+         * entirely. Default "Off" — a freshly-added trigger
+         * is silent until the composer chooses an interval.
+         * @type {string}
+         */
+        this.autoBeatInterval = opts.autoBeatInterval ?? "Off";
 
         // --- Harmony overrides (null = inherit from score). ---
         /** @type {string | null} */
@@ -596,12 +656,38 @@ export class Sprite {
         this.color = opts.color ?? "#7db8d6";
 
         // --- Function slots ---
-        /** @type {Function | null} */
-        this.step = opts.step ?? null;
-        /** @type {Function | null} */
-        this.auto = opts.auto ?? null;
+        // String names of functions defined in the bundle's
+        // behaviors.js file. Empty string is the unbound
+        // state. See DESIGN.md §9.
+        /**
+         * Motion Update — called every physics tick before
+         * integration to compute an acceleration vector
+         * `{ax, ay}` that the simulation adds to velocity.
+         * Empty string falls back to the conventional shared
+         * function named `motionUpdate` in behaviors.js (the
+         * "shared default" rule from DESIGN.md §9); when no
+         * such function exists either, the sprite runs pure
+         * inertial physics.
+         * @type {string}
+         */
+        this.motionUpdate = opts.motionUpdate ?? "";
+        /**
+         * Auto — fires on the sprite's beat-aligned timer.
+         * Empty string means no binding.
+         * @type {string}
+         */
+        this.auto = opts.auto ?? "";
         /** Beats between auto firings (when auto is defined). */
         this.autoInterval = opts.autoInterval ?? 1;
+        /**
+         * Auto Beat Interval token controlling the cadence
+         * at which the Auto function fires. Drawn from the
+         * fixed beat-interval list plus the sentinel "Off"
+         * which suppresses Auto firings entirely. Default
+         * "Off".
+         * @type {string}
+         */
+        this.autoBeatInterval = opts.autoBeatInterval ?? "Off";
 
         // --- Harmony overrides (null = inherit from score). ---
         /** @type {string | null} */

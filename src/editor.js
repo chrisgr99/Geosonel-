@@ -176,9 +176,15 @@ function jsonErrorPosition(message, source) {
  * tab hosting the form-based property inspector. The raw
  * JSON view stays available as a fallback (and will until
  * the inspector covers every editable scene field).
+ *
+ * behaviors.js is the canonical v2.4 filename; behaviours.js
+ * is the legacy spelling kept here as a fallback so a bundle
+ * mid-migration (legacy filename still present) renders the
+ * right tab label until the rename pass runs.
  */
 const TAB_LABELS = {
     "scene.json": "Properties JSON",
+    "behaviors.js": "Behaviors",
     "behaviours.js": "Behaviours",
 };
 
@@ -513,6 +519,87 @@ export class TabbedEditor {
     }
 
     /**
+     * Switch to the named tab and scroll the named top-level
+     * function's declaration line to the top of the editor's
+     * visible region. Used after Create scaffolds a new stub
+     * (so the user sees the new function ready for editing)
+     * and after the Go-to button on a slot whose function
+     * already exists. The CodeMirror cursor is moved to the
+     * declaration line so a subsequent keystroke lands at
+     * the right place without further mouse movement, and
+     * the editor takes focus so the user can begin typing.
+     *
+     * Combines the doc replacement, language switch, cursor
+     * move, and scroll into one dispatch so all four happen
+     * in a single layout pass — separate dispatches would
+     * scroll based on the doc state after the change but
+     * before measurement, which can land a fraction of a
+     * line off.
+     *
+     * If the named function isn't found in the file (e.g.
+     * the user deleted it in CodeMirror after the scene was
+     * last reloaded), the call falls back to plain selectTab
+     * so the user still sees the file rather than getting a
+     * silent no-op.
+     *
+     * @param {string} name  File name (e.g. "behaviors.js").
+     * @param {string} functionName  Top-level function name to locate.
+     */
+    selectTabAndScrollToFunction(name, functionName) {
+        if (name === VIRTUAL_TAB_INSPECTOR) {
+            this.selectTab(name);
+            return;
+        }
+        const file = this.bundle.getFile(name);
+        if (file === null || this.view === null) {
+            this.selectTab(name);
+            return;
+        }
+
+        // Build the target position for the function name.
+        // The validateFunctionName guard ensures the name is
+        // a JS identifier with no regex metacharacters, so
+        // direct interpolation is safe; defence-in-depth
+        // re-checks the pattern here so a malformed name
+        // can't reach the regex constructor.
+        let targetPos = -1;
+        if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(functionName)) {
+            const re = new RegExp(`^function\\s+${functionName}\\s*\\(`, "m");
+            const match = re.exec(file.content);
+            if (match !== null) targetPos = match.index;
+        }
+
+        if (targetPos === -1) {
+            this.selectTab(name);
+            return;
+        }
+
+        this.activeName = name;
+        this._setInspectorVisible(false);
+
+        const exts = extensionsForFile(name);
+
+        this._suppressDirty = true;
+        this.view.dispatch({
+            changes: {
+                from: 0,
+                to: this.view.state.doc.length,
+                insert: file.content,
+            },
+            selection: { anchor: targetPos },
+            effects: [
+                this._langCompartment.reconfigure(exts.language),
+                this._linterCompartment.reconfigure(exts.linter),
+                EditorView.scrollIntoView(targetPos, { y: "start" }),
+            ],
+        });
+        this._suppressDirty = false;
+
+        this._renderTabs();
+        this.view.focus();
+    }
+
+    /**
      * @param {string} content
      */
     _onDocChanged(content) {
@@ -556,8 +643,13 @@ export class TabbedEditor {
             this._renderVirtualTab(VIRTUAL_TAB_INSPECTOR, "Properties"),
         );
 
-        // File tabs in display order.
-        const orderedNames = ["behaviours.js", "scene.json"];
+        // File tabs in display order. Behaviors first so the
+        // composer reads behaviour declarations before the
+        // declarative scene data; Properties JSON second.
+        // Both legacy and v2.4 filenames are listed so a
+        // bundle in either state renders correctly during
+        // the migration window.
+        const orderedNames = ["behaviors.js", "behaviours.js", "scene.json"];
         const renderedNames = new Set();
         for (const name of orderedNames) {
             const file = this.bundle.getFile(name);

@@ -38,18 +38,26 @@ import { GENERATED_ID_PATTERN } from "./idGen.js";
  * dollar signs. Conservative — Unicode identifier characters
  * are technically allowed by the JS spec but cause more
  * trouble than they're worth as code handles.
+ *
+ * Exported for reuse by the function-name validator in
+ * curveFieldValidation.js, which applies the same
+ * identifier check to the names users type into Band 3's
+ * function-binding fields.
  */
-const IDENTIFIER_PATTERN = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+export const IDENTIFIER_PATTERN = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
 
 /**
  * JavaScript reserved words that can't be used as identifiers.
  * Includes current keywords, future-reserved words, strict-
  * mode reserved words, and the boolean and null literals.
  * Kept inclusive: better to reject a few rare-but-legal
- * names than to let through one that breaks behaviours.js
+ * names than to let through one that breaks behaviors.js
  * when used as a code handle.
+ *
+ * Exported for reuse by the function-name validator in
+ * curveFieldValidation.js.
  */
-const RESERVED_WORDS = new Set([
+export const RESERVED_WORDS = new Set([
     // Current keywords
     "break", "case", "catch", "class", "const", "continue", "debugger",
     "default", "delete", "do", "else", "export", "extends", "finally",

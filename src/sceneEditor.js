@@ -497,6 +497,124 @@ export function cleanLegacySceneFields(data) {
 }
 
 /**
+ * Rename pre-v2.4 function-slot field names to their v2.4
+ * equivalents on every curve, trigger, and sprite entry:
+ *
+ *   - sprite.step → sprite.motionUpdate
+ *   - curve.beat → curve.hitBeat
+ *   - curve.sweep → curve.hitTrigger
+ *
+ * Trigger.collision and trigger.auto are unchanged; sprite.auto
+ * is unchanged; the renaming only touches slots whose
+ * conceptual name changed in v2.4 (see DESIGN.md §9). The
+ * stored value (typically a function-name string) is preserved
+ * verbatim, so a curve that referenced "circleBeat" before now
+ * references "circleBeat" through the new hitBeat key. The
+ * composer is free to rename the function in behaviors.js to
+ * match the new convention (hitBeat_circle) but is not required
+ * to.
+ *
+ * Field positioning preserves key order: the new key replaces
+ * the old key in the entry's key sequence, so the formatted
+ * JSON keeps the slot in roughly the same visual location.
+ * Entries already in v2.4 form (no legacy keys) are skipped.
+ * If both legacy and new keys coexist (a partially-migrated
+ * entry, possible in hand-edited JSON), the new key wins and
+ * the legacy key is dropped.
+ *
+ * Returns true iff at least one entry was changed.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function renameFunctionSlotFields(data) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+    let changed = false;
+    /** @type {Array<[string, Record<string, string>]>} */
+    const renamesPerKind = [
+        ["curves", { beat: "hitBeat", sweep: "hitTrigger" }],
+        ["sprites", { step: "motionUpdate" }],
+        // Triggers carry no slot-name renames in v2.4 (Collision
+        // and Auto labels are unchanged); listed here as an
+        // empty map for symmetry so a future rename only adds
+        // an entry rather than restructuring the loop.
+        ["triggers", {}],
+    ];
+    for (const [arrayKey, renames] of renamesPerKind) {
+        const renameKeys = Object.keys(renames);
+        if (renameKeys.length === 0) continue;
+        const arr = data[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (let i = 0; i < arr.length; i++) {
+            const entry = arr[i];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            const present = renameKeys.filter((k) => k in entry);
+            if (present.length === 0) continue;
+            // Walk existing keys preserving order, replacing
+            // each legacy key with its new key (and value)
+            // in place. If the new key is already present
+            // (partially-migrated entry), the new value wins
+            // and the legacy key is dropped without inserting
+            // a duplicate.
+            /** @type {Record<string, any>} */
+            const newEntry = {};
+            for (const k of Object.keys(entry)) {
+                if (k in renames) {
+                    const newKey = renames[k];
+                    if (newKey in entry) {
+                        // The new key already lives on the
+                        // entry at its own position, so we
+                        // simply drop the legacy key here
+                        // and let the new key carry through
+                        // when its own iteration reaches it.
+                        continue;
+                    }
+                    newEntry[newKey] = entry[k];
+                } else {
+                    newEntry[k] = entry[k];
+                }
+            }
+            arr[i] = newEntry;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/**
+ * Rename the legacy bundle-level filename "behaviours.js" to
+ * the v2.4 "behaviors.js". Bundle-level migration: doesn't
+ * touch scene.json text. Preserves the file's content,
+ * mimeType, and position in the bundle's file list.
+ *
+ * No-op when the bundle already has "behaviors.js" (whether
+ * or not "behaviours.js" also exists — the new file wins).
+ * If both names exist, the legacy file is removed without
+ * merging content; the user's hand-edited migrations are
+ * the recommended way to consolidate the two should they
+ * ever coexist outside of an in-flight migration.
+ *
+ * Returns true iff a rename was performed.
+ *
+ * @param {import("./bundle.js").Bundle} bundle
+ * @returns {boolean}
+ */
+export function migrateBehaviorsFilename(bundle) {
+    const oldFile = bundle.getFile("behaviours.js");
+    if (oldFile === null) return false;
+    const newFile = bundle.getFile("behaviors.js");
+    if (newFile !== null) {
+        // Defensive: both exist. Drop the legacy one without
+        // merging — the user's behaviors.js is canonical.
+        bundle.removeFile("behaviours.js");
+        return true;
+    }
+    bundle.addTextFile("behaviors.js", oldFile.content, oldFile.mimeType);
+    bundle.removeFile("behaviours.js");
+    return true;
+}
+
+/**
  * Fill in default canvas-size fields for scores that predate
  * the per-scene canvas size feature. Scenes loaded without
  * canvasW or canvasH get the legacy hardcoded image-region
@@ -1325,6 +1443,236 @@ function clampCanvasDimension(value) {
     if (n < 1) return 1;
     if (n > 200) return 200;
     return n;
+}
+
+// --- Band 3 / Band 4 (Message function slots and auto-beat-interval) write paths ---
+//
+// Each slot field (motionUpdate, hitBeat, hitTrigger,
+// collision, auto) holds a STRING name pointing into
+// behaviors.js. Empty string is the unbound state. The
+// inspector's slot-field commits and Create button land in
+// the per-slot mutators below; selection-kind dispatch
+// happens in main.js's applyInspectorEdit so the inspector
+// only has to know which slot it's editing, not which
+// mutator name maps to it.
+//
+// Slots are kind-specific by design (DESIGN.md §9):
+// motionUpdate is sprite-only, hitBeat / hitTrigger are
+// curve-only, collision is trigger-only, auto exists on
+// both sprites and triggers but with separate semantics
+// (sprite Auto fires on the sprite's beat-aligned timer;
+// trigger Auto fires on the trigger's). The mutators take
+// a selection slice keyed to their kind so a multi-kind
+// selection edit only touches objects whose kind matches
+// the slot.
+
+/**
+ * Set the motionUpdate slot field on every selected sprite.
+ * Triggers and curves in the selection are ignored —
+ * motionUpdate is sprite-only. Empty value clears the bind
+ * (the sprite then falls back to the conventional shared
+ * `motionUpdate` function in behaviors.js per the shared-
+ * default rule from DESIGN.md §9). Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setMotionUpdateOnSprites(data, selection, value) {
+    setFieldOnSelection(data, { sprites: selection.sprites }, "motionUpdate", String(value));
+}
+
+/**
+ * Set the auto slot field on every selected sprite.
+ * Triggers and curves in the selection are ignored. Empty
+ * value clears the bind. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setAutoOnSprites(data, selection, value) {
+    setFieldOnSelection(data, { sprites: selection.sprites }, "auto", String(value));
+}
+
+/**
+ * Set the collision slot field on every selected trigger.
+ * Sprites and curves in the selection are ignored —
+ * collision is trigger-only. Empty value clears the bind.
+ * Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setCollisionOnTriggers(data, selection, value) {
+    setFieldOnSelection(data, { triggers: selection.triggers }, "collision", String(value));
+}
+
+/**
+ * Set the auto slot field on every selected trigger.
+ * Sprites and curves in the selection are ignored. Empty
+ * value clears the bind. Distinct from setAutoOnSprites
+ * because the two paths run independently against
+ * different selection slices, even though both fields
+ * share the same key name.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setAutoOnTriggers(data, selection, value) {
+    setFieldOnSelection(data, { triggers: selection.triggers }, "auto", String(value));
+}
+
+/**
+ * Set the hitBeat slot field on every selected curve.
+ * Sprites and triggers in the selection are ignored —
+ * hitBeat is curve-only. Empty value clears the bind.
+ * Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setHitBeatOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "hitBeat", String(value));
+}
+
+/**
+ * Set the hitTrigger slot field on every selected curve.
+ * Sprites and triggers in the selection are ignored —
+ * hitTrigger is curve-only. Empty value clears the bind.
+ * Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setHitTriggerOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "hitTrigger", String(value));
+}
+
+/**
+ * Set the autoBeatInterval field on every selected sprite.
+ * Triggers and curves in the selection are ignored. Value
+ * is a token from the fixed beat-interval list plus the
+ * sentinel "Off" which suppresses Auto firings entirely.
+ * Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setAutoBeatIntervalOnSprites(data, selection, value) {
+    setFieldOnSelection(data, { sprites: selection.sprites }, "autoBeatInterval", String(value));
+}
+
+/**
+ * Set the autoBeatInterval field on every selected trigger.
+ * Sprites and curves in the selection are ignored. Value is
+ * a token from the fixed beat-interval list plus "Off".
+ * Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setAutoBeatIntervalOnTriggers(data, selection, value) {
+    setFieldOnSelection(data, { triggers: selection.triggers }, "autoBeatInterval", String(value));
+}
+
+/**
+ * Append a stub function declaration to behaviors.js for a
+ * fresh slot binding. Used by the inspector's Create button
+ * in Band 3, which fires on a slot whose name doesn't yet
+ * exist in behaviors.js. The stub's body shape varies by
+ * slot kind so the user starts with a callable function
+ * that returns the right shape for its slot:
+ *
+ *   - motionUpdate (sprite Motion Update): returns
+ *     { ax: 0, ay: 0 } so the simulation reads zero
+ *     acceleration without crashing.
+ *   - hitBeat / hitTrigger / collision / auto: returns
+ *     null. The audio path eventually treats null as "no
+ *     event fires this tick", so a fresh stub is silent
+ *     until the composer fills in the body.
+ *
+ * Returns {newContent, alreadyExists}. When the named
+ * function already exists at the top level, alreadyExists
+ * is true and newContent equals the input — no append, no
+ * duplicate declaration. The Create button's enable/disable
+ * gate in the inspector should already preempt this case;
+ * the defensive check here means a race (two Create clicks
+ * before the first re-render lands) doesn't end up with
+ * two declarations of the same name in behaviors.js.
+ *
+ * The function is appended at the end of the file with a
+ * blank line separator so the existing structure is left
+ * undisturbed and the new declaration is easy to find.
+ *
+ * @param {string} content  Current behaviors.js source.
+ * @param {string} functionName  Identifier to scaffold.
+ * @param {"motionUpdate" | "hitBeat" | "hitTrigger" | "collision" | "auto"} slotKind
+ * @returns {{ newContent: string, alreadyExists: boolean }}
+ */
+export function scaffoldFunctionInBehaviors(content, functionName, slotKind) {
+    // Look for an existing top-level function declaration
+    // with the same name. Conservative regex match: line
+    // starting with `function NAME(` (optional `export `
+    // prefix). Misses const/let bindings to function
+    // expressions, which is acceptable here — the inspector
+    // gates Create on functionMap membership built by the
+    // loader, which catches every shape of top-level
+    // function declaration. This regex is the second line
+    // of defence against a race in the inspector's gate.
+    const re = new RegExp(
+        `^[ \\t]*(?:export[ \\t]+)?function[ \\t]+${escapeForRegex(functionName)}[ \\t]*\\(`,
+        "m"
+    );
+    if (re.test(content)) {
+        return { newContent: content, alreadyExists: true };
+    }
+    const stub = stubBodyFor(slotKind, functionName);
+    // Ensure exactly one blank line between the existing
+    // content and the appended stub. Strip trailing
+    // newlines, then add the separator and the stub. The
+    // stub itself ends with a newline so the file's
+    // trailing-newline convention survives.
+    const trimmed = content.replace(/\s+$/, "");
+    const separator = trimmed.length === 0 ? "" : "\n\n";
+    return { newContent: `${trimmed}${separator}${stub}`, alreadyExists: false };
+}
+
+/**
+ * Slot-kind-specific stub body for scaffoldFunctionInBehaviors.
+ * @param {"motionUpdate" | "hitBeat" | "hitTrigger" | "collision" | "auto"} slotKind
+ * @param {string} functionName
+ * @returns {string}
+ */
+function stubBodyFor(slotKind, functionName) {
+    if (slotKind === "motionUpdate") {
+        return `function ${functionName}(ctx) {\n    // Return acceleration { ax, ay } applied to the sprite\n    // before integration. See DESIGN.md \u00a79 for the ctx\n    // fields available (dt, x, y, vx, vy, imageColor,\n    // imageColorAt).\n    return { ax: 0, ay: 0 };\n}\n`;
+    }
+    // Music-event slots (hitBeat, hitTrigger, collision, auto).
+    // All four return either a music-event object or null;
+    // the stub returns null so a freshly-created binding is
+    // silent until the composer fills in the body.
+    return `function ${functionName}(ctx) {\n    // Return a music event ({ note, velocity, duration })\n    // or null for no firing. See DESIGN.md \u00a79 for the\n    // ctx fields available for this slot.\n    return null;\n}\n`;
+}
+
+/**
+ * Escape a string for safe inclusion in a RegExp source.
+ * Used by scaffoldFunctionInBehaviors's existence check;
+ * function names that pass the inspector's identifier
+ * validator never contain regex metacharacters, but the
+ * defensive escape covers any path that bypasses the
+ * validator.
+ * @param {string} s
+ * @returns {string}
+ */
+function escapeForRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

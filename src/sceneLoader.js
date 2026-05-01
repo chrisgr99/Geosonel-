@@ -2,9 +2,9 @@
  * Scene loader.
  *
  * Builds a populated Scene from a score bundle's scene.json
- * and behaviours.js files. Replaces the earlier sketchRunner
+ * and behaviors.js files. Replaces the earlier sketchRunner
  * that combined data and behaviour in a single sketch.js \u2014
- * DESIGN.md v2.1 splits the two so a property panel and AI
+ * DESIGN.md v2.4 splits the two so a property panel and AI
  * assistants can edit them independently.
  *
  * The loader does three things in sequence:
@@ -14,30 +14,38 @@
  *      triggers, and sprites are walked and handed to
  *      scene.addCurve / addTrigger / addSprite.
  *
- *   2. Parse behaviours.js with Acorn to find every top-level
+ *   2. Parse behaviors.js with Acorn to find every top-level
  *      function declaration and every const/let bound to a
  *      function expression or arrow. Those names are the
  *      identifiers a scene.json function-ref field can refer
- *      to (beat, sweep, collision, step, auto).
+ *      to (hitBeat, hitTrigger, collision, motionUpdate,
+ *      auto).
  *
- *   3. Execute behaviours.js inside a wrapper that returns a
+ *   3. Execute behaviors.js inside a wrapper that returns a
  *      name-to-function map. The user's code only contains
  *      declarations, no top-level side effects expected (and
  *      none required), so re-executing on every Run Scene is
  *      cheap.
  *
- * After steps 2 and 3 we have a function map. We then walk
- * scene.json's object arrays and, for each function-ref field
- * whose value is a string, resolve it against the map. A
- * string that doesn't match any defined function is reported
- * as an error so the user catches missing or misspelled
- * references early.
+ * After steps 2 and 3 we have a function map. The map is
+ * attached to the Scene as scene.functionMap and consulted
+ * by the simulation when a slot fires. Slot fields on Curve,
+ * Trigger, and Sprite hold STRING NAMES throughout — the
+ * loader passes them through to the constructors verbatim
+ * and does NOT resolve them at load time. A name that
+ * doesn't match any top-level function in behaviors.js is a
+ * soft error: the slot stays inert at fire time and the
+ * inspector eventually surfaces a warning, but the scene
+ * still runs. This v2.4 model differs from the pre-v2.4
+ * model where slot fields stored Function references
+ * resolved at load time and a missing reference was a hard
+ * load-time error.
  *
  * Error reporting tries to give a line number into the
  * relevant source. JSON parse errors carry "position N" or
  * "line N column M" patterns we can convert to a 1-based line
  * number. JavaScript syntax errors come from Acorn with a
- * structured loc field. Runtime errors during behaviours.js
+ * structured loc field. Runtime errors during behaviors.js
  * execution use the same offset-calibration trick as the old
  * runner so line numbers map back to the user's source rather
  * than the wrapper's body.
@@ -46,11 +54,10 @@
 // @ts-check
 
 import { Scene } from "./scene.js";
-import { functionRefFieldsFor } from "./sceneSchema.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const SCRIPT_PREFIX = `"use strict";\n`;
-const BEHAVIOURS_FILENAME = "behaviours.js";
+const BEHAVIORS_FILENAME = "behaviors.js";
 
 /** Function-wrapper line offset, calibrated on first use. */
 /** @type {number | null} */
@@ -66,7 +73,7 @@ let calibratedOffset = null;
 export class SceneLoader {
     /**
      * Load a Scene from the bundle's scene.json and
-     * behaviours.js files.
+     * behaviors.js files.
      * @param {import("./bundle.js").Bundle} bundle
      * @returns {LoadResult}
      */
@@ -75,9 +82,9 @@ export class SceneLoader {
         if (sceneFile === null) {
             return errorResult("This score has no scene.json file.");
         }
-        const behavioursFile = bundle.getFile(BEHAVIOURS_FILENAME);
-        if (behavioursFile === null) {
-            return errorResult(`This score has no ${BEHAVIOURS_FILENAME} file.`);
+        const behaviorsFile = bundle.getFile(BEHAVIORS_FILENAME);
+        if (behaviorsFile === null) {
+            return errorResult(`This score has no ${BEHAVIORS_FILENAME} file.`);
         }
 
         // --- 1. Parse scene.json ---
@@ -93,15 +100,15 @@ export class SceneLoader {
             return errorResult("scene.json must be a JSON object at top level.");
         }
 
-        // --- 2. Parse behaviours.js with Acorn for function names ---
-        const namesResult = extractTopLevelFunctionNames(behavioursFile.content);
+        // --- 2. Parse behaviors.js with Acorn for function names ---
+        const namesResult = extractTopLevelFunctionNames(behaviorsFile.content);
         if (!namesResult.ok) {
             return errorResult(namesResult.error);
         }
         const functionNames = namesResult.names;
 
-        // --- 3. Execute behaviours.js to get a function map ---
-        const execResult = executeScript(behavioursFile.content, functionNames);
+        // --- 3. Execute behaviors.js to get a function map ---
+        const execResult = executeScript(behaviorsFile.content, functionNames);
         if (!execResult.ok) {
             return errorResult(execResult.error);
         }
@@ -109,6 +116,7 @@ export class SceneLoader {
 
         // --- 4. Build the Scene ---
         const scene = new Scene();
+        scene.functionMap = functionMap;
 
         try {
             applyPieceLevelFields(scene, sceneData);
@@ -122,7 +130,6 @@ export class SceneLoader {
             if (!Array.isArray(arr)) {
                 return errorResult(`scene.json: "${kind}" must be an array.`);
             }
-            const refFields = functionRefFieldsFor(kind);
             for (let i = 0; i < arr.length; i++) {
                 const entry = arr[i];
                 if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
@@ -130,28 +137,13 @@ export class SceneLoader {
                         `scene.json: ${kind}[${i}] must be an object.`
                     );
                 }
+                // Slot fields hold string names; pass them
+                // through verbatim. Resolution against
+                // functionMap happens at fire time, not here
+                // — a name that doesn't resolve is a soft error
+                // (slot stays inert) rather than a load-time
+                // failure. See DESIGN.md §9.
                 const opts = { ...entry };
-
-                // Resolve function-name strings to actual
-                // function references. A null is fine (slot
-                // intentionally empty); a string must resolve.
-                for (const fieldKey of refFields) {
-                    const value = opts[fieldKey];
-                    if (value === null || value === undefined) continue;
-                    if (typeof value !== "string") {
-                        return errorResult(
-                            `scene.json: ${kind}[${i}].${fieldKey} must be a string ` +
-                            `naming a function defined in ${BEHAVIOURS_FILENAME}.`
-                        );
-                    }
-                    if (!Object.prototype.hasOwnProperty.call(functionMap, value)) {
-                        return errorResult(
-                            `scene.json: ${kind}[${i}].${fieldKey} references "${value}", ` +
-                            `which is not defined in ${BEHAVIOURS_FILENAME}.`
-                        );
-                    }
-                    opts[fieldKey] = functionMap[value];
-                }
 
                 if (kind === "curves") scene.addCurve(opts);
                 else if (kind === "triggers") scene.addTrigger(opts);
@@ -229,10 +221,10 @@ function extractTopLevelFunctionNames(source) {
         if (line !== null) {
             return {
                 ok: false,
-                error: `${BEHAVIOURS_FILENAME} syntax error on line ${line}: ${message}`,
+                error: `${BEHAVIORS_FILENAME} syntax error on line ${line}: ${message}`,
             };
         }
-        return { ok: false, error: `${BEHAVIOURS_FILENAME} syntax error: ${message}` };
+        return { ok: false, error: `${BEHAVIORS_FILENAME} syntax error: ${message}` };
     }
 
     /** @type {string[]} */
@@ -278,7 +270,7 @@ function executeScript(source, functionNames) {
         SCRIPT_PREFIX +
         source +
         `\n;return { ${returnObjectEntries} };` +
-        `\n//# sourceURL=${BEHAVIOURS_FILENAME}`;
+        `\n//# sourceURL=${BEHAVIORS_FILENAME}`;
 
     let fn;
     try {
@@ -325,7 +317,7 @@ function executeScript(source, functionNames) {
  */
 function calibrateOffset() {
     const probeBody =
-        `"use strict";\nthrow new Error("__gxw_probe__");\n//# sourceURL=${BEHAVIOURS_FILENAME}`;
+        `"use strict";\nthrow new Error("__gxw_probe__");\n//# sourceURL=${BEHAVIORS_FILENAME}`;
     try {
         // eslint-disable-next-line no-new-func
         new Function(probeBody)();
@@ -357,7 +349,7 @@ function getOffset() {
  */
 function formatBehavioursRuntimeError(kind, err, source) {
     if (!(err instanceof Error)) {
-        return `${BEHAVIOURS_FILENAME} ${kind.toLowerCase()}: ${String(err)}`;
+        return `${BEHAVIORS_FILENAME} ${kind.toLowerCase()}: ${String(err)}`;
     }
     const info = extractLineInfo(err);
     const name = err.name && err.name !== "Error" ? err.name : kind;
@@ -365,10 +357,10 @@ function formatBehavioursRuntimeError(kind, err, source) {
         const userLine = info.line - getOffset();
         const lineText = lineFromSource(source, userLine);
         if (lineText !== null && userLine >= 1) {
-            return `${BEHAVIOURS_FILENAME} ${name} on line ${userLine}: ${err.message}\n  ${lineText.trim()}`;
+            return `${BEHAVIORS_FILENAME} ${name} on line ${userLine}: ${err.message}\n  ${lineText.trim()}`;
         }
     }
-    return `${BEHAVIOURS_FILENAME} ${name}: ${err.message}`;
+    return `${BEHAVIORS_FILENAME} ${name}: ${err.message}`;
 }
 
 /**
@@ -431,6 +423,7 @@ function extractLineInfo(err) {
     }
     const stack = typeof err.stack === "string" ? err.stack : "";
     const patterns = [
+        /behaviors\.js:(\d+):(\d+)/,
         /behaviours\.js:(\d+):(\d+)/,
         /<anonymous>:(\d+):(\d+)/,
         /eval at.*:(\d+):(\d+)/,
