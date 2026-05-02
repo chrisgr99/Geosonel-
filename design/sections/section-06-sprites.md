@@ -1,0 +1,18 @@
+## Section 6 — Sprites
+
+A sprite is an autonomous agent that moves through the scene under its own logic.
+
+Geometry. A sprite has a position, a velocity, and a visible disc rendered at its position with a configurable display diameter. The disc is the sprite's visual presence on the canvas; the display diameter combined with the score's spriteScale also defines the bounding circle the simulation uses for canvas-wall collision under the inside-only rule (Section 22). Sprites do not collide with triggers, curves, or other sprites — see Section 8 — so the disc plays no role in object-to-object collision; it serves only the wall-bounce check and the visual identity of the sprite on the canvas.
+
+Motion. Sprites move freely in the scene. They are not path-constrained — if the composer wants sweep-along-a-path behaviour, that is handled by a curve with an extended cursor, not by a sprite. Each sprite has authored x, y, vx, vy, and maxSpeed fields in scene.json that define its initial state at score-beat zero and its rewind state. At runtime the simulation maintains a separate per-sprite runtime state holding the live position and velocity; the canvas reads this runtime state for rendering and hit-testing, while the inspector continues to display the authored fields for editing. See Section 22 for the integration step, the inside-only wall rule, and the runtime/authored split.
+
+Functions. A sprite has two optional function slots:
+
+- The Motion Update function is called every physics step before integration. It receives a context object describing the sprite's current state and environment (Section 9) and returns an acceleration vector `{ ax, ay }` that the simulation adds to velocity before integrating position. This is where image-driven wandering, gradient-following, viscosity, and other continuous physics responses are expressed. Motion Update does not fire musical events — it shapes trajectory only. Multiple sprites typically share one Motion Update function (the conventional default behaviour, see Section 9) since they share the same image and force field; per-sprite overrides are available when a sprite needs distinct physics.
+- The Auto function fires on the sprite's own timer at an interval set in the sprite's properties. This is the rhythmic emission slot, used for sprites that play on a beat clock regardless of where they are or what they're doing. Auto returns musical-event parameters or undefined for silence; it does not affect motion.
+
+Either or both slots may be undefined. A sprite with only a Motion Update function is a pure autonomous wanderer that produces no sound on its own — visible motion only. A sprite with only an Auto function is a metronome moving inertially under whatever initial velocity it was authored with. A sprite with both is the typical case: image-driven motion with rhythmic events. A sprite with neither is a position reference that drifts under pure inertia and walls.
+
+Sprites do not have a collision function. They do not collide with triggers, curves, or other sprites. If a sprite wants to fire triggers based on proximity, its Motion Update or Auto function reads scene state and does so explicitly — "is there a trigger within 2 units of me, and did I just enter that radius?" is a three-line check inside the function body. This asymmetry — sprites only initiate, never receive — keeps the collision model single-directional and simple. See Section 8.
+
+Soft UI convention: six sprites in the default palette, based on empirical experience from GeoSonix that parameter management past six becomes overwhelming. Not a data-model limit.

@@ -1,0 +1,15 @@
+## Section 7 — Transport and Tempo
+
+The transport is global, with state: BPM, current beat position, play/stop/pause/rewind, and optional tempo automation. Time signature is per-curve in v2.3 (see Section 10's beatsPerBar and beatInterval); the score-level transport does not carry a time signature in this revision. A future revision may reintroduce a score-level time signature that curves can opt to inherit through a per-curve flag, but the current model leaves time-signature decisions entirely with each curve, which directly enables polyrhythmic and polymetric textures across curves on the same canvas.
+
+Curves convert their cycle time from slots to wall-clock seconds using cycleDuration × beatInterval × current BPM at evaluation time (see Section 4 and Section 10 for the per-curve fields). Tempo changes during a cycle affect pacing accordingly. Triggers' auto timers tick in beats, converted to wall-clock time via BPM. Sprites drive physics from the transport's beat clock — physics time step is expressed in beats; wall-clock mapping happens via tempo. Halving tempo doubles the time it takes a sprite to cover the same spatial trajectory; forces and field values don't depend on tempo, only pacing does.
+
+Duration overrides: each curve's cycle time, each trigger's auto interval, and each sprite's auto interval can be specified in beats (default), absolute seconds (ignores tempo), or proportional units relative to some reference.
+
+Per-object tempo override is available but deferred. Common case is one global tempo.
+
+Determinism. The transport's job is to advance a beat counter; the simulation's evolution is exclusively a function of (initial scene state, elapsed beats), with no dependence on wall-clock timing during the run. Rewind resets every piece of dynamic state — sprite positions, cursor positions, behaviour-internal counters — to whatever the scene declares as initial state, so a piece played from beat zero through to beat N produces the identical sequence of events on every replay regardless of how fast the audio callback runs in wall time. This determinism property is the foundation for repeatable composition (the composer can rate a piece without it changing under them) and for offline rendering (the same simulation, run faster than realtime, produces sample-identical audio output). The simulation's master time unit is integer ticks at 960 ticks per quarter-note, chosen so every value in the beatInterval dropdown maps to an integer tick count.
+
+Transport controls are exposed in a bar along the bottom of the main window: a rewind button and a play-pause toggle on the left, followed by an elapsed-time readout and a BPM field. The BPM default is defined in the sketch's setup() function (see Section 14); BPM is editable at runtime from the transport bar for live experimentation, and runtime changes do not write back to the sketch, so a sketch reload restores the value defined in setup().
+
+The transport clock is driven by the browser's AudioContext.currentTime, which provides sub-millisecond timing accuracy independent of animation frame timing.

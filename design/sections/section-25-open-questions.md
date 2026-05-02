@@ -1,0 +1,53 @@
+## Section 25 — Open Questions
+
+1. Property inspector design. v2.3 ships v1 of the form-based property inspector as the primary Properties tab: six bands (identity; geometry and visual; message functions; auto message interval; beat points; cycle parameters) sized by their constraint rows, with selection-driven greying based on which kinds appear in the canvas selection, and a blank state when nothing is selected. The natural minimum form width is roughly 500 pixels, set by the Auto Message Interval row and the Cycle Parameters row 2. v1 is layout-only — fields show placeholder values rather than live data. Open and remaining: live data binding from scene.json into the form (the next milestone); a commit pipeline so inspector edits flow through the same parse-mutate-stringify path the canvas toolbar uses; multi-select rendering refinements (varies indicators, tri-state checkboxes for partially-checked Enable/Hide); how function-slot bindings are entered (a dropdown of names sourced from behaviours.js, free text, or both); the Create button scaffolding stub functions in behaviours.js when the named function does not yet exist; how the inspector composes with manual JSON editing when both can modify the same object (see also question 3 below); and how far into advanced fields (harmony overrides, per-object MIDI routing) the inspector goes before falling back to the Properties JSON tab.
+
+2. Object-creation toolbar design. v2.2 ships the first iteration: a toolbar above the canvas with a single tool, Add Sprite. State machine: idle, armed (one-shot), locked (repeating). Single-click arms, double-click locks, Esc disarms, click on the active tool disarms at any state. Add Trigger and the curve-shape tools are the next additions. Open: whether shape variants (line, circle, piste, bezier) are one tool with a dropdown or separate tools — v2.2 leans toward separate tools matching GeoSonix's toolbar, since each shape places differently (single click for circle, click-drag for line, click-click-...-double-click for piste).
+
+3. Editing routes and synchronisation. v2.2 settled the question raised in earlier versions: scene data is its own file (scene.json) separate from behaviour code (behaviours.js), so the historical "sketch versus inspector data store" tension dissolves. There is one source of truth (scene.json) that three routes will be able to edit: the Properties JSON tab in the editor, the canvas toolbar and gesture system, and the form-based property inspector once data binding ships. The canvas's edit pipeline (parse → mutate → stringify → update bundle → refresh editor view → re-run scene) preserves field ordering and approximates the hand-written formatting style of the default template; the inspector will use the same pipeline when its edits go live. Open: how the property inspector composes with manual JSON editing when both can modify the same object — inspector edits during JSON dirty state should probably be blocked with a message, the same way canvas edits are blocked when the JSON has a parse error.
+
+4. REPL / workspace execution model. GeoSonix maintained a persistent JavaScript workspace and allowed the composer to execute individual lines, selections, functions, or the whole script from within the script editor. This is a valuable pattern for incremental development. GXW currently specifies "save-triggers-reload" which is simpler but less interactive. Whether to add GeoSonix-style workspace execution in a later milestone is open.
+
+5. Vector field normalisation algorithm.
+
+6. Sprite step function mutation conventions. Currently the step function both mutates the sprite (via this.vx = ...) and fires events (via return value). Should mutations be wrapped in a helper function for clarity, or is direct assignment idiomatic enough? Is returning null to not fire clear enough, or should there be a separate explicit "fire" helper?
+
+7. Sprite-fires-trigger-by-proximity pattern. This is the common case the step function will handle. Should GXW provide a helper like `ctx.nearbyTriggers(radius)` so the composer doesn't have to write the scene-scan logic by hand every time? If so, what's the API?
+
+8. Full curve shape catalogue beyond the initial four or five.
+
+9. Distortion helper library. GeoMaestro had a rich catalogue of named distortion functions (Volume, Pit, Dur, Pan, Time, Mer). GXW folds these into the curve's sweep function, but named presets for common distortion patterns would speed authoring. Open whether to ship a standard library of them.
+
+10. Curve sweep-modulation by internal beat pattern. A curve's cursor could advance non-uniformly, pausing on silent beats and accelerating through high-strength beats, driven by the curve's own rhythm. This is a compositional capability from GeoMaestro's projector modulation. Whether to expose it in the initial release is open.
+
+11. Per-agent tempo overrides.
+
+12. External transport sync (Ableton Link, MIDI clock).
+
+13. Multi-scene scores and how scenes relate in the Compositor.
+
+14. Compositor design in detail.
+
+15. Default internal synthesis voice bank scope and quality.
+
+16. Web Worker boundary for physics and simulation.
+
+17. Anthropic API authentication model — direct in browser, lightweight proxy, or user-supplied API key. v2.2 deprecated the disk-mirror approach (which was an attempt to side-step in-browser API access by giving Claude Desktop direct filesystem access through MCP). v2.3 introduces the AI Handoff feature (see Section 15) as a simpler user-controlled successor for sharing scores with Claude through a configured folder. The longer-term direction beyond v2.3 is an embedded API key letting Claude operate on score state through the same in-memory pipeline as the canvas toolbar. Open questions remain about credential storage (where the key lives, how it's protected from accidental exposure in screenshots and exported bundles), rate limiting, cost transparency, and whether scene-edit operations should run as tool calls (Claude proposes structured edits that GXW applies through the same parse-mutate-stringify pipeline as the canvas toolbar) or as free-form JSON rewrites.
+
+18. 3D support. GeoSonix had Z coordinates but in practice kept Z=0 almost everywhere. GXW specifies 2D. Whether to reintroduce Z is open; current decision is to defer.
+
+19. Video instead of static images for the scalar-field background.
+
+20. MIDI input for score parameter control.
+
+21. OSC output via WebSocket bridge.
+
+22. Default helper functions in the mapping library beyond the initial set.
+
+23. Bundle sharing mechanism — URL-based, export file, hosted gallery.
+
+24. Save-snapshot / recall-snapshot feature. GeoSonix's .score format suggested the possibility of multiple named snapShots of scene state. Whether GXW supports this is open; the sketch re-execution model already makes scene state reproducible from source, so snapshots would be a convenience for exploratory work more than a necessity.
+
+25. Unified bound-trigger model. Section 10.5 captures a proposed evolution that visualises and treats curve beat points as triggers bound to their parent curve, rendered as diamonds rotated so two opposite vertices lie on the curve, with shared inheritance from the curve, an external-visibility setting controlling exposure to other curves' cursors, and a whichever-has-a-function-wins-when-only-one-is-defined rule (with both-fire-in-defined-order when both are defined) for resolving cursor sweep functions against trigger functions. Open issues within the proposal: the inspector wording for the visibility setting, and the pattern-grammar design for the phrase-pasting future direction (encoding per-beat pitch and payload alongside the existing strength data so a melodic phrase can be pasted onto a curve as bound triggers). The proposal sits in a post-v2.3 milestone window; the v2.3 property-inspector work does not need to anticipate it.
+
+26. Trigger Sync to Beat semantics, ownership, and inspector placement. The curve-inspector's Band 6 has carried a placeholder Trigger Sync to Beat combo since the inspector first shipped, with no specified semantics and no data binding. The intended meaning is quantization: a non-Off setting from the eighteen beat-interval tokens defers a triggered firing from the moment of physical collision to the next boundary of the chosen grid in score time, while Off fires at collision. The grid is the score's tempo grid, independent of any curve's beatInterval setting. Three open questions remain. First, ownership: per-trigger (the property lives on the trigger; one trigger fires on its own grid no matter who hits it; auto-fired events defer to the same grid; different curves hitting the same trigger get the same quantization), per-curve (the property lives on the curve; one curve produces quantized firings on its own grid no matter which trigger it sweeps; auto-fired triggers don't participate; different curves hitting the same trigger get different quantization), or both with a precedence rule. The per-trigger view fits the natural reading that quantization is a property of the firing event and the firing event lives on the trigger; it also extends cleanly to auto-fired triggers. The per-curve view fits the reading that the cursor's motion owns the timing of the collision-detection event; it also extends to a curve's own internal beat firings landing on a separate grid from its slot grid (though slot firings already land on slot boundaries by definition, so this case is mostly degenerate). Historical GeoSonix behaviour and which view best serves real composition both inform the choice. Second, semantics edge cases: what happens when multiple collisions occur within one quantization interval (collapse to one firing? all fire on the boundary?); how Off interacts with auto-firing; whether the deferred firing carries the original collision context (which curve, which sweep position) or recomputes context at the firing moment. Third, inspector placement: Band 6 of the curve view continues to hold the placeholder combo through v2.3 regardless of where ownership lands, because adding a trigger-specific band or row for one field would cost more than is justified at this point. If ownership turns out to be per-trigger, the placeholder will eventually move to the trigger-property inspector when broader trigger-property work happens; if per-curve, the placeholder is already in the right place and just needs data binding. The data-model field, validator, and engine consumption (in the Simulation module) are all deferred until ownership is settled and real binding lands.
