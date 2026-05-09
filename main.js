@@ -77,12 +77,10 @@ import {
     removeObjects,
     fillMissingIds,
     fillEmptyNames,
-    cleanLegacyCurveFields,
     cleanLegacyShapeFields,
-    fillMissingMusicalTimingFields,
     cleanLegacySceneFields,
     fillMissingCanvasSize,
-    renameFunctionSlotFields,
+    stripObsoleteFields,
     migrateBehaviorsFilename,
     setMuteOnSelection,
     setHideOnCurves,
@@ -410,22 +408,24 @@ async function main() {
 
     /**
      * Before loading the scene, scan scene.json for objects
-     * that lack an id or a name and fill them in, and clean
-     * up any vestigial curve fields left over from older
-     * model versions. Ids are stable and type-prefixed
-     * (sp_xxxxxx, tr_xxxxxx, cv_xxxxxx) and survive across
-     * edits because we write them back to the bundle's
-     * scene.json text after generating them. Names are
-     * inserted as empty strings — the same default the
-     * constructors apply — so the user has an obvious place
-     * to type a name in the JSON tab without first
-     * remembering the field exists. Legacy curve fields
-     * (cycleBeats, beatsPerCycle) are cleaned up: cycleBeats
-     * is renamed to cycleDuration to reflect the new model;
-     * beatsPerCycle is dropped entirely since the new model
-     * doesn't use it. All passes are no-ops once the steady
-     * state is reached, which is the case once a score has
-     * been loaded once after these passes were introduced.
+     * that lack an id or a name and fill them in, strip
+     * fields that became obsolete with the section-27
+     * reshape, and run the small remaining set of legacy
+     * cleanups (circle-shape migration, removed score-level
+     * fields, missing canvas-size). Ids are stable and
+     * type-prefixed (sp_xxxxxx, tr_xxxxxx, cv_xxxxxx) and
+     * survive across edits because we write them back to
+     * the bundle's scene.json text after generating them.
+     * Names are inserted as empty strings — the same default
+     * the constructors apply — so the user has an obvious
+     * place to type a name in the JSON tab without first
+     * remembering the field exists. The strip pass cleans
+     * out the pre-section-27 per-curve timing fields, the
+     * old per-kind callback slots, and the auto-message-
+     * interval fields so existing scores in IndexedDB show
+     * clean JSON in the Properties JSON tab on first load
+     * after the reshape. All passes are no-ops once the
+     * steady state is reached.
      *
      * Done before sceneLoader.load() so the loader sees the
      * normalised scene; done after editor.save() so we don't
@@ -440,20 +440,16 @@ async function main() {
         if (!parsed.ok) return;
         const idsChanged = fillMissingIds(parsed.data);
         const namesChanged = fillEmptyNames(parsed.data);
-        const legacyChanged = cleanLegacyCurveFields(parsed.data);
         const shapesChanged = cleanLegacyShapeFields(parsed.data);
-        const timingChanged = fillMissingMusicalTimingFields(parsed.data);
         const sceneFieldsChanged = cleanLegacySceneFields(parsed.data);
         const canvasSizeChanged = fillMissingCanvasSize(parsed.data);
-        const slotFieldsRenamed = renameFunctionSlotFields(parsed.data);
+        const obsoleteStripped = stripObsoleteFields(parsed.data);
         if (!idsChanged &&
             !namesChanged &&
-            !legacyChanged &&
             !shapesChanged &&
-            !timingChanged &&
             !sceneFieldsChanged &&
             !canvasSizeChanged &&
-            !slotFieldsRenamed) return;
+            !obsoleteStripped) return;
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();

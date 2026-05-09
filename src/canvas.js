@@ -743,7 +743,6 @@ export class Canvas {
         if (this._scene === null) return;
         for (const curve of this._scene.curves) {
             this._strokeCurveShape(curve);
-            this._drawCurveBeatPoints(curve);
             this._drawCurveCursor(curve);
         }
     }

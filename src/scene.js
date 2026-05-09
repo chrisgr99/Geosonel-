@@ -12,33 +12,41 @@
  * receiving a single options object with declarative
  * properties.
  *
- * Object types follow DESIGN.md v2.4:
- *   - Curves carry geometry, intrinsic rhythm (beat points via
- *     activeBeats and strength strings), a cursor with
- *     left/right extents, and Hit Beat / Hit Trigger function
- *     slots.
- *   - Triggers are static positions with optional payload and
- *     Collision / Auto function slots.
- *   - Sprites are autonomous point agents with Motion Update /
- *     Auto function slots.
+ * Object types follow the section-27 strudel-pattern-language
+ * model. Each source kind (curve, trigger, sprite) carries
+ * the same four uniform callback slots, each guarded by a
+ * Can-X gate boolean:
  *
- * Function slot fields hold STRING NAMES, not function
- * references. The named functions live in behaviors.js inside
- * the score bundle. The Scene also carries a functionMap
- * built by the scene loader at load time, mapping each
- * top-level function name in behaviors.js to its function
- * reference; the simulation looks up names against this map
- * when firing. Empty-string slot fields mean "no binding".
- * A non-empty slot whose name doesn't resolve in the map is
- * a soft error — the slot stays inert for that object and
- * the inspector eventually surfaces a warning, but the scene
- * still runs.
+ *   - cycle    — fires on cycle start. Carries cyclePattern,
+ *                cyclePatternLocation ("Here" or "Code Tab"),
+ *                and beatsPerCycle. cyclePattern is an inline
+ *                strudel mini-notation pattern in "Here" mode,
+ *                or the name of a function in the Code tab in
+ *                "Code Tab" mode.
+ *   - hasHit   — fires when the source hits another source;
+ *                bound function in hasHitFunction.
+ *   - beenHit  — fires when the source is hit by another;
+ *                bound function in beenHitFunction.
+ *   - onTick   — fires every simulation tick; bound function
+ *                in onTickFunction.
  *
- * At this milestone the Scene is mostly a static data
- * structure; the simulation hook for Motion Update lands in
- * a follow-up commit. The canvas renders the scene
- * statically so the composer gets immediate visual feedback
- * on their declared structure.
+ * Curves additionally carry geometry and a cursor with
+ * left/right extents. Triggers additionally carry position,
+ * size, colour, and an optional payload. Sprites additionally
+ * carry position, velocity, maxSpeed, and displayDiameter.
+ *
+ * Function-name fields (hasHitFunction, beenHitFunction,
+ * onTickFunction, and cyclePattern in "Code Tab" mode) hold
+ * STRING NAMES of functions defined in the bundle's
+ * behaviors.js file, not function references. The Scene also
+ * carries a functionMap built by the scene loader at load
+ * time, mapping each top-level function name in behaviors.js
+ * to its function reference; the simulation looks up names
+ * against this map when firing. Empty-string slot fields mean
+ * "no binding". A non-empty slot whose name doesn't resolve
+ * in the map is a soft error — the slot stays inert for that
+ * object and the inspector eventually surfaces a warning, but
+ * the scene still runs.
  *
  * Per-object harmony override fields (tonic, scaleName, root,
  * chordName, range, rangeLow, mapNotesTo) default to null
@@ -92,9 +100,9 @@ export class Scene {
         // (when one is loaded) stretches to fill this region;
         // the area outside it draws as a darker grey with a
         // grey border around the canvas. Sprite walls bounce
-        // at canvas ± W/2 and ± H/2 once sprite physics lands
-        // in milestone 2. Independent of the viewport: the
-        // viewport stays at ±16 × ±12 at zoom 1 regardless of
+        // at canvas ± W/2 and ± H/2 once sprite physics lands
+        // in milestone 2. Independent of the viewport: the
+        // viewport stays at ±16 × ±12 at zoom 1 regardless of
         // canvas size, so a small canvas reads as a small
         // bordered rectangle in the centre of a larger empty
         // viewport, and a large canvas extends past the
@@ -110,7 +118,7 @@ export class Scene {
         //     fills exactly canvasW × canvasH centred on the
         //     origin. Pixel sampling for trigger and sprite
         //     fills tracks the same region.
-        //   - Sprite walls (milestone 2): sprites bounce off
+        //   - Sprite walls (milestone 2): sprites bounce off
         //     the four canvas edges using these dimensions.
         //   - Visual play-area hint: the canvas border anchors
         //     the eye on where composition was intended.
@@ -288,23 +296,23 @@ export class Curve {
         this.name = opts.name ?? "";
 
         /**
-         * When true the curve is muted: its beat function and
-         * sweep function do not fire. The cursor still
-         * advances visibly so the curve's rhythm structure
-         * stays readable as motion. Wired into the simulation
-         * loop in a later milestone.
+         * When true the curve is muted: its callback slots
+         * do not fire. The cursor still advances visibly so
+         * the curve's rhythm structure stays readable as
+         * motion. Wired into the simulation loop in a later
+         * milestone.
          * @type {boolean}
          */
         this.mute = opts.mute ?? false;
 
         /**
-         * When true the curve is hidden: its geometry and
-         * beat-point tick marks do not render. The cursor
-         * still renders subject to its R and L extents (so a
-         * hidden curve with non-zero cursor extent shows the
-         * cursor as the only visible part). Selection markers
-         * still draw on a hidden curve. Wired into the canvas
-         * render path in a later milestone.
+         * When true the curve is hidden: its geometry does
+         * not render. The cursor still renders subject to
+         * its R and L extents (so a hidden curve with
+         * non-zero cursor extent shows the cursor as the
+         * only visible part). Selection markers still draw
+         * on a hidden curve. Wired into the canvas render
+         * path in a later milestone.
          * @type {boolean}
          */
         this.hide = opts.hide ?? false;
@@ -323,56 +331,6 @@ export class Curve {
          */
         this.curveThickness = opts.curveThickness ?? 1;
 
-        // --- Rhythm ---
-        /**
-         * Length of one full cycle in slots. The cursor
-         * advances through the cycle one slot at a time;
-         * each slot's musical duration is given by
-         * beatInterval (below). Rounded to integer at
-         * construction time so fractional values from JSON
-         * are tolerated. See DESIGN.md §10.
-         */
-        this.cycleDuration = Math.round(opts.cycleDuration ?? 4);
-        /**
-         * Token naming the musical duration of one slot.
-         * Drawn from the fixed list in beatIntervals.js. The
-         * default "Qtr" preserves pre-v2.3 behaviour, where
-         * one slot was implicitly one quarter-beat. See
-         * DESIGN.md §10's "Per-curve musical-timing fields".
-         * @type {string}
-         */
-        this.beatInterval = opts.beatInterval ?? "Qtr";
-        /**
-         * Numerator of the curve's time signature, with
-         * beatInterval as the denominator. Default 4 yields
-         * 4/4 time when paired with the default "Qtr"
-         * beatInterval. Currently consumed by the inspector
-         * for visual structure of the activeBeats and
-         * strength strings (the pipe-character rule);
-         * reserved for future bar-aware features.
-         * @type {number}
-         */
-        this.beatsPerBar = Math.round(opts.beatsPerBar ?? 4);
-        /**
-         * Slot offset between the curve's slot 0 and the
-         * cursor's position at score-beat zero (and at
-         * rewind). Signed; positive values delay slot 0,
-         * negative values advance into the curve before
-         * score-beat zero. Default 0.
-         * @type {number}
-         */
-        this.beatOffset = Math.round(opts.beatOffset ?? 0);
-        /**
-         * Space-separated multipliers applied to the
-         * cycle's score-time duration cycle by cycle.
-         * Default "1" means uniform pacing; multi-value
-         * lists like "0.4 2 -1" produce per-cycle modulation
-         * including reverse direction (negative values
-         * reverse). Validated by the inspector; stored here
-         * as-is. See DESIGN.md §4.
-         * @type {string}
-         */
-        this.cycleSpeeds = opts.cycleSpeeds ?? "1";
         /**
          * Cycle count at which the cursor halts. Default -1
          * means play forever; positive integers stop the
@@ -381,61 +339,6 @@ export class Curve {
          * @type {number}
          */
         this.stopAtCycle = opts.stopAtCycle ?? -1;
-        /**
-         * How the activeBeats string is authored. Default
-         * "normal" matches pre-v2.3 behaviour (the user
-         * types the string directly). "euclidean" generates
-         * the string from the activeBeatsCount, beatShift,
-         * and repeats parameters; "none" suppresses all
-         * firings and renders no beat-point markers. The
-         * mode controls authoring ergonomics in the
-         * inspector; the engine reads only the activeBeats
-         * string regardless of mode. See DESIGN.md §10's
-         * "Beat-points mode".
-         * @type {"normal" | "euclidean" | "none"}
-         */
-        this.beatPointsMode = opts.beatPointsMode ?? "normal";
-        /**
-         * Euclidean parameter — the count of active beats
-         * the generator distributes across cycleDuration
-         * slots. Inert when beatPointsMode is not
-         * "euclidean". Defaults to 0; the inspector picks a
-         * sensible non-zero value when the user first
-         * switches to euclidean mode.
-         * @type {number}
-         */
-        this.activeBeatsCount = Math.round(opts.activeBeatsCount ?? 0);
-        /**
-         * Euclidean parameter — rotational offset that
-         * shifts the generated pattern around the cycle by
-         * N slots. Inert when beatPointsMode is not
-         * "euclidean". Default 0.
-         * @type {number}
-         */
-        this.beatShift = Math.round(opts.beatShift ?? 0);
-        /**
-         * Euclidean parameter — internal repetition count.
-         * The generator produces a Euclidean rhythm of
-         * length cycleDuration / repeats with
-         * activeBeatsCount / repeats actives, then
-         * concatenates `repeats` copies to fill
-         * cycleDuration slots. Inert when beatPointsMode is
-         * not "euclidean". Default 1 (no internal
-         * repetition).
-         * @type {number}
-         */
-        this.repeats = Math.round(opts.repeats ?? 1);
-        /**
-         * Free-length "x" and "." string. Cycles independently
-         * as cycle positions advance; need not match
-         * cycleDuration in length. May contain spaces and
-         * pipe characters as display-only formatting; the
-         * engine strips them before cycling. See DESIGN.md
-         * §10 for the full string semantics.
-         */
-        this.activeBeats = opts.activeBeats ?? "x";
-        /** Digit string 0-9; cycles independently of activeBeats. May contain spaces and pipes; stripped by engine. */
-        this.strength = opts.strength ?? "9";
 
         // --- Cursor ---
         /** Cursor extent right of curve direction, canvas units. */
@@ -449,33 +352,50 @@ export class Curve {
          * @type {number}
          */
         this.cursorThickness = opts.cursorThickness ?? 2;
-        /**
-         * When true, active beats double as collision targets
-         * for other curves' extended cursors.
-         */
-        this.beatsAreTriggers = opts.beatsAreTriggers ?? false;
 
-        // --- Function slots ---
-        // String names of functions defined in the bundle's
-        // behaviors.js file. Empty string is the unbound
-        // state. Resolution to a function reference happens
-        // through Scene.functionMap at fire time. See
-        // DESIGN.md §9 for the slot model.
+        // --- Callback slots ---
+        // Section-27 four-slot model: cycle / hasHit / beenHit
+        // / onTick. Each slot is guarded by a Can-X gate
+        // boolean; a slot fires only when its gate is true.
+        // The cycle slot additionally carries cyclePattern,
+        // cyclePatternLocation, and beatsPerCycle.
+        // Function-name fields hold STRING NAMES of functions
+        // in behaviors.js; empty string means no binding.
+
+        /** @type {boolean} */
+        this.canCycle = opts.canCycle ?? false;
         /**
-         * Hit Beat — fires when the curve's cursor reaches
-         * an active beat point during internal cycle
-         * advancement. Empty string means no binding.
+         * Strudel mini-notation pattern (when
+         * cyclePatternLocation is "Here") or the name of a
+         * function in the Code tab (when "Code Tab"). Empty
+         * string means no binding.
          * @type {string}
          */
-        this.hitBeat = opts.hitBeat ?? "";
+        this.cyclePattern = opts.cyclePattern ?? "";
+        /** @type {"Here" | "Code Tab"} */
+        this.cyclePatternLocation = opts.cyclePatternLocation ?? "Here";
         /**
-         * Hit Trigger — fires when the curve's extended
-         * cursor sweeps a trigger or a beats-as-trigger
-         * position on another curve. Empty string means no
-         * binding.
-         * @type {string}
+         * Cycle length in master beats. Wall-clock cycle
+         * duration is beatsPerCycle * 60 / BPM. Default 4
+         * (one master bar in 4/4).
+         * @type {number}
          */
-        this.hitTrigger = opts.hitTrigger ?? "";
+        this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+
+        /** @type {boolean} */
+        this.canHit = opts.canHit ?? false;
+        /** @type {string} */
+        this.hasHitFunction = opts.hasHitFunction ?? "";
+
+        /** @type {boolean} */
+        this.canBeHit = opts.canBeHit ?? false;
+        /** @type {string} */
+        this.beenHitFunction = opts.beenHitFunction ?? "";
+
+        /** @type {boolean} */
+        this.canTick = opts.canTick ?? false;
+        /** @type {string} */
+        this.onTickFunction = opts.onTickFunction ?? "";
 
         // --- Harmony overrides (null = inherit from score). ---
         /** @type {string | null} */
@@ -511,10 +431,9 @@ export class Trigger {
         this.name = opts.name ?? "";
 
         /**
-         * When true the trigger is muted: its collision
-         * function and auto function do not fire. The trigger
-         * still renders. Wired into the simulation loop in a
-         * later milestone.
+         * When true the trigger is muted: its callback slots
+         * do not fire. The trigger still renders. Wired into
+         * the simulation loop in a later milestone.
          * @type {boolean}
          */
         this.mute = opts.mute ?? false;
@@ -550,35 +469,33 @@ export class Trigger {
         /** Arbitrary payload available as this.* in functions. */
         this.payload = opts.payload ?? null;
 
-        // --- Function slots ---
-        // String names of functions defined in the bundle's
-        // behaviors.js file. Empty string is the unbound
-        // state. See DESIGN.md §9.
-        /**
-         * Collision — fires when a curve's extended cursor
-         * sweeps over this trigger. Empty string means no
-         * binding.
-         * @type {string}
-         */
-        this.collision = opts.collision ?? "";
-        /**
-         * Auto — fires on the trigger's beat-aligned timer.
-         * Empty string means no binding.
-         * @type {string}
-         */
-        this.auto = opts.auto ?? "";
-        /** Beats between auto firings (when auto is defined). */
-        this.autoInterval = opts.autoInterval ?? 1;
-        /**
-         * Auto Beat Interval token controlling the cadence
-         * at which the Auto function fires. Drawn from the
-         * fixed beat-interval list (Section 10) plus the
-         * sentinel "Off" which suppresses Auto firings
-         * entirely. Default "Off" — a freshly-added trigger
-         * is silent until the composer chooses an interval.
-         * @type {string}
-         */
-        this.autoBeatInterval = opts.autoBeatInterval ?? "Off";
+        // --- Callback slots ---
+        // Section-27 four-slot model. See Curve for the full
+        // description of the slot semantics.
+
+        /** @type {boolean} */
+        this.canCycle = opts.canCycle ?? false;
+        /** @type {string} */
+        this.cyclePattern = opts.cyclePattern ?? "";
+        /** @type {"Here" | "Code Tab"} */
+        this.cyclePatternLocation = opts.cyclePatternLocation ?? "Here";
+        /** @type {number} */
+        this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+
+        /** @type {boolean} */
+        this.canHit = opts.canHit ?? false;
+        /** @type {string} */
+        this.hasHitFunction = opts.hasHitFunction ?? "";
+
+        /** @type {boolean} */
+        this.canBeHit = opts.canBeHit ?? false;
+        /** @type {string} */
+        this.beenHitFunction = opts.beenHitFunction ?? "";
+
+        /** @type {boolean} */
+        this.canTick = opts.canTick ?? false;
+        /** @type {string} */
+        this.onTickFunction = opts.onTickFunction ?? "";
 
         // --- Harmony overrides (null = inherit from score). ---
         /** @type {string | null} */
@@ -614,12 +531,10 @@ export class Sprite {
         this.name = opts.name ?? "";
 
         /**
-         * When true the sprite is muted: its step function is
-         * still called (so physics, image-sampling, and self-
-         * mutation continue) but its return value is discarded
-         * — no musical event fires. The auto function does not
-         * fire when muted. Wired into the simulation loop in a
-         * later milestone.
+         * When true the sprite is muted: its callback slots
+         * do not fire. Physics, image-sampling, and rendering
+         * continue. Wired into the simulation loop in a later
+         * milestone.
          * @type {boolean}
          */
         this.mute = opts.mute ?? false;
@@ -655,39 +570,33 @@ export class Sprite {
          */
         this.color = opts.color ?? "#7db8d6";
 
-        // --- Function slots ---
-        // String names of functions defined in the bundle's
-        // behaviors.js file. Empty string is the unbound
-        // state. See DESIGN.md §9.
-        /**
-         * Motion Update — called every physics tick before
-         * integration to compute an acceleration vector
-         * `{ax, ay}` that the simulation adds to velocity.
-         * Empty string falls back to the conventional shared
-         * function named `motionUpdate` in behaviors.js (the
-         * "shared default" rule from DESIGN.md §9); when no
-         * such function exists either, the sprite runs pure
-         * inertial physics.
-         * @type {string}
-         */
-        this.motionUpdate = opts.motionUpdate ?? "";
-        /**
-         * Auto — fires on the sprite's beat-aligned timer.
-         * Empty string means no binding.
-         * @type {string}
-         */
-        this.auto = opts.auto ?? "";
-        /** Beats between auto firings (when auto is defined). */
-        this.autoInterval = opts.autoInterval ?? 1;
-        /**
-         * Auto Beat Interval token controlling the cadence
-         * at which the Auto function fires. Drawn from the
-         * fixed beat-interval list plus the sentinel "Off"
-         * which suppresses Auto firings entirely. Default
-         * "Off".
-         * @type {string}
-         */
-        this.autoBeatInterval = opts.autoBeatInterval ?? "Off";
+        // --- Callback slots ---
+        // Section-27 four-slot model. See Curve for the full
+        // description of the slot semantics.
+
+        /** @type {boolean} */
+        this.canCycle = opts.canCycle ?? false;
+        /** @type {string} */
+        this.cyclePattern = opts.cyclePattern ?? "";
+        /** @type {"Here" | "Code Tab"} */
+        this.cyclePatternLocation = opts.cyclePatternLocation ?? "Here";
+        /** @type {number} */
+        this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+
+        /** @type {boolean} */
+        this.canHit = opts.canHit ?? false;
+        /** @type {string} */
+        this.hasHitFunction = opts.hasHitFunction ?? "";
+
+        /** @type {boolean} */
+        this.canBeHit = opts.canBeHit ?? false;
+        /** @type {string} */
+        this.beenHitFunction = opts.beenHitFunction ?? "";
+
+        /** @type {boolean} */
+        this.canTick = opts.canTick ?? false;
+        /** @type {string} */
+        this.onTickFunction = opts.onTickFunction ?? "";
 
         // --- Harmony overrides (null = inherit from score). ---
         /** @type {string | null} */

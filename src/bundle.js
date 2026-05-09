@@ -273,29 +273,20 @@ export function makeEmptyBundle(name) {
   "curves": [
     {
       "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 12, "h": 12 },
-      "cycleDuration": 4,
-      "beatInterval": "Qtr",
-      "beatsPerBar": 4,
-      "beatOffset": 0,
-      "beatPointsMode": "normal",
-      "activeBeats": "x",
-      "strength": "9272",
       "cursorR": 2,
-      "cursorL": 0,
-      "hitBeat": "hitBeat_circle",
-      "hitTrigger": "hitTrigger_circle"
+      "cursorL": 0
     }
   ],
 
   "triggers": [
-    { "x":  9, "y":  0, "note": 60, "collision": "collision_node" },
-    { "x": -9, "y":  0, "note": 64, "collision": "collision_node" },
-    { "x":  0, "y":  9, "note": 67, "collision": "collision_node" },
-    { "x":  0, "y": -9, "note": 72, "collision": "collision_node" }
+    { "x":  9, "y":  0, "note": 60 },
+    { "x": -9, "y":  0, "note": 64 },
+    { "x":  0, "y":  9, "note": 67 },
+    { "x":  0, "y": -9, "note": 72 }
   ],
 
   "sprites": [
-    { "x": 0, "y": 0, "vx": 1, "vy": 0, "motionUpdate": "" }
+    { "x": 0, "y": 0, "vx": 1, "vy": 0 }
   ]
 }
 `,
@@ -307,65 +298,24 @@ export function makeEmptyBundle(name) {
         `// behaviors.js — object behaviour definitions for this
 // score.
 //
-// This file holds the named functions that scene.json's
-// objects refer to by name. Each function slot in scene.json
-// (hitBeat, hitTrigger, collision, motionUpdate, auto) takes
-// the string name of one of the functions below. The two
-// files together — declarative data plus named behaviours —
-// make up a score.
+// This file holds named functions that scene.json's objects
+// refer to by string name through their callback slots
+// (section 27 four-slot model). Slot bindings live on each
+// source in scene.json:
 //
-// Sprite Motion Update has a shared-default convention: any
-// sprite with an empty motionUpdate slot field invokes the
-// conventional function named \`motionUpdate\` below. Per-
-// sprite overrides are available by typing a different name
-// into the slot field. No other slot has a shared default;
-// curves, triggers, and sprite Auto slots default to per-
-// object names like hitBeat_circle, collision_node,
-// auto_drum. See DESIGN.md §9 for the full naming
-// convention.
+//   - cycle (when cyclePatternLocation is "Code Tab"):
+//       function cycle_objectName() { return "bd*4"; }
+//   - hasHit (when canHit is true):
+//       function hasHit_objectName(ctx) { ... }
+//   - beenHit (when canBeHit is true):
+//       function beenHit_objectName(ctx) { ... }
+//   - onTick (when canTick is true):
+//       function onTick_objectName(ctx) { ... }
 //
-// Function bodies aren't yet invoked — the simulation hook
-// for Motion Update lands in a follow-up commit. Until then
-// this file just needs to parse and execute without errors.
-// References inside function bodies to helpers (scaleMap,
-// etc.) are harmless because nothing calls these functions
-// yet.
-
-// --- Curve behaviours ---
-function hitBeat_circle(ctx) {
-    const degrees = [0, 2, 4, 5];
-    return {
-        note: scaleMap(degrees[ctx.beatIndex % 4] / 7,
-                       { scale: ctx.scale, root: ctx.root }),
-        velocity: ctx.strength * 14,
-        duration: 200,
-    };
-}
-
-function hitTrigger_circle(ctx) {
-    return {
-        note: ctx.trigger.note - Math.floor(ctx.d),
-        velocity: Math.max(20, 127 - Math.floor(ctx.d * 8)),
-        duration: 400,
-    };
-}
-
-// --- Trigger behaviours ---
-function collision_node(ctx) {
-    return { note: this.note, velocity: 100, duration: 300 };
-}
-
-// --- Sprite behaviours ---
-// Shared Motion Update default. Every sprite with an empty
-// motionUpdate slot field invokes this function each physics
-// tick. Returns an acceleration vector { ax, ay } that the
-// simulation adds to the sprite's velocity before integrating
-// position. No-op for now — returns zero acceleration so
-// sprites drift under their initial velocity until the
-// composer fills in image-driven physics.
-function motionUpdate(ctx) {
-    return { ax: 0, ay: 0 };
-}
+// The default new-score template has no slot bindings, so
+// this file starts empty. Add functions here as you bind
+// slots in the inspector; every callback name follows the
+// slotName_objectName convention.
 `
     );
 

@@ -671,6 +671,79 @@ export function fillMissingCanvasSize(data) {
 }
 
 /**
+ * Strip curve, trigger, and sprite fields that became
+ * obsolete with the section-27 reshape: the four-slot
+ * callback model replaces the old per-kind slots
+ * (hitBeat, hitTrigger, collision, motionUpdate, auto),
+ * the auto-message-interval mechanism is eliminated, and
+ * the beat-points-era per-curve timing fields
+ * (cycleDuration, beatInterval, beatsPerBar, beatOffset,
+ * cycleSpeeds, beatPointsMode, the Euclidean trio,
+ * activeBeats, strength, beatsAreTriggers) all go away.
+ *
+ * Existing scores in IndexedDB carry these fields in
+ * their stored scene.json; the constructors silently
+ * drop them on load, but the Properties JSON tab surfaces
+ * stored field text directly, so this strip pass cleans
+ * the stored JSON on first load after the reshape.
+ * Steady-state (already-stripped) bundles are a no-op.
+ *
+ * The strip list also includes the pre-v2.4 transitional
+ * function-slot names sprite.step, curve.beat, and
+ * curve.sweep that even older scores might still carry.
+ * Those were once renamed to the v2.4 names (motionUpdate,
+ * hitBeat, hitTrigger), which are themselves now obsolete
+ * under the section-27 model, so all of step/beat/sweep
+ * and motionUpdate/hitBeat/hitTrigger are stripped
+ * together.
+ *
+ * Returns true iff at least one field was stripped; the
+ * caller uses that signal to decide whether to write the
+ * mutated scene back to the bundle.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function stripObsoleteFields(data) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+    /** @type {Record<string, string[]>} */
+    const obsoletePerKind = {
+        curves: [
+            "cycleDuration", "cycleBeats", "beatInterval",
+            "beatsPerBar", "beatOffset", "cycleSpeeds",
+            "beatPointsMode", "activeBeatsCount", "beatShift",
+            "repeats", "activeBeats", "strength",
+            "beatsAreTriggers", "hitBeat", "hitTrigger",
+            "beat", "sweep",
+        ],
+        triggers: [
+            "collision", "auto", "autoInterval", "autoBeatInterval",
+        ],
+        sprites: [
+            "motionUpdate", "auto", "autoInterval", "autoBeatInterval",
+            "step",
+        ],
+    };
+    let changed = false;
+    for (const kind of ["curves", "triggers", "sprites"]) {
+        const arr = data[kind];
+        if (!Array.isArray(arr)) continue;
+        const fieldsToStrip = obsoletePerKind[kind];
+        for (let i = 0; i < arr.length; i++) {
+            const entry = arr[i];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            for (const field of fieldsToStrip) {
+                if (field in entry) {
+                    delete entry[field];
+                    changed = true;
+                }
+            }
+        }
+    }
+    return changed;
+}
+
+/**
  * Add a sprite to the parsed scene at canvas position (x, y).
  * The sprite gets a freshly generated id, x, y, and vx/vy=0.
  * Other fields fall through to the constructor defaults (no

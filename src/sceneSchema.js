@@ -24,7 +24,6 @@
  *   "shape"                                     — curve geometry sub-object
  *   "object"                                    — opaque sub-object
  *   "functionRef"                               — name of a function defined in script.js
- *   "beatsString" / "strengthString"            — domain-specific strings
  *
  * The schema is read by:
  *   - the scene loader, to know which fields are functionRef
@@ -41,11 +40,6 @@
  */
 
 // @ts-check
-
-import {
-    DEFAULT_BEAT_INTERVAL,
-    allBeatIntervalTokens,
-} from "./beatIntervals.js";
 
 /**
  * @typedef {Object} FieldDef
@@ -81,6 +75,40 @@ const HARMONY_OVERRIDE_FIELDS = [
 ];
 
 /**
+ * Callback-slot fields shared by Curve, Trigger, and Sprite.
+ * Every source kind has all four slots (cycle, hasHit, beenHit,
+ * onTick), each guarded by a Can-X gate boolean. The cycle
+ * slot uniquely also carries a pattern field (inline strudel
+ * mini-notation when cyclePatternLocation is "Here", or a
+ * function name in the Code tab when "Code Tab") and a
+ * beatsPerCycle field giving the cycle length in master beats.
+ *
+ * Function naming convention: every slot's function (when it
+ * lives in the Code tab) is named slotName_sourceName, e.g.
+ * cycle_curve1, hasHit_trigger2, beenHit_trigger2,
+ * onTick_sprite1.
+ * @type {FieldDef[]}
+ */
+const CALLBACK_SLOT_FIELDS = [
+    { key: "canCycle", label: "Can Cycle", type: "boolean", default: false },
+    { key: "cyclePattern", label: "Cycle Pattern", type: "string", default: "" },
+    {
+        key: "cyclePatternLocation",
+        label: "Cycle Code Location",
+        type: "enum",
+        default: "Here",
+        enumValues: ["Here", "Code Tab"],
+    },
+    { key: "beatsPerCycle", label: "Beats/Cycle", type: "number", default: 4, min: 0 },
+    { key: "canHit", label: "Can Hit", type: "boolean", default: false },
+    { key: "hasHitFunction", label: "Has Hit Function", type: "functionRef", default: "" },
+    { key: "canBeHit", label: "Can Be Hit", type: "boolean", default: false },
+    { key: "beenHitFunction", label: "Been Hit Function", type: "functionRef", default: "" },
+    { key: "canTick", label: "Can Tick", type: "boolean", default: false },
+    { key: "onTickFunction", label: "On Tick Function", type: "functionRef", default: "" },
+];
+
+/**
  * Score-level (piece-wide) fields. These live at the top of
  * scene.json, not inside any object array.
  * @type {FieldDef[]}
@@ -107,8 +135,8 @@ export const SCENE_FIELDS = [
 ];
 
 /**
- * Curve-specific fields, followed by the shared harmony
- * overrides.
+ * Curve-specific fields, followed by the shared callback-slot
+ * fields and the harmony overrides.
  * @type {FieldDef[]}
  */
 export const CURVE_FIELDS = [
@@ -118,41 +146,17 @@ export const CURVE_FIELDS = [
     { key: "hide", label: "Hide", type: "boolean", default: false },
     { key: "shape", label: "Shape", type: "shape", default: null },
     { key: "curveThickness", label: "Curve Thickness", type: "number", default: 1 },
-    { key: "cycleDuration", label: "Beats/Cycle", type: "integer", default: 4, min: 1 },
-    {
-        key: "beatInterval",
-        label: "Beat Interval",
-        type: "enum",
-        default: DEFAULT_BEAT_INTERVAL,
-        enumValues: allBeatIntervalTokens(),
-    },
-    { key: "beatsPerBar", label: "Beats/Bar", type: "integer", default: 4, min: 1 },
-    { key: "beatOffset", label: "Beat Offset", type: "integer", default: 0 },
-    { key: "cycleSpeeds", label: "Cycle Speeds", type: "string", default: "1" },
     { key: "stopAtCycle", label: "Stop at Cycle", type: "integer", default: -1 },
-    {
-        key: "beatPointsMode",
-        label: "Curve Beat Points",
-        type: "enum",
-        default: "normal",
-        enumValues: ["normal", "euclidean", "none"],
-    },
-    { key: "activeBeatsCount", label: "Active Beats", type: "integer", default: 0, min: 0 },
-    { key: "beatShift", label: "Beat Shift", type: "integer", default: 0 },
-    { key: "repeats", label: "Repeats", type: "integer", default: 1, min: 1 },
-    { key: "activeBeats", label: "Active Beats", type: "beatsString", default: "x" },
-    { key: "strength", label: "Beat Strength", type: "strengthString", default: "9" },
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
     { key: "cursorThickness", label: "Cursor Thickness", type: "number", default: 2 },
-    { key: "beatsAreTriggers", label: "Beats Are Triggers", type: "boolean", default: false },
-    { key: "hitBeat", label: "Hit Beat Function", type: "functionRef", default: "" },
-    { key: "hitTrigger", label: "Hit Trigger Function", type: "functionRef", default: "" },
+    ...CALLBACK_SLOT_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 
 /**
- * Trigger-specific fields, followed by harmony overrides.
+ * Trigger-specific fields, followed by the shared callback-slot
+ * fields and the harmony overrides.
  * @type {FieldDef[]}
  */
 export const TRIGGER_FIELDS = [
@@ -165,21 +169,13 @@ export const TRIGGER_FIELDS = [
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
     { key: "note", label: "Note", type: "integer", default: null },
     { key: "payload", label: "Payload", type: "object", default: null },
-    { key: "collision", label: "Collision Function", type: "functionRef", default: "" },
-    { key: "auto", label: "Auto Function", type: "functionRef", default: "" },
-    { key: "autoInterval", label: "Auto Interval", type: "number", default: 1 },
-    {
-        key: "autoBeatInterval",
-        label: "Auto Beat Interval",
-        type: "enum",
-        default: "Off",
-        enumValues: ["Off", ...allBeatIntervalTokens()],
-    },
+    ...CALLBACK_SLOT_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 
 /**
- * Sprite-specific fields, followed by harmony overrides.
+ * Sprite-specific fields, followed by the shared callback-slot
+ * fields and the harmony overrides.
  * @type {FieldDef[]}
  */
 export const SPRITE_FIELDS = [
@@ -193,16 +189,7 @@ export const SPRITE_FIELDS = [
     { key: "maxSpeed", label: "Max Speed", type: "number", default: 16 },
     { key: "displayDiameter", label: "Display Diameter", type: "number", default: 1.05 },
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
-    { key: "motionUpdate", label: "Motion Update Function", type: "functionRef", default: "" },
-    { key: "auto", label: "Auto Function", type: "functionRef", default: "" },
-    { key: "autoInterval", label: "Auto Interval", type: "number", default: 1 },
-    {
-        key: "autoBeatInterval",
-        label: "Auto Beat Interval",
-        type: "enum",
-        default: "Off",
-        enumValues: ["Off", ...allBeatIntervalTokens()],
-    },
+    ...CALLBACK_SLOT_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 
