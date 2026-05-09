@@ -319,4 +319,31 @@ export class Transport {
         }
         return this._audioContext;
     }
+
+    /**
+     * Public accessor for the AudioContext. Returns null until
+     * something has caused _ensureAudioContext to run (typically
+     * the first play() click, or an explicit ensureAudioContext
+     * call from the StrudelRuntime). The runtime uses this to
+     * pass GXW's single AudioContext to strudel's webaudio layer
+     * rather than letting strudel create its own; sharing one
+     * context avoids two-audio-thread overhead and the risk of
+     * one context suspending while the other does not.
+     * @returns {AudioContext | null}
+     */
+    get audioContext() {
+        return this._audioContext;
+    }
+
+    /**
+     * Eagerly create and return the AudioContext, satisfying the
+     * browser's user-gesture requirement at the call site. Used
+     * by the StrudelRuntime when the user clicks Load Engine —
+     * that click is the gesture, and we want the context live
+     * before strudel initialises.
+     * @returns {AudioContext}
+     */
+    ensureAudioContext() {
+        return this._ensureAudioContext();
+    }
 }

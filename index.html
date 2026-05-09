@@ -5,6 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GXW</title>
     <link rel="stylesheet" href="main.css">
+
+    <!--
+      Import map for @strudel/web subpackages. Loaded via esm.sh
+      so no build step is required. The @strudel/web umbrella is
+      preferred for runtime use because it bundles core, mini,
+      and webaudio together and avoids the duplicate-copies-of-
+      core problem that a four-package import map can produce.
+      The individual subpackage entries are kept for the spike
+      page (spike-strudel.html) which uses them directly.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@strudel/web": "https://esm.sh/@strudel/web",
+          "@strudel/core": "https://esm.sh/@strudel/core",
+          "@strudel/mini": "https://esm.sh/@strudel/mini",
+          "@strudel/webaudio": "https://esm.sh/@strudel/webaudio",
+          "@strudel/tonal": "https://esm.sh/@strudel/tonal"
+        }
+      }
+    </script>
 </head>
 <body>
     <div id="app">
@@ -19,6 +40,7 @@
             </nav>
 
             <div id="transport-controls" aria-label="Transport">
+                <button class="transport-btn engine-state-idle" id="load-engine-btn" aria-label="Load audio engine">Load Engine</button>
                 <button class="transport-btn" id="rewind-btn" aria-label="Rewind to start">⏮</button>
                 <button class="transport-btn" id="play-btn" aria-label="Play">▶</button>
                 <div class="elapsed-time" id="elapsed-time">0:00:00</div>

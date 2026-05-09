@@ -57,6 +57,7 @@ import { TabbedEditor } from "./src/editor.js";
 import { Transport } from "./src/transport.js";
 import { Simulation } from "./src/simulation.js";
 import { TransportBarView } from "./src/transportBar.js";
+import { StrudelRuntime } from "./src/strudel/runtime.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
 import { MessageArea } from "./src/messages.js";
@@ -192,9 +193,19 @@ async function main() {
         onRunScene: () => { runScene(); },
     });
 
-    // --- Transport ---
+    // --- Transport and audio engine ---
+    //
+    // The StrudelRuntime is constructed here but not initialised
+    // until the user clicks Load Engine in the transport bar.
+    // The click is the browser gesture that allows the shared
+    // AudioContext (owned by Transport, used by both Transport
+    // and strudel's webaudio layer) to start. Tier 1 leaves the
+    // runtime idle; Tier 2 will add the pattern evaluation
+    // primitive that drives output.
     const transport = new Transport();
-    new TransportBarView(transport);
+    const strudelRuntime = new StrudelRuntime(transport);
+    new TransportBarView(transport, strudelRuntime);
+    /** @type {any} */ (window).strudelRuntime = strudelRuntime;
 
     // --- Simulation ---
     //

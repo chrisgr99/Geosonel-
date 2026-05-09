@@ -1636,3 +1636,67 @@ body.inspector-hidden #canvas-pane {
     text-decoration-skip-ink: none;
     text-decoration-thickness: 2px;
 }
+
+/* Load Engine button.
+ *
+ * Sized and styled to fit the "Load Engine" text in a transport
+ * bar slot, with state colours that signal lifecycle at a
+ * glance: orange in the idle state (action available), dim
+ * while loading, green once the engine has loaded, red on
+ * failure. The state class (engine-state-idle / loading /
+ * loaded / failed) is swapped by transportBar.js's
+ * _applyEngineStatus method.
+ */
+#load-engine-btn {
+    font-size: 0.6rem;
+    line-height: 1;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    color: white;
+    cursor: pointer;
+    white-space: nowrap;
+    /* Fixed width sized to fit the longest label
+     * ("Load Engine (retry)") with a small horizontal margin
+     * so text never crowds the button edges. The width also
+     * keeps the surrounding transport bar from reflowing when
+     * the state class changes. */
+    width: 100px;
+    text-align: center;
+}
+
+#load-engine-btn.engine-state-idle {
+    background-color: #ec8b1a;
+    border-color: #c47011;
+}
+
+#load-engine-btn.engine-state-idle:hover {
+    background-color: #f5a23e;
+}
+
+#load-engine-btn.engine-state-loading {
+    background-color: #b08c5f;
+    border-color: #8a6e49;
+    cursor: progress;
+    /* Override default disabled greying so the loading state
+     * still reads clearly under accessibility zoom. */
+    opacity: 1;
+}
+
+#load-engine-btn.engine-state-loaded {
+    background-color: #3aa84a;
+    border-color: #2c8a3a;
+    /* Override default disabled greying — the green should
+     * read as success, not as inert. */
+    opacity: 1;
+    cursor: default;
+}
+
+#load-engine-btn.engine-state-failed {
+    background-color: #c83e3e;
+    border-color: #a02d2d;
+}
+
+#load-engine-btn.engine-state-failed:hover {
+    background-color: #d65656;
+}

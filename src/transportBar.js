@@ -27,6 +27,8 @@
 // @ts-check
 
 /** @typedef {import("./transport.js").Transport} Transport */
+/** @typedef {import("./strudel/runtime.js").StrudelRuntime} StrudelRuntime */
+/** @typedef {import("./strudel/runtime.js").RuntimeStatus} RuntimeStatus */
 
 const PLAY_GLYPH = "▶";
 const PAUSE_GLYPH = "⏸";
@@ -34,9 +36,15 @@ const PAUSE_GLYPH = "⏸";
 export class TransportBarView {
     /**
      * @param {Transport} transport
+     * @param {StrudelRuntime | null} [strudelRuntime] Optional;
+     *     when provided, the Load Engine button gets wired to
+     *     it. Passing null leaves the button visible but inert,
+     *     useful for tests that mount the transport bar without
+     *     a runtime.
      */
-    constructor(transport) {
+    constructor(transport, strudelRuntime = null) {
         this.transport = transport;
+        this.strudelRuntime = strudelRuntime;
 
         // Gather DOM references. If any of these are missing,
         // the transport bar is malformed and we log and bail.
@@ -52,6 +60,9 @@ export class TransportBarView {
             document.getElementById("bpm-input")
         );
         this.bpmGroup = document.getElementById("bpm-group");
+        this.loadEngineBtn = /** @type {HTMLButtonElement | null} */ (
+            document.getElementById("load-engine-btn")
+        );
 
         if (!this.playBtn || !this.rewindBtn || !this.elapsedTimeEl ||
             !this.musicalPositionEl || !this.bpmInput || !this.bpmGroup) {
@@ -63,9 +74,74 @@ export class TransportBarView {
         this._applyBpmToField();
         this._applyPlayState();
         this._applyBpmVisibility();
+        this._wireLoadEngine();
 
         this._tick = this._tick.bind(this);
         requestAnimationFrame(this._tick);
+    }
+
+    // --- Load Engine button ---
+
+    _wireLoadEngine() {
+        if (!this.loadEngineBtn) return;
+        if (this.strudelRuntime === null) {
+            // No runtime to wire; leave the button as a visible
+            // affordance but disable it so clicks do nothing.
+            this.loadEngineBtn.disabled = true;
+            return;
+        }
+        this.loadEngineBtn.addEventListener("click", () => {
+            if (!this.strudelRuntime) return;
+            // The click is the user gesture that lets the
+            // AudioContext start. Runtime.init() handles the
+            // rest; the button reacts via the status listener
+            // below.
+            this.strudelRuntime.init().catch(() => {
+                // Errors are already logged inside init; the
+                // status transition to "failed" updates the
+                // button label below.
+            });
+        });
+        this.strudelRuntime.onStatusChange((status) => this._applyEngineStatus(status));
+    }
+
+    /**
+     * @param {RuntimeStatus} status
+     */
+    _applyEngineStatus(status) {
+        if (!this.loadEngineBtn) return;
+        // Swap a single state class on the button so CSS can
+        // style each state distinctly (orange idle, dim while
+        // loading, green when loaded, red on failure).
+        this.loadEngineBtn.classList.remove(
+            "engine-state-idle",
+            "engine-state-loading",
+            "engine-state-loaded",
+            "engine-state-failed",
+        );
+        this.loadEngineBtn.classList.add(`engine-state-${status}`);
+        switch (status) {
+            case "idle":
+                this.loadEngineBtn.textContent = "Load Engine";
+                this.loadEngineBtn.disabled = false;
+                this.loadEngineBtn.setAttribute("aria-label", "Load audio engine");
+                break;
+            case "loading":
+                this.loadEngineBtn.textContent = "Loading...";
+                this.loadEngineBtn.disabled = true;
+                this.loadEngineBtn.setAttribute("aria-label", "Audio engine loading");
+                break;
+            case "loaded":
+                this.loadEngineBtn.textContent = "Engine Loaded";
+                this.loadEngineBtn.disabled = true;
+                this.loadEngineBtn.setAttribute("aria-label", "Audio engine loaded");
+                break;
+            case "failed":
+                this.loadEngineBtn.textContent = "Load Engine (retry)";
+                this.loadEngineBtn.disabled = false;
+                this.loadEngineBtn.setAttribute("aria-label", "Audio engine failed; click to retry");
+                break;
+        }
     }
 
     // --- Wiring ---
