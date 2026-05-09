@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GXW Strudel separability spike</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 1.5rem; max-width: 880px; line-height: 1.4; }
+    h1 { font-size: 1.4rem; }
+    h2 { font-size: 1.05rem; margin-top: 1.5rem; }
+    button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
+    pre { background: #1c1c1c; color: #ddd; padding: 0.75rem; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; }
+    .ok { color: #7ee787; }
+    .fail { color: #ff8080; }
+    .step { color: #c0c0ff; }
+  </style>
+
+  <!--
+    Import map for @strudel/web. This page is self-contained so
+    the import map does not affect the main GXW app. esm.sh
+    publishes npm packages as ESM-friendly modules, suitable
+    for browser import maps without a build step. If a specific
+    version of strudel needs to be pinned later, add @x.y.z to
+    the URLs below.
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "@strudel/core": "https://esm.sh/@strudel/core",
+        "@strudel/mini": "https://esm.sh/@strudel/mini",
+        "@strudel/webaudio": "https://esm.sh/@strudel/webaudio",
+        "@strudel/web": "https://esm.sh/@strudel/web"
+      }
+    }
+  </script>
+</head>
+<body>
+  <h1>GXW Strudel separability spike</h1>
+  <p>
+    This page verifies the architectural assumption captured in
+    <code>design/sections/section-27-strudel-pattern-language.md</code>:
+    that strudel's three layers (mini-notation parser plus modifier
+    algebra, the Pattern abstraction, and the cyclist plus
+    superdough audio) are cleanly separable, and that GXW can
+    drive <code>Pattern.queryArc</code> and superdough manually
+    without ever starting strudel's cyclist.
+  </p>
+  <p>
+    Click the button to run the spike. The user gesture also
+    satisfies the browser's AudioContext requirement. If the
+    spike succeeds, you should see four parsed events logged
+    and hear four short percussion hits over two seconds.
+  </p>
+
+  <button id="run">Run spike</button>
+
+  <h2>Stage 1: parse and queryArc (no audio needed)</h2>
+  <pre id="parse-log">(not run yet)</pre>
+
+  <h2>Stage 2: schedule through superdough (audio)</h2>
+  <pre id="audio-log">(not run yet)</pre>
+
+  <script type="module">
+    /*
+      Strudel separability spike inline script.
+
+      What this spike does:
+        1. Imports strudel's evaluation API and superdough audio
+           output via a browser import map (no build step).
+        2. On user gesture, initialises an AudioContext via
+           strudel/webaudio.
+        3. Parses a hardcoded mini-notation pattern.
+        4. Calls Pattern.queryArc(0, 1) directly to retrieve the
+           events for one cycle.
+        5. Iterates the resulting Haps and schedules each via
+           superdough with a manually computed audio-context time.
+
+      What this spike deliberately does NOT do:
+        - It does not start strudel's cyclist or REPL.
+        - It does not couple to GXW's simulation loop or any
+          existing GXW source code.
+        - It is not the production runtime. It is a verification
+          harness whose job is to prove (or disprove) the
+          architectural separation, after which it is discarded
+          or absorbed into Tier 1.
+
+      Spike open questions this should answer:
+        - Does Pattern.queryArc work standalone, without any
+          cyclist setup?
+        - Does superdough play scheduled events when called
+          outside the cyclist's tick loop?
+        - Are there global-state dependencies (window.cps and
+          similar) that need to be set defensively before any
+          modifier in the promoted vocabulary will behave?
+
+      How to run:
+        From the GXW repo root, serve the folder over HTTP
+        (for example: python3 -m http.server 8000), then
+        open http://localhost:8000/spike-strudel.html in a
+        browser. Opening the file directly via file:// will
+        fail because ES module imports require HTTP.
+
+      Notes on the strudel import surface:
+        The exact import names below are best-effort against
+        recent @strudel/web releases. If any import path
+        resolves to undefined, the error log will show it,
+        and the import map at the top of this file is the
+        place to adjust. The spike is intentionally small so
+        rewiring imports is cheap.
+    */
+
+    const parseLog = document.getElementById('parse-log');
+    const audioLog = document.getElementById('audio-log');
+    const runButton = document.getElementById('run');
+
+    const cleanLog = (el) => { el.textContent = ''; };
+    const log = (el, line, cls) => {
+      const span = document.createElement('span');
+      if (cls) span.className = cls;
+      span.textContent = line + '\n';
+      el.appendChild(span);
+    };
+
+    runButton.addEventListener('click', async () => {
+      cleanLog(parseLog);
+      cleanLog(audioLog);
+
+      // ---------- Stage 1: parse and query ----------
+      try {
+        log(parseLog, 'Step 1.1: importing @strudel/mini and @strudel/core', 'step');
+        const mini = await import('@strudel/mini');
+        const core = await import('@strudel/core');
+        log(parseLog, '  @strudel/mini exports: ' + Object.keys(mini).slice(0, 12).join(', ') + '...', 'ok');
+        log(parseLog, '  @strudel/core exports: ' + Object.keys(core).slice(0, 12).join(', ') + '...', 'ok');
+
+        log(parseLog, 'Step 1.2: parsing mini-notation "bd sn bd sn"', 'step');
+        // mini() takes a mini-notation string and returns a Pattern
+        // whose values are the bare per-event tokens ("bd", "sn", ...).
+        // We deliberately do NOT call .s(patternString) here, because
+        // .s(string) would set every event's s field to the whole
+        // pattern string rather than to the per-event token. Instead
+        // we build the {s: hap.value} object at schedule time.
+        const patternString = 'bd sn bd sn';
+        const pattern = mini.mini(patternString);
+        log(parseLog, '  pattern parsed; type: ' + typeof pattern + ', has queryArc: ' + (typeof pattern.queryArc === 'function'), 'ok');
+
+        log(parseLog, 'Step 1.3: calling pattern.queryArc(0, 1) directly', 'step');
+        const haps = pattern.queryArc(0, 1);
+        log(parseLog, '  queryArc returned ' + haps.length + ' Hap(s):', 'ok');
+        for (const hap of haps) {
+          const begin = Number(hap.whole?.begin ?? hap.part?.begin);
+          const end = Number(hap.whole?.end ?? hap.part?.end);
+          log(parseLog, '    [' + begin.toFixed(3) + ', ' + end.toFixed(3) + ') value=' + JSON.stringify(hap.value));
+        }
+
+        if (haps.length === 0) {
+          log(parseLog, 'Stage 1 produced no events. Stopping; investigate parser/queryArc imports.', 'fail');
+          return;
+        }
+
+        log(parseLog, 'Stage 1 PASSED: parser and queryArc work without the cyclist.', 'ok');
+
+        // ---------- Stage 2: schedule through superdough ----------
+        try {
+          log(audioLog, 'Step 2.1: importing @strudel/webaudio', 'step');
+          const webaudio = await import('@strudel/webaudio');
+          log(audioLog, '  @strudel/webaudio exports: ' + Object.keys(webaudio).slice(0, 12).join(', ') + '...', 'ok');
+
+          log(audioLog, 'Step 2.2: initialising AudioContext', 'step');
+          // We are already inside a click handler, so we do not
+            // need initAudioOnFirstClick (which installs a one-time
+            // page-level listener and could hang when awaited from
+            // inside a click). Instead get the context directly
+            // and resume it if suspended; that is the standard
+            // Web Audio user-gesture-to-running pattern.
+          let ctx = (typeof webaudio.getAudioContext === 'function')
+            ? webaudio.getAudioContext()
+            : null;
+          if (!ctx && typeof webaudio.initAudio === 'function') {
+            await webaudio.initAudio();
+            ctx = (typeof webaudio.getAudioContext === 'function')
+              ? webaudio.getAudioContext()
+              : null;
+          }
+          if (ctx && ctx.state === 'suspended') {
+            await ctx.resume();
+          }
+          log(audioLog, '  audio context state: ' + (ctx ? ctx.state : 'no getAudioContext export'), ctx && ctx.state === 'running' ? 'ok' : 'fail');
+
+          log(audioLog, 'Step 2.3: loading dirt-samples (drum bank)', 'step');
+          if (typeof webaudio.samples === 'function') {
+            await webaudio.samples('github:tidalcycles/dirt-samples');
+            log(audioLog, '  samples loaded.', 'ok');
+          } else {
+            log(audioLog, '  samples() not found on @strudel/webaudio; sounds may not play.', 'fail');
+          }
+
+          log(audioLog, 'Step 2.4: scheduling events via superdough', 'step');
+          if (typeof webaudio.superdough !== 'function') {
+            log(audioLog, '  superdough not found on @strudel/webaudio; cannot schedule.', 'fail');
+            return;
+          }
+
+          const cycleDurationSeconds = 2.0; // 4 events at 120 BPM
+          const audioStart = ctx ? ctx.currentTime + 0.1 : 0.1;
+          for (const hap of haps) {
+            const begin = Number(hap.whole?.begin ?? hap.part?.begin);
+            const end = Number(hap.whole?.end ?? hap.part?.end);
+            const eventTime = audioStart + begin * cycleDurationSeconds;
+            const eventDur = (end - begin) * cycleDurationSeconds;
+            // Build a clean value object whose s field is the
+            // per-event token rather than the whole pattern string.
+            // hap.value here is just the bare token ("bd", "sn", ...).
+            const playValue = { s: hap.value };
+            // superdough signature varies by version; the common
+            // shape is superdough(value, deadlineSeconds, durationSeconds).
+            // deadlineSeconds is offset from audioContext.currentTime
+            // in some versions, absolute in others; here we pass
+            // offset-from-now to be safe.
+            webaudio.superdough(playValue, eventTime - (ctx ? ctx.currentTime : 0), eventDur);
+            log(audioLog, '  scheduled ' + JSON.stringify(playValue) + ' at t+' + (eventTime - (ctx ? ctx.currentTime : 0)).toFixed(3) + ' dur=' + eventDur.toFixed(3));
+          }
+
+          log(audioLog, 'Stage 2 PASSED: superdough accepted scheduled events without the cyclist.', 'ok');
+          log(audioLog, 'Listen for four hits over the next 2 seconds.', 'ok');
+
+          // Lower-level diagnostic: schedule a raw Web Audio beep
+          // about 0.05s before the first strudel hit. If the beep
+          // plays but the strudel hits do not, the samples did not
+          // actually load. If the beep also does not play, the
+          // AudioContext itself is not running and the rest of
+          // Stage 2 was reporting false success.
+          if (ctx) {
+            log(audioLog, 'Step 2.5: scheduling raw-Web-Audio diagnostic beep at t+' + (audioStart - ctx.currentTime - 0.05).toFixed(3), 'step');
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.frequency.value = 440;
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            const beepTime = audioStart - 0.05;
+            const beepDur = 0.08;
+            gain.gain.setValueAtTime(0.4, beepTime);
+            gain.gain.linearRampToValueAtTime(0.0, beepTime + beepDur);
+            osc.start(beepTime);
+            osc.stop(beepTime + beepDur + 0.01);
+            log(audioLog, '  beep scheduled. If you hear a short 440Hz tone but no drums, samples did not load.', 'ok');
+          }
+        } catch (err) {
+          log(audioLog, 'Stage 2 FAILED: ' + (err && err.message ? err.message : String(err)), 'fail');
+          console.error(err);
+        }
+      } catch (err) {
+        log(parseLog, 'Stage 1 FAILED: ' + (err && err.message ? err.message : String(err)), 'fail');
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>
