@@ -85,16 +85,6 @@ import {
     setMuteOnSelection,
     setHideOnCurves,
     setNameOnSelection,
-    setCycleDurationOnCurves,
-    setCycleSpeedsOnCurves,
-    setStopAtCycleOnCurves,
-    setActiveBeatsOnCurves,
-    setStrengthOnCurves,
-    setBeatIntervalOnCurves,
-    setBeatsPerBarOnCurves,
-    setBeatOffsetOnCurves,
-    setBeatPointsModeOnCurves,
-    setEuclideanParameterOnCurves,
     translateSelection,
     scaleCurveAxis,
     setPositionAxisOnSelection,
@@ -106,15 +96,6 @@ import {
     setCurveThicknessOnCurves,
     setCursorThicknessOnCurves,
     setColorOnSelection,
-    setMotionUpdateOnSprites,
-    setAutoOnSprites,
-    setCollisionOnTriggers,
-    setAutoOnTriggers,
-    setHitBeatOnCurves,
-    setHitTriggerOnCurves,
-    setAutoBeatIntervalOnSprites,
-    setAutoBeatIntervalOnTriggers,
-    scaffoldFunctionInBehaviors,
     setCanvasW,
     setCanvasH,
 } from "./src/sceneEditor.js";
@@ -714,63 +695,6 @@ async function main() {
                 await applySceneEdit((data) =>
                     setNameOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setCycleDuration") {
-                await applySceneEdit((data) =>
-                    setCycleDurationOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setCycleSpeeds") {
-                await applySceneEdit((data) =>
-                    setCycleSpeedsOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setStopAtCycle") {
-                await applySceneEdit((data) =>
-                    setStopAtCycleOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setActiveBeats") {
-                await applySceneEdit((data) =>
-                    setActiveBeatsOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setStrength") {
-                await applySceneEdit((data) =>
-                    setStrengthOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setBeatInterval") {
-                await applySceneEdit((data) =>
-                    setBeatIntervalOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setBeatsPerBar") {
-                await applySceneEdit((data) =>
-                    setBeatsPerBarOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setBeatOffset") {
-                await applySceneEdit((data) =>
-                    setBeatOffsetOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setBeatPointsMode") {
-                // The inspector handles the per-curve
-                // none-mode stash. When restoring out of
-                // none mode, it passes the stashed
-                // activeBeats string as edit.restoreActiveBeats
-                // (or null/undefined if there's nothing to
-                // restore, in which case the mutator leaves
-                // activeBeats alone).
-                await applySceneEdit((data) =>
-                    setBeatPointsModeOnCurves(
-                        data,
-                        edit.selection,
-                        edit.value,
-                        edit.restoreActiveBeats ?? null,
-                    ),
-                );
-            } else if (edit.kind === "setEuclideanParameter") {
-                await applySceneEdit((data) =>
-                    setEuclideanParameterOnCurves(
-                        data,
-                        edit.selection,
-                        edit.paramName,
-                        edit.value,
-                    ),
-                );
             } else if (edit.kind === "translateSelection") {
                 await applySceneEdit((data) =>
                     translateSelection(data, edit.selection, edit.dx, edit.dy),
@@ -815,112 +739,6 @@ async function main() {
                 await applySceneEdit((data) =>
                     setColorOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setMotionUpdate") {
-                await applySceneEdit((data) =>
-                    setMotionUpdateOnSprites(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setHitBeat") {
-                await applySceneEdit((data) =>
-                    setHitBeatOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setHitTrigger") {
-                await applySceneEdit((data) =>
-                    setHitTriggerOnCurves(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setCollision") {
-                await applySceneEdit((data) =>
-                    setCollisionOnTriggers(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setAuto") {
-                // Sprite Auto and Trigger Auto share an edit
-                // kind because the inspector's Band 3 row
-                // labels both as just "Auto". The objectKind
-                // disambiguator on the edit picks the right
-                // mutator; falling through silently when it's
-                // missing keeps a malformed edit from
-                // crashing the dispatch chain.
-                if (edit.objectKind === "sprite") {
-                    await applySceneEdit((data) =>
-                        setAutoOnSprites(data, edit.selection, edit.value),
-                    );
-                } else if (edit.objectKind === "trigger") {
-                    await applySceneEdit((data) =>
-                        setAutoOnTriggers(data, edit.selection, edit.value),
-                    );
-                }
-            } else if (edit.kind === "setAutoBeatInterval") {
-                if (edit.objectKind === "sprite") {
-                    await applySceneEdit((data) =>
-                        setAutoBeatIntervalOnSprites(data, edit.selection, edit.value),
-                    );
-                } else if (edit.objectKind === "trigger") {
-                    await applySceneEdit((data) =>
-                        setAutoBeatIntervalOnTriggers(data, edit.selection, edit.value),
-                    );
-                }
-            } else if (edit.kind === "createFunctionStub") {
-                // Two-file commit: scaffold a stub function
-                // declaration into behaviors.js for the
-                // proposed name (a no-op if the function
-                // already exists), then bind the slot in
-                // scene.json to that name. Both changes flow
-                // through one runScene cycle so the user
-                // sees one re-render with the new state
-                // applied. After the binding lands, switch
-                // the editor to the behaviors.js tab so the
-                // user sees the new stub ready for editing.
-                const behaviorsFile = session.bundle.getFile("behaviors.js");
-                if (behaviorsFile === null) {
-                    messages.write("No behaviors.js in this score.", "error");
-                    return;
-                }
-                const { newContent, alreadyExists } = scaffoldFunctionInBehaviors(
-                    behaviorsFile.content,
-                    edit.proposedName,
-                    edit.slotKey,
-                );
-                if (!alreadyExists) {
-                    session.bundle.updateContent("behaviors.js", newContent);
-                }
-                // Apply the slot binding in scene.json. The
-                // mutator picks up by (objectKind, slotKey)
-                // pair so a single dispatch table handles
-                // every Band 3 row.
-                /** @type {Record<string, (d: any, s: any, v: string) => void>} */
-                const setterByKindAndSlot = {
-                    "sprite|motionUpdate": setMotionUpdateOnSprites,
-                    "sprite|auto": setAutoOnSprites,
-                    "trigger|collision": setCollisionOnTriggers,
-                    "trigger|auto": setAutoOnTriggers,
-                    "curve|hitBeat": setHitBeatOnCurves,
-                    "curve|hitTrigger": setHitTriggerOnCurves,
-                };
-                const setter = setterByKindAndSlot[`${edit.objectKind}|${edit.slotKey}`];
-                if (typeof setter === "function") {
-                    await applySceneEdit((data) =>
-                        setter(data, edit.selection, edit.proposedName),
-                    );
-                }
-                // Switch to behaviors.js and scroll the
-                // new (or pre-existing) function to the
-                // top of the editor's visible region so the
-                // user can immediately edit its body. The
-                // selectTabAndScrollToFunction call pulls
-                // fresh content from the bundle (so any
-                // updateContent above is reflected in
-                // CodeMirror's view) before locating the
-                // function declaration.
-                editor.selectTabAndScrollToFunction("behaviors.js", edit.proposedName);
-            } else if (edit.kind === "goToFunction") {
-                // Slot's bound function already exists in
-                // behaviors.js — switch to that tab and
-                // scroll the declaration to the top of the
-                // visible region. Mirrors the
-                // createFunctionStub flow's tail step,
-                // skipping the scaffold and slot-bind work
-                // since both are no-ops when the function
-                // and binding already exist.
-                editor.selectTabAndScrollToFunction("behaviors.js", edit.functionName);
             }
         });
     }
