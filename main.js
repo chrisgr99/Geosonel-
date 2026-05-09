@@ -96,6 +96,17 @@ import {
     setCurveThicknessOnCurves,
     setCursorThicknessOnCurves,
     setColorOnSelection,
+    setCanCycleOnSelection,
+    setCyclePatternOnSelection,
+    setCyclePatternLocationOnSelection,
+    setBeatsPerCycleOnSelection,
+    setCanHitOnSelection,
+    setHasHitFunctionOnSelection,
+    setCanBeHitOnSelection,
+    setBeenHitFunctionOnSelection,
+    setCanTickOnSelection,
+    setOnTickFunctionOnSelection,
+    scaffoldCallbackSlotFunction,
     setCanvasW,
     setCanvasH,
 } from "./src/sceneEditor.js";
@@ -739,6 +750,90 @@ async function main() {
                 await applySceneEdit((data) =>
                     setColorOnSelection(data, edit.selection, edit.value),
                 );
+            } else if (edit.kind === "setCanCycle") {
+                await applySceneEdit((data) =>
+                    setCanCycleOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCyclePattern") {
+                await applySceneEdit((data) =>
+                    setCyclePatternOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCyclePatternLocation") {
+                await applySceneEdit((data) =>
+                    setCyclePatternLocationOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatsPerCycle") {
+                await applySceneEdit((data) =>
+                    setBeatsPerCycleOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCanHit") {
+                await applySceneEdit((data) =>
+                    setCanHitOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setHasHitFunction") {
+                await applySceneEdit((data) =>
+                    setHasHitFunctionOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCanBeHit") {
+                await applySceneEdit((data) =>
+                    setCanBeHitOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeenHitFunction") {
+                await applySceneEdit((data) =>
+                    setBeenHitFunctionOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCanTick") {
+                await applySceneEdit((data) =>
+                    setCanTickOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setOnTickFunction") {
+                await applySceneEdit((data) =>
+                    setOnTickFunctionOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "createFunctionStub") {
+                // Band 3 Create button. Three steps:
+                //   1. Scaffold a stub declaration in
+                //      behaviors.js (no-op if a function
+                //      with the proposed name already
+                //      exists at the top level).
+                //   2. Bind the slot's function-name field
+                //      on the selected object via the
+                //      matching mutator. applySceneEdit
+                //      runs save + rebuild, so the new
+                //      function ends up in functionMap on
+                //      the next render of the inspector.
+                //   3. Switch the editor to behaviors.js
+                //      and scroll the new declaration to
+                //      the top, so the composer can start
+                //      filling in the body immediately.
+                const behaviorsFile = session.bundle.getFile("behaviors.js");
+                if (behaviorsFile === null) {
+                    messages.write("No behaviors.js in this score.", "error");
+                    return;
+                }
+                const { newContent, alreadyExists } = scaffoldCallbackSlotFunction(
+                    behaviorsFile.content,
+                    edit.proposedName,
+                    edit.slotKey,
+                );
+                if (!alreadyExists) {
+                    session.bundle.updateContent("behaviors.js", newContent);
+                }
+                /** @type {Record<string, (d: any, s: any, v: string) => void>} */
+                const setterByKind = {
+                    "hasHit": setHasHitFunctionOnSelection,
+                    "beenHit": setBeenHitFunctionOnSelection,
+                    "onTick": setOnTickFunctionOnSelection,
+                };
+                const setter = setterByKind[edit.slotKey];
+                if (typeof setter === "function") {
+                    await applySceneEdit((data) =>
+                        setter(data, edit.selection, edit.proposedName),
+                    );
+                }
+                editor.selectTabAndScrollToFunction("behaviors.js", edit.proposedName);
+            } else if (edit.kind === "goToFunction") {
+                editor.selectTabAndScrollToFunction("behaviors.js", edit.functionName);
             }
         });
     }

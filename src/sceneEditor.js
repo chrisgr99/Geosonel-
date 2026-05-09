@@ -1518,6 +1518,186 @@ function clampCanvasDimension(value) {
     return n;
 }
 
+// --- Callback slot write paths (section 27) ---
+//
+// Section 27 collapses the per-kind callback slots into
+// four uniform slots — cycle, hasHit, beenHit, onTick —
+// shared across curves, triggers, and sprites. The ten
+// fields below each get one mutator, applied to every
+// kind in the selection because the slots are uniform
+// across kinds. The thin wrappers exist so the dispatch
+// in main.js can stay one-edit-kind-per-field, matching
+// the shape of the bands above.
+
+/**
+ * Set the canCycle field on every selected object across
+ * all kinds.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} value
+ */
+export function setCanCycleOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "canCycle", !!value, true);
+}
+
+/**
+ * Set the cyclePattern field across the selection. Stored
+ * verbatim. Section 27's dual-interpretation rule means
+ * the same string is read either as inline mini-notation
+ * (when cyclePatternLocation is "Here") or as a function
+ * name in the Code tab (when "Code Tab"); the loader and
+ * runtime resolve the meaning at use time.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setCyclePatternOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "cyclePattern", String(value));
+}
+
+/**
+ * Set the cyclePatternLocation field across the selection.
+ * Value is one of the literal strings "Here" or "Code Tab".
+ * Stage 2B's Code Location radio commits both directions
+ * but does not yet move a cyclePattern body between the
+ * two locations; the move semantic lands when Stage 3
+ * introduces the CodeMirror Band 4.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setCyclePatternLocationOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "cyclePatternLocation", String(value));
+}
+
+/**
+ * Set the beatsPerCycle field across the selection. Stored
+ * as an integer, clamped to a minimum of 1 since a cycle
+ * with zero or fewer beats has no defined behaviour.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setBeatsPerCycleOnSelection(data, selection, value) {
+    const n = Math.max(1, Math.round(Number(value)));
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "beatsPerCycle", n);
+}
+
+/**
+ * Set the canHit field across the selection.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} value
+ */
+export function setCanHitOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "canHit", !!value, true);
+}
+
+/**
+ * Set the hasHitFunction field across the selection.
+ * Value is a function name string. No validation in
+ * Stage 2B; the soft-error model leaves the slot inert
+ * until the named function appears in scene.functionMap.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setHasHitFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "hasHitFunction", String(value));
+}
+
+/**
+ * Set the canBeHit field across the selection.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} value
+ */
+export function setCanBeHitOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "canBeHit", !!value, true);
+}
+
+/**
+ * Set the beenHitFunction field across the selection. See
+ * setHasHitFunctionOnSelection for the validation note.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeenHitFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "beenHitFunction", String(value));
+}
+
+/**
+ * Set the canTick field across the selection.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} value
+ */
+export function setCanTickOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "canTick", !!value, true);
+}
+
+/**
+ * Set the onTickFunction field across the selection. See
+ * setHasHitFunctionOnSelection for the validation note.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setOnTickFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "onTickFunction", String(value));
+}
+
+/**
+ * Append a stub function declaration to behaviors.js for a
+ * Band 3 callback-slot binding (section 27 vocabulary).
+ * Used by the inspector's Create button on the hasHit,
+ * beenHit, or onTick rows when the proposed function name
+ * doesn't yet exist in behaviors.js. The stub body is
+ * generic: section 27's ctx contract for the new slots is
+ * still being settled, so the body stays empty for the
+ * composer to fill in once that contract lands.
+ *
+ * Returns { newContent, alreadyExists }. When the named
+ * function already exists at the top level, alreadyExists
+ * is true and newContent equals the input — no append, no
+ * duplicate declaration. The Create button's enable gate
+ * in the inspector should already preempt this case; the
+ * defensive check here means a race (two Create clicks
+ * before the first re-render lands) doesn't end up with
+ * two declarations of the same name.
+ *
+ * The function is appended at the end of the file with a
+ * blank line separator so the existing structure is left
+ * undisturbed and the new declaration is easy to find.
+ *
+ * @param {string} content  Current behaviors.js source.
+ * @param {string} functionName  Identifier to scaffold.
+ * @param {"hasHit" | "beenHit" | "onTick"} slotKey
+ * @returns {{ newContent: string, alreadyExists: boolean }}
+ */
+export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
+    // Conservative regex: line starting with `function NAME(`
+    // (optional `export ` prefix). Misses const/let bindings
+    // to function expressions, which is acceptable here —
+    // the inspector's Create gate uses scene.functionMap
+    // membership built by the loader, which catches every
+    // shape of top-level function declaration. This regex is
+    // the second line of defence against a Create-click race.
+    const re = new RegExp(
+        `^[ \\t]*(?:export[ \\t]+)?function[ \\t]+${escapeForRegex(functionName)}[ \\t]*\\(`,
+        "m"
+    );
+    if (re.test(content)) {
+        return { newContent: content, alreadyExists: true };
+    }
+    const stub = `function ${functionName}(ctx) {\n    // Section 27 ${slotKey} slot callback.\n    // See DESIGN.md section 27 for ctx fields and return\n    // semantics.\n}\n`;
+    const trimmed = content.replace(/\s+$/, "");
+    const separator = trimmed.length === 0 ? "" : "\n\n";
+    return { newContent: `${trimmed}${separator}${stub}`, alreadyExists: false };
+}
+
 // --- Band 3 / Band 4 (Message function slots and auto-beat-interval) write paths ---
 //
 // Each slot field (motionUpdate, hitBeat, hitTrigger,

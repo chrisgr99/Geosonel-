@@ -10,17 +10,18 @@
  * fields un-grey based on which kinds are present in the
  * selection.
  *
- * Stage 2A scope. Inspector currently renders Bands 1
- * (Identity) and 2 (Geometry / visual) only. The four
- * obsolete bands from the pre-section-27 design (Message
- * Functions, Auto Beat Interval, Beat Points, Cycle
- * Parameters) were removed when their underlying schema
- * fields were removed in Tier 3 Stage 1; Stage 2B will add
- * a new Band 3 that exposes the four uniform callback
- * slots (cycle, hasHit, beenHit, onTick) defined in section
- * 27 of DESIGN.md, and Stages 3 and 4 will add the
- * CodeMirror Band 4 and the Create-button / validation
- * surface.
+ * Stage 2B scope. Inspector renders Bands 1 (Identity), 2
+ * (Geometry / visual), and 3 (Callback slots), plus a stub
+ * Band 4 whose first row carries the Code Location radio
+ * inert. Band 3 exposes the four uniform callback slots
+ * (canCycle, hasHit, beenHit, onTick) defined in section
+ * 27 of DESIGN.md. The Create and Go-to buttons on the
+ * hasHit, beenHit, and onTick rows are operative; the
+ * canCycle row's button is deferred pending the Code
+ * Location move-semantic design that Stage 3 will land
+ * alongside the CodeMirror Band 4. Stage 4 closes out
+ * validation for the function-name fields and
+ * cyclePattern.
  *
  * Band 1 — Identity. Object ID is read-only and greyed for
  * multi-select; Name is editable for single-select and
@@ -40,6 +41,66 @@
  * coordinate (or dimension) for every applicable selected
  * object — so single-select, uniform multi-select, and
  * varies multi-select all flow through the same primitive.
+ *
+ * Band 3 — Callback slots. Five rows exposing the four
+ * uniform callback slots from section 27 of DESIGN.md.
+ * Row labels read as the JavaScript callback function
+ * names: canCycle for the cycle slot, then hasHit,
+ * beenHit, and onTick. The cycle slot spans two rows:
+ * row one carries the canCycle checkbox and a
+ * cyclePattern text field; row two carries a multiline
+ * "beats per cycle" label sized to align the
+ * beatsPerCycle numeric field with the function-name
+ * column above. The beatsPerCycle field disables when
+ * the canCycle checkbox is unchecked. Rows three through
+ * five (hasHit, beenHit, onTick) each carry a Can-X
+ * checkbox, the matching function-name field, and a
+ * Create or Go-to button on the right. Every row
+ * activates for any non-empty selection, since the
+ * callback-slot vocabulary is shared across curves,
+ * triggers, and sprites.
+ *
+ * Create / Go-to buttons. Operative for hasHit,
+ * beenHit, and onTick. Both disable when the slot's
+ * Can-X checkbox is unchecked or when the selection
+ * isn't single-object. When checked and a single object
+ * is selected, the displayed function name (or the
+ * proposed default if the field is empty) is looked up
+ * in scene.functionMap. Found triggers the Go-to label
+ * and a goToFunction edit; not-found triggers the
+ * Create label and a createFunctionStub edit. The
+ * function-name field's text renders muted when the
+ * named function doesn't yet exist in behaviors.js —
+ * a low-key cue that the slot's not yet wired up.
+ * Default proposed name when the field is empty is
+ * slotName_objectId, e.g. onTick_sp_a3f7.
+ *
+ * Band 4 — Code (CodeMirror, future). Stub band whose
+ * first row carries the Code Location radio (Here /
+ * Code Tab) drawn as proper circular radio buttons.
+ * Visually present but inactive in this commit — click
+ * handlers stay unwired pending the Code Location
+ * move-semantic design (which decides what happens to
+ * the cyclePattern body when the user flips between
+ * Here and Code Tab). Stage 3 fills in the rest of the
+ * band with the CodeMirror editor and activates the
+ * radio.
+ *
+ * Stage 2B inert pieces. The function-name fields and
+ * the cyclePattern field accept any text without
+ * validation. Stage 4 will add validateFunctionName for
+ * the three function fields and the appropriate parser
+ * for cyclePattern. The canCycle row carries no Create /
+ * Go-to button this commit — its cyclePattern field is
+ * dual-purpose (inline mini-notation when Code Location
+ * is Here, function name when Code Tab), and with the
+ * radio inactive the field stays in the Here
+ * interpretation. Adding Create there would either
+ * scaffold a function whose name is the typed mini-
+ * notation pattern (broken) or commit to a behaviour
+ * that hasn't been settled. The button lands on the
+ * canCycle row alongside the radio activation in a
+ * later stage.
  *
  * Edit lifecycle. Editable fields share a validator-driven
  * commit lifecycle: hard errors squiggle red and refuse to
@@ -78,6 +139,9 @@
  *     is selected.
  *   - Color is active when sprites or triggers are present;
  *     a curve-only selection greys it.
+ *   - Band 3 callback slots are universal: every row
+ *     activates for any non-empty selection regardless of
+ *     kinds.
  *
  * The Inspector exposes setSelection(), setScene(), and
  * setEditCallback(); main.js wires the three together so
@@ -134,6 +198,26 @@ const W = {
 
     // Text fields.
     name: 280,
+
+    // Band 3 function-name and cyclePattern fields. Sized
+    // to match the Name field width so the right edge of
+    // Band 3 lines up with Band 1's Name row.
+    callbackField: 280,
+
+    // Band 3 row 2's small numeric beatsPerCycle field.
+    beatsPerCycle: 50,
+
+    // Band 3 row 2's "beats per cycle" multiline label.
+    // Wider than W.leftLabel so the beatsPerCycle field's
+    // left edge aligns with the function-name fields on
+    // rows above and below (which sit after the leftLabel
+    // column plus the Can-X checkbox). The label text
+    // wraps to two lines at this width.
+    beatsPerCycleLabel: 100,
+
+    // Band 3 Create / Go-to button. Wide enough for the
+    // longer "Go to" label (and "Create") at 10pt.
+    slotButton: 56,
 };
 
 export class Inspector {
@@ -244,6 +328,8 @@ export class Inspector {
         panel.appendChild(this._buildTitleBar(ctx));
         panel.appendChild(this._buildBandIdentity(ctx));
         panel.appendChild(this._buildBandGeometry(ctx));
+        panel.appendChild(this._buildBandCallbackSlots(ctx));
+        panel.appendChild(this._buildBandCodeMirror(ctx));
 
         // Bottom spacer. Pushes the last band's fields up by
         // about two row heights so the macOS dock doesn't
@@ -397,7 +483,7 @@ export class Inspector {
      * "do this thing" outcome — so the click commits to a
      * uniform muted-or-hidden state. Other states toggle.
      *
-     * @param {"setMute" | "setHide"} kind
+     * @param {"setMute" | "setHide" | "setCanCycle" | "setCanHit" | "setCanBeHit" | "setCanTick"} kind
      * @param {boolean | "varies"} currentState
      */
     _onBooleanCheckboxClick(kind, currentState) {
@@ -1059,6 +1145,482 @@ export class Inspector {
 
         return band;
     }
+
+    /**
+     * Band 3 — Callback slots. Five rows exposing the four
+     * uniform callback slots from section 27 of DESIGN.md.
+     * Every row activates for any non-empty selection
+     * regardless of kinds, since the slot vocabulary is
+     * shared across curves, triggers, and sprites.
+     *
+     * Layout. Row 1 is the canCycle slot's first line:
+     * row label "canCycle", canCycle checkbox,
+     * cyclePattern text field. Row 2 is the canCycle
+     * slot's second line: a multiline "beats per cycle"
+     * label sized to align the field's left edge with the
+     * function-name column above, then the beatsPerCycle
+     * numeric field. The beatsPerCycle field disables when
+     * canCycle is unchecked. Rows 3 through 5 are the
+     * hasHit, beenHit, and onTick slots, each carrying a
+     * row label, a Can-X checkbox, a function-name field,
+     * and a Create / Go-to button.
+     *
+     * Read binding aggregates each field across the entire
+     * selection (objs.all). Multi-select disagreement
+     * renders blank for the text and numeric fields and
+     * as a tri-state varies-checkbox for the Can-X bools.
+     * Editing a blank-varies field commits the typed value
+     * to every selected object regardless of kind.
+     *
+     * Create / Go-to buttons (rows 3 through 5).
+     * Disabled when the slot's Can-X checkbox is
+     * unchecked or when the selection isn't single-object.
+     * When checked and a single object is selected, the
+     * displayed function name (or the proposed default
+     * when the field is empty) is looked up in
+     * scene.functionMap; found triggers Go-to, not-found
+     * triggers Create. The function-name field renders
+     * muted when its text doesn't resolve in functionMap.
+     *
+     * @param {ReturnType<typeof buildSelectionContext>} ctx
+     */
+    _buildBandCallbackSlots(ctx) {
+        const band = document.createElement("div");
+        band.className = "insp-band";
+
+        const objs = selectedObjects(this._scene, this._selection);
+        const slotActive = ctx.total > 0;
+
+        // Single-object context. The placeholder name, the
+        // function-existence check, and the Create / Go-to
+        // button gate all read against one specific object.
+        // Multi-object selections drop to a blank
+        // placeholder and a disabled button.
+        const singleObj = (ctx.isSingle && objs.all.length === 1) ? objs.all[0] : null;
+
+        const canCycleAgg = aggregateBoolean(objs.all, "canCycle");
+        const cyclePatternAgg = aggregateString(objs.all, "cyclePattern");
+        const beatsPerCycleAgg = aggregateString(objs.all, "beatsPerCycle");
+        const canHitAgg = aggregateBoolean(objs.all, "canHit");
+        const hasHitFunctionAgg = aggregateString(objs.all, "hasHitFunction");
+        const canBeHitAgg = aggregateBoolean(objs.all, "canBeHit");
+        const beenHitFunctionAgg = aggregateString(objs.all, "beenHitFunction");
+        const canTickAgg = aggregateBoolean(objs.all, "canTick");
+        const onTickFunctionAgg = aggregateString(objs.all, "onTickFunction");
+
+        // Identity validator: every input passes through as
+        // ok with no canonical transformation. Stage 4 will
+        // swap this for validateFunctionName on the three
+        // function-name fields and the appropriate parser
+        // on cyclePattern.
+        const inertOk = (/** @type {string} */ c) =>
+            ({ kind: /** @type {"ok"} */ ("ok"), value: c });
+
+        // Row 1: canCycle slot — row label, canCycle
+        // checkbox, cyclePattern text field. No Create /
+        // Go-to button this commit (see header doc).
+        const r1 = mkRow();
+        r1.appendChild(mkLabel("canCycle", { width: W.leftLabel, disabled: !slotActive }));
+        r1.appendChild(mkCheckbox({
+            checked: canCycleAgg === true,
+            varies: canCycleAgg === "varies",
+            disabled: !slotActive,
+            onClick: slotActive
+                ? () => this._onBooleanCheckboxClick("setCanCycle", canCycleAgg)
+                : undefined,
+        }));
+        r1.appendChild(this._buildEditableField({
+            value: cyclePatternAgg === "varies" ? "" : cyclePatternAgg,
+            width: W.callbackField,
+            editable: slotActive,
+            validator: inertOk,
+            editKind: "setCyclePattern",
+        }));
+        band.appendChild(r1);
+
+        // Row 2: canCycle slot — multiline label sized to
+        // span both the leftLabel and the Can-X checkbox
+        // columns, so the beatsPerCycle field's left edge
+        // aligns with the function-name field's left edge
+        // on the rows above and below. The label and the
+        // field both disable when the canCycle checkbox
+        // is unchecked.
+        const beatsPerCycleEnabled = slotActive && canCycleAgg === true;
+        const r2 = mkRow();
+        r2.appendChild(mkLabel("beats per\ncycle", {
+            width: W.beatsPerCycleLabel,
+            multiline: true,
+            disabled: !beatsPerCycleEnabled,
+        }));
+        r2.appendChild(this._buildEditableField({
+            value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
+            numeric: true,
+            width: W.beatsPerCycle,
+            editable: beatsPerCycleEnabled,
+            validator: (c) => validateNumber(c, { min: 1 }),
+            editKind: "setBeatsPerCycle",
+        }));
+        band.appendChild(r2);
+
+        // Rows 3-5: hasHit, beenHit, onTick. Driven by a
+        // small config table so the three rows share one
+        // construction loop.
+        /** @type {Array<{
+         *   label: string,
+         *   slotKey: "hasHit" | "beenHit" | "onTick",
+         *   canEditKind: "setCanHit" | "setCanBeHit" | "setCanTick",
+         *   canAgg: boolean | "varies",
+         *   funcEditKind: "setHasHitFunction" | "setBeenHitFunction" | "setOnTickFunction",
+         *   funcAgg: string | "varies",
+         * }>} */
+        const slotRows = [
+            { label: "hasHit", slotKey: "hasHit", canEditKind: "setCanHit", canAgg: canHitAgg, funcEditKind: "setHasHitFunction", funcAgg: hasHitFunctionAgg },
+            { label: "beenHit", slotKey: "beenHit", canEditKind: "setCanBeHit", canAgg: canBeHitAgg, funcEditKind: "setBeenHitFunction", funcAgg: beenHitFunctionAgg },
+            { label: "onTick", slotKey: "onTick", canEditKind: "setCanTick", canAgg: canTickAgg, funcEditKind: "setOnTickFunction", funcAgg: onTickFunctionAgg },
+        ];
+        for (const row of slotRows) {
+            const r = mkRow();
+            r.appendChild(mkLabel(row.label, { width: W.leftLabel, disabled: !slotActive }));
+            r.appendChild(mkCheckbox({
+                checked: row.canAgg === true,
+                varies: row.canAgg === "varies",
+                disabled: !slotActive,
+                onClick: slotActive
+                    ? () => this._onBooleanCheckboxClick(row.canEditKind, row.canAgg)
+                    : undefined,
+            }));
+
+            // Field value and placeholder. Aggregate
+            // disagreement renders blank; the placeholder
+            // hint is the proposed default name when the
+            // field is empty and the selection is a single
+            // object.
+            const fieldValue = row.funcAgg === "varies" ? "" : row.funcAgg;
+            const placeholder = singleObj !== null
+                ? proposedFunctionName(row.slotKey, singleObj)
+                : "";
+            // Effective name for existence-and-button
+            // purposes: typed value if non-empty, else
+            // the proposed default. Empty effective name
+            // (multi-object with no typed value) means
+            // there's no name to look up or scaffold and
+            // the button stays disabled.
+            const effectiveName = fieldValue.length > 0 ? fieldValue : placeholder;
+            const functionExists = effectiveName.length > 0
+                && this._functionExistsInScene(effectiveName);
+
+            r.appendChild(this._buildSlotField({
+                value: fieldValue,
+                placeholder,
+                width: W.callbackField,
+                editable: slotActive,
+                functionExists,
+                editKind: row.funcEditKind,
+            }));
+
+            // Button. Disabled when slot Can-X unchecked,
+            // multi-object selected, or no name to act on.
+            const canChecked = row.canAgg === true;
+            const buttonEnabled = canChecked && singleObj !== null && effectiveName.length > 0;
+            const buttonLabel = functionExists ? "Go to" : "Create";
+            r.appendChild(this._buildSlotButton({
+                label: buttonLabel,
+                disabled: !buttonEnabled,
+                slotKey: row.slotKey,
+                functionName: effectiveName,
+                functionExists,
+            }));
+
+            band.appendChild(r);
+        }
+
+        return band;
+    }
+
+    /**
+     * Band 4 — Code (CodeMirror, future). Stub band whose
+     * first row carries the Code Location radio. Stage 3
+     * will fill in the rest of this band with the
+     * CodeMirror editor for the cyclePattern body when the
+     * canCycle slot's Code Location is Code Tab. The radio
+     * is rendered but inactive in this commit.
+     *
+     * @param {ReturnType<typeof buildSelectionContext>} _ctx
+     */
+    _buildBandCodeMirror(_ctx) {
+        const band = document.createElement("div");
+        band.className = "insp-band";
+
+        const objs = selectedObjects(this._scene, this._selection);
+        const cyclePatternLocationAgg = aggregateString(objs.all, "cyclePatternLocation");
+
+        const r1 = mkRow();
+        r1.appendChild(this._buildCodeLocationRadio({
+            value: cyclePatternLocationAgg === "varies" ? "" : cyclePatternLocationAgg,
+        }));
+        band.appendChild(r1);
+
+        return band;
+    }
+
+    /**
+     * Build the Code Location radio. Drawn as proper
+     * circular radio buttons (filled circle for the
+     * selected option, empty for the other) with their
+     * text labels to the right. Visually present but
+     * inactive in Stage 2B — click handlers stay unwired
+     * pending the move-semantic design (which decides what
+     * happens to the cyclePattern body when the user flips
+     * between Here and Code Tab).
+     *
+     * Inline styles handle the circular button visuals so
+     * the radio reads correctly without dedicated CSS in
+     * this commit. currentColor on the border and inner
+     * dot picks up the inspector's text colour, so the
+     * button inherits the active palette automatically.
+     *
+     * @param {{ value: string }} opts
+     * @returns {HTMLSpanElement}
+     */
+    _buildCodeLocationRadio(opts) {
+        const el = document.createElement("span");
+        el.className = "insp-code-location";
+        el.style.display = "inline-flex";
+        el.style.alignItems = "center";
+        el.style.gap = "14px";
+
+        /**
+         * @param {"Here" | "Code Tab"} optionValue
+         * @param {string} label
+         */
+        const buildOption = (optionValue, label) => {
+            const wrapper = document.createElement("span");
+            wrapper.style.display = "inline-flex";
+            wrapper.style.alignItems = "center";
+            wrapper.style.gap = "5px";
+
+            const button = document.createElement("span");
+            button.style.display = "inline-block";
+            button.style.boxSizing = "border-box";
+            button.style.width = "12px";
+            button.style.height = "12px";
+            button.style.borderRadius = "50%";
+            button.style.border = "1.5px solid currentColor";
+            button.style.position = "relative";
+
+            if (opts.value === optionValue) {
+                const inner = document.createElement("span");
+                inner.style.display = "block";
+                inner.style.width = "6px";
+                inner.style.height = "6px";
+                inner.style.borderRadius = "50%";
+                inner.style.background = "currentColor";
+                inner.style.position = "absolute";
+                inner.style.top = "1.5px";
+                inner.style.left = "1.5px";
+                button.appendChild(inner);
+            }
+
+            wrapper.appendChild(button);
+
+            const labelEl = document.createElement("span");
+            labelEl.textContent = label;
+            wrapper.appendChild(labelEl);
+
+            return wrapper;
+        };
+
+        el.appendChild(buildOption("Here", "Here"));
+        el.appendChild(buildOption("Code Tab", "Code Tab"));
+
+        return el;
+    }
+
+    /**
+     * Build a slot function-name field for Band 3 rows 3
+     * through 5. Like _buildEditableField but with two
+     * additions: a placeholder shown in muted text when
+     * the field is empty (the proposed default function
+     * name), and a render-time muted treatment for the
+     * typed text when the named function doesn't exist in
+     * behaviors.js. Both muted treatments use inline
+     * opacity so the field reads correctly without
+     * dedicated CSS in this commit.
+     *
+     * Commit lifecycle mirrors _buildEditableField: Enter
+     * commits, Escape reverts, blur silently reverts a
+     * hard-error candidate. Stage 2B uses an identity
+     * validator (every input commits as ok); Stage 4 will
+     * swap in validateFunctionName.
+     *
+     * @param {{
+     *   value: string,
+     *   placeholder: string,
+     *   width: number,
+     *   editable: boolean,
+     *   functionExists: boolean,
+     *   editKind: string,
+     * }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildSlotField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-field insp-slot-field";
+        el.style.width = `${opts.width}px`;
+
+        // Function-doesn't-exist muted treatment for typed
+        // names. Placeholder text gets its own muted
+        // styling below; this branch handles the case where
+        // the user has typed (or stored) a name that
+        // doesn't resolve in scene.functionMap yet.
+        if (opts.editable && !opts.functionExists && opts.value !== "") {
+            el.style.opacity = "0.55";
+        }
+
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.textContent = opts.value;
+            return el;
+        }
+
+        el.setAttribute("contenteditable", "plaintext-only");
+        el.setAttribute("spellcheck", "false");
+
+        const showPlaceholder = () => {
+            el.textContent = opts.placeholder;
+            el.classList.add("placeholder-shown");
+            el.style.opacity = "0.55";
+        };
+        const clearPlaceholder = () => {
+            el.textContent = "";
+            el.classList.remove("placeholder-shown");
+            el.style.opacity = "";
+        };
+
+        if (opts.value !== "") {
+            el.textContent = opts.value;
+        } else if (opts.placeholder !== "") {
+            showPlaceholder();
+        }
+
+        el.addEventListener("focus", () => {
+            if (el.classList.contains("placeholder-shown")) {
+                clearPlaceholder();
+            } else {
+                selectAllInElement(el);
+            }
+        });
+
+        let committed = false;
+        const tryCommit = () => {
+            const candidate = el.textContent ?? "";
+            if (committed) return;
+            if (candidate !== opts.value) {
+                committed = true;
+                this._emitEdit({ kind: opts.editKind, value: candidate });
+            }
+        };
+
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit();
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                if (opts.value !== "") {
+                    el.textContent = opts.value;
+                    el.style.opacity = opts.functionExists ? "" : "0.55";
+                } else if (opts.placeholder !== "") {
+                    showPlaceholder();
+                } else {
+                    el.textContent = "";
+                    el.style.opacity = "";
+                }
+                el.blur();
+                return;
+            }
+        });
+        el.addEventListener("blur", () => {
+            tryCommit();
+            if (
+                el.textContent === "" &&
+                opts.placeholder !== ""
+            ) {
+                showPlaceholder();
+            }
+        });
+
+        return el;
+    }
+
+    /**
+     * Build the Create / Go-to button for a Band 3 slot
+     * row (rows 3 through 5). Disabled state uses the
+     * existing insp-btn-create.disabled styling. Enabled
+     * click routes to one of two edits: goToFunction when
+     * the named function already exists in behaviors.js,
+     * or createFunctionStub when it does not. The slotKey
+     * tags the createFunctionStub edit so main.js can
+     * dispatch the binding mutator (one of
+     * setHasHitFunctionOnSelection,
+     * setBeenHitFunctionOnSelection,
+     * setOnTickFunctionOnSelection).
+     *
+     * @param {{
+     *   label: string,
+     *   disabled: boolean,
+     *   slotKey: "hasHit" | "beenHit" | "onTick",
+     *   functionName: string,
+     *   functionExists: boolean,
+     * }} opts
+     * @returns {HTMLButtonElement}
+     */
+    _buildSlotButton(opts) {
+        const el = document.createElement("button");
+        el.className = "insp-btn-create";
+        el.style.minWidth = `${W.slotButton}px`;
+        if (opts.disabled) el.classList.add("disabled");
+        el.textContent = opts.label;
+
+        if (!opts.disabled) {
+            el.addEventListener("click", () => {
+                if (opts.functionExists) {
+                    this._emitEdit({
+                        kind: "goToFunction",
+                        functionName: opts.functionName,
+                    });
+                } else {
+                    this._emitEdit({
+                        kind: "createFunctionStub",
+                        slotKey: opts.slotKey,
+                        proposedName: opts.functionName,
+                    });
+                }
+            });
+        }
+        return el;
+    }
+
+    /**
+     * Whether a top-level function with the given name
+     * already exists in the current scene's functionMap.
+     * Used by the slot button's Create-vs-Go-to decision
+     * and by the slot field's function-doesn't-exist
+     * muted treatment. Null scene or empty name returns
+     * false so the gates settle on Create with whatever
+     * name shows up next.
+     *
+     * @param {string} name
+     * @returns {boolean}
+     */
+    _functionExistsInScene(name) {
+        if (this._scene === null || name === "") return false;
+        return Object.prototype.hasOwnProperty.call(
+            this._scene.functionMap, name,
+        );
+    }
 }
 
 // --- Selection-context helpers ---
@@ -1464,6 +2026,29 @@ function selectAllInElement(el) {
     range.selectNodeContents(el);
     sel.removeAllRanges();
     sel.addRange(range);
+}
+
+/**
+ * Compute the proposed function name for a Band 3 slot
+ * row's Create button (and the placeholder hint shown
+ * when the field is empty). Convention is
+ * slotName_objectId, e.g. onTick_sp_a3f7. The slot keys
+ * (hasHit, beenHit, onTick) are valid JS identifiers and
+ * the ids are generated as <kind>_<sixhex> which is also
+ * identifier-safe, so the joined name passes JS-identifier
+ * rules. Returns empty string when the object lacks an
+ * id, which the caller treats as no proposed name and
+ * disables the Create button accordingly.
+ *
+ * @param {"hasHit" | "beenHit" | "onTick"} slotKey
+ * @param {any} obj
+ * @returns {string}
+ */
+function proposedFunctionName(slotKey, obj) {
+    if (obj === null || typeof obj !== "object") return "";
+    const id = typeof obj.id === "string" ? obj.id : "";
+    if (id === "") return "";
+    return `${slotKey}_${id}`;
 }
 
 // --- Field-construction helpers ---
