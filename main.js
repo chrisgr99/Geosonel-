@@ -71,6 +71,10 @@ import { DiskMirror } from "./src/diskMirror.js";
 import { openDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
 import {
+    parsePatternToPositions,
+    formatParseResultForConsole,
+} from "./src/strudel/patternParse.js";
+import {
     parseScene,
     stringifyScene,
     addSpriteAt,
@@ -749,6 +753,24 @@ async function main() {
                     setColorOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCyclePattern") {
+                // Stage 2 of the cursor-as-collider work:
+                // parse the cyclePattern through @strudel/mini
+                // and log the computed fractional positions to
+                // the GXW console. Visible feedback that the
+                // strudel parser is wired up and producing real
+                // queryArc output, since Stage 2 does not yet
+                // render markers on the canvas. Empty patterns
+                // skip the log so clearing the field does not
+                // produce a console line. Stage 3 will replace
+                // the console output with on-canvas diamond
+                // markers; the log line stays for now as a
+                // belt-and-braces validation surface.
+                const patternValue = String(edit.value ?? "");
+                if (patternValue.trim() !== "") {
+                    const parseResult = parsePatternToPositions(patternValue);
+                    const line = formatParseResultForConsole(patternValue, parseResult);
+                    messages.write(line, parseResult.ok ? "info" : "error");
+                }
                 await applySceneEdit((data) =>
                     setCyclePatternOnSelection(data, edit.selection, edit.value),
                 );

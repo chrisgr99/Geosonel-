@@ -755,6 +755,20 @@ export class Inspector {
         const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
             const candidate = el.textContent ?? "";
             const result = opts.validator(candidate);
+            // TEMPORARY DEBUG: trace cyclePattern commits to
+            // diagnose the second-edit-not-detected issue.
+            // Remove once the bug is identified.
+            if (opts.editKind === "setCyclePattern") {
+                console.log("[cyclePattern tryCommit]",
+                    "mode:", mode,
+                    "candidate:", JSON.stringify(candidate),
+                    "opts.value:", JSON.stringify(opts.value),
+                    "result.kind:", result.kind,
+                    "result.value:", JSON.stringify(result.value),
+                    "committed:", committed,
+                    "diff:", result.value !== opts.value,
+                );
+            }
             if (result.kind === "hard") {
                 if (mode === "blur") {
                     // Silently revert: an abandoned bad value
@@ -783,6 +797,14 @@ export class Inspector {
                 }
             }
         };
+
+        // TEMPORARY DEBUG: trace cyclePattern field creation.
+        if (opts.editKind === "setCyclePattern") {
+            console.log("[cyclePattern field built]",
+                "opts.value:", JSON.stringify(opts.value),
+                "el.textContent:", JSON.stringify(el.textContent),
+            );
+        }
 
         el.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
