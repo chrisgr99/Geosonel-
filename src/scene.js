@@ -354,26 +354,21 @@ export class Curve {
         this.cursorThickness = opts.cursorThickness ?? 2;
 
         // --- Callback slots ---
-        // Section-27 four-slot model: cycle / hasHit / beenHit
-        // / onTick. Each slot is guarded by a Can-X gate
-        // boolean; a slot fires only when its gate is true.
-        // The cycle slot additionally carries cyclePattern,
-        // cyclePatternLocation, and beatsPerCycle.
-        // Function-name fields hold STRING NAMES of functions
-        // in behaviors.js; empty string means no binding.
+        // Section-27 four-slot model: hasHit / beenHit /
+        // onTick are Code-tab slots, each guarded by a
+        // Can-X gate. The cyclePattern carries the
+        // strudel mini-notation pattern that fires when
+        // the source has cursor extents and is unmuted
+        // (per the cursor-as-collider model). Function-
+        // name fields hold STRING NAMES of functions in
+        // behaviors.js; empty string means no binding.
 
-        /** @type {boolean} */
-        this.canCycle = opts.canCycle ?? false;
         /**
-         * Strudel mini-notation pattern (when
-         * cyclePatternLocation is "Here") or the name of a
-         * function in the Code tab (when "Code Tab"). Empty
-         * string means no binding.
+         * Strudel mini-notation pattern. Empty string
+         * means no pattern.
          * @type {string}
          */
         this.cyclePattern = opts.cyclePattern ?? "";
-        /** @type {"Here" | "Code Tab"} */
-        this.cyclePatternLocation = opts.cyclePatternLocation ?? "Here";
         /**
          * Cycle length in master beats. Wall-clock cycle
          * duration is beatsPerCycle * 60 / BPM. Default 4
@@ -470,15 +465,13 @@ export class Trigger {
         this.payload = opts.payload ?? null;
 
         // --- Callback slots ---
-        // Section-27 four-slot model. See Curve for the full
-        // description of the slot semantics.
+        // Section-27 model. Triggers do not self-fire under
+        // the cursor-as-collider model (they have no cursor),
+        // but the cyclePattern stays editable for future
+        // Tier 5 collision-firing work.
 
-        /** @type {boolean} */
-        this.canCycle = opts.canCycle ?? false;
         /** @type {string} */
         this.cyclePattern = opts.cyclePattern ?? "";
-        /** @type {"Here" | "Code Tab"} */
-        this.cyclePatternLocation = opts.cyclePatternLocation ?? "Here";
         /** @type {number} */
         this.beatsPerCycle = opts.beatsPerCycle ?? 4;
 
@@ -570,16 +563,25 @@ export class Sprite {
          */
         this.color = opts.color ?? "#7db8d6";
 
+        // --- Cursor (cursor-as-collider model) ---
+        // Cursor extents perpendicular to the sprite's last
+        // motion direction. cursorR units extend right of
+        // motion, cursorL units extend left. A sprite has a
+        // visible, firing, colliding cursor iff cursorR or
+        // cursorL is non-zero AND mute is unchecked. Default
+        // zero so existing sprites do not silently grow
+        // cursors on schema migration.
+        /** @type {number} */
+        this.cursorR = opts.cursorR ?? 0;
+        /** @type {number} */
+        this.cursorL = opts.cursorL ?? 0;
+
         // --- Callback slots ---
-        // Section-27 four-slot model. See Curve for the full
+        // Section-27 model. See Curve for the full
         // description of the slot semantics.
 
-        /** @type {boolean} */
-        this.canCycle = opts.canCycle ?? false;
         /** @type {string} */
         this.cyclePattern = opts.cyclePattern ?? "";
-        /** @type {"Here" | "Code Tab"} */
-        this.cyclePatternLocation = opts.cyclePatternLocation ?? "Here";
         /** @type {number} */
         this.beatsPerCycle = opts.beatsPerCycle ?? 4;
 

@@ -840,6 +840,16 @@ export class Canvas {
     }
 
     _drawCurveCursor(curve) {
+        // Cursor-as-collider gate: a curve has a visible
+        // cursor only when it has a non-zero extent AND is
+        // not muted. Both extents zero, or mute checked,
+        // means no cursor on the canvas. Per section 27's
+        // cursor-as-collider model, cursor presence is what
+        // makes the curve a collider and an audio source;
+        // the visual gate matches the operational one.
+        if (curve.cursorR === 0 && curve.cursorL === 0) return;
+        if (curve.mute) return;
+
         const ctx = this.ctx;
         // Cursor parameter t comes from the simulation's
         // per-curve runtime state when wired; falls back to
@@ -855,15 +865,6 @@ export class Canvas {
         if (sample === null) return;
         const px = this.toPixelX(sample.x);
         const py = this.toPixelY(sample.y);
-
-        if (curve.cursorR === 0 && curve.cursorL === 0) {
-            // Point cursor: a small filled marker.
-            ctx.fillStyle = CURSOR_COLOUR;
-            ctx.beginPath();
-            ctx.arc(px, py, 4, 0, Math.PI * 2);
-            ctx.fill();
-            return;
-        }
 
         // Extended cursor: a perpendicular segment of length
         // cursorL on the left and cursorR on the right.

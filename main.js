@@ -91,14 +91,12 @@ import {
     setSizeAxisOnSelection,
     setSpriteDisplayDiameterOnSelection,
     setTriggerSizeOnSelection,
-    setCursorROnCurves,
-    setCursorLOnCurves,
+    setCursorROnSelection,
+    setCursorLOnSelection,
     setCurveThicknessOnCurves,
     setCursorThicknessOnCurves,
     setColorOnSelection,
-    setCanCycleOnSelection,
     setCyclePatternOnSelection,
-    setCyclePatternLocationOnSelection,
     setBeatsPerCycleOnSelection,
     setCanHitOnSelection,
     setHasHitFunctionOnSelection,
@@ -732,11 +730,11 @@ async function main() {
                 );
             } else if (edit.kind === "setCursorR") {
                 await applySceneEdit((data) =>
-                    setCursorROnCurves(data, edit.selection, edit.value),
+                    setCursorROnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCursorL") {
                 await applySceneEdit((data) =>
-                    setCursorLOnCurves(data, edit.selection, edit.value),
+                    setCursorLOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCurveThickness") {
                 await applySceneEdit((data) =>
@@ -750,17 +748,9 @@ async function main() {
                 await applySceneEdit((data) =>
                     setColorOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setCanCycle") {
-                await applySceneEdit((data) =>
-                    setCanCycleOnSelection(data, edit.selection, edit.value),
-                );
             } else if (edit.kind === "setCyclePattern") {
                 await applySceneEdit((data) =>
                     setCyclePatternOnSelection(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setCyclePatternLocation") {
-                await applySceneEdit((data) =>
-                    setCyclePatternLocationOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setBeatsPerCycle") {
                 await applySceneEdit((data) =>

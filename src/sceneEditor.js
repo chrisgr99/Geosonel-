@@ -715,13 +715,16 @@ export function stripObsoleteFields(data) {
             "repeats", "activeBeats", "strength",
             "beatsAreTriggers", "hitBeat", "hitTrigger",
             "beat", "sweep",
+            "canCycle", "cyclePatternLocation",
         ],
         triggers: [
             "collision", "auto", "autoInterval", "autoBeatInterval",
+            "canCycle", "cyclePatternLocation",
         ],
         sprites: [
             "motionUpdate", "auto", "autoInterval", "autoBeatInterval",
             "step",
+            "canCycle", "cyclePatternLocation",
         ],
     };
     let changed = false;
@@ -1391,27 +1394,37 @@ export function setTriggerSizeOnSelection(data, selection, value) {
 }
 
 /**
- * Set cursorR on every selected curve. Sprites and triggers
- * in the selection are ignored. Mutates `data` in place.
+ * Set cursorR on every selected curve and sprite. Triggers
+ * in the selection are ignored since triggers cannot have
+ * cursors under the cursor-as-collider model. Mutates
+ * `data` in place.
  *
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string | number} value
  */
-export function setCursorROnCurves(data, selection, value) {
-    setFieldOnSelection(data, { curves: selection.curves }, "cursorR", Number(value));
+export function setCursorROnSelection(data, selection, value) {
+    setFieldOnSelection(data, {
+        sprites: selection.sprites,
+        curves: selection.curves,
+    }, "cursorR", Number(value));
 }
 
 /**
- * Set cursorL on every selected curve. Sprites and triggers
- * in the selection are ignored. Mutates `data` in place.
+ * Set cursorL on every selected curve and sprite. Triggers
+ * in the selection are ignored since triggers cannot have
+ * cursors under the cursor-as-collider model. Mutates
+ * `data` in place.
  *
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string | number} value
  */
-export function setCursorLOnCurves(data, selection, value) {
-    setFieldOnSelection(data, { curves: selection.curves }, "cursorL", Number(value));
+export function setCursorLOnSelection(data, selection, value) {
+    setFieldOnSelection(data, {
+        sprites: selection.sprites,
+        curves: selection.curves,
+    }, "cursorL", Number(value));
 }
 
 /**
@@ -1530,44 +1543,17 @@ function clampCanvasDimension(value) {
 // the shape of the bands above.
 
 /**
- * Set the canCycle field on every selected object across
- * all kinds.
- * @param {any} data
- * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
- * @param {boolean} value
- */
-export function setCanCycleOnSelection(data, selection, value) {
-    setBooleanFieldOnSelection(data, selection, "canCycle", !!value, true);
-}
-
-/**
  * Set the cyclePattern field across the selection. Stored
- * verbatim. Section 27's dual-interpretation rule means
- * the same string is read either as inline mini-notation
- * (when cyclePatternLocation is "Here") or as a function
- * name in the Code tab (when "Code Tab"); the loader and
- * runtime resolve the meaning at use time.
+ * verbatim. Under the cursor-as-collider model the pattern
+ * fires when the source has non-zero cursor extents and is
+ * unmuted; for triggers the pattern stays editable for
+ * future Tier 5 collision-firing work.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
  */
 export function setCyclePatternOnSelection(data, selection, value) {
     setStringFieldOnSelection(data, selection, "cyclePattern", String(value));
-}
-
-/**
- * Set the cyclePatternLocation field across the selection.
- * Value is one of the literal strings "Here" or "Code Tab".
- * Stage 2B's Code Location radio commits both directions
- * but does not yet move a cyclePattern body between the
- * two locations; the move semantic lands when Stage 3
- * introduces the CodeMirror Band 4.
- * @param {any} data
- * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
- * @param {string} value
- */
-export function setCyclePatternLocationOnSelection(data, selection, value) {
-    setStringFieldOnSelection(data, selection, "cyclePatternLocation", String(value));
 }
 
 /**

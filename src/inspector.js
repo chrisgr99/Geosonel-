@@ -10,61 +10,65 @@
  * fields un-grey based on which kinds are present in the
  * selection.
  *
- * Stage 2B scope. Inspector renders Bands 1 (Identity), 2
- * (Geometry / visual), and 3 (Callback slots), plus a stub
- * Band 4 whose first row carries the Code Location radio
- * inert. Band 3 exposes the four uniform callback slots
- * (canCycle, hasHit, beenHit, onTick) defined in section
- * 27 of DESIGN.md. The Create and Go-to buttons on the
- * hasHit, beenHit, and onTick rows are operative; the
- * canCycle row's button is deferred pending the Code
- * Location move-semantic design that Stage 3 will land
- * alongside the CodeMirror Band 4. Stage 4 closes out
- * validation for the function-name fields and
- * cyclePattern.
+ * Cursor-as-collider stage. Inspector renders Bands 1
+ * (Identity), 2 (Geometry / visual), and 3 (Callback
+ * slots), plus an active Band 4 carrying the
+ * cyclePattern editor as a single-line contenteditable
+ * surface (Stage 2 of the cursor-as-collider work will
+ * upgrade it to a CodeMirror instance with parse-as-
+ * you-type validation). Band 3 exposes three Code-tab
+ * callback slots (hasHit, beenHit, onTick) defined in
+ * section 27 of DESIGN.md; the cycle slot's gate is
+ * derived from cursor extents and mute (cursor-as-
+ * collider model) so it has no Band 3 row of its own.
+ * The Create and Go-to buttons on the three slot rows
+ * are operative.
  *
- * Band 1 — Identity. Object ID is read-only and greyed for
- * multi-select; Name is editable for single-select and
- * greyed for multi-select; Mute is editable for any non-
- * empty selection; Hide is curve-only and greyed when the
- * selection contains no curves.
+ * Band 1 — Identity. Two rows. Row 1: Object ID
+ * (read-only, greyed for multi-select), Mute (editable
+ * for any non-empty selection), Hide (curve-only,
+ * greyed when the selection contains no curves). Row 2
+ * is the cycle duration row, reading as "Cycles In [N]
+ * beats" with the schema's beatsPerCycle field as the
+ * editable number between the label and the units. The
+ * cycle duration field is universal across kinds but
+ * greys for trigger-only selections since triggers
+ * cannot self-fire under the cursor-as-collider model. The
+ * user-typed Name field that earlier inspector versions
+ * exposed has been dropped; the schema field stays in
+ * place for future re-surfacing.
  *
  * Band 2 — Geometry / visual. Position is universal (any
- * non-empty selection); Curve Size W/H, Curve Thickness,
- * Cursor R/L, Cursor Thickness activate when curves are in
- * the selection; Sprite/Trigger Size activates when the
+ * non-empty selection); Curve Size W/H and Curve
+ * Thickness activate when curves are in the selection;
+ * Cursor R/L extends to curves and sprites under the
+ * cursor-as-collider model and greys when all selected
+ * curves and sprites are muted; Cursor Thickness stays
+ * curve-only since sprite cursor visualisation is
+ * deferred; Sprite/Trigger Size activates when the
  * selection is exclusively that kind (the row's label
- * tracks which); Color activates when sprites or triggers
- * are present (curves carry no per-object colour at this
- * milestone). Position and Curve Size W/H use absolute-set
- * semantics — typing a value commits that value as the new
- * coordinate (or dimension) for every applicable selected
- * object — so single-select, uniform multi-select, and
- * varies multi-select all flow through the same primitive.
+ * tracks which); Color activates when sprites or
+ * triggers are present (curves carry no per-object
+ * colour at this milestone). Position and Curve Size
+ * W/H use absolute-set semantics — typing a value
+ * commits that value as the new coordinate (or
+ * dimension) for every applicable selected object — so
+ * single-select, uniform multi-select, and varies
+ * multi-select all flow through the same primitive.
  *
- * Band 3 — Callback slots. Five rows exposing the four
- * uniform callback slots from section 27 of DESIGN.md.
- * Row labels read as the JavaScript callback function
- * names: canCycle for the cycle slot, then hasHit,
- * beenHit, and onTick. The cycle slot spans two rows:
- * row one carries the canCycle checkbox and a
- * cyclePattern text field; row two carries a multiline
- * "beats per cycle" label sized to align the
- * beatsPerCycle numeric field with the function-name
- * column above. The beatsPerCycle field disables when
- * the canCycle checkbox is unchecked. Rows three through
- * five (hasHit, beenHit, onTick) each carry a Can-X
- * checkbox, the matching function-name field, and a
- * Create or Go-to button on the right. Every row
- * activates for any non-empty selection, since the
- * callback-slot vocabulary is shared across curves,
- * triggers, and sprites.
+ * Band 3 — Callback slots. Three rows: hasHit, beenHit,
+ * onTick. Each row carries a row label, a Can-X
+ * checkbox, a function-name field, and a Create or
+ * Go-to button. Every row activates for any non-empty
+ * selection regardless of kinds, since the slot
+ * vocabulary is shared across curves, triggers, and
+ * sprites.
  *
- * Create / Go-to buttons. Operative for hasHit,
- * beenHit, and onTick. Both disable when the slot's
- * Can-X checkbox is unchecked or when the selection
- * isn't single-object. When checked and a single object
- * is selected, the displayed function name (or the
+ * Create / Go-to buttons. Operative for all three
+ * slots. Both disable when the slot's Can-X checkbox
+ * is unchecked or when the selection isn't single-
+ * object. When checked and a single object is
+ * selected, the displayed function name (or the
  * proposed default if the field is empty) is looked up
  * in scene.functionMap. Found triggers the Go-to label
  * and a goToFunction edit; not-found triggers the
@@ -75,32 +79,27 @@
  * Default proposed name when the field is empty is
  * slotName_objectId, e.g. onTick_sp_a3f7.
  *
- * Band 4 — Code (CodeMirror, future). Stub band whose
- * first row carries the Code Location radio (Here /
- * Code Tab) drawn as proper circular radio buttons.
- * Visually present but inactive in this commit — click
- * handlers stay unwired pending the Code Location
- * move-semantic design (which decides what happens to
- * the cyclePattern body when the user flips between
- * Here and Code Tab). Stage 3 fills in the rest of the
- * band with the CodeMirror editor and activates the
- * radio.
+ * Band 4 — cyclePattern editor. The active home for
+ * the strudel mini-notation pattern that fires when
+ * the source has cursor extents and is unmuted (per
+ * the cursor-as-collider model). One row: a "pattern"
+ * label and a wide editable field. Stage 1 lands the
+ * editor as a single-line contenteditable surface
+ * with an identity validator that commits any input
+ * as ok. Stage 2 will swap the surface for a
+ * CodeMirror instance and add parse-as-you-type
+ * validation that hard-rejects unparseable patterns at
+ * commit time, with modifier-context warnings rendered
+ * as soft errors. The cyclePattern is editable for any
+ * non-empty selection, including triggers (whose
+ * patterns stay editable for future Tier 5 collision-
+ * firing).
  *
- * Stage 2B inert pieces. The function-name fields and
+ * Stage 1 inert pieces. The function-name fields and
  * the cyclePattern field accept any text without
- * validation. Stage 4 will add validateFunctionName for
- * the three function fields and the appropriate parser
- * for cyclePattern. The canCycle row carries no Create /
- * Go-to button this commit — its cyclePattern field is
- * dual-purpose (inline mini-notation when Code Location
- * is Here, function name when Code Tab), and with the
- * radio inactive the field stays in the Here
- * interpretation. Adding Create there would either
- * scaffold a function whose name is the typed mini-
- * notation pattern (broken) or commit to a behaviour
- * that hasn't been settled. The button lands on the
- * canCycle row alongside the radio activation in a
- * later stage.
+ * validation. A future stage will add
+ * validateFunctionName for the three function fields
+ * and the strudel parser for cyclePattern.
  *
  * Edit lifecycle. Editable fields share a validator-driven
  * commit lifecycle: hard errors squiggle red and refuse to
@@ -126,9 +125,9 @@
  * Greying rules.
  *   - Universal fields (Position, Mute) are active for any
  *     non-empty selection.
- *   - Object ID and Name are active only for single-object
- *     selections; greyed for multi-select since both are
- *     per-object unique.
+ *   - Object ID is active only for single-object
+ *     selections; greyed for multi-select since the id
+ *     is per-object unique.
  *   - Hide applies only to curves; greyed when the
  *     selection contains no curves.
  *   - Sprite/Trigger Size is active only when the selection
@@ -204,16 +203,10 @@ const W = {
     // Band 3 lines up with Band 1's Name row.
     callbackField: 280,
 
-    // Band 3 row 2's small numeric beatsPerCycle field.
+    // Band 1 cycle duration numeric field. Small width
+    // since the value is typically a single-digit master-
+    // beat count (4 by default).
     beatsPerCycle: 50,
-
-    // Band 3 row 2's "beats per cycle" multiline label.
-    // Wider than W.leftLabel so the beatsPerCycle field's
-    // left edge aligns with the function-name fields on
-    // rows above and below (which sit after the leftLabel
-    // column plus the Can-X checkbox). The label text
-    // wraps to two lines at this width.
-    beatsPerCycleLabel: 100,
 
     // Band 3 Create / Go-to button. Wide enough for the
     // longer "Go to" label (and "Create") at 10pt.
@@ -388,12 +381,26 @@ export class Inspector {
     }
 
     /**
-     * Band 1 — Identity. ID is read-only and greyed for multi-
-     * select; Name is editable for single-select and greyed
+     * Band 1 — Identity. Object ID is read-only and greyed
      * for multi-select; Mute is editable for any non-empty
-     * selection and defaults to off (false = not muted); Hide
-     * is curve-only and greyed when the selection contains no
-     * curves.
+     * selection and defaults to off (false = not muted);
+     * Hide is curve-only and greyed when the selection
+     * contains no curves. The user-typed Name field that
+     * earlier versions of the inspector exposed has been
+     * dropped under the cursor-as-collider reshape; the
+     * schema field stays in place for future re-surfacing,
+     * but only the system-assigned id is shown.
+     *
+     * Row 2 is the cycle duration row, which reads as
+     * "Cycles In [N] beats" with the small numeric field
+     * (the underlying schema key is beatsPerCycle) sitting
+     * between the "Cycles In" label on the left and the
+     * "beats" units suffix on the right. The field is
+     * universal across kinds since curves, sprites, and
+     * triggers all carry a cycle counter, but greys for
+     * trigger-only selections since triggers cannot self-
+     * fire under the cursor-as-collider model and their
+     * cycle counter is internal-only.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandIdentity(ctx) {
@@ -402,30 +409,19 @@ export class Inspector {
 
         const objs = selectedObjects(this._scene, this._selection);
         const idEditable = ctx.isSingle;
-        const nameEditable = ctx.isSingle;
         const hideActive = ctx.hasCurves;
+        const cycleDurationActive = ctx.hasSprites || ctx.hasCurves;
 
-        // ID and name come from the single selected object on
-        // single-select. On multi-select the row is greyed and
-        // the values are blank, since both fields are per-
-        // object unique. Defensive null checks: if the scene
-        // hasn't loaded yet, objs.all is empty and we fall
-        // through to the same blank-greyed presentation.
+        // ID comes from the single selected object on
+        // single-select. On multi-select the field is greyed
+        // and the value is blank, since id is per-object
+        // unique. Defensive null checks: if the scene hasn't
+        // loaded yet, objs.all is empty and we fall through
+        // to the same blank-greyed presentation.
         let idValue = "";
-        let nameValue = "";
-        /** @type {string | null} */
-        let singleObjId = null;
-        let nameConflict = false;
         if (ctx.isSingle && objs.all.length === 1) {
             const obj = objs.all[0];
             idValue = typeof obj.id === "string" ? obj.id : "";
-            nameValue = typeof obj.name === "string" ? obj.name : "";
-            singleObjId = idValue !== "" ? idValue : null;
-            if (nameValue !== "") {
-                nameConflict = nameConflictsInScene(
-                    nameValue, this._scene, singleObjId,
-                );
-            }
         }
 
         // Mute aggregates across every selected object (any
@@ -437,6 +433,15 @@ export class Inspector {
         const hideState = ctx.hasCurves
             ? aggregateBoolean(objs.curves, "hide")
             : false;
+
+        // beatsPerCycle aggregates across the whole selection
+        // since the schema field is universal. The row greys
+        // for trigger-only selections via cycleDurationActive,
+        // but the aggregate still reads from objs.all so a
+        // mixed selection containing a trigger plus a sprite
+        // shows the common value (or varies) rather than
+        // ignoring the trigger.
+        const beatsPerCycleAgg = aggregateString(objs.all, "beatsPerCycle");
 
         const r1 = mkRow();
         r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !idEditable }));
@@ -464,13 +469,19 @@ export class Inspector {
         band.appendChild(r1);
 
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Name", { width: W.leftLabel, disabled: !nameEditable }));
-        r2.appendChild(this._buildNameField({
-            value: nameValue,
-            editable: nameEditable,
-            conflict: nameConflict,
-            objId: singleObjId,
+        r2.appendChild(mkLabel("Cycles In", {
+            width: W.leftLabel,
+            disabled: !cycleDurationActive,
         }));
+        r2.appendChild(this._buildEditableField({
+            value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
+            numeric: true,
+            width: W.beatsPerCycle,
+            editable: cycleDurationActive,
+            validator: (c) => validateNumber(c, { min: 1 }),
+            editKind: "setBeatsPerCycle",
+        }));
+        r2.appendChild(mkUnits("beats", { disabled: !cycleDurationActive }));
         band.appendChild(r2);
 
         return band;
@@ -483,7 +494,7 @@ export class Inspector {
      * "do this thing" outcome — so the click commits to a
      * uniform muted-or-hidden state. Other states toggle.
      *
-     * @param {"setMute" | "setHide" | "setCanCycle" | "setCanHit" | "setCanBeHit" | "setCanTick"} kind
+     * @param {"setMute" | "setHide" | "setCanHit" | "setCanBeHit" | "setCanTick"} kind
      * @param {boolean | "varies"} currentState
      */
     _onBooleanCheckboxClick(kind, currentState) {
@@ -1067,29 +1078,42 @@ export class Inspector {
         }));
         band.appendChild(r2);
 
-        // Cursor R/L + Cursor Thickness. Curves only. All
-        // three are direct field commits via setFieldOnSelection.
-        const cursorRAgg = aggregateString(objs.curves, "cursorR");
-        const cursorLAgg = aggregateString(objs.curves, "cursorL");
+        // Cursor R/L + Cursor Thickness. Cursor R and L
+        // apply to curves and sprites under the cursor-as-
+        // collider model; cursor presence is the gate for
+        // self-firing and collision capability. Cursor
+        // Thickness stays curve-only since sprite cursor
+        // visualisation is deferred. The R and L extent
+        // fields grey when the selection contains no
+        // curves or sprites, or when all selected curves
+        // and sprites are muted (mute is the operational
+        // toggle that hides the cursor without losing the
+        // extent settings).
+        const cursorObjs = [...objs.curves, ...objs.sprites];
+        const cursorRAgg = aggregateString(cursorObjs, "cursorR");
+        const cursorLAgg = aggregateString(cursorObjs, "cursorL");
         const cursorThicknessAgg = aggregateString(objs.curves, "cursorThickness");
+        const cursorMuteAgg = aggregateBoolean(cursorObjs, "mute");
+        const cursorExtentDisabled =
+            cursorObjs.length === 0 || cursorMuteAgg === true;
 
         const r3 = mkRow();
-        r3.appendChild(mkLabel("Cursor Size", { width: W.leftLabel, disabled: curveDisabled }));
-        r3.appendChild(mkInlineLetter("R", { disabled: curveDisabled }));
+        r3.appendChild(mkLabel("Cursor Size", { width: W.leftLabel, disabled: cursorExtentDisabled }));
+        r3.appendChild(mkInlineLetter("R", { disabled: cursorExtentDisabled }));
         r3.appendChild(this._buildEditableField({
             value: cursorRAgg === "varies" ? "" : cursorRAgg,
             numeric: true,
             width: W.cursorRL,
-            editable: !curveDisabled,
+            editable: !cursorExtentDisabled,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorR",
         }));
-        r3.appendChild(mkInlineLetter("L", { disabled: curveDisabled }));
+        r3.appendChild(mkInlineLetter("L", { disabled: cursorExtentDisabled }));
         r3.appendChild(this._buildEditableField({
             value: cursorLAgg === "varies" ? "" : cursorLAgg,
             numeric: true,
             width: W.cursorRL,
-            editable: !curveDisabled,
+            editable: !cursorExtentDisabled,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorL",
         }));
@@ -1147,40 +1171,35 @@ export class Inspector {
     }
 
     /**
-     * Band 3 — Callback slots. Five rows exposing the four
-     * uniform callback slots from section 27 of DESIGN.md.
-     * Every row activates for any non-empty selection
-     * regardless of kinds, since the slot vocabulary is
-     * shared across curves, triggers, and sprites.
-     *
-     * Layout. Row 1 is the canCycle slot's first line:
-     * row label "canCycle", canCycle checkbox,
-     * cyclePattern text field. Row 2 is the canCycle
-     * slot's second line: a multiline "beats per cycle"
-     * label sized to align the field's left edge with the
-     * function-name column above, then the beatsPerCycle
-     * numeric field. The beatsPerCycle field disables when
-     * canCycle is unchecked. Rows 3 through 5 are the
-     * hasHit, beenHit, and onTick slots, each carrying a
-     * row label, a Can-X checkbox, a function-name field,
-     * and a Create / Go-to button.
+     * Band 3 — Callback slots. Three rows after the
+     * cursor-as-collider reshape: hasHit, beenHit, onTick.
+     * Each row carries a row label, a Can-X checkbox, a
+     * function-name field, and a Create or Go-to button.
+     * The cycle slot has no Band 3 row of its own; the
+     * cyclePattern lives in the Band 4 CodeMirror surface,
+     * the canCycle gate is gone (cursor presence is derived
+     * from cursor extents and mute), and the cycle duration
+     * (beatsPerCycle) field has moved to Band 1. Every row
+     * activates for any non-empty selection regardless of
+     * kinds, since the slot vocabulary is shared across
+     * curves, triggers, and sprites.
      *
      * Read binding aggregates each field across the entire
      * selection (objs.all). Multi-select disagreement
-     * renders blank for the text and numeric fields and
-     * as a tri-state varies-checkbox for the Can-X bools.
+     * renders blank for the function-name fields and as a
+     * tri-state varies-checkbox for the Can-X bools.
      * Editing a blank-varies field commits the typed value
      * to every selected object regardless of kind.
      *
-     * Create / Go-to buttons (rows 3 through 5).
-     * Disabled when the slot's Can-X checkbox is
-     * unchecked or when the selection isn't single-object.
-     * When checked and a single object is selected, the
-     * displayed function name (or the proposed default
-     * when the field is empty) is looked up in
-     * scene.functionMap; found triggers Go-to, not-found
-     * triggers Create. The function-name field renders
-     * muted when its text doesn't resolve in functionMap.
+     * Create / Go-to buttons. Disabled when the slot's
+     * Can-X checkbox is unchecked or when the selection
+     * isn't single-object. When checked and a single
+     * object is selected, the displayed function name (or
+     * the proposed default when the field is empty) is
+     * looked up in scene.functionMap; found triggers Go-to,
+     * not-found triggers Create. The function-name field
+     * renders muted when its text doesn't resolve in
+     * functionMap.
      *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
@@ -1198,9 +1217,6 @@ export class Inspector {
         // placeholder and a disabled button.
         const singleObj = (ctx.isSingle && objs.all.length === 1) ? objs.all[0] : null;
 
-        const canCycleAgg = aggregateBoolean(objs.all, "canCycle");
-        const cyclePatternAgg = aggregateString(objs.all, "cyclePattern");
-        const beatsPerCycleAgg = aggregateString(objs.all, "beatsPerCycle");
         const canHitAgg = aggregateBoolean(objs.all, "canHit");
         const hasHitFunctionAgg = aggregateString(objs.all, "hasHitFunction");
         const canBeHitAgg = aggregateBoolean(objs.all, "canBeHit");
@@ -1208,63 +1224,8 @@ export class Inspector {
         const canTickAgg = aggregateBoolean(objs.all, "canTick");
         const onTickFunctionAgg = aggregateString(objs.all, "onTickFunction");
 
-        // Identity validator: every input passes through as
-        // ok with no canonical transformation. Stage 4 will
-        // swap this for validateFunctionName on the three
-        // function-name fields and the appropriate parser
-        // on cyclePattern.
-        const inertOk = (/** @type {string} */ c) =>
-            ({ kind: /** @type {"ok"} */ ("ok"), value: c });
-
-        // Row 1: canCycle slot — row label, canCycle
-        // checkbox, cyclePattern text field. No Create /
-        // Go-to button this commit (see header doc).
-        const r1 = mkRow();
-        r1.appendChild(mkLabel("canCycle", { width: W.leftLabel, disabled: !slotActive }));
-        r1.appendChild(mkCheckbox({
-            checked: canCycleAgg === true,
-            varies: canCycleAgg === "varies",
-            disabled: !slotActive,
-            onClick: slotActive
-                ? () => this._onBooleanCheckboxClick("setCanCycle", canCycleAgg)
-                : undefined,
-        }));
-        r1.appendChild(this._buildEditableField({
-            value: cyclePatternAgg === "varies" ? "" : cyclePatternAgg,
-            width: W.callbackField,
-            editable: slotActive,
-            validator: inertOk,
-            editKind: "setCyclePattern",
-        }));
-        band.appendChild(r1);
-
-        // Row 2: canCycle slot — multiline label sized to
-        // span both the leftLabel and the Can-X checkbox
-        // columns, so the beatsPerCycle field's left edge
-        // aligns with the function-name field's left edge
-        // on the rows above and below. The label and the
-        // field both disable when the canCycle checkbox
-        // is unchecked.
-        const beatsPerCycleEnabled = slotActive && canCycleAgg === true;
-        const r2 = mkRow();
-        r2.appendChild(mkLabel("beats per\ncycle", {
-            width: W.beatsPerCycleLabel,
-            multiline: true,
-            disabled: !beatsPerCycleEnabled,
-        }));
-        r2.appendChild(this._buildEditableField({
-            value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
-            numeric: true,
-            width: W.beatsPerCycle,
-            editable: beatsPerCycleEnabled,
-            validator: (c) => validateNumber(c, { min: 1 }),
-            editKind: "setBeatsPerCycle",
-        }));
-        band.appendChild(r2);
-
-        // Rows 3-5: hasHit, beenHit, onTick. Driven by a
-        // small config table so the three rows share one
-        // construction loop.
+        // Three slot rows driven by a small config table
+        // so they share one construction loop.
         /** @type {Array<{
          *   label: string,
          *   slotKey: "hasHit" | "beenHit" | "onTick",
@@ -1338,102 +1299,52 @@ export class Inspector {
     }
 
     /**
-     * Band 4 — Code (CodeMirror, future). Stub band whose
-     * first row carries the Code Location radio. Stage 3
-     * will fill in the rest of this band with the
-     * CodeMirror editor for the cyclePattern body when the
-     * canCycle slot's Code Location is Code Tab. The radio
-     * is rendered but inactive in this commit.
+     * Band 4 — cyclePattern editor. The active home for
+     * the strudel mini-notation pattern that fires when
+     * the source has cursor extents and is unmuted (per
+     * the cursor-as-collider model). Stage 1 lands the
+     * editor as a single-line contenteditable surface
+     * with an identity validator; Stage 2 will swap the
+     * surface for a CodeMirror instance and add
+     * parse-as-you-type validation that hard-rejects
+     * unparseable patterns at commit time. The
+     * cyclePattern is editable for any non-empty
+     * selection, including triggers (whose patterns
+     * stay editable for future Tier 5 collision-firing).
      *
-     * @param {ReturnType<typeof buildSelectionContext>} _ctx
+     * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
-    _buildBandCodeMirror(_ctx) {
+    _buildBandCodeMirror(ctx) {
         const band = document.createElement("div");
         band.className = "insp-band";
 
         const objs = selectedObjects(this._scene, this._selection);
-        const cyclePatternLocationAgg = aggregateString(objs.all, "cyclePatternLocation");
+        const patternActive = ctx.total > 0;
+        const cyclePatternAgg = aggregateString(objs.all, "cyclePattern");
+
+        // Identity validator: every input passes through
+        // as ok with no canonical transformation. Stage 2
+        // will swap this for the strudel mini-notation
+        // parser, with parse failures classified as hard
+        // errors and modifier-context warnings as soft.
+        const inertOk = (/** @type {string} */ c) =>
+            ({ kind: /** @type {"ok"} */ ("ok"), value: c });
 
         const r1 = mkRow();
-        r1.appendChild(this._buildCodeLocationRadio({
-            value: cyclePatternLocationAgg === "varies" ? "" : cyclePatternLocationAgg,
+        r1.appendChild(mkLabel("pattern", {
+            width: W.leftLabel,
+            disabled: !patternActive,
+        }));
+        r1.appendChild(this._buildEditableField({
+            value: cyclePatternAgg === "varies" ? "" : cyclePatternAgg,
+            width: W.callbackField,
+            editable: patternActive,
+            validator: inertOk,
+            editKind: "setCyclePattern",
         }));
         band.appendChild(r1);
 
         return band;
-    }
-
-    /**
-     * Build the Code Location radio. Drawn as proper
-     * circular radio buttons (filled circle for the
-     * selected option, empty for the other) with their
-     * text labels to the right. Visually present but
-     * inactive in Stage 2B — click handlers stay unwired
-     * pending the move-semantic design (which decides what
-     * happens to the cyclePattern body when the user flips
-     * between Here and Code Tab).
-     *
-     * Inline styles handle the circular button visuals so
-     * the radio reads correctly without dedicated CSS in
-     * this commit. currentColor on the border and inner
-     * dot picks up the inspector's text colour, so the
-     * button inherits the active palette automatically.
-     *
-     * @param {{ value: string }} opts
-     * @returns {HTMLSpanElement}
-     */
-    _buildCodeLocationRadio(opts) {
-        const el = document.createElement("span");
-        el.className = "insp-code-location";
-        el.style.display = "inline-flex";
-        el.style.alignItems = "center";
-        el.style.gap = "14px";
-
-        /**
-         * @param {"Here" | "Code Tab"} optionValue
-         * @param {string} label
-         */
-        const buildOption = (optionValue, label) => {
-            const wrapper = document.createElement("span");
-            wrapper.style.display = "inline-flex";
-            wrapper.style.alignItems = "center";
-            wrapper.style.gap = "5px";
-
-            const button = document.createElement("span");
-            button.style.display = "inline-block";
-            button.style.boxSizing = "border-box";
-            button.style.width = "12px";
-            button.style.height = "12px";
-            button.style.borderRadius = "50%";
-            button.style.border = "1.5px solid currentColor";
-            button.style.position = "relative";
-
-            if (opts.value === optionValue) {
-                const inner = document.createElement("span");
-                inner.style.display = "block";
-                inner.style.width = "6px";
-                inner.style.height = "6px";
-                inner.style.borderRadius = "50%";
-                inner.style.background = "currentColor";
-                inner.style.position = "absolute";
-                inner.style.top = "1.5px";
-                inner.style.left = "1.5px";
-                button.appendChild(inner);
-            }
-
-            wrapper.appendChild(button);
-
-            const labelEl = document.createElement("span");
-            labelEl.textContent = label;
-            wrapper.appendChild(labelEl);
-
-            return wrapper;
-        };
-
-        el.appendChild(buildOption("Here", "Here"));
-        el.appendChild(buildOption("Code Tab", "Code Tab"));
-
-        return el;
     }
 
     /**

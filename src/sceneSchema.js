@@ -76,29 +76,23 @@ const HARMONY_OVERRIDE_FIELDS = [
 
 /**
  * Callback-slot fields shared by Curve, Trigger, and Sprite.
- * Every source kind has all four slots (cycle, hasHit, beenHit,
- * onTick), each guarded by a Can-X gate boolean. The cycle
- * slot uniquely also carries a pattern field (inline strudel
- * mini-notation when cyclePatternLocation is "Here", or a
- * function name in the Code tab when "Code Tab") and a
- * beatsPerCycle field giving the cycle length in master beats.
+ * Every source kind carries the cyclePattern field and the
+ * three Code-tab callback slots (hasHit, beenHit, onTick),
+ * each guarded by a Can-X gate boolean (canHit, canBeHit,
+ * canTick). The cyclePattern lives in the Band 4 CodeMirror
+ * editor; cursor-as-collider derives self-firing from cursor
+ * extents and mute, so there is no canCycle gate. The
+ * beatsPerCycle field gives the cycle length in master beats
+ * and surfaces in Band 1 as the cycle duration row.
  *
- * Function naming convention: every slot's function (when it
- * lives in the Code tab) is named slotName_sourceName, e.g.
- * cycle_curve1, hasHit_trigger2, beenHit_trigger2,
- * onTick_sprite1.
+ * Function naming convention: each Code-tab slot's function
+ * is named slotName_sourceId, e.g. hasHit_tr_a3f7,
+ * beenHit_tr_a3f7, onTick_sp_b9c2. The cyclePattern's home
+ * is the Band 4 editor and not the Code tab.
  * @type {FieldDef[]}
  */
 const CALLBACK_SLOT_FIELDS = [
-    { key: "canCycle", label: "Can Cycle", type: "boolean", default: false },
     { key: "cyclePattern", label: "Cycle Pattern", type: "string", default: "" },
-    {
-        key: "cyclePatternLocation",
-        label: "Cycle Code Location",
-        type: "enum",
-        default: "Here",
-        enumValues: ["Here", "Code Tab"],
-    },
     { key: "beatsPerCycle", label: "Beats/Cycle", type: "number", default: 4, min: 0 },
     { key: "canHit", label: "Can Hit", type: "boolean", default: false },
     { key: "hasHitFunction", label: "Has Hit Function", type: "functionRef", default: "" },
@@ -189,6 +183,8 @@ export const SPRITE_FIELDS = [
     { key: "maxSpeed", label: "Max Speed", type: "number", default: 16 },
     { key: "displayDiameter", label: "Display Diameter", type: "number", default: 1.05 },
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
+    { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
+    { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
     ...CALLBACK_SLOT_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];
