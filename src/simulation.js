@@ -1,76 +1,92 @@
 /**
  * Simulation module.
  *
- * Advances scene state forward in time. Owns the per-curve
- * runtime state (current cycle parameter, completed cycle
- * count, halt flag) and the per-sprite runtime state
- * (position, velocity) so authored data on Curve and Sprite
- * instances stays clean. Currently scoped to cursor
- * advancement and sprite physics; beat firing and pattern-
- * driven event generation are deferred to later milestones.
+ * Advances scene state forward in time. Owns the per-source
+ * runtime state (cursor t for curves, position and velocity
+ * for sprites, cycle phase and counter for all three kinds)
+ * so authored data on Curve, Trigger, and Sprite instances
+ * stays clean. Currently scoped to cursor advancement, sprite
+ * physics, and per-source cycle phase tracking; pattern
+ * firing and beat events are deferred to later milestones.
  *
  * Architecture:
  *   - Fixed-step simulation at SIM_DT seconds per step
- *     (1/240 s, ~4.17 ms). Determinism is required by
- *     DESIGN.md §7: rewinding and replaying must reproduce
- *     identical state at every point. A fixed step makes
- *     that property hold regardless of frame-rate variance.
- *   - tick() is the single entry point. It reads the
+ *     (1/240 s, ~4.17 ms). Determinism per DESIGN.md §7
+ *     requires the step size to be constant; rewind and
+ *     replay must reproduce identical state on every run.
+ *   - tick() is the single entry point. Reads the
  *     transport's elapsedSeconds, computes how much time
  *     has passed since the last tick, and runs as many
  *     fixed steps as fit. The Canvas calls this from its
  *     render loop.
  *   - Going backward in time (elapsedSeconds < previous)
- *     is interpreted as a rewind: every curve's runtime
- *     state resets to t = 0, cycle count zero, and every
- *     sprite's runtime state resets to its authored
- *     position and velocity. The accumulator clears.
- *     Rewind detection happens implicitly through the
- *     same entry point as normal advancement, no separate
- *     event needed.
- *   - Per-curve and per-sprite runtime state live in Maps
- *     keyed by id. setScene reconciles by id: matching
- *     ids preserve runtime state so playback continues
- *     across scene edits; new ids start at authored
- *     values; removed ids drop. For sprites, scene edits
- *     that change authored x/y/vx/vy (drags, inspector
- *     edits, hand JSON edits) are detected by comparing
- *     against the per-state record of last-seen authored
- *     values, and the matching runtime fields snap to
- *     the new authored value on detection.
+ *     is interpreted as a rewind: every source's runtime
+ *     state resets and the accumulator clears. Rewind
+ *     detection happens implicitly through the same entry
+ *     point as normal advancement, no separate event
+ *     needed.
+ *   - Per-source runtime state lives in three id-keyed
+ *     Maps (curves, triggers, sprites). setScene reconciles
+ *     by id: matching ids preserve runtime state so
+ *     playback continues across scene edits; new ids start
+ *     at authored values; removed ids drop. For sprites,
+ *     scene edits that change authored x/y/vx/vy (drags,
+ *     inspector edits, hand JSON edits) are detected by
+ *     comparing against the per-state record of last-seen
+ *     authored values, and the matching runtime fields
+ *     snap to the new authored value on detection.
  *
- * The Simulation is passive: no internal timer, no
- * requestAnimationFrame loop, no listeners on transport.
- * The Canvas owns the play loop; the Simulation is queried
- * on demand. Cursor advancement and sprite integration
- * happen during tick(); the Canvas reads each curve's
- * current t via getCurveCursorT and each sprite's current
- * x/y/vx/vy via getSpriteRuntime at draw time.
+ * Master clock and cycle phase. Section 27's master clock
+ * model: every source has a wall-clock cycle period derived
+ * from the transport's BPM and the source's beatsPerCycle
+ * field, where cycleDuration in seconds is beatsPerCycle * 60
+ * / BPM. Each source's cycle phase advances at rate
+ * 1/cycleDuration per second, wrapping at 1.0 to start the
+ * next cycle. Cycle phase advances unconditionally,
+ * regardless of canCycle — canCycle gates pattern firing in
+ * a later stage, not phase tracking now.
  *
- * Sprite physics. Each step, every sprite's runtime
- * position advances by vx*dt and vy*dt. Velocity is
- * clamped to the sprite's authored maxSpeed at the start
- * of each step. Walls at x = ±canvasW/2 and y = ±canvasH/2
- * bounce sprites whose full bounding circle was inside the
- * canvas at step start — the inside-only rule. A sprite
- * outside the canvas drifts freely; once entirely inside,
- * walls act as barriers. This matches the soft-canvas
- * semantics documented in scene.js: the canvas is a play-
- * area hint, not a hard constraint, and a sprite that
- * starts outside (or is moved outside by a drag) can
- * re-enter freely without being trapped or teleported.
+ * Per-cycle home snap. When a source's cycle phase wraps,
+ * the source returns to its home position. For curves the
+ * cursor t snaps back to 0 — the visual evidence the cycle
+ * has started over. For sprites the live x, y, vx, vy snap
+ * back to the authored values, the same fields _rewind()
+ * uses, so a moving sprite returns to its starting position
+ * and resumes its initial motion at every cycle boundary —
+ * the trajectory loops in lockstep with the cycle. Triggers
+ * don't currently move (no velocity in the schema) so the
+ * snap is a no-op on position, but the cycle counter still
+ * advances so future pattern firing has the timing.
  *
- * cycleSpeeds and stopAtCycle are honoured. Per DESIGN.md
- * §4, cycleSpeeds is a list of per-cycle multipliers cycling
- * through itself: positive values run forward, negative
- * values reverse, zero stands still for one normal-cycle's
- * duration. The list index advances one per completed cycle.
- * stopAtCycle halts the cursor in place after N cycles
- * complete; -1 means play forever. beatOffset is currently
- * inert; it stays in the data model and the JSON round-trip,
- * but the simulation does not consult it. Its meaning will
- * be revisited as part of the Strudel migration in v2.5+ per
- * DESIGN.md §27's phasing.
+ * stopAtCycle (curves only). Curves carry a stopAtCycle
+ * field giving the cycle count at which the cursor halts;
+ * -1 means play forever. Sprites and triggers don't have a
+ * stopAtCycle at this milestone, so they cycle indefinitely
+ * until rewound.
+ *
+ * Sprite physics. Each step every sprite's runtime position
+ * advances by vx*dt and vy*dt. Velocity is clamped to the
+ * sprite's authored maxSpeed at the start of each step.
+ * Walls at x = ±canvasW/2 and y = ±canvasH/2 bounce sprites
+ * whose full bounding circle was inside the canvas at step
+ * start — the inside-only rule. A sprite outside the canvas
+ * drifts freely; once entirely inside, walls act as
+ * barriers. This matches the soft-canvas semantics
+ * documented in scene.js: the canvas is a play-area hint,
+ * not a hard constraint, and a sprite that starts outside
+ * (or is moved outside by a drag) can re-enter freely
+ * without being trapped or teleported. Physics doesn't read
+ * BPM — motion is in canvas units per real-time second
+ * regardless of musical tempo.
+ *
+ * Pre-section-27 cycleSpeeds. The per-curve cycleSpeeds
+ * field (whitespace-separated multipliers cycling through
+ * themselves for forward/reverse/freeze cursor motion) was
+ * the pre-section-27 mechanism for cycle-rate manipulation.
+ * Section 27 replaces it with mini-notation modifiers
+ * (.fast, .slow, .rev) at the pattern layer, so the field
+ * is gone from the schema and the simulation runs all
+ * cursors at multiplier 1 — uniform forward pacing only.
  */
 
 // @ts-check
@@ -84,58 +100,77 @@
 const SIM_DT = 1 / 240;
 
 /**
- * Per-curve runtime state. Holds the cursor's current
- * position along the curve and the bookkeeping the
- * simulation needs to drive cycleSpeeds advancement and
- * stopAtCycle halting. Lives in the Simulation's
- * id-keyed map; never serialised, never seen by the
- * inspector.
+ * Debug flag for cycle-wrap logging. When true, every cycle
+ * wrap on every source emits a console.log line carrying
+ * the source kind, id, name, and new cycle counter. Useful
+ * for verifying the master-clock timing during development.
+ * Default off so the console stays clean for the composer
+ * during normal use.
+ */
+const LOG_CYCLE_WRAPS = false;
+
+/**
+ * Compute the wall-clock cycle duration in seconds for a
+ * source with the given beatsPerCycle, under the master
+ * BPM. Returns 0 (a sentinel for "no valid cycle") when
+ * either input is missing or non-positive; the caller
+ * treats 0 as a skip and the source's cycle phase doesn't
+ * advance that step.
+ *
+ * @param {number | null} bpm
+ * @param {any} beatsPerCycle
+ * @returns {number}
+ */
+function cycleDurationSeconds(bpm, beatsPerCycle) {
+    if (bpm === null || typeof bpm !== "number" || bpm <= 0) return 0;
+    if (typeof beatsPerCycle !== "number" || beatsPerCycle <= 0) return 0;
+    return (beatsPerCycle * 60) / bpm;
+}
+
+/**
+ * Per-curve runtime state. Holds the cursor's position
+ * along the curve plus the cycle-tracking bookkeeping.
+ * Lives in the Simulation's id-keyed map; never serialised,
+ * never seen by the inspector.
  */
 class CurveRuntimeState {
     constructor() {
         /**
          * Cursor position along the curve, in [0, 1). t = 0
-         * is the curve's start (first endpoint for line and
-         * piste, theta = 0 / 3 o'clock for ellipse); t = 1
-         * wraps back to t = 0. The wrap is purely a coordinate-
-         * system artifact and does not count as a cycle
-         * boundary; cycleProgress (below) tracks cycle
-         * boundaries independently.
+         * is the curve's home position (first endpoint for
+         * line and piste, theta = 0 / 3 o'clock for ellipse).
+         * Snaps back to 0 on cycle wrap, providing the
+         * visible per-cycle home return.
          * @type {number}
          */
         this.t = 0;
         /**
          * Magnitude-only accumulator of the current cycle's
-         * progress, in [0, 1). Advances by |tDelta| per
-         * step (or by beatsPerStep/cycleDuration when the
-         * multiplier is zero, so a frozen cycle still ends
-         * after one cycleDuration of time). When the
-         * accumulator reaches 1, the cycle completes,
-         * cycleCount increments, and the accumulator carries
-         * the small overshoot into the next cycle so timing
-         * stays accurate across boundaries.
+         * progress, in [0, 1). Advances by dt/cycleDuration
+         * per step. When the accumulator reaches 1, the cycle
+         * completes, cycleCount increments, the small
+         * overshoot carries into the next cycle so timing
+         * stays accurate across boundaries, and t snaps to 0
+         * for the visual home return.
          *
          * Tracking cycle progress separately from t is what
-         * lets a curve with cycleSpeeds "-1" or "1 -1" work
-         * correctly. If we used t wrapping to detect cycle
-         * boundaries, a cursor starting at t = 0 with a
-         * negative multiplier would wrap on the first step
-         * and incorrectly count that as a completed cycle
-         * — the cursor would flicker near the boundary
-         * instead of traversing the full curve in reverse.
+         * lets the t-snap-to-home behaviour avoid compounding
+         * timing error: t snaps to 0 each cycle for visual
+         * crispness while cycleProgress preserves the
+         * overshoot that would otherwise be lost.
          * @type {number}
          */
         this.cycleProgress = 0;
         /**
-         * Number of cycles completed since rewind. Indexes
-         * cycleSpeeds modulo the list length, so the
-         * multiplier in effect for the current cycle is
-         * cycleSpeeds[cycleCount mod list-length].
+         * Number of cycles completed since rewind. Curves
+         * additionally compare this against stopAtCycle:
+         * when cycleCount reaches stopAtCycle, halted is set
+         * and the cursor stops advancing.
          * @type {number}
          */
         this.cycleCount = 0;
         /**
-         * When true the cursor is halted in place because
+         * When true, the cursor is halted because
          * stopAtCycle was reached. Subsequent ticks skip
          * this curve entirely until the next rewind clears
          * the flag.
@@ -146,13 +181,31 @@ class CurveRuntimeState {
 }
 
 /**
+ * Per-trigger runtime state. Triggers don't currently move
+ * (no velocity field in the schema), so the runtime state
+ * holds only the cycle-tracking fields. The trigger's
+ * displayed position remains the authored x, y. Lives in
+ * the Simulation's id-keyed map; never serialised, never
+ * seen by the inspector.
+ */
+class TriggerRuntimeState {
+    constructor() {
+        /** @type {number} */
+        this.cycleProgress = 0;
+        /** @type {number} */
+        this.cycleCount = 0;
+    }
+}
+
+/**
  * Per-sprite runtime state. Holds the live position and
- * velocity that the simulation advances each step, plus a
- * record of the last-seen authored values so setScene can
- * detect external edits (drag, inspector, hand JSON) and
- * snap runtime to the new authored values when they
- * differ. Lives in the Simulation's id-keyed map; never
- * serialised, never seen by the inspector.
+ * velocity that the simulation advances each step, the
+ * record of last-seen authored values for setScene's
+ * snap-on-edit detection, and the cycle-tracking
+ * bookkeeping. The authored-value record also serves as the
+ * snap-home target for per-cycle resets. Lives in the
+ * Simulation's id-keyed map; never serialised, never seen
+ * by the inspector.
  */
 class SpriteRuntimeState {
     /**
@@ -160,13 +213,10 @@ class SpriteRuntimeState {
      */
     constructor(sprite) {
         // Live runtime values, advanced by the simulation
-        // and reset by rewind. The Canvas reads these at
-        // draw time and for hit-testing, so they're the
-        // visible position regardless of whether the
-        // simulation is currently advancing. On creation
-        // they take their initial values from the sprite's
-        // authored x/y/vx/vy — same effect as a rewind to
-        // the just-loaded scene.
+        // and reset by rewind or per-cycle home snap. The
+        // Canvas reads these at draw time and for hit-
+        // testing, so they're the visible position regardless
+        // of whether the simulation is currently advancing.
         this.x = numberOrZero(sprite.x);
         this.y = numberOrZero(sprite.y);
         this.vx = numberOrZero(sprite.vx);
@@ -179,11 +229,23 @@ class SpriteRuntimeState {
         // snaps the matching runtime fields to the new
         // authored value when they differ. Position and
         // velocity are tracked independently so a position
-        // edit doesn't reset velocity and vice versa.
+        // edit doesn't reset velocity and vice versa. These
+        // also serve as the snap-home target: when a cycle
+        // wraps, the live runtime fields restore from these
+        // values so the sprite returns to its starting
+        // position with its initial motion intact.
         this._authX = this.x;
         this._authY = this.y;
         this._authVx = this.vx;
         this._authVy = this.vy;
+        // Cycle tracking. Sprites have no cursor, so the
+        // cycle phase drives only the per-cycle home snap
+        // here; in a later stage the wrap also fires the
+        // cycle-pattern callback.
+        /** @type {number} */
+        this.cycleProgress = 0;
+        /** @type {number} */
+        this.cycleCount = 0;
     }
 }
 
@@ -197,6 +259,8 @@ export class Simulation {
         this._scene = null;
         /** @type {Map<string, CurveRuntimeState>} */
         this._curveState = new Map();
+        /** @type {Map<string, TriggerRuntimeState>} */
+        this._triggerState = new Map();
         /** @type {Map<string, SpriteRuntimeState>} */
         this._spriteState = new Map();
         /**
@@ -216,10 +280,11 @@ export class Simulation {
     }
 
     /**
-     * Update the scene reference. Reconciles per-curve and
-     * per-sprite runtime state by id: existing ids preserve
-     * their state so playback continues across edits, new
-     * ids start at authored values, removed ids drop.
+     * Update the scene reference. Reconciles per-source
+     * runtime state by id across curves, triggers, and
+     * sprites. Existing ids preserve their state so
+     * playback continues across scene edits, new ids start
+     * at authored values, removed ids drop.
      *
      * For sprites, an id that's already in the map gets its
      * runtime fields compared against the new Sprite's
@@ -241,6 +306,7 @@ export class Simulation {
         this._scene = scene;
         if (scene === null) {
             this._curveState.clear();
+            this._triggerState.clear();
             this._spriteState.clear();
             return;
         }
@@ -256,6 +322,21 @@ export class Simulation {
         }
         for (const id of [...this._curveState.keys()]) {
             if (!seenCurveIds.has(id)) this._curveState.delete(id);
+        }
+        // Triggers: reconcile by id. Cycle state preserved
+        // across edits so a counter mid-piece doesn't reset
+        // when the user adds another trigger.
+        /** @type {Set<string>} */
+        const seenTriggerIds = new Set();
+        for (const t of scene.triggers) {
+            if (typeof t.id !== "string") continue;
+            seenTriggerIds.add(t.id);
+            if (!this._triggerState.has(t.id)) {
+                this._triggerState.set(t.id, new TriggerRuntimeState());
+            }
+        }
+        for (const id of [...this._triggerState.keys()]) {
+            if (!seenTriggerIds.has(id)) this._triggerState.delete(id);
         }
         // Sprites: reconcile by id. Existing state preserved
         // unless an authored field changed since last seen,
@@ -306,7 +387,7 @@ export class Simulation {
      * the elapsed-since-last-tick interval, with leftover
      * sub-step time held in the accumulator for the next
      * tick. Going backward in time is interpreted as a
-     * rewind: every curve's runtime state resets and the
+     * rewind: every source's runtime state resets and the
      * accumulator clears.
      *
      * Called from the Canvas's render loop. Idempotent
@@ -333,12 +414,19 @@ export class Simulation {
     }
 
     /**
-     * Reset every curve's runtime state to its rewind
-     * position (t = 0, cycle 0, progress 0, not halted)
-     * and every sprite's runtime state back to its
-     * authored position and velocity. The map keys stay
-     * registered; only their contained state resets.
-     * Called on detected rewind from tick().
+     * Reset every source's runtime state to its rewind
+     * position. Curves: t = 0, cycle progress and count 0,
+     * halted false. Triggers: cycle progress and count 0
+     * (no position to reset). Sprites: live x/y/vx/vy snap
+     * back to the authored values, cycle progress and count
+     * reset to 0. The map keys stay registered; only their
+     * contained state resets. Called on detected rewind
+     * from tick().
+     *
+     * The per-cycle home snap (in _stepCurve, _stepTrigger,
+     * and _stepSprites) reuses the same restoration logic
+     * but applies it per source on each cycle wrap rather
+     * than across the whole scene at once.
      */
     _rewind() {
         for (const state of this._curveState.values()) {
@@ -346,6 +434,10 @@ export class Simulation {
             state.cycleProgress = 0;
             state.cycleCount = 0;
             state.halted = false;
+        }
+        for (const state of this._triggerState.values()) {
+            state.cycleProgress = 0;
+            state.cycleCount = 0;
         }
         // Sprite rewind copies the per-state record of
         // last-seen authored values back into the live
@@ -359,128 +451,129 @@ export class Simulation {
             state.y = state._authY;
             state.vx = state._authVx;
             state.vy = state._authVy;
+            state.cycleProgress = 0;
+            state.cycleCount = 0;
         }
     }
 
     /**
-     * One fixed-step simulation tick. Walks every curve in
-     * the scene that has an associated runtime state and
-     * advances its cycle parameter by the score-beats that
-     * elapse during dt seconds, scaled by the curve's
-     * cycleSpeeds entry for the current cycle. Curves
-     * already halted by stopAtCycle are skipped.
+     * One fixed-step simulation tick. Walks every source in
+     * the scene that has runtime state — curves first
+     * (cursor advancement plus cycle phase), then triggers
+     * (cycle phase only), then sprites (physics first, then
+     * cycle phase). Each source's cycle duration is computed
+     * from its own beatsPerCycle and the transport's BPM
+     * via cycleDurationSeconds, so different sources can run
+     * at different cycle rates simultaneously.
      *
      * @param {number} dt  Elapsed seconds in this step (always SIM_DT).
      */
     _step(dt) {
         if (this._scene === null) return;
         const bpm = this._transport.bpm;
-        if (bpm !== null && bpm > 0) {
-            const beatsPerSecond = bpm / 60;
-            const beatsPerStep = beatsPerSecond * dt;
-            for (const curve of this._scene.curves) {
-                if (typeof curve.id !== "string") continue;
-                const state = this._curveState.get(curve.id);
-                if (state === undefined) continue;
-                if (state.halted) continue;
-                this._stepCurve(curve, state, beatsPerStep);
-            }
+        for (const curve of this._scene.curves) {
+            if (typeof curve.id !== "string") continue;
+            const state = this._curveState.get(curve.id);
+            if (state === undefined) continue;
+            if (state.halted) continue;
+            const cd = cycleDurationSeconds(bpm, curve.beatsPerCycle);
+            this._stepCurve(curve, state, cd, dt);
         }
-        // Sprite physics doesn't depend on bpm — sprites
-        // move in canvas units per real second regardless
-        // of musical tempo — so it runs even when the bpm
-        // guard above skips the cursor work.
-        this._stepSprites(dt);
+        for (const trigger of this._scene.triggers) {
+            if (typeof trigger.id !== "string") continue;
+            const state = this._triggerState.get(trigger.id);
+            if (state === undefined) continue;
+            const cd = cycleDurationSeconds(bpm, trigger.beatsPerCycle);
+            this._stepTrigger(trigger, state, cd, dt);
+        }
+        // Sprite physics doesn't read BPM, but the cycle
+        // phase does, so we pass it through. Physics first
+        // means a sprite that wraps its cycle mid-step
+        // snaps home from a position that includes this
+        // step's motion, which matches the intended
+        // semantics: the sprite moved during the cycle, and
+        // at cycle's end it returns to its starting point.
+        this._stepSprites(dt, bpm);
     }
 
     /**
-     * Advance one curve's runtime state by beatsPerStep
-     * score beats. The current cycleSpeeds multiplier and
-     * cycleDuration determine how fast t advances; cycle
-     * completion is detected by cycleProgress reaching 1
-     * (a magnitude-only accumulator independent of t's
-     * wrap behaviour).
+     * Advance one curve's cursor and cycle phase by dt
+     * seconds.
      *
-     * Position update: state.t advances by tDelta and
-     * wraps at the [0, 1) boundary so the cursor stays
-     * within the curve's parameter range. The wrap is
-     * purely cosmetic; it does not signal cycle
-     * completion.
+     * Cursor: state.t advances by dt/cycleDuration each
+     * step and wraps to [0, 1). On cycle completion, t
+     * snaps to 0 explicitly — the visible home return at
+     * each cycle boundary. The wrap-on-add above handles
+     * mid-cycle wraparound when t exceeds 1; the explicit
+     * snap inside the cycle-completion loop handles the
+     * boundary case independently of floating-point drift.
      *
-     * Progress update: cycleProgress accumulates absolute
-     * progress through the current cycle. For non-zero
-     * multipliers this is |tDelta|; for the special
-     * zero-multiplier case (cursor frozen for one cycle's
-     * normal duration) it is beatsPerStep/cycleDuration so
-     * the cycle still ends in cycleDuration of time. When
-     * cycleProgress crosses 1, the cycle completes, the
-     * count advances, and the small overshoot carries into
-     * the next cycle to keep timing accurate.
-     *
-     * Note that the multiplier sampled at the start of the
-     * step is used for the entire step, even if cycle
-     * completion within the step would have switched to
-     * the next cycleSpeeds entry. At SIM_DT the resulting
-     * timing error at the boundary is sub-millisecond and
-     * not perceptible. A future refinement could split the
-     * step at boundaries if needed.
+     * Cycle progress: cycleProgress accumulates absolute
+     * progress through the current cycle. When it crosses
+     * 1, the cycle completes, the count advances, and the
+     * small overshoot carries into the next cycle so timing
+     * stays accurate across boundaries — t loses the
+     * overshoot to the snap-to-home, but cycleProgress
+     * preserves it.
      *
      * @param {any} curve
      * @param {CurveRuntimeState} state
-     * @param {number} beatsPerStep
+     * @param {number} cycleDuration  Wall-clock seconds per cycle.
+     * @param {number} dt  Elapsed seconds in this step.
      */
-    _stepCurve(curve, state, beatsPerStep) {
-        const cycleDuration = curve.cycleDuration;
-        if (typeof cycleDuration !== "number" || cycleDuration <= 0) return;
-        const multiplier = parseCycleSpeeds(curve.cycleSpeeds, state.cycleCount);
-        // Signed fraction of one natural cycle traversed in
-        // this step. Drives state.t.
-        const tDelta = (beatsPerStep / cycleDuration) * multiplier;
-        // Update displayed position with wrap. The wrap is
-        // a coordinate-system convenience; it has no
-        // semantic meaning for cycle counting.
+    _stepCurve(curve, state, cycleDuration, dt) {
+        if (cycleDuration <= 0) return;
+        const tDelta = dt / cycleDuration;
+        // Advance t with wrap. The wrap is a coordinate-
+        // system convenience for the cursor display; the
+        // semantically meaningful cycle wrap happens via
+        // cycleProgress below.
         let newT = state.t + tDelta;
         while (newT >= 1) newT -= 1;
-        while (newT < 0) newT += 1;
         state.t = newT;
-        // Advance cycle progress. Always non-negative,
-        // always increases. Magnitude scales with
-        // |multiplier| so faster cycles end sooner; the
-        // multiplier-zero special case substitutes
-        // beatsPerStep/cycleDuration so a frozen cursor
-        // still completes a cycle on schedule.
-        const progressDelta = multiplier === 0
-            ? beatsPerStep / cycleDuration
-            : Math.abs(tDelta);
-        state.cycleProgress += progressDelta;
-        // Detect cycle completion. Multiple completions in
-        // one step are possible at very high multipliers or
-        // very short cycleDurations; the loop handles that.
+        state.cycleProgress += tDelta;
         const stopAt = (typeof curve.stopAtCycle === "number") ? curve.stopAtCycle : -1;
+        // Detect cycle completion. Multiple completions in
+        // one step are possible at very short cycle
+        // durations; the loop handles that.
         while (state.cycleProgress >= 1) {
             state.cycleProgress -= 1;
             state.cycleCount++;
-            // Snap state.t to the cycle's end boundary so
-            // discrete-step overshoot doesn't accumulate
-            // visually across cycles. A forward cycle ends
-            // at t = 0 (the wrap point of t = 1); a backward
-            // cycle ends at t = 1 (the wrap point of t = 0).
-            // Freeze cycles (multiplier 0) have no
-            // direction, so the cursor stays at whatever
-            // boundary the most recent non-zero cycle left
-            // it at — which on a closed curve like an
-            // ellipse is visually identical regardless, and
-            // on an open curve correctly stops the freeze
-            // at the natural endpoint of the prior motion.
-            if (multiplier > 0) {
-                state.t = 0;
-            } else if (multiplier < 0) {
-                state.t = 1;
-            }
+            // Snap t to home. The accumulated overshoot
+            // already lives in cycleProgress for timing
+            // accuracy, so losing it from t here is fine —
+            // the cursor visibly returns to the start of
+            // the curve at every cycle boundary.
+            state.t = 0;
+            logCycleWrap("curve", curve, state.cycleCount);
             if (stopAt >= 0 && state.cycleCount >= stopAt) {
                 state.halted = true;
                 return;
             }
+        }
+    }
+
+    /**
+     * Advance one trigger's cycle phase by dt seconds.
+     * Triggers don't move (no velocity in the schema), so
+     * the only state that changes is cycle progress and
+     * counter. On cycle wrap there's no position to snap
+     * home — the trigger sits at its authored x, y
+     * throughout. The counter is tracked so future pattern
+     * firing has the timing.
+     *
+     * @param {any} trigger
+     * @param {TriggerRuntimeState} state
+     * @param {number} cycleDuration
+     * @param {number} dt
+     */
+    _stepTrigger(trigger, state, cycleDuration, dt) {
+        if (cycleDuration <= 0) return;
+        state.cycleProgress += dt / cycleDuration;
+        while (state.cycleProgress >= 1) {
+            state.cycleProgress -= 1;
+            state.cycleCount++;
+            logCycleWrap("trigger", trigger, state.cycleCount);
         }
     }
 
@@ -503,14 +596,12 @@ export class Simulation {
 
     /**
      * Look up a sprite's current runtime state. Returns
-     * null when no state exists for this id, which can
-     * happen briefly during a scene reload before setScene
-     * has run with the new scene, or for ids the simulation
-     * has never seen. The Canvas calls this at draw time
-     * for sprite render positions, and for hit-testing
-     * against the visual sprite (so a click on a moving
-     * sprite catches it where the user sees it, not where
-     * its authored position lives in scene.json).
+     * null when no state exists for this id (briefly
+     * possible during a scene reload before setScene runs
+     * with the new scene, or for ids the simulation has
+     * never seen). The Canvas calls this at draw time for
+     * sprite render positions and for hit-testing against
+     * the visual sprite.
      *
      * The returned object is the live runtime state — the
      * same one the simulation mutates each step — so
@@ -531,20 +622,20 @@ export class Simulation {
      * runtime fields and update the per-state record of
      * last-seen authored values to match. Used by the
      * canvas's drag pipeline to keep visual feedback in
-     * sync with the cursor while a sprite is being moved
-     * — the drag mutates the Scene's authored x/y for
-     * the visual round-trip; this method propagates that
-     * mutation into the simulation's runtime so the
-     * Canvas (which reads runtime at draw time) shows the
-     * dragged position.
+     * sync with the cursor while a sprite is being moved —
+     * the drag mutates the Scene's authored x/y for the
+     * visual round-trip; this method propagates that
+     * mutation into the simulation's runtime so the Canvas
+     * (which reads runtime at draw time) shows the dragged
+     * position.
      *
      * Velocity is intentionally NOT copied. A drag is a
      * positional edit; the sprite's velocity should
      * continue uninterrupted across the drag so playback
      * doesn't visually "hitch" when the user grabs and
-     * releases. setScene's reconciliation handles the
-     * full edit settlement, including any velocity
-     * change, after the JSON commit cycle completes.
+     * releases. setScene's reconciliation handles the full
+     * edit settlement, including any velocity change,
+     * after the JSON commit cycle completes.
      *
      * No-op when the sprite has no runtime state — the
      * sprite was added in the same edit cycle and
@@ -568,32 +659,42 @@ export class Simulation {
 
     /**
      * Advance every sprite's runtime state by dt seconds.
-     * Each sprite's velocity is clamped to its authored
-     * maxSpeed at the top of the step, then position
-     * integrates by vx*dt and vy*dt, then walls are
-     * resolved under the inside-only rule (a sprite that
-     * wasn't fully inside the canvas at step start drifts
-     * freely; one that was inside bounces off any wall its
-     * post-integration position would have crossed).
+     * Order per sprite:
      *
-     * The bounce model is perfectly elastic — velocity
-     * flips with no energy loss — and treats the X and Y
-     * axes independently, so a sprite hitting a corner
-     * bounces in both axes simultaneously. The inside
-     * check uses the sprite's full bounding circle
-     * (radius = displayDiameter/2 × scene.spriteScale)
-     * so a sprite touching a wall from inside,
-     * edge-to-wall, still counts as inside and bounces on
-     * the next outward step.
+     *   1. Velocity ceiling: clamp vx, vy to authored
+     *      maxSpeed.
+     *   2. Position integration: x += vx*dt, y += vy*dt.
+     *   3. Wall bounce under the inside-only rule (a sprite
+     *      that wasn't fully inside the canvas at step
+     *      start drifts freely; one that was inside bounces
+     *      off any wall its post-integration position would
+     *      have crossed). Bounce is perfectly elastic and
+     *      treats X and Y axes independently.
+     *   4. Cycle phase advancement at rate dt/cycleDuration.
+     *   5. On cycle wrap, snap x/y/vx/vy back to authored
+     *      values and increment the counter — the per-cycle
+     *      home return that loops the sprite's trajectory
+     *      with the cycle.
      *
-     * Sprite physics doesn't read bpm — motion is in
-     * canvas units per real-time second — so this runs
-     * even when the cursor-advancement path is skipped
-     * for a missing or zero bpm.
+     * The inside check uses the sprite's full bounding
+     * circle (radius = displayDiameter/2 × scene.spriteScale)
+     * so a sprite touching a wall from inside, edge-to-wall,
+     * still counts as inside and bounces on the next outward
+     * step.
+     *
+     * Sprite physics doesn't read BPM — motion is in canvas
+     * units per real-time second regardless of musical
+     * tempo. The cycle-phase step uses BPM plus the
+     * sprite's beatsPerCycle to compute cycle duration via
+     * cycleDurationSeconds; with cycleDuration 0 (missing
+     * or zero BPM, missing or zero beatsPerCycle), the
+     * cycle phase doesn't advance but the physics still
+     * runs.
      *
      * @param {number} dt  Elapsed seconds in this step (always SIM_DT).
+     * @param {number | null} bpm  Master tempo from the transport.
      */
-    _stepSprites(dt) {
+    _stepSprites(dt, bpm) {
         if (this._scene === null) return;
         const halfW = numberOrZero(this._scene.canvasW) / 2;
         const halfH = numberOrZero(this._scene.canvasH) / 2;
@@ -604,10 +705,7 @@ export class Simulation {
             if (typeof sprite.id !== "string") continue;
             const state = this._spriteState.get(sprite.id);
             if (state === undefined) continue;
-            // Velocity ceiling. Authored maxSpeed is the
-            // expected source; defensive against missing
-            // or non-positive values from hand-edited
-            // JSON.
+            // 1. Velocity ceiling.
             const maxSpeed = (typeof sprite.maxSpeed === "number" && sprite.maxSpeed > 0)
                 ? sprite.maxSpeed
                 : Infinity;
@@ -617,22 +715,12 @@ export class Simulation {
                 state.vx *= factor;
                 state.vy *= factor;
             }
-            // Integrate.
+            // 2. Integrate.
             const oldX = state.x;
             const oldY = state.y;
             let newX = oldX + state.vx * dt;
             let newY = oldY + state.vy * dt;
-            // Wall bouncing under the inside-only rule. A
-            // sprite is "inside" iff its full bounding
-            // circle sits within the canvas at step
-            // start; only such sprites can bounce.
-            // Sprites partially or wholly outside drift
-            // freely — they may re-enter the canvas
-            // through any wall, which protects against
-            // the case where the user shrinks the canvas
-            // around a sprite or drags one outside, and
-            // matches the soft-canvas semantics that
-            // curves also follow.
+            // 3. Wall bounce under the inside-only rule.
             const r = Math.max(0,
                 (numberOrZero(sprite.displayDiameter) / 2) * spriteScale);
             const wasInside =
@@ -658,6 +746,26 @@ export class Simulation {
             }
             state.x = newX;
             state.y = newY;
+            // 4. Cycle phase. Skipped silently when cycle
+            //    duration is 0 (missing/zero BPM, missing/zero
+            //    beatsPerCycle) — physics still runs but the
+            //    sprite never wraps.
+            const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle);
+            if (cd <= 0) continue;
+            state.cycleProgress += dt / cd;
+            // 5. On wrap, snap the sprite home and advance
+            //    the counter. Multiple wraps in one step are
+            //    possible at very short cycle durations; the
+            //    loop handles that.
+            while (state.cycleProgress >= 1) {
+                state.cycleProgress -= 1;
+                state.cycleCount++;
+                state.x = state._authX;
+                state.y = state._authY;
+                state.vx = state._authVx;
+                state.vy = state._authVy;
+                logCycleWrap("sprite", sprite, state.cycleCount);
+            }
         }
     }
 }
@@ -677,31 +785,20 @@ function numberOrZero(v) {
 }
 
 /**
- * Parse a cycleSpeeds string and return the multiplier that
- * applies to the given cycle count. The list cycles through
- * itself, so cycleCount mod list-length picks the entry. An
- * empty string, an unparseable token, or a non-finite number
- * falls back to 1 (uniform pacing). The validator gates
- * inspector input, so well-formed strings are the common
- * case; the defensive defaults here only matter for
- * hand-edited JSON that bypasses the validator.
+ * Emit a console.log line for a cycle wrap on a source.
+ * Only logs when LOG_CYCLE_WRAPS is true; the no-op path
+ * costs almost nothing per cycle. Useful when developing
+ * the master clock or diagnosing per-source timing issues
+ * by flipping the flag at the top of this module.
  *
- * @param {any} speedsStr
- * @param {number} cycleCount
- * @returns {number}
+ * @param {"curve" | "trigger" | "sprite"} kind
+ * @param {any} obj  The Curve / Trigger / Sprite.
+ * @param {number} cycleCount  Counter value after this wrap.
  */
-function parseCycleSpeeds(speedsStr, cycleCount) {
-    if (typeof speedsStr !== "string") return 1;
-    const trimmed = speedsStr.trim();
-    if (trimmed === "") return 1;
-    const tokens = trimmed.split(/\s+/);
-    if (tokens.length === 0) return 1;
-    // Positive modulo so cycleCount can be any non-negative
-    // integer and still index the list correctly. Defensive
-    // against any future code path that might pass a negative
-    // count (currently can't happen).
-    const idx = ((cycleCount % tokens.length) + tokens.length) % tokens.length;
-    const n = Number(tokens[idx]);
-    if (!Number.isFinite(n)) return 1;
-    return n;
+function logCycleWrap(kind, obj, cycleCount) {
+    if (!LOG_CYCLE_WRAPS) return;
+    const id = (obj !== null && typeof obj === "object" && typeof obj.id === "string") ? obj.id : "?";
+    const name = (obj !== null && typeof obj === "object" && typeof obj.name === "string") ? obj.name : "";
+    const nameSuffix = name === "" ? "" : ` "${name}"`;
+    console.log(`[cycle] ${kind} ${id}${nameSuffix} cycle ${cycleCount}`);
 }
