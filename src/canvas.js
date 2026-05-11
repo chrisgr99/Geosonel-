@@ -345,6 +345,7 @@ export class Canvas {
             passive: false,
         });
         this.canvasEl.addEventListener("mousedown", (e) => this._onMouseDown(e));
+        this.canvasEl.addEventListener("dblclick", (e) => this._onDoubleClick(e));
 
         this._onResize();
     }
@@ -1584,6 +1585,45 @@ export class Canvas {
             this._emitSelectionChanged();
             return;
         }
+    }
+
+    /**
+     * Double-click on a canvas object emits an
+     * openObjectInCode edit so external host code can
+     * switch to the Code tab and scroll to the object's
+     * source. The single clicks that precede the dblclick
+     * event have already flowed through the normal
+     * mousedown / mouseup gesture state machine, so the
+     * object is already selected by the time this fires;
+     * the dblclick's job is just to emit the navigation
+     * intent.
+     *
+     * Ignored when a creation tool is armed (under a tool
+     * the natural reading of two quick clicks is "place
+     * two objects", not "navigate to source"), when no
+     * edit callback is wired, when no scene is loaded, or
+     * when the dblclick lands on empty space (no object
+     * to navigate to).
+     *
+     * @param {MouseEvent} e
+     */
+    _onDoubleClick(e) {
+        if (e.button !== 0) return;
+        if (this._activeTool !== null) return;
+        if (this._editCallback === null) return;
+        if (this._scene === null) return;
+        const pos = this._eventToCanvas(e);
+        const hit = this._hitTestObject(pos.x, pos.y);
+        if (hit === null) return;
+        let obj;
+        if (hit.kind === "sprite") obj = this._scene.sprites[hit.index];
+        else if (hit.kind === "trigger") obj = this._scene.triggers[hit.index];
+        else obj = this._scene.curves[hit.index];
+        if (obj === undefined || typeof obj.id !== "string") return;
+        this._editCallback({
+            kind: "openObjectInCode",
+            objectId: obj.id,
+        });
     }
 
     /**

@@ -695,6 +695,35 @@ async function main() {
     };
 
     /**
+     * Candidate name list for jumping to an object's first
+     * occurrence in behaviors.js. Per section 28's
+     * bidirectional navigation spec, an object's source can
+     * appear in any of four forms: a labelled pattern block
+     * with the dollar-prefixed tag, or one of three
+     * callback-function declarations whose names follow the
+     * slotName_objectId convention (hasHit_id, beenHit_id,
+     * onTick_id). selectTabAndScrollToFunction walks these
+     * candidates and lands on whichever appears earliest in
+     * the file, falling back to a plain tab switch when none
+     * is present.
+     *
+     * Both the inspector's Pattern row Go-to button and the
+     * canvas object's double-click gesture share this
+     * candidate list so the navigation behaviour is
+     * consistent regardless of which gesture the user
+     * picks.
+     *
+     * @param {string} objectId
+     * @returns {string[]}
+     */
+    const candidatesForObject = (objectId) => [
+        "$" + objectId,
+        "hasHit_" + objectId,
+        "beenHit_" + objectId,
+        "onTick_" + objectId,
+    ];
+
+    /**
      * Apply a mutation to the active score's scene.json,
      * refresh the editor view, and re-run the scene. The
      * mutator runs directly on the parsed scene-data object.
@@ -764,6 +793,20 @@ async function main() {
                 triggers: edit.triggers,
                 curves: edit.curves,
             });
+        } else if (edit.kind === "openObjectInCode") {
+            // Canvas double-click on an object. Switches to
+            // the Code tab and scrolls to the object's
+            // first occurrence in behaviors.js, walking
+            // the same candidate list (labelled block tag
+            // plus the three callback-function name forms)
+            // that the inspector's Pattern row Go-to
+            // button uses. selectTabAndScrollToFunction
+            // falls back to a plain tab switch when none
+            // of the candidates is present.
+            editor.selectTabAndScrollToFunction(
+                "behaviors.js",
+                candidatesForObject(edit.objectId),
+            );
         }
     });
 
@@ -951,15 +994,25 @@ async function main() {
                 await runScene();
                 editor.selectTabAndScrollToFunction("behaviors.js", "$" + edit.objectId);
             } else if (edit.kind === "goToObjectInCode") {
-                // Band 1 pattern row Go-to button. Pass the
-                // labelled-block tag as a single candidate
-                // to selectTabAndScrollToFunction; if the
-                // tag isn't found in the current
-                // behaviors.js content (e.g. the user
-                // deleted the block in CodeMirror after the
-                // scene was last reloaded), the call falls
-                // back to a plain tab switch.
-                editor.selectTabAndScrollToFunction("behaviors.js", "$" + edit.objectId);
+                // Band 1 pattern row Go-to button. Per section
+                // 28's bidirectional navigation spec, the
+                // Go-to gesture targets the object's first
+                // occurrence in behaviors.js regardless of
+                // which form it takes — labelled block tag
+                // or any of the three callback-function name
+                // declarations. Pass the full candidate list
+                // so selectTabAndScrollToFunction's earliest-
+                // match logic picks whichever appears first.
+                // The Pattern row only surfaces Go-to when a
+                // labelled block exists, so the dollar-
+                // prefixed tag is always present in the file;
+                // the callback candidates let an earlier
+                // callback declaration win when the file is
+                // ordered that way.
+                editor.selectTabAndScrollToFunction(
+                    "behaviors.js",
+                    candidatesForObject(edit.objectId),
+                );
             }
         });
     }

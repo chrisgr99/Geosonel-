@@ -1,39 +1,41 @@
 /**
- * Selection-driven tag highlighting for labelled pattern
- * blocks in behaviors.js.
+ * Selection-driven source-binding highlighting for
+ * behaviors.js.
  *
- * Stage A5 of the section-28 pattern-authoring sequence.
- * A top-level $objectId: expression block in behaviors.js
- * renders its $objectId: tag (label name plus colon) in
- * accent green via the cm-pattern-active-tag CSS class
- * whenever the dollar-prefixed label matches the id of an
- * object that is currently selected on the canvas.
- * Inactive tags stay in the default name-token colour from
- * cmTheme.
+ * Stage A5 of the section-28 pattern-authoring sequence,
+ * extended to cover the full source-binding surface. The
+ * decoration paints two kinds of identifier in accent green
+ * via the cm-pattern-active-tag CSS class whenever the
+ * identifier resolves to a currently-selected canvas
+ * object:
  *
- * The match is selection-based, not scene-wide. A labelled
- * block for an unselected object stays pink even though
- * the object exists in scene.json. The green communicates
- * "this is the pattern block for the object you currently
- * have selected" \u2014 a navigational cue tying the canvas
- * focus to its corresponding source. Selecting another
- * object moves the green to its block; deselecting clears
- * all green.
+ *   - The $objectId: tag of a top-level labelled pattern
+ *     block (label name plus colon).
+ *   - The name of a top-level function declaration whose
+ *     name follows the slotName_objectId convention, where
+ *     slotName is one of hasHit, beenHit, or onTick.
  *
- * Multi-selection works the same way: every selected
- * object's labelled block(s) light up in parallel.
- * Selection of an object that has no labelled block
- * produces no green anywhere, which is also a useful cue
- * (the composer can see when an object's pattern source
- * hasn't been written yet, or when the dollar-prefixed
- * label has a typo).
+ * Both forms point at the same conceptual thing: a piece
+ * of behaviors.js source bound to a scene object. The
+ * green visually ties the canvas's current focus to the
+ * code that handles it. Inactive bindings stay in the
+ * default name-token pink.
  *
- * Duplicate labelled blocks (two blocks with the same
- * $objectId tag) both highlight when their object is
- * selected, since each is a pattern source for that
- * object from the source-tree point of view. The runtime
- * resolves duplicates per its own rule (the most recent
- * Cmd-Enter promote wins).
+ * The match is selection-based, not scene-wide. A binding
+ * for an unselected object stays pink even though the
+ * object exists in scene.json. Selecting another object
+ * moves the green to its bindings; deselecting clears all
+ * green. Multi-selection lights up every selected
+ * object's bindings in parallel.
+ *
+ * Duplicate bindings for the same object id (two labelled
+ * blocks with the same tag, or two function declarations
+ * with the same name) all highlight when their object is
+ * selected. The runtime resolves duplicates per its own
+ * rules — most-recent Cmd-Enter wins for cyclePattern;
+ * later top-level function declarations shadow earlier
+ * ones in JavaScript — but the source-tree view honestly
+ * surfaces every place the binding appears.
  *
  * The decoration recomputes on every doc change (cheap:
  * Acorn parses small files in microseconds) and on every
@@ -61,11 +63,30 @@ export const setSelectedObjectIdsEffect = StateEffect.define();
 const activeTagMark = Decoration.mark({ class: "cm-pattern-active-tag" });
 
 /**
- * Compute decorations for the labelled-block tags bound
- * to currently-selected canvas objects. Returns a
- * DecorationSet covering the $objectId: ranges (label
- * name plus colon) of blocks whose dollar-prefixed label
- * matches an id in the selection set.
+ * Slot-name prefixes for top-level callback function
+ * declarations. Each prefix matches one of section 27's
+ * Code-tab callback slots; the object id follows the
+ * trailing underscore. Sorted with the longest prefix
+ * first so the matching loop's startsWith probes don't
+ * cause beenHit to be mistaken for a name starting with
+ * the shorter onTick prefix (which doesn't actually
+ * conflict here, but keeping prefixes sorted by length is
+ * the safe convention for prefix matching).
+ *
+ * @type {Array<{prefix: string, length: number}>}
+ */
+const CALLBACK_PREFIXES = [
+    { prefix: "beenHit_", length: "beenHit_".length },
+    { prefix: "hasHit_", length: "hasHit_".length },
+    { prefix: "onTick_", length: "onTick_".length },
+];
+
+/**
+ * Compute decorations for the source bindings of currently-
+ * selected canvas objects. Returns a DecorationSet covering
+ * the $objectId: tags of matching labelled blocks plus the
+ * function-name identifiers of matching callback function
+ * declarations.
  *
  * @param {import("@codemirror/view").EditorView} view
  * @param {Set<string> | null} selectedObjectIds
@@ -94,36 +115,60 @@ function computeDecorations(view, selectedObjectIds) {
         return builder.finish();
     }
     for (const node of ast.body) {
-        if (node.type !== "LabeledStatement") continue;
-        const label = node.label;
-        if (label === null ||
-            label.type !== "Identifier" ||
-            typeof label.name !== "string") continue;
-        if (!label.name.startsWith("$")) continue;
-        const objectId = label.name.slice(1);
-        if (!selectedObjectIds.has(objectId)) continue;
-        // Find the colon between the label and the body
-        // explicitly so any whitespace between them does
-        // not become part of the styled range. The colon
-        // must exist between label.end and the
-        // LabelledStatement body's start by the JavaScript
-        // grammar; the -1 guard is defence against a
-        // malformed AST.
-        const colonPos = source.indexOf(":", label.end);
-        if (colonPos === -1) continue;
-        builder.add(label.start, colonPos + 1, activeTagMark);
+        if (node.type === "LabeledStatement") {
+            const label = node.label;
+            if (label === null ||
+                label.type !== "Identifier" ||
+                typeof label.name !== "string") continue;
+            if (!label.name.startsWith("$")) continue;
+            const objectId = label.name.slice(1);
+            if (!selectedObjectIds.has(objectId)) continue;
+            // Find the colon between the label and the body
+            // explicitly so any whitespace between them does
+            // not become part of the styled range. The colon
+            // must exist between label.end and the
+            // LabelledStatement body's start by the JavaScript
+            // grammar; the -1 guard is defence against a
+            // malformed AST.
+            const colonPos = source.indexOf(":", label.end);
+            if (colonPos === -1) continue;
+            builder.add(label.start, colonPos + 1, activeTagMark);
+        } else if (node.type === "FunctionDeclaration") {
+            const id = node.id;
+            if (id === null ||
+                id.type !== "Identifier" ||
+                typeof id.name !== "string") continue;
+            const name = id.name;
+            let objectId = null;
+            for (const cp of CALLBACK_PREFIXES) {
+                if (name.startsWith(cp.prefix)) {
+                    objectId = name.slice(cp.length);
+                    break;
+                }
+            }
+            if (objectId === null) continue;
+            if (!selectedObjectIds.has(objectId)) continue;
+            // Highlight just the function-name identifier
+            // (id.start to id.end). The "function" keyword
+            // and parameter list stay in their default
+            // syntax-highlighter colours, so only the
+            // object-binding part of the declaration reads
+            // as green.
+            builder.add(id.start, id.end, activeTagMark);
+        }
     }
     return builder.finish();
 }
 
 /**
  * Build the CodeMirror extension that maintains the
- * selection-driven tag highlight decorations. The
- * extension is a ViewPlugin holding the current selected
- * object ids; the set updates when main.js dispatches
- * setSelectedObjectIdsEffect. Doc changes trigger a
- * recompute against the existing id set (the user has
- * changed the file but the canvas selection has not).
+ * selection-driven source-binding highlight decorations.
+ * The extension is a ViewPlugin holding the current
+ * selected object ids; the set updates when main.js
+ * dispatches setSelectedObjectIdsEffect. Doc changes
+ * trigger a recompute against the existing id set (the
+ * user has changed the file but the canvas selection has
+ * not).
  *
  * @returns {import("@codemirror/state").Extension}
  */
