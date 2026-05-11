@@ -140,7 +140,8 @@ function jsonErrorPosition(message, source) {
  * Tab label overrides. Files with a friendly name listed here
  * show that label in the tab bar instead of the raw filename.
  * The filename remains the underlying identifier for storage,
- * disk-mirror, and AI editing.
+ * disk-mirror, and AI editing — only the human-facing tab
+ * text is affected here.
  *
  * scene.json shows as "Properties JSON" rather than
  * "Properties" because the Properties tab is now a virtual
@@ -148,15 +149,20 @@ function jsonErrorPosition(message, source) {
  * JSON view stays available as a fallback (and will until
  * the inspector covers every editable scene field).
  *
- * behaviors.js is the canonical v2.4 filename; behaviours.js
- * is the legacy spelling kept here as a fallback so a bundle
- * mid-migration (legacy filename still present) renders the
- * right tab label until the rename pass runs.
+ * behaviors.js and behaviours.js both show as "Code" per
+ * section 28's terminology, which treats the behaviour file
+ * as the score's source-code surface (callback functions,
+ * labelled pattern blocks) rather than naming it after the
+ * older "behaviours" concept. behaviors.js is the canonical
+ * v2.4 filename; behaviours.js is the legacy spelling kept
+ * here as a fallback so a bundle mid-migration (legacy
+ * filename still present) renders the right tab label until
+ * the rename pass runs.
  */
 const TAB_LABELS = {
     "scene.json": "Properties JSON",
-    "behaviors.js": "Behaviors",
-    "behaviours.js": "Behaviours",
+    "behaviors.js": "Code",
+    "behaviours.js": "Code",
 };
 
 /**
@@ -769,13 +775,14 @@ export class TabbedEditor {
     /**
      * Render the tab bar. The Properties tab (form inspector)
      * is virtual — it has no backing file and is rendered
-     * first regardless of bundle file order. Behaviours
-     * (behaviours.js) follows, then Properties JSON
-     * (scene.json), then any other text files in the bundle
-     * in their natural order. Pinning the order this way means
-     * the form-based Properties tab is always leftmost and
-     * the raw JSON view sits next to its companion Behaviours
-     * tab regardless of how the bundle stores its files.
+     * first regardless of bundle file order. The Code tab
+     * (behaviors.js / behaviours.js) follows, then Properties
+     * JSON (scene.json), then any other text files in the
+     * bundle in their natural order. Pinning the order this
+     * way means the form-based Properties tab is always
+     * leftmost and the raw JSON view sits next to its
+     * companion Code tab regardless of how the bundle stores
+     * its files.
      */
     _renderTabs() {
         this.tabBar.innerHTML = "";
@@ -785,12 +792,12 @@ export class TabbedEditor {
             this._renderVirtualTab(VIRTUAL_TAB_INSPECTOR, "Properties"),
         );
 
-        // File tabs in display order. Behaviors first so the
-        // composer reads behaviour declarations before the
-        // declarative scene data; Properties JSON second.
-        // Both legacy and v2.4 filenames are listed so a
-        // bundle in either state renders correctly during
-        // the migration window.
+        // File tabs in display order. Code first so the
+        // composer reads function declarations and pattern
+        // blocks before the declarative scene data;
+        // Properties JSON second. Both legacy and v2.4
+        // filenames are listed so a bundle in either state
+        // renders correctly during the migration window.
         const orderedNames = ["behaviors.js", "behaviours.js", "scene.json"];
         const renderedNames = new Set();
         for (const name of orderedNames) {

@@ -758,6 +758,23 @@ async function main() {
     canvas.setEditCallback(async (edit) => {
         if (edit.kind === "addSprite") {
             await applySceneEdit((data) => addSpriteAt(data, edit.x, edit.y));
+            // Leave the just-placed sprite selected so the
+            // user can immediately edit it — drag, tweak
+            // via the inspector, or hit Delete to undo.
+            // addSpriteAt appends to the sprites array, so
+            // the new sprite is the last entry of the
+            // freshly-loaded scene. canvas.setSelection
+            // emits selectionChanged, which flows through
+            // the normal selection-update path so the
+            // inspector and the active-tag highlight
+            // follow without any extra wiring here.
+            if (currentScene !== null && currentScene.sprites.length > 0) {
+                canvas.setSelection({
+                    sprites: [currentScene.sprites.length - 1],
+                    triggers: [],
+                    curves: [],
+                });
+            }
         } else if (edit.kind === "translateSelection") {
             // Canvas drag-end emits the same edit shape
             // the inspector emits when its Position field
