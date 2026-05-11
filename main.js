@@ -177,6 +177,21 @@ async function main() {
     /** @type {(objectId: string, expressionBody: string) => Promise<void>} */
     let handlePromotePattern = async () => {};
 
+    /**
+     * Current Scene object, refreshed after each
+     * successful runScene. Used by dispatchSelectedObjectIds
+     * to resolve canvas selection indices (which are
+     * positional into sprites/triggers/curves arrays) into
+     * the object ids needed by the Stage A5 active-tag
+     * highlight. Null before the first runScene completes,
+     * and stays null when a runScene fails (parse error,
+     * load error); the dispatcher handles the null case
+     * by emitting an empty id set.
+     *
+     * @type {import("./src/scene.js").Scene | null}
+     */
+    let currentScene = null;
+
     const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, bundle, {
         onDirtyChange: (dirty) => {
             setSavedIndicator(dirty ? "unsaved" : "saved");
@@ -363,6 +378,17 @@ async function main() {
             // is safe to call unconditionally on every
             // scene reload.
             toolbar.setCanvasSize(result.scene.canvasW, result.scene.canvasH);
+            // Stage A5: refresh the current scene reference
+            // and dispatch the canvas's current selection
+            // (resolved to object ids against the freshly-
+            // loaded scene) to the editor's active-tag
+            // highlight. Selection indices are preserved
+            // across scene reloads, so re-resolving on
+            // every reload picks up any id changes at the
+            // same indices (e.g. after an external
+            // scene.json edit).
+            currentScene = result.scene;
+            dispatchSelectedObjectIds(canvas.getSelection());
             messages.write("Scene updated.");
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
@@ -628,6 +654,47 @@ async function main() {
     });
 
     /**
+     * Resolve a canvas selection — arrays of indices into
+     * the current scene's sprites, triggers, and curves —
+     * into the corresponding set of object ids, and
+     * dispatch it to the editor so the Stage A5 active-
+     * tag highlight in behaviors.js tracks the selection.
+     * Labelled blocks whose dollar-prefixed label matches
+     * one of the resolved ids render in accent green; all
+     * others stay in the default pink.
+     *
+     * Called on every canvas selectionChanged event and
+     * after each successful runScene. Empty selection
+     * dispatches an empty set, which the ViewPlugin reads
+     * as no green anywhere. When the scene isn't loaded
+     * (initial load before the first runScene completes,
+     * or a runScene that failed to build a Scene) the
+     * dispatch is still empty — there's no id mapping to
+     * resolve indices against.
+     *
+     * @param {{sprites: number[], triggers: number[], curves: number[]}} selection
+     */
+    const dispatchSelectedObjectIds = (selection) => {
+        /** @type {Set<string>} */
+        const ids = new Set();
+        if (currentScene !== null) {
+            for (const i of selection.sprites) {
+                const obj = currentScene.sprites[i];
+                if (obj !== undefined && typeof obj.id === "string") ids.add(obj.id);
+            }
+            for (const i of selection.triggers) {
+                const obj = currentScene.triggers[i];
+                if (obj !== undefined && typeof obj.id === "string") ids.add(obj.id);
+            }
+            for (const i of selection.curves) {
+                const obj = currentScene.curves[i];
+                if (obj !== undefined && typeof obj.id === "string") ids.add(obj.id);
+            }
+        }
+        editor.setSelectedObjectIds(ids);
+    };
+
+    /**
      * Apply a mutation to the active score's scene.json,
      * refresh the editor view, and re-run the scene. The
      * mutator runs directly on the parsed scene-data object.
@@ -687,6 +754,16 @@ async function main() {
                     curves: edit.curves,
                 });
             }
+            // Stage A5: drive the Code tab's active-tag
+            // highlight from the same selection. Labelled
+            // blocks whose dollar-prefixed labels match
+            // one of the selected object ids render in
+            // accent green; everything else stays pink.
+            dispatchSelectedObjectIds({
+                sprites: edit.sprites,
+                triggers: edit.triggers,
+                curves: edit.curves,
+            });
         }
     });
 

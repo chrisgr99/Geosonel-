@@ -510,6 +510,31 @@ html, body {
     border-right: 1px solid #555555;
 }
 
+/* Stage A5 active-tag highlight. The CodeMirror decoration
+ * in patternHighlight.js marks the $objectId: tag of a
+ * labelled pattern block as cm-pattern-active-tag whenever
+ * the dollar-prefixed label matches an object id present
+ * in scene.json. The accent green (#5fc858) matches the
+ * inspector's checkbox-checked colour, the brightest of
+ * the inspector-band greens, which reads cleanly against
+ * the editor's near-black background.
+ *
+ * The descendant selector is essential: CodeMirror's
+ * syntax highlighter wraps the identifier text ($sp_xxxxx)
+ * in its own inner span carrying a colour class (pink, via
+ * contrastOverrides in cmTheme.js). That inner span's own
+ * colour overrides any inherited colour from the active-
+ * tag wrapper, so without targeting descendants the green
+ * would only paint the colon (a direct text node inside
+ * the wrapper) and the actual identifier text would stay
+ * pink. !important on top of the descendant selector
+ * keeps the green winning over the inner span's class
+ * colour, which has equal CSS specificity. */
+#editor-area .cm-pattern-active-tag,
+#editor-area .cm-pattern-active-tag * {
+    color: #5fc858 !important;
+}
+
 /* --- Property inspector --- */
 
 /* The inspector replicates the GeoSonix property editor's look

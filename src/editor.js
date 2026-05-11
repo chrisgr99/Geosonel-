@@ -29,6 +29,7 @@ import { linter, lintGutter } from "https://esm.sh/@codemirror/lint@6?deps=@code
 import * as acorn from "https://esm.sh/acorn@8";
 import { Inspector } from "./inspector.js";
 import { customDarkTheme } from "./cmTheme.js";
+import { patternHighlightExtension, setSelectedObjectIdsEffect } from "./patternHighlight.js";
 
 /**
  * Sentinel name for the virtual Properties tab. The
@@ -396,6 +397,31 @@ export class TabbedEditor {
         return f === null ? null : f.content;
     }
 
+    /**
+     * Update the editor's selected-object-id state so the
+     * Stage A5 active-tag decoration in patternHighlight.js
+     * highlights labelled blocks whose dollar-prefixed
+     * label matches one of the ids currently selected on
+     * the canvas. Dispatched to the underlying CodeMirror
+     * view as a setSelectedObjectIdsEffect; the ViewPlugin
+     * reads the new set and recomputes its DecorationSet
+     * immediately.
+     *
+     * Called by main.js on every canvas selection change
+     * and after each successful runScene, so the highlight
+     * follows clicks in real time and starts with the right
+     * state on first load. Safe to call before the view
+     * has mounted: the call is a no-op in that case.
+     *
+     * @param {Set<string>} selectedObjectIds
+     */
+    setSelectedObjectIds(selectedObjectIds) {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: setSelectedObjectIdsEffect.of(selectedObjectIds),
+        });
+    }
+
     // --- Mounting ---
 
     _mountEditor() {
@@ -450,6 +476,7 @@ export class TabbedEditor {
                 ]),
                 this._langCompartment.of(javascript()),
                 ...customDarkTheme(),
+                patternHighlightExtension(),
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         this._onDocChanged(update.state.doc.toString());
