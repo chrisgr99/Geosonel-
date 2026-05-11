@@ -2,19 +2,18 @@
  * Strudel pattern expression parsing for the cyclePattern
  * field.
  *
- * Stage 2 of the cursor-as-collider work introduces parsing
- * of the cyclePattern expression typed into Band 4 of the
- * inspector. The field accepts a JavaScript expression that
- * evaluates to a strudel Pattern: a pattern-constructor
- * function call like note("c d e f") or s("bd sn"), with
- * any chained modifiers like .fast(2), .every(4, rev),
- * .gain(0.7), and .s("piano"). The string argument inside
- * the constructor call is mini-notation; the constructor
- * functions handle the mini-parsing internally. This shape
- * is chosen so the user can express the full strudel API
- * (sound selection, modulation, repetition, alternation)
- * directly in the field rather than being limited to bare
- * mini-notation.
+ * Parses a strudel pattern expression — a JavaScript
+ * expression that evaluates to a strudel Pattern — into
+ * the fractional cycle positions of one cycle's events.
+ * The expression is a pattern-constructor function call
+ * like note("c d e f") or s("bd sn"), with any chained
+ * modifiers like .fast(2), .every(4, rev), .gain(0.7),
+ * .s("piano"). The string argument inside the constructor
+ * call is mini-notation; the constructor functions handle
+ * the mini-parsing internally. This shape lets the user
+ * express the full strudel API (sound selection,
+ * modulation, repetition, alternation) directly rather
+ * than being limited to bare mini-notation.
  *
  * Evaluation. The expression is evaluated through the
  * Function constructor in the global scope, where
@@ -24,9 +23,7 @@
  * those globals — that is, before the user has clicked
  * Load Engine in the transport bar — the parser surfaces
  * a friendly "Load Engine first" message rather than a
- * raw "note is not defined" ReferenceError. Once the
- * engine is loaded the parse runs synchronously on every
- * commit.
+ * raw "note is not defined" ReferenceError.
  *
  * Validation. A successfully-evaluated expression must
  * produce a strudel Pattern, identifiable by the presence
@@ -38,12 +35,17 @@
  * cycle and we extract their fractional begin positions
  * for downstream consumers.
  *
+ * Use site. Called by main.js's Cmd-Enter promote-pattern
+ * handler when the user presses Cmd-Enter on a labelled
+ * $objectId: expression block in the Code tab (Stage A4
+ * of the section-28 pattern-authoring sequence). On
+ * parse success the positions are logged to the GXW
+ * console and the body text is written to the matched
+ * object's cyclePattern field; on parse failure the
+ * diagnostic is logged and the scene mutation is skipped.
  * The cached parsed Pattern is not yet stored on the
- * source object. Stage 2's next sub-step will add
- * parse-on-commit caching keyed by source id; for now
- * the parse is recomputed on each commit. Stage 3 will
- * consume the cached Pattern to render diamond markers
- * at the parsed positions on curve geometry.
+ * source object; a future stage will add parse-on-promote
+ * caching for downstream marker rendering.
  */
 
 // @ts-check
@@ -177,19 +179,20 @@ function hapBoundary(hap, key) {
 
 /**
  * Format a parse result for display in the GXW console.
- * Used by main.js's inspector dispatch on every
- * cyclePattern commit to surface what the parser saw,
- * since Stage 2 has no on-canvas marker rendering yet.
+ * Used by main.js's Cmd-Enter promote-pattern handler to
+ * surface what the parser saw, since on-canvas marker
+ * rendering for the parsed positions is not yet wired.
  *
- * The original expression is intentionally not echoed in
- * the formatted line; an expression containing string
- * literals (which all useful patterns do) would otherwise
- * produce a console line with nested or unbalanced quotes
- * that is hard to read. The user can correlate the
- * console output with their typed expression via recency
- * since each Enter on the field produces one line. Stage
- * 3 retires this console output in favour of on-canvas
- * marker rendering.
+ * The original expression is intentionally not echoed
+ * in the formatted line; an expression containing
+ * string literals (which all useful patterns do) would
+ * otherwise produce a console line with nested or
+ * unbalanced quotes that is hard to read. The user can
+ * correlate the console output with their typed
+ * expression via recency since each Cmd-Enter on a
+ * labelled block produces one line. A future
+ * visualisation stage retires this console output in
+ * favour of on-canvas marker rendering.
  *
  * @param {string} _expressionString
  * @param {ParseResult} result

@@ -174,6 +174,9 @@ async function main() {
     /** @type {() => Promise<void>} */
     let runScene = async () => {};
 
+    /** @type {(objectId: string, expressionBody: string) => Promise<void>} */
+    let handlePromotePattern = async () => {};
+
     const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, bundle, {
         onDirtyChange: (dirty) => {
             setSavedIndicator(dirty ? "unsaved" : "saved");
@@ -184,6 +187,9 @@ async function main() {
             justSavedTimeout = setTimeout(() => setSavedIndicator("saved"), 1000);
         },
         onRunScene: () => { runScene(); },
+        onPromotePattern: (objectId, expressionBody) => {
+            void handlePromotePattern(objectId, expressionBody);
+        },
     });
 
     // --- Transport and audio engine ---
@@ -880,6 +886,90 @@ async function main() {
             }
         });
     }
+
+    // --- Cmd-Enter promote-pattern handler ---
+    //
+    // Stage A4 of the section-28 pattern-authoring
+    // sequence. The editor's _tryPromoteLabelledBlock
+    // detects whether the Cmd-Enter cursor sits inside a
+    // top-level $objectId: expression block in
+    // behaviors.js; if so it calls the onPromotePattern
+    // callback wired to handlePromotePattern below. The
+    // handler parses the expression, logs the result to
+    // the messages console, and on parse success writes
+    // the body text to the matched object's cyclePattern
+    // field via setCyclePatternOnSelection plus the
+    // standard applySceneEdit pipeline (parse, mutate,
+    // stringify, refresh editor, runScene).
+    //
+    // On parse failure the handler logs the diagnostic
+    // and returns without propagating; the Cmd-Enter has
+    // already been consumed by the editor, so no Run
+    // Scene falls through. On an object-not-found case
+    // (the labelled block's tag references an id that no
+    // longer exists in scene.json) the handler likewise
+    // logs and returns.
+    handlePromotePattern = async (objectId, expressionBody) => {
+        const parseResult = parsePatternToPositions(expressionBody);
+        const line = formatParseResultForConsole(expressionBody, parseResult);
+        messages.write(line, parseResult.ok ? "info" : "error");
+        if (!parseResult.ok) return;
+
+        // Look up the object by id in the current scene.json
+        // arrays to determine its kind and index, then build
+        // a synthetic single-object selection for
+        // setCyclePatternOnSelection. Parsing scene.json
+        // here is independent of applySceneEdit's own parse
+        // a few lines down; the duplication is cheap (the
+        // file is small) and keeps the not-found case
+        // observable before the edit pipeline runs.
+        const sceneFile = session.bundle.getFile("scene.json");
+        if (sceneFile === null) {
+            messages.write("No scene.json in this score.", "error");
+            return;
+        }
+        const parsed = parseScene(sceneFile.content);
+        if (!parsed.ok) {
+            messages.write(
+                `Cannot promote pattern while scene.json has a parse error: ${parsed.error}`,
+                "error",
+            );
+            return;
+        }
+        /** @type {"sprites" | "triggers" | "curves" | null} */
+        let foundKind = null;
+        let foundIndex = -1;
+        for (const kind of /** @type {const} */ (["sprites", "triggers", "curves"])) {
+            const arr = parsed.data[kind];
+            if (!Array.isArray(arr)) continue;
+            for (let i = 0; i < arr.length; i++) {
+                const entry = arr[i];
+                if (entry !== null &&
+                    typeof entry === "object" &&
+                    !Array.isArray(entry) &&
+                    entry.id === objectId) {
+                    foundKind = kind;
+                    foundIndex = i;
+                    break;
+                }
+            }
+            if (foundKind !== null) break;
+        }
+        if (foundKind === null) {
+            messages.write(
+                `Pattern promote: no object with id ${objectId} in scene.json.`,
+                "error",
+            );
+            return;
+        }
+        /** @type {{sprites: number[], triggers: number[], curves: number[]}} */
+        const selection = { sprites: [], triggers: [], curves: [] };
+        selection[foundKind].push(foundIndex);
+
+        await applySceneEdit((data) =>
+            setCyclePatternOnSelection(data, selection, expressionBody),
+        );
+    };
 
     // Escape disarms the active tool. Listening at the window
     // level means it works regardless of whether the canvas,

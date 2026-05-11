@@ -231,6 +231,7 @@ function findReferencePosition(source, candidate) {
  * @property {(dirty: boolean) => void} [onDirtyChange]
  * @property {() => void} [onSaved]
  * @property {() => void} [onRunScene]
+ * @property {(objectId: string, expressionBody: string) => void} [onPromotePattern]
  */
 
 export class TabbedEditor {
@@ -249,6 +250,7 @@ export class TabbedEditor {
         this.onDirtyChange = callbacks.onDirtyChange ?? (() => {});
         this.onSaved = callbacks.onSaved ?? (() => {});
         this.onRunScene = callbacks.onRunScene ?? (() => {});
+        this.onPromotePattern = callbacks.onPromotePattern ?? (() => {});
 
         /** @type {string | null} */
         this.activeName = null;
@@ -407,6 +409,14 @@ export class TabbedEditor {
             {
                 key: "Mod-Enter",
                 run: () => {
+                    // Stage A4: if the cursor sits inside a
+                    // top-level labelled pattern block in
+                    // behaviors.js, promote the block's
+                    // expression body to the named object's
+                    // cyclePattern via the onPromotePattern
+                    // callback. Otherwise fall through to the
+                    // existing Run Scene gesture.
+                    if (this._tryPromoteLabelledBlock()) return true;
                     this.onRunScene();
                     return true;
                 },
@@ -627,6 +637,81 @@ export class TabbedEditor {
 
         this._renderTabs();
         this.view.focus();
+    }
+
+    /**
+     * Detect whether the cursor in the active tab is inside
+     * a top-level labelled pattern block, and if so emit
+     * the onPromotePattern callback with the block's
+     * objectId and expression body text. The labelled-
+     * statement form is $objectId: expression — a JavaScript
+     * LabeledStatement whose label name starts with a dollar
+     * character and whose body is an ExpressionStatement.
+     * The objectId passed to the callback is the label name
+     * minus its leading dollar; the expression body is
+     * sliced from the source text so the user's original
+     * whitespace and formatting carry through.
+     *
+     * Active only on behaviors.js / behaviours.js. The
+     * labelled-statement convention is part of the behaviour
+     * file's authoring surface per section 28; other tabs
+     * (the virtual inspector, scene.json, any additional
+     * text files) never trigger pattern promotion.
+     *
+     * Returns true iff a labelled block was found and the
+     * callback was emitted. The Mod-Enter handler uses the
+     * return value to decide whether to consume the keypress
+     * (true) or fall through to onRunScene (false). A
+     * whole-file Acorn parse failure falls through to
+     * onRunScene as well, because that path will surface the
+     * syntax error via its existing load-fail mechanism.
+     *
+     * @returns {boolean}
+     */
+    _tryPromoteLabelledBlock() {
+        if (this.view === null) return false;
+        if (this.activeName !== "behaviors.js" &&
+            this.activeName !== "behaviours.js") return false;
+        const source = this.view.state.doc.toString();
+        const cursorPos = this.view.state.selection.main.head;
+        let ast;
+        try {
+            ast = acorn.parse(source, {
+                ecmaVersion: 2022,
+                sourceType: "script",
+                allowReturnOutsideFunction: true,
+                locations: false,
+            });
+        } catch (err) {
+            // Whole-file syntax error: fall through to the
+            // Run Scene gesture, whose load-fail path
+            // surfaces the diagnostic.
+            return false;
+        }
+        if (ast === null || !Array.isArray(ast.body)) return false;
+        for (const node of ast.body) {
+            if (node.type !== "LabeledStatement") continue;
+            // Acorn's start/end are character offsets into
+            // the source string. Inclusive on both ends so a
+            // cursor immediately after the block's closing
+            // punctuation still counts as inside.
+            if (cursorPos < node.start || cursorPos > node.end) continue;
+            const label = node.label;
+            if (label === null ||
+                label.type !== "Identifier" ||
+                typeof label.name !== "string") continue;
+            if (!label.name.startsWith("$")) continue;
+            const body = node.body;
+            if (body === null ||
+                body.type !== "ExpressionStatement") continue;
+            const expr = body.expression;
+            if (expr === null) continue;
+            const objectId = label.name.slice(1);
+            const expressionText = source.slice(expr.start, expr.end);
+            this.onPromotePattern(objectId, expressionText);
+            return true;
+        }
+        return false;
     }
 
     /**
