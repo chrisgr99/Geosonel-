@@ -525,6 +525,19 @@ html, body {
 .inspector-pane {
     color: #d8d4cc;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+    height: 100%;
+}
+
+/* The panel is a vertical stack of bands followed by a
+ * bottom spacer. min-height: 100% lets the panel reach
+ * the inspector-area's bottom even when the bands' natural
+ * heights don't fill it; when they do overfill it, the
+ * panel grows past the viewport and inspector-area's
+ * overflow-y handles scrolling. */
+.inspector-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
 }
 
 .insp-title-bar {

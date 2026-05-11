@@ -753,18 +753,19 @@ async function main() {
                     setColorOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCyclePattern") {
-                // Stage 2 of the cursor-as-collider work:
-                // parse the cyclePattern through @strudel/mini
-                // and log the computed fractional positions to
-                // the GXW console. Visible feedback that the
-                // strudel parser is wired up and producing real
-                // queryArc output, since Stage 2 does not yet
-                // render markers on the canvas. Empty patterns
-                // skip the log so clearing the field does not
-                // produce a console line. Stage 3 will replace
-                // the console output with on-canvas diamond
-                // markers; the log line stays for now as a
-                // belt-and-braces validation surface.
+                // Pattern-edit dispatch. Currently dormant:
+                // Stage A1 of the pattern-authoring pivot
+                // removed the inspector's Band 4 editor, so
+                // nothing in the current UI emits this edit
+                // kind. The branch stays because Stage A4
+                // (Cmd-Enter routing in the Code tab) will
+                // re-introduce a path that emits it from a
+                // labelled-statement block. The parse-and-
+                // log step gives the GXW console a visible
+                // confirmation line for each committed
+                // pattern, alongside the actual scene
+                // mutation that propagates the new value to
+                // the object's cyclePattern field.
                 const patternValue = String(edit.value ?? "");
                 if (patternValue.trim() !== "") {
                     const parseResult = parsePatternToPositions(patternValue);

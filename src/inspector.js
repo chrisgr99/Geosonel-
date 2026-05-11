@@ -12,15 +12,14 @@
  *
  * Cursor-as-collider stage. Inspector renders Bands 1
  * (Identity), 2 (Geometry / visual), and 3 (Callback
- * slots), plus an active Band 4 carrying the
- * cyclePattern editor as a single-line contenteditable
- * surface (Stage 2 of the cursor-as-collider work will
- * upgrade it to a CodeMirror instance with parse-as-
- * you-type validation). Band 3 exposes three Code-tab
- * callback slots (hasHit, beenHit, onTick) defined in
- * section 27 of DESIGN.md; the cycle slot's gate is
- * derived from cursor extents and mute (cursor-as-
- * collider model) so it has no Band 3 row of its own.
+ * slots). Band 3 exposes three Code-tab callback slots
+ * (hasHit, beenHit, onTick) defined in sections 27 and
+ * 28 of DESIGN.md; the cycle slot has no Band 3 row at
+ * this milestone (Stage A3 of the pattern-authoring
+ * pivot will add a pattern row with Create / Go-to that
+ * navigates into the Code tab where labelled-statement
+ * blocks live). The canCycle gate is derived from
+ * cursor extents and mute (cursor-as-collider model).
  * The Create and Go-to buttons on the three slot rows
  * are operative.
  *
@@ -79,27 +78,22 @@
  * Default proposed name when the field is empty is
  * slotName_objectId, e.g. onTick_sp_a3f7.
  *
- * Band 4 — cyclePattern editor. The active home for
- * the strudel mini-notation pattern that fires when
- * the source has cursor extents and is unmuted (per
- * the cursor-as-collider model). One row: a "pattern"
- * label and a wide editable field. Stage 1 lands the
- * editor as a single-line contenteditable surface
- * with an identity validator that commits any input
- * as ok. Stage 2 will swap the surface for a
- * CodeMirror instance and add parse-as-you-type
- * validation that hard-rejects unparseable patterns at
- * commit time, with modifier-context warnings rendered
- * as soft errors. The cyclePattern is editable for any
- * non-empty selection, including triggers (whose
- * patterns stay editable for future Tier 5 collision-
- * firing).
+ * cyclePattern field. The schema field exists on every
+ * source but is not editable through the inspector at
+ * this milestone. Stage A1 of the pattern-authoring
+ * pivot removed the inline Band 4 editor; Stage A3 will
+ * add a Band 3 pattern row with Create / Go-to button
+ * navigating into the Code tab, where labelled-statement
+ * blocks (`$objectId: expression`) act as the authoring
+ * surface per section 28. Until Stage A3 lands, existing
+ * cyclePattern values in scene.json keep firing through
+ * the runtime but are read-only from the UI's
+ * perspective.
  *
- * Stage 1 inert pieces. The function-name fields and
- * the cyclePattern field accept any text without
- * validation. A future stage will add
- * validateFunctionName for the three function fields
- * and the strudel parser for cyclePattern.
+ * Stage 1 inert pieces. The function-name fields
+ * accept any text without validation. A future stage
+ * will add validateFunctionName for the three function
+ * fields.
  *
  * Edit lifecycle. Editable fields share a validator-driven
  * commit lifecycle: hard errors squiggle red and refuse to
@@ -322,7 +316,6 @@ export class Inspector {
         panel.appendChild(this._buildBandIdentity(ctx));
         panel.appendChild(this._buildBandGeometry(ctx));
         panel.appendChild(this._buildBandCallbackSlots(ctx));
-        panel.appendChild(this._buildBandCodeMirror(ctx));
 
         // Bottom spacer. Pushes the last band's fields up by
         // about two row heights so the macOS dock doesn't
@@ -755,20 +748,6 @@ export class Inspector {
         const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
             const candidate = el.textContent ?? "";
             const result = opts.validator(candidate);
-            // TEMPORARY DEBUG: trace cyclePattern commits to
-            // diagnose the second-edit-not-detected issue.
-            // Remove once the bug is identified.
-            if (opts.editKind === "setCyclePattern") {
-                console.log("[cyclePattern tryCommit]",
-                    "mode:", mode,
-                    "candidate:", JSON.stringify(candidate),
-                    "opts.value:", JSON.stringify(opts.value),
-                    "result.kind:", result.kind,
-                    "result.value:", JSON.stringify(result.value),
-                    "committed:", committed,
-                    "diff:", result.value !== opts.value,
-                );
-            }
             if (result.kind === "hard") {
                 if (mode === "blur") {
                     // Silently revert: an abandoned bad value
@@ -797,14 +776,6 @@ export class Inspector {
                 }
             }
         };
-
-        // TEMPORARY DEBUG: trace cyclePattern field creation.
-        if (opts.editKind === "setCyclePattern") {
-            console.log("[cyclePattern field built]",
-                "opts.value:", JSON.stringify(opts.value),
-                "el.textContent:", JSON.stringify(el.textContent),
-            );
-        }
 
         el.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
@@ -1197,14 +1168,16 @@ export class Inspector {
      * cursor-as-collider reshape: hasHit, beenHit, onTick.
      * Each row carries a row label, a Can-X checkbox, a
      * function-name field, and a Create or Go-to button.
-     * The cycle slot has no Band 3 row of its own; the
-     * cyclePattern lives in the Band 4 CodeMirror surface,
-     * the canCycle gate is gone (cursor presence is derived
-     * from cursor extents and mute), and the cycle duration
-     * (beatsPerCycle) field has moved to Band 1. Every row
-     * activates for any non-empty selection regardless of
-     * kinds, since the slot vocabulary is shared across
-     * curves, triggers, and sprites.
+     * The cycle slot has no Band 3 row of its own at this
+     * milestone; Stage A3 of the pattern-authoring pivot
+     * will add a pattern row with Create / Go-to that
+     * navigates into the Code tab. The canCycle gate is
+     * gone (cursor presence is derived from cursor extents
+     * and mute), and the cycle duration (beatsPerCycle)
+     * field has moved to Band 1. Every row activates for
+     * any non-empty selection regardless of kinds, since
+     * the slot vocabulary is shared across curves,
+     * triggers, and sprites.
      *
      * Read binding aggregates each field across the entire
      * selection (objs.all). Multi-select disagreement
@@ -1316,55 +1289,6 @@ export class Inspector {
 
             band.appendChild(r);
         }
-
-        return band;
-    }
-
-    /**
-     * Band 4 — cyclePattern editor. The active home for
-     * the strudel mini-notation pattern that fires when
-     * the source has cursor extents and is unmuted (per
-     * the cursor-as-collider model). Stage 1 lands the
-     * editor as a single-line contenteditable surface
-     * with an identity validator; Stage 2 will swap the
-     * surface for a CodeMirror instance and add
-     * parse-as-you-type validation that hard-rejects
-     * unparseable patterns at commit time. The
-     * cyclePattern is editable for any non-empty
-     * selection, including triggers (whose patterns
-     * stay editable for future Tier 5 collision-firing).
-     *
-     * @param {ReturnType<typeof buildSelectionContext>} ctx
-     */
-    _buildBandCodeMirror(ctx) {
-        const band = document.createElement("div");
-        band.className = "insp-band";
-
-        const objs = selectedObjects(this._scene, this._selection);
-        const patternActive = ctx.total > 0;
-        const cyclePatternAgg = aggregateString(objs.all, "cyclePattern");
-
-        // Identity validator: every input passes through
-        // as ok with no canonical transformation. Stage 2
-        // will swap this for the strudel mini-notation
-        // parser, with parse failures classified as hard
-        // errors and modifier-context warnings as soft.
-        const inertOk = (/** @type {string} */ c) =>
-            ({ kind: /** @type {"ok"} */ ("ok"), value: c });
-
-        const r1 = mkRow();
-        r1.appendChild(mkLabel("pattern", {
-            width: W.leftLabel,
-            disabled: !patternActive,
-        }));
-        r1.appendChild(this._buildEditableField({
-            value: cyclePatternAgg === "varies" ? "" : cyclePatternAgg,
-            width: W.callbackField,
-            editable: patternActive,
-            validator: inertOk,
-            editKind: "setCyclePattern",
-        }));
-        band.appendChild(r1);
 
         return band;
     }
