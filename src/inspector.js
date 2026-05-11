@@ -14,16 +14,17 @@
  * (Identity), 2 (Geometry / visual), and 3 (Callback
  * slots). Band 3 exposes three Code-tab callback slots
  * (hasHit, beenHit, onTick) defined in sections 27 and
- * 28 of DESIGN.md; the cycle slot has no Band 3 row at
- * this milestone (Stage A3 of the pattern-authoring
- * pivot will add a pattern row with Create / Go-to that
- * navigates into the Code tab where labelled-statement
- * blocks live). The canCycle gate is derived from
- * cursor extents and mute (cursor-as-collider model).
- * The Create and Go-to buttons on the three slot rows
- * are operative.
+ * 28 of DESIGN.md; each row carries a Can-X checkbox,
+ * a function-name field, and a Create or Go-to button.
+ * Band 1's bottom row is the cycle-pattern authoring
+ * row: a static "Pattern for This Object" label plus
+ * one button that reads either "Create $id" or "Go to
+ * $id" depending on whether a labelled block for the
+ * selected object exists in behaviors.js. The canCycle
+ * gate is derived from cursor extents and mute
+ * (cursor-as-collider model).
  *
- * Band 1 — Identity. Two rows. Row 1: Object ID
+ * Band 1 — Identity. Three rows. Row 1: Object ID
  * (read-only, greyed for multi-select), Mute (editable
  * for any non-empty selection), Hide (curve-only,
  * greyed when the selection contains no curves). Row 2
@@ -32,10 +33,19 @@
  * editable number between the label and the units. The
  * cycle duration field is universal across kinds but
  * greys for trigger-only selections since triggers
- * cannot self-fire under the cursor-as-collider model. The
- * user-typed Name field that earlier inspector versions
- * exposed has been dropped; the schema field stays in
- * place for future re-surfacing.
+ * cannot self-fire under the cursor-as-collider model.
+ * Row 3 is the pattern row: a static "Pattern for
+ * This Object" label plus one button whose text
+ * incorporates the labelled-block tag the button
+ * targets. With a single object selected the button
+ * reads "Create $id" when no labelled block for the
+ * selected object exists in behaviors.js, or "Go to
+ * $id" when one does. Multi-select and empty
+ * selections grey the row and shorten the button text
+ * to just "Create" with no identifier.
+ * The user-typed Name field that earlier inspector
+ * versions exposed has been dropped; the schema field
+ * stays in place for future re-surfacing.
  *
  * Band 2 — Geometry / visual. Position is universal (any
  * non-empty selection); Curve Size W/H and Curve
@@ -79,16 +89,18 @@
  * slotName_objectId, e.g. onTick_sp_a3f7.
  *
  * cyclePattern field. The schema field exists on every
- * source but is not editable through the inspector at
- * this milestone. Stage A1 of the pattern-authoring
- * pivot removed the inline Band 4 editor; Stage A3 will
- * add a Band 3 pattern row with Create / Go-to button
- * navigating into the Code tab, where labelled-statement
- * blocks (`$objectId: expression`) act as the authoring
- * surface per section 28. Until Stage A3 lands, existing
- * cyclePattern values in scene.json keep firing through
- * the runtime but are read-only from the UI's
- * perspective.
+ * source but is not directly editable through the
+ * inspector. Stage A3 of the pattern-authoring pivot
+ * added the pattern row at the bottom of Band 1, whose
+ * Create / Go-to button navigates into the Code tab
+ * where labelled-statement blocks of the form
+ * $objectId: expression act as the authoring surface
+ * per section 28. Stage A4 will land Cmd-Enter routing
+ * that promotes a labelled block's expression body to
+ * the named object's cyclePattern field in scene.json;
+ * until then, existing cyclePattern values keep firing
+ * through the runtime but the Code-tab blocks are the
+ * place to draft and revise.
  *
  * Stage 1 inert pieces. The function-name fields
  * accept any text without validation. A future stage
@@ -133,8 +145,10 @@
  *   - Color is active when sprites or triggers are present;
  *     a curve-only selection greys it.
  *   - Band 3 callback slots are universal: every row
- *     activates for any non-empty selection regardless of
- *     kinds.
+ *     activates for any non-empty selection regardless
+ *     of kinds.
+ *   - Band 1's pattern row activates only for single-
+ *     object selections.
  *
  * The Inspector exposes setSelection(), setScene(), and
  * setEditCallback(); main.js wires the three together so
@@ -374,15 +388,16 @@ export class Inspector {
     }
 
     /**
-     * Band 1 — Identity. Object ID is read-only and greyed
-     * for multi-select; Mute is editable for any non-empty
-     * selection and defaults to off (false = not muted);
-     * Hide is curve-only and greyed when the selection
-     * contains no curves. The user-typed Name field that
-     * earlier versions of the inspector exposed has been
-     * dropped under the cursor-as-collider reshape; the
-     * schema field stays in place for future re-surfacing,
-     * but only the system-assigned id is shown.
+     * Band 1 — Identity. Three rows. Row 1: Object ID
+     * is read-only and greyed for multi-select; Mute is
+     * editable for any non-empty selection and defaults
+     * to off (false = not muted); Hide is curve-only and
+     * greyed when the selection contains no curves. The
+     * user-typed Name field that earlier versions of the
+     * inspector exposed has been dropped under the
+     * cursor-as-collider reshape; the schema field stays
+     * in place for future re-surfacing, but only the
+     * system-assigned id is shown.
      *
      * Row 2 is the cycle duration row, which reads as
      * "Cycles In [N] beats" with the small numeric field
@@ -394,6 +409,26 @@ export class Inspector {
      * trigger-only selections since triggers cannot self-
      * fire under the cursor-as-collider model and their
      * cycle counter is internal-only.
+     *
+     * Row 3 is the pattern row: a static "Pattern for
+     * This Object" label plus one button whose text
+     * incorporates the labelled-block tag the button
+     * targets. With a single object selected the button
+     * reads "Create $id" when no labelled block for the
+     * selected object exists in behaviors.js, or "Go to
+     * $id" when one does. Multi-select and empty
+     * selections grey the row and shorten the button
+     * text to just "Create" with no identifier.
+     * Existence check is strictly labelled-block-based:
+     * scene.labelledBlocks is scanned for an entry
+     * whose objectId matches the selected object's id.
+     * The button routes through two edit kinds:
+     * createPatternBlock when no block exists (scaffolds
+     * $id: sound("") at the end of behaviors.js via
+     * scaffoldPatternBlock) and goToObjectInCode when
+     * one does (scrolls the Code tab to the block's
+     * declaration line).
+     *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildBandIdentity(ctx) {
@@ -476,6 +511,67 @@ export class Inspector {
         }));
         r2.appendChild(mkUnits("beats", { disabled: !cycleDurationActive }));
         band.appendChild(r2);
+
+        // Row 3: pattern row. Active only for single-
+        // object selections; multi-select and empty
+        // selections grey the row. Existence check is
+        // strictly labelled-block-based.
+        const patternRowActive = ctx.isSingle && objs.all.length === 1;
+        const patternObj = patternRowActive ? objs.all[0] : null;
+        let labelledBlockExists = false;
+        if (patternObj !== null && this._scene !== null) {
+            const blocks = this._scene.labelledBlocks;
+            labelledBlockExists = Array.isArray(blocks)
+                && blocks.some((b) => b.objectId === patternObj.id);
+        }
+
+        const r3 = mkRow();
+        // The left label uses an inline width wider
+        // than W.leftLabel (78px) since "Pattern for
+        // This Object" doesn't fit at that width. Not
+        // promoted to a W constant since this row is
+        // the only use; the longer label pushes the
+        // button right but the row stays visually
+        // balanced with the rows above.
+        r3.appendChild(mkLabel("Pattern for This Object", {
+            width: 160,
+            disabled: !patternRowActive,
+        }));
+
+        const patternButton = document.createElement("button");
+        patternButton.className = "insp-btn-create";
+        if (!patternRowActive) patternButton.classList.add("disabled");
+
+        // Button text varies with state. Single-object
+        // selection shows the labelled-block tag the
+        // button will create or jump to; empty or multi-
+        // select shows just the verb "Create" since no
+        // specific identifier applies.
+        if (patternObj !== null) {
+            const tag = "$" + patternObj.id;
+            patternButton.textContent = (labelledBlockExists ? "Go to " : "Create ") + tag;
+        } else {
+            patternButton.textContent = "Create";
+        }
+
+        if (patternObj !== null) {
+            const objId = patternObj.id;
+            patternButton.addEventListener("click", () => {
+                if (labelledBlockExists) {
+                    this._emitEdit({
+                        kind: "goToObjectInCode",
+                        objectId: objId,
+                    });
+                } else {
+                    this._emitEdit({
+                        kind: "createPatternBlock",
+                        objectId: objId,
+                    });
+                }
+            });
+        }
+        r3.appendChild(patternButton);
+        band.appendChild(r3);
 
         return band;
     }
@@ -1164,37 +1260,36 @@ export class Inspector {
     }
 
     /**
-     * Band 3 — Callback slots. Three rows after the
-     * cursor-as-collider reshape: hasHit, beenHit, onTick.
-     * Each row carries a row label, a Can-X checkbox, a
-     * function-name field, and a Create or Go-to button.
-     * The cycle slot has no Band 3 row of its own at this
-     * milestone; Stage A3 of the pattern-authoring pivot
-     * will add a pattern row with Create / Go-to that
-     * navigates into the Code tab. The canCycle gate is
-     * gone (cursor presence is derived from cursor extents
-     * and mute), and the cycle duration (beatsPerCycle)
-     * field has moved to Band 1. Every row activates for
-     * any non-empty selection regardless of kinds, since
-     * the slot vocabulary is shared across curves,
-     * triggers, and sprites.
+     * Band 3 — Callback slots. Three rows: hasHit,
+     * beenHit, onTick. Each row carries a row label, a
+     * Can-X checkbox, a function-name field, and a
+     * Create or Go-to button. Every row activates for
+     * any non-empty selection regardless of kinds,
+     * since the slot vocabulary is shared across
+     * curves, triggers, and sprites. The canCycle gate
+     * is gone (cursor presence is derived from cursor
+     * extents and mute), the cycle duration
+     * (beatsPerCycle) field lives on Band 1's second
+     * row, and the cycle-pattern authoring row is the
+     * third row of Band 1.
      *
-     * Read binding aggregates each field across the entire
-     * selection (objs.all). Multi-select disagreement
-     * renders blank for the function-name fields and as a
-     * tri-state varies-checkbox for the Can-X bools.
-     * Editing a blank-varies field commits the typed value
-     * to every selected object regardless of kind.
+     * Read binding aggregates each field across the
+     * entire selection (objs.all). Multi-select
+     * disagreement renders blank for the function-name
+     * fields and as a tri-state varies-checkbox for the
+     * Can-X bools. Editing a blank-varies field commits
+     * the typed value to every selected object
+     * regardless of kind.
      *
      * Create / Go-to buttons. Disabled when the slot's
      * Can-X checkbox is unchecked or when the selection
      * isn't single-object. When checked and a single
-     * object is selected, the displayed function name (or
-     * the proposed default when the field is empty) is
-     * looked up in scene.functionMap; found triggers Go-to,
-     * not-found triggers Create. The function-name field
-     * renders muted when its text doesn't resolve in
-     * functionMap.
+     * object is selected, the displayed function name
+     * (or the proposed default when the field is empty)
+     * is looked up in scene.functionMap; found triggers
+     * Go-to, not-found triggers Create. The function-
+     * name field renders muted when its text doesn't
+     * resolve in functionMap.
      *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */

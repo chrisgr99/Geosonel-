@@ -109,6 +109,7 @@ import {
     setCanTickOnSelection,
     setOnTickFunctionOnSelection,
     scaffoldCallbackSlotFunction,
+    scaffoldPatternBlock,
     setCanvasW,
     setCanvasH,
 } from "./src/sceneEditor.js";
@@ -847,6 +848,35 @@ async function main() {
                 editor.selectTabAndScrollToFunction("behaviors.js", edit.proposedName);
             } else if (edit.kind === "goToFunction") {
                 editor.selectTabAndScrollToFunction("behaviors.js", edit.functionName);
+            } else if (edit.kind === "createPatternBlock") {
+                // Band 1 pattern row Create button. Append
+                // a $id: sound("") stub at the end of
+                // behaviors.js, refresh the editor view,
+                // run the scene (so the loader picks up
+                // the new labelledBlocks entry), then
+                // switch to behaviors.js and scroll to the
+                // new stub so the user can fill in the
+                // pattern expression.
+                const behaviorsFile = session.bundle.getFile("behaviors.js");
+                if (behaviorsFile === null) {
+                    messages.write("No behaviors.js in this score.", "error");
+                    return;
+                }
+                const { newContent } = scaffoldPatternBlock(behaviorsFile.content, edit.objectId);
+                session.bundle.updateContent("behaviors.js", newContent);
+                editor.refreshActiveTabFromBundle();
+                await runScene();
+                editor.selectTabAndScrollToFunction("behaviors.js", "$" + edit.objectId);
+            } else if (edit.kind === "goToObjectInCode") {
+                // Band 1 pattern row Go-to button. Pass the
+                // labelled-block tag as a single candidate
+                // to selectTabAndScrollToFunction; if the
+                // tag isn't found in the current
+                // behaviors.js content (e.g. the user
+                // deleted the block in CodeMirror after the
+                // scene was last reloaded), the call falls
+                // back to a plain tab switch.
+                editor.selectTabAndScrollToFunction("behaviors.js", "$" + edit.objectId);
             }
         });
     }

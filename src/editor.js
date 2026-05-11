@@ -20,16 +20,15 @@
 // @ts-check
 
 import { EditorView, keymap, lineNumbers } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
-import { EditorState, Prec, Compartment } from "https://esm.sh/@codemirror/state@6.5.2";
+import { EditorState, Compartment } from "https://esm.sh/@codemirror/state@6.5.2";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
-import { indentOnInput, indentUnit, bracketMatching, HighlightStyle, syntaxHighlighting } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
+import { indentOnInput, indentUnit, bracketMatching } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
 import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6?deps=@codemirror/state@6.5.2";
 import { json } from "https://esm.sh/@codemirror/lang-json@6?deps=@codemirror/state@6.5.2";
 import { linter, lintGutter } from "https://esm.sh/@codemirror/lint@6?deps=@codemirror/state@6.5.2";
-import { oneDark } from "https://esm.sh/@codemirror/theme-one-dark@6?deps=@codemirror/state@6.5.2";
-import { tags as t } from "https://esm.sh/@lezer/highlight@1";
 import * as acorn from "https://esm.sh/acorn@8";
 import { Inspector } from "./inspector.js";
+import { customDarkTheme } from "./cmTheme.js";
 
 /**
  * Sentinel name for the virtual Properties tab. The
@@ -40,35 +39,6 @@ import { Inspector } from "./inspector.js";
  * area and shows the inspector area.
  */
 const VIRTUAL_TAB_INSPECTOR = "__inspector__";
-
-/**
- * Targeted overrides to oneDark. Everything not listed here
- * keeps oneDark's default colour. Iterating by exception:
- * only the specific tokens the user finds hard to read get
- * shifted.
- *
- * Comments — pushed to the same warm gray as the message area
- * so commented-out code and documentation read with
- * consistent brightness across the app.
- *
- * Property names and other coral-group tokens (oneDark uses
- * a saturated coral-red for these by default) — shifted to a
- * lighter pink with more white mixed in, since saturated red
- * reads poorly for the composer.
- */
-const contrastOverrides = HighlightStyle.define([
-    { tag: t.comment, color: "#c8c0b0" },
-    { tag: t.lineComment, color: "#c8c0b0" },
-    { tag: t.blockComment, color: "#c8c0b0" },
-    { tag: t.docComment, color: "#c8c0b0" },
-    { tag: t.meta, color: "#c8c0b0" },
-
-    { tag: t.propertyName, color: "#ff8595" },
-    { tag: t.name, color: "#ff8595" },
-    { tag: t.character, color: "#ff8595" },
-    { tag: t.macroName, color: "#ff8595" },
-    { tag: t.deleted, color: "#ff8595" },
-]);
 
 /**
  * CodeMirror linter that runs the source through Acorn's
@@ -208,6 +178,51 @@ function extensionsForFile(name) {
         return { language: json(), linter: jsonSyntaxLinter };
     }
     return { language: javascript(), linter: jsSyntaxLinter };
+}
+
+/**
+ * Find the start position of a top-level reference in a
+ * source file. Two reference forms are supported, dispatched
+ * by their leading character:
+ *
+ *   - A candidate starting with a dollar character is
+ *     treated as a labelled-statement tag. A line-anchored
+ *     regex matches the candidate followed by optional
+ *     whitespace and a colon, locating dollar-prefixed
+ *     labelled blocks like "$sp_a3f7:" used as pattern
+ *     authoring blocks per section 28.
+ *
+ *   - Any other identifier-shaped candidate is treated as
+ *     a function name. A line-anchored regex matches the
+ *     word "function" followed by whitespace and the
+ *     candidate followed by an opening parenthesis,
+ *     locating top-level function declarations.
+ *
+ * Returns -1 when the candidate is not a valid JS
+ * identifier shape (defence in depth against regex
+ * metacharacters) or when no match is found. Both regexes
+ * anchor at line start to avoid spurious matches inside
+ * expression bodies or string literals.
+ *
+ * @param {string} source
+ * @param {string} candidate
+ * @returns {number}
+ */
+function findReferencePosition(source, candidate) {
+    if (typeof candidate !== "string") return -1;
+    if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(candidate)) return -1;
+    let re;
+    if (candidate[0] === "$") {
+        // Escape the leading dollar for the regex (where it
+        // otherwise anchors to end-of-string). The rest of
+        // the identifier is already safe by the shape check
+        // above.
+        re = new RegExp("^\\" + candidate + "\\s*:", "m");
+    } else {
+        re = new RegExp("^function\\s+" + candidate + "\\s*\\(", "m");
+    }
+    const match = re.exec(source);
+    return match === null ? -1 : match.index;
 }
 
 
@@ -424,8 +439,7 @@ export class TabbedEditor {
                     ...historyKeymap,
                 ]),
                 this._langCompartment.of(javascript()),
-                oneDark,
-                Prec.highest(syntaxHighlighting(contrastOverrides)),
+                ...customDarkTheme(),
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         this._onDocChanged(update.state.doc.toString());
@@ -519,15 +533,26 @@ export class TabbedEditor {
     }
 
     /**
-     * Switch to the named tab and scroll the named top-level
-     * function's declaration line to the top of the editor's
-     * visible region. Used after Create scaffolds a new stub
-     * (so the user sees the new function ready for editing)
-     * and after the Go-to button on a slot whose function
-     * already exists. The CodeMirror cursor is moved to the
-     * declaration line so a subsequent keystroke lands at
-     * the right place without further mouse movement, and
-     * the editor takes focus so the user can begin typing.
+     * Switch to the named tab and scroll a top-level
+     * reference to the top of the editor's visible region.
+     * Used after Create scaffolds a new declaration (so the
+     * user sees the new content ready for editing) and
+     * after Go-to on any Band 3 slot whose target already
+     * exists. The CodeMirror cursor is moved to the matched
+     * line so a subsequent keystroke lands at the right
+     * place, and the editor takes focus so the user can
+     * begin typing.
+     *
+     * The target can be either a single string or an array
+     * of strings. The single-string form is what current
+     * callers use; the array form picks the earliest match
+     * across multiple candidates and is supported for cases
+     * that may need it. Each candidate is dispatched by
+     * its leading character: a dollar-prefixed name
+     * matches a labelled-statement tag, any other
+     * identifier-shaped name matches a top-level function
+     * declaration. When multiple candidates match, the
+     * earliest match in the file wins.
      *
      * Combines the doc replacement, language switch, cursor
      * move, and scroll into one dispatch so all four happen
@@ -536,16 +561,16 @@ export class TabbedEditor {
      * before measurement, which can land a fraction of a
      * line off.
      *
-     * If the named function isn't found in the file (e.g.
-     * the user deleted it in CodeMirror after the scene was
+     * If no candidate matches in the file (e.g. the user
+     * deleted the target in CodeMirror after the scene was
      * last reloaded), the call falls back to plain selectTab
      * so the user still sees the file rather than getting a
      * silent no-op.
      *
      * @param {string} name  File name (e.g. "behaviors.js").
-     * @param {string} functionName  Top-level function name to locate.
+     * @param {string | string[]} target  Function name, dollar-prefixed labelled-statement tag, or an array of either.
      */
-    selectTabAndScrollToFunction(name, functionName) {
+    selectTabAndScrollToFunction(name, target) {
         if (name === VIRTUAL_TAB_INSPECTOR) {
             this.selectTab(name);
             return;
@@ -556,17 +581,22 @@ export class TabbedEditor {
             return;
         }
 
-        // Build the target position for the function name.
-        // The validateFunctionName guard ensures the name is
-        // a JS identifier with no regex metacharacters, so
-        // direct interpolation is safe; defence-in-depth
-        // re-checks the pattern here so a malformed name
-        // can't reach the regex constructor.
+        // Walk the candidate list and pick the earliest
+        // match. Each candidate is dispatched by leading
+        // character: dollar-prefixed candidates match
+        // labelled-statement tags, others match function
+        // declarations. findReferencePosition gates each
+        // candidate on a JS identifier shape check for
+        // defence in depth against regex metacharacters in
+        // any path that has not run a stricter validator.
+        const candidates = Array.isArray(target) ? target : [target];
         let targetPos = -1;
-        if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(functionName)) {
-            const re = new RegExp(`^function\\s+${functionName}\\s*\\(`, "m");
-            const match = re.exec(file.content);
-            if (match !== null) targetPos = match.index;
+        for (const candidate of candidates) {
+            const pos = findReferencePosition(file.content, candidate);
+            if (pos === -1) continue;
+            if (targetPos === -1 || pos < targetPos) {
+                targetPos = pos;
+            }
         }
 
         if (targetPos === -1) {

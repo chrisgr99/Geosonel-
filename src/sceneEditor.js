@@ -1684,6 +1684,47 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
     return { newContent: `${trimmed}${separator}${stub}`, alreadyExists: false };
 }
 
+/**
+ * Append an empty labelled pattern block to behaviors.js for
+ * the given object id. Used by the inspector's Band 1 pattern
+ * row Create button (Stage A3 of the section-28 pattern-
+ * authoring sequence) when no labelled block for the selected
+ * object yet exists. The scaffolded form is $id: sound("") —
+ * a labelled ExpressionStatement whose body is a call to
+ * strudel's `sound` constructor with an empty string. The
+ * `sound("")` starter gives the user a typical pattern shape
+ * to fill in (replacing the empty string with mini-notation
+ * like "bd sn"), but is harmless if they want to use a
+ * different constructor like note(...) or stack(...): they
+ * can simply edit over it. Stage A2's splitLabelledStatements
+ * recognises the block as a labelled ExpressionStatement and
+ * strips it from the scene-load execution stream, so the
+ * sound() call never runs at load time.
+ *
+ * The block is appended at the end of the file with a blank
+ * line separator so the existing structure is left
+ * undisturbed and the new block is easy to find.
+ *
+ * Unlike scaffoldCallbackSlotFunction, this function does
+ * not gate on duplicate detection: section 28 explicitly
+ * allows multiple labelled blocks for the same object as
+ * variants. The inspector's Create button only fires when
+ * no labelled block exists for the selected object, so the
+ * no-duplicate case is gated on the read side; users
+ * wanting additional variants type them directly in the
+ * Code tab.
+ *
+ * @param {string} content  Current behaviors.js source.
+ * @param {string} objectId  Identifier of the object to tag.
+ * @returns {{ newContent: string }}
+ */
+export function scaffoldPatternBlock(content, objectId) {
+    const block = "$" + objectId + ": sound(\"\");\n";
+    const trimmed = content.replace(/\s+$/, "");
+    const separator = trimmed.length === 0 ? "" : "\n\n";
+    return { newContent: `${trimmed}${separator}${block}` };
+}
+
 // --- Band 3 / Band 4 (Message function slots and auto-beat-interval) write paths ---
 //
 // Each slot field (motionUpdate, hitBeat, hitTrigger,
