@@ -295,28 +295,7 @@ export function makeEmptyBundle(name) {
 
     bundle.addTextFile(
         "behaviors.js",
-        `// behaviors.js — object behaviour definitions for this
-// score.
-//
-// This file holds named functions that scene.json's objects
-// refer to by string name through their callback slots
-// (section 27 four-slot model). Slot bindings live on each
-// source in scene.json:
-//
-//   - cycle (when cyclePatternLocation is "Code Tab"):
-//       function cycle_objectName() { return "bd*4"; }
-//   - hasHit (when canHit is true):
-//       function hasHit_objectName(ctx) { ... }
-//   - beenHit (when canBeHit is true):
-//       function beenHit_objectName(ctx) { ... }
-//   - onTick (when canTick is true):
-//       function onTick_objectName(ctx) { ... }
-//
-// The default new-score template has no slot bindings, so
-// this file starts empty. Add functions here as you bind
-// slots in the inspector; every callback name follows the
-// slotName_objectName convention.
-`
+        "",
     );
 
     return bundle;

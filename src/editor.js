@@ -496,6 +496,31 @@ export class TabbedEditor {
                     ".cm-scroller": {
                         fontFamily: "SF Mono, Menlo, Consolas, monospace",
                     },
+                    // Bottom padding on the content area so the
+                    // editor can scroll any line all the way to
+                    // the top of the viewport. Without this,
+                    // scrollIntoView near the end of the file
+                    // hits the bottom of the document and
+                    // leaves the target somewhere short of the
+                    // first row — there isn't enough content
+                    // below to fill the viewport, so CodeMirror
+                    // can't scroll further. 100vh covers any
+                    // pane size up to full body height (focus-
+                    // canvas mode being the largest case), so
+                    // every function declaration and labelled
+                    // pattern block in behaviors.js can land at
+                    // row 0 regardless of where it sits in the
+                    // file. The trade-off is some empty space
+                    // visible when the user scrolls past the
+                    // last line of code; this is rare in
+                    // practice (navigation is by
+                    // selectTabAndScrollToFunction, not by
+                    // manual end-of-file scrolling) and the
+                    // scrollbar still indicates the document
+                    // boundary.
+                    ".cm-content": {
+                        paddingBottom: "100vh",
+                    },
                 }),
             ],
         });
@@ -663,7 +688,7 @@ export class TabbedEditor {
             effects: [
                 this._langCompartment.reconfigure(exts.language),
                 this._linterCompartment.reconfigure(exts.linter),
-                EditorView.scrollIntoView(targetPos, { y: "start" }),
+                EditorView.scrollIntoView(targetPos, { y: "start", yMargin: 0 }),
             ],
         });
         this._suppressDirty = false;
