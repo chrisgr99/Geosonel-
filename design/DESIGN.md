@@ -6,7 +6,7 @@ Status: Living document — sections split into individual files in `sections/`.
 
 Naming: GXW (working title).
 
-GXW is a web app for composing music that emerges from 2D scenes. A scene is a substrate of paths and sprites placed at considered positions. Paths carry bound sprites whose cursors sweep along the path; free sprites move autonomously through the canvas. Both kinds of sprite produce music declaratively through Strudel pattern strings or procedurally through JavaScript callbacks, with scene state — image colour, sprite position and motion — feeding into the music through composable signals.
+GXW is a web app for composing music that emerges from 2D scenes. A scene is a substrate of curves, triggers, and sprites placed at considered positions on a canvas. The user authors a Strudel pattern for each object that participates in the music; the object's events fire as its own cursor sweeps through the canvas, or when another object's cursor crosses it. Curves carry their cursors along their drawn geometry; sprites carry theirs perpendicular to motion; triggers stay still as point colliders that respond when a cursor lands on them. Per-object JavaScript callbacks (hasHit, beenHit, onTick) cover hit detection and per-tick behaviour. Scene state — image colour, sprite position, sprite motion — feeds into patterns through dynamic signals so the music tracks what happens on the canvas.
 
 ## Table of Contents
 

@@ -34,8 +34,6 @@ reason about. The audio-firing-path decision IS blocking.
   without committing to the full Tier 2 machinery; strudel
   is the long-term endpoint. The choice shapes how much of
   Tier 2 lands and in what order.
-- DESIGN.md project description paragraph rewrite, informed
-  by the section 27 and 28 framing.
 - Pass through DESIGN.md sections 1-26 identifying parts
   that fit naturally under the section 27/28 framing and
   parts that need revision. Some pre-pivot work items may
