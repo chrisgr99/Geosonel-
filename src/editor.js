@@ -698,6 +698,22 @@ export class TabbedEditor {
     }
 
     /**
+     * Switch to the Properties tab, which hosts the
+     * form-based property inspector. Equivalent to
+     * clicking the Properties tab in the tab bar: the
+     * CodeMirror editor area is hidden and the inspector
+     * area is shown. Used by main.js as the navigation
+     * target when a canvas double-click lands on an
+     * object that has no source in behaviors.js (no
+     * labelled pattern block and no default-named
+     * callback declaration), so the user can use the
+     * inspector's Create buttons to scaffold one.
+     */
+    selectInspectorTab() {
+        this.selectTab(VIRTUAL_TAB_INSPECTOR);
+    }
+
+    /**
      * Detect whether the cursor in the active tab is inside
      * a top-level labelled pattern block, and if so emit
      * the onPromotePattern callback with the block's

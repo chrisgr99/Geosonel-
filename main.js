@@ -758,6 +758,44 @@ async function main() {
         "onTick_" + objectId,
     ];
 
+    /**
+     * Return true when the given object has at least one
+     * labelled pattern block or default-named callback
+     * declaration in behaviors.js. Used by the canvas
+     * double-click handler to decide between the Code tab
+     * (scroll to existing source) and the Properties tab
+     * (offer scaffold buttons) as the navigation target.
+     *
+     * The check is aligned with what candidatesForObject
+     * navigates to: the dollar-prefixed labelled tag plus
+     * the three slotName_objectId callback names. Custom-
+     * renamed callbacks bound via the inspector's slot
+     * fields are not consulted here because
+     * selectTabAndScrollToFunction wouldn't navigate to
+     * them either, so the navigation and the check stay
+     * aligned: anything we'd take the user to lives
+     * inside behaviors.js, anything else means the
+     * Properties tab is the right destination.
+     *
+     * @param {string} objectId
+     * @returns {boolean}
+     */
+    const objectHasCodeSource = (objectId) => {
+        if (currentScene === null) return false;
+        if (Array.isArray(currentScene.labelledBlocks)) {
+            for (const block of currentScene.labelledBlocks) {
+                if (block.objectId === objectId) return true;
+            }
+        }
+        const fmap = currentScene.functionMap;
+        if (fmap !== null && typeof fmap === "object") {
+            if (("hasHit_" + objectId) in fmap) return true;
+            if (("beenHit_" + objectId) in fmap) return true;
+            if (("onTick_" + objectId) in fmap) return true;
+        }
+        return false;
+    };
+
     // --- Undo state for canvas-originated mutations ---
     //
     // Snapshot-based undo: each canvas edit pushes the prior
@@ -1069,19 +1107,26 @@ async function main() {
                 curves: edit.curves,
             });
         } else if (edit.kind === "openObjectInCode") {
-            // Canvas double-click on an object. Switches to
-            // the Code tab and scrolls to the object's
-            // first occurrence in behaviors.js, walking
-            // the same candidate list (labelled block tag
-            // plus the three callback-function name forms)
-            // that the inspector's Pattern row Go-to
-            // button uses. selectTabAndScrollToFunction
-            // falls back to a plain tab switch when none
-            // of the candidates is present.
-            editor.selectTabAndScrollToFunction(
-                "behaviors.js",
-                candidatesForObject(edit.objectId),
-            );
+            // Canvas double-click on an object. When the
+            // object has at least one labelled pattern
+            // block or default-named callback declaration
+            // in behaviors.js, switch to the Code tab and
+            // scroll to whichever appears earliest in the
+            // file. When neither exists (the user has not
+            // yet authored a pattern or callback for the
+            // object), switch to the Properties tab
+            // instead so the inspector's Band 1 pattern
+            // row Create and Band 3 callback Create
+            // buttons are immediately available as the
+            // natural next step.
+            if (objectHasCodeSource(edit.objectId)) {
+                editor.selectTabAndScrollToFunction(
+                    "behaviors.js",
+                    candidatesForObject(edit.objectId),
+                );
+            } else {
+                editor.selectInspectorTab();
+            }
         }
     });
 
