@@ -272,6 +272,7 @@ export function makeEmptyBundle(name) {
 
   "curves": [
     {
+      "id": "CRV1",
       "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 12, "h": 12 },
       "cursorR": 2,
       "cursorL": 0
@@ -279,15 +280,17 @@ export function makeEmptyBundle(name) {
   ],
 
   "triggers": [
-    { "x":  9, "y":  0, "note": 60 },
-    { "x": -9, "y":  0, "note": 64 },
-    { "x":  0, "y":  9, "note": 67 },
-    { "x":  0, "y": -9, "note": 72 }
+    { "id": "TRG1", "x":  9, "y":  0, "note": 60 },
+    { "id": "TRG2", "x": -9, "y":  0, "note": 64 },
+    { "id": "TRG3", "x":  0, "y":  9, "note": 67 },
+    { "id": "TRG4", "x":  0, "y": -9, "note": 72 }
   ],
 
   "sprites": [
-    { "x": 0, "y": 0, "vx": 1, "vy": 0 }
-  ]
+    { "id": "SPR1", "x": 0, "y": 0, "vx": 1, "vy": 0 }
+  ],
+
+  "idCounters": { "sprite": 2, "trigger": 5, "curve": 2 }
 }
 `,
         "application/json"

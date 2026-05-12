@@ -109,8 +109,8 @@ export function validateName(candidate, otherNames) {
         return { kind: "ok", value: "" };
     }
 
-    // Reserved id-format pattern: catch sp_a3f7e2-style names
-    // that would shadow generated ids if used as handles.
+    // Reserved id-format pattern: catch SPR1- or TRG2-style
+    // names that would shadow generated ids if used as handles.
     if (GENERATED_ID_PATTERN.test(trimmed)) {
         return {
             kind: "hard",

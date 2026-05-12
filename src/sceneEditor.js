@@ -30,7 +30,7 @@
 
 // @ts-check
 
-import { generateId, collectExistingIds } from "./idGen.js";
+import { generateId, ensureIdCounters } from "./idGen.js";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
 const MULTILINE_ARRAY_KEYS = new Set(["curves"]);
@@ -159,25 +159,33 @@ function jsonKey(k) {
  * Walk the parsed scene data and fill in a freshly generated
  * id for any object whose id field is missing, null, or an
  * empty string. Ids already present and non-empty are left
- * alone, even if they don't match the generated pattern — a
- * user-supplied id from a hand-written scene.json is
- * respected.
+ * alone, even if they don't match the conventional generated
+ * pattern — a user-supplied id from a hand-written scene.json
+ * is respected, and the counter-advancement step run via
+ * ensureIdCounters doesn't try to reconcile against
+ * unconventional ids.
+ *
+ * Also ensures data.idCounters exists and is at least as high
+ * as the next id needed for each kind: the missing sub-object
+ * is created when absent, and stale counters are advanced
+ * past any conventional id whose integer is higher (see
+ * idGen.js ensureIdCounters for the full rule).
  *
  * The id field is inserted as the first key of the entry, so
  * the formatted JSON output (V8 preserves insertion order)
  * shows the id on the top line of the entry where a reader
  * expects to find it.
  *
- * Returns true iff at least one id was added; the caller can
- * use that signal to decide whether to write the mutated
- * scene back to the bundle.
+ * Returns true iff at least one id was added or idCounters
+ * was created or advanced; the caller can use that signal to
+ * decide whether to write the mutated scene back to the
+ * bundle.
  *
  * @param {any} data
  * @returns {boolean}
  */
 export function fillMissingIds(data) {
-    const existing = collectExistingIds(data);
-    let changed = false;
+    let changed = ensureIdCounters(data);
     /** @type {Array<["curve" | "trigger" | "sprite", string]>} */
     const kindAndKey = [
         ["curve", "curves"],
@@ -193,8 +201,7 @@ export function fillMissingIds(data) {
                 typeof entry !== "object" ||
                 Array.isArray(entry)) continue;
             if (typeof entry.id === "string" && entry.id.length > 0) continue;
-            const newId = generateId(kind, existing);
-            existing.add(newId);
+            const newId = generateId(kind, data);
             // Replace the entry with a new object whose id is
             // the first key. Discard any pre-existing null or
             // empty id field so it doesn't leak through.
@@ -525,7 +532,8 @@ export function addSpriteAt(data, x, y) {
     if (!Array.isArray(data.sprites)) {
         data.sprites = [];
     }
-    const id = generateId("sprite", collectExistingIds(data));
+    ensureIdCounters(data);
+    const id = generateId("sprite", data);
     data.sprites.push({
         id,
         name: "",
