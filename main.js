@@ -78,6 +78,8 @@ import {
     parseScene,
     stringifyScene,
     addSpriteAt,
+    addTriggerAt,
+    addCurveAt,
     removeObjects,
     fillMissingIds,
     fillEmptyNames,
@@ -617,13 +619,16 @@ async function main() {
 
     // --- Canvas toolbar and direct-manipulation editing ---
     //
-    // The toolbar sits above the canvas and currently exposes
-    // a single tool: Add Sprite. Single-clicking arms it for
+    // The toolbar sits above the canvas and exposes three
+    // creation tools: Add Sprite (click to place), Add
+    // Trigger (click to place), and Add Curve (drag to
+    // define an ellipse bounding box, hold Shift for a
+    // circle). Single-clicking a tool button arms it for
     // one placement; double-clicking locks it for repeated
-    // placements until Esc or a second click on the tool. With
-    // no tool armed, the canvas is in selection mode: clicks
-    // select sprites, drag-from-empty draws a marquee, and
-    // drag-on-sprite moves the selection.
+    // placements until Esc or a second click on the tool.
+    // With no tool armed, the canvas is in selection mode:
+    // clicks select objects, drag-from-empty draws a
+    // marquee, and drag-on-object moves the selection.
     //
     // Canvas edits are committed by parsing scene.json,
     // mutating it, stringifying back, updating the bundle in
@@ -788,6 +793,37 @@ async function main() {
                     sprites: [currentScene.sprites.length - 1],
                     triggers: [],
                     curves: [],
+                });
+            }
+        } else if (edit.kind === "addTrigger") {
+            // Symmetric with addSprite: append a trigger at
+            // the click position, then select it so the
+            // inspector and active-tag highlight track the
+            // newly placed object. addTriggerAt appends so
+            // the new trigger is the last entry after the
+            // scene reloads.
+            await applySceneEdit((data) => addTriggerAt(data, edit.x, edit.y));
+            if (currentScene !== null && currentScene.triggers.length > 0) {
+                canvas.setSelection({
+                    sprites: [],
+                    triggers: [currentScene.triggers.length - 1],
+                    curves: [],
+                });
+            }
+        } else if (edit.kind === "addCurve") {
+            // Curve creation carries a full shape sub-object
+            // produced by the canvas's drag-to-define-
+            // ellipse gesture (or in principle any future
+            // shape-creating tool that emits this edit
+            // kind). addCurveAt rounds coordinates and
+            // appends, so the new curve is the last entry
+            // after the scene reloads.
+            await applySceneEdit((data) => addCurveAt(data, edit.shape));
+            if (currentScene !== null && currentScene.curves.length > 0) {
+                canvas.setSelection({
+                    sprites: [],
+                    triggers: [],
+                    curves: [currentScene.curves.length - 1],
                 });
             }
         } else if (edit.kind === "translateSelection") {

@@ -12,9 +12,14 @@
  * disarms). The user enters armed state with a single click
  * on a tool button and locked state with a double-click. The
  * Escape key or clicking the tool button again exits either
- * state. Phase 1 ships with a single tool: Add Sprite. The
- * cluster is built to grow — add Trigger, then the curve-
- * shape tools, by extending the TOOL_DEFS array.
+ * state. The toolbar ships three creation tools: Add Sprite
+ * (click-to-place), Add Trigger (click-to-place), and Add
+ * Curve (drag-to-define an ellipse bounding box, Shift
+ * during drag constrains to a circle). Each tool's icon
+ * carries a small plus mark at the lower right to signal
+ * create mode, mirroring the GeoSonix toolbar convention.
+ * The cluster is built to grow by extending the TOOL_DEFS
+ * array.
  *
  * Right cluster. The image-import button surfaces the same
  * file-picker flow as the File menu's Import Image command
@@ -57,18 +62,51 @@ const TOOL_DEFS = [
         name: "sprite",
         label: "Add Sprite",
         tooltip: "Add Sprite. Click to place one. Double-click to add multiple. Esc to exit.",
-        // The outline circle is stroked in the same blue used
-        // for sprite boundaries on the canvas (#7db8d6 from
-        // canvas.js's OBJECT_BOUNDARY_COLOUR), so the icon
-        // visually identifies this as the Add Sprite tool. The
-        // centre dot follows currentColor so it shifts tone
-        // with button state (idle/hover/armed/locked). Sized
-        // to fill most of the 32×32 button with a small
-        // breathing margin.
+        // Hollow blue circle (the sprite's on-canvas boundary
+        // colour) with a filled centre dot in currentColor so
+        // the dot shifts tone with button state (idle / hover
+        // / armed / locked). A small plus mark in currentColor
+        // sits at the lower right corner as the create-mode
+        // signal shared with the trigger and curve tools.
         svg:
             `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
-            `<circle cx="12" cy="12" r="10" stroke="#7db8d6" stroke-width="2" fill="none"/>` +
-            `<circle cx="12" cy="12" r="3" fill="currentColor"/>` +
+            `<circle cx="12" cy="12" r="9" stroke="#7db8d6" stroke-width="2" fill="none"/>` +
+            `<circle cx="12" cy="12" r="2.5" fill="currentColor"/>` +
+            `<path d="M 16.5 20 L 21.5 20 M 19 17.5 L 19 22.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>` +
+            `</svg>`,
+    },
+    {
+        name: "trigger",
+        label: "Add Trigger",
+        tooltip: "Add Trigger. Click to place one. Double-click to add multiple. Esc to exit.",
+        // Hollow blue diamond matching the trigger's on-canvas
+        // shape and boundary colour, with the same lower-right
+        // plus mark as the sprite tool. Diamond vertices at
+        // (12, 3), (21, 12), (12, 21), (3, 12) keep the icon
+        // visually balanced against the sprite tool's circle
+        // at comparable size, so the two read as siblings in
+        // the create cluster.
+        svg:
+            `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
+            `<path d="M 12 3 L 21 12 L 12 21 L 3 12 Z" stroke="#7db8d6" stroke-width="2" fill="none" stroke-linejoin="round"/>` +
+            `<path d="M 16.5 20 L 21.5 20 M 19 17.5 L 19 22.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>` +
+            `</svg>`,
+    },
+    {
+        name: "curve",
+        label: "Add Curve",
+        tooltip: "Add Curve. Drag to define an ellipse; hold Shift for a circle. Double-click the tool to add multiple. Esc to exit.",
+        // Hollow green ellipse picking up CURVE_COLOUR
+        // (#7dd68a) from canvas.js so the icon visually
+        // identifies the curve tool against the blue sprite
+        // and trigger tools. Slightly wider than tall (rx=9,
+        // ry=6) so the shape reads unambiguously as an
+        // ellipse rather than a circle. Same lower-right plus
+        // mark as the other create tools.
+        svg:
+            `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
+            `<ellipse cx="12" cy="12" rx="9" ry="6" stroke="#7dd68a" stroke-width="2" fill="none"/>` +
+            `<path d="M 16.5 20 L 21.5 20 M 19 17.5 L 19 22.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>` +
             `</svg>`,
     },
 ];

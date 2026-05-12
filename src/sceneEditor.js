@@ -545,6 +545,88 @@ export function addSpriteAt(data, x, y) {
 }
 
 /**
+ * Add a trigger to the parsed scene at canvas position
+ * (x, y). The trigger gets a freshly generated id, empty
+ * name, and x/y; size, color, and the callback slots fall
+ * through to the Trigger constructor defaults. Mirrors
+ * addSpriteAt's shape so the canvas's click-to-place path
+ * for triggers is symmetric with the sprite path. Mutates
+ * `data` in place.
+ * @param {any} data
+ * @param {number} x
+ * @param {number} y
+ */
+export function addTriggerAt(data, x, y) {
+    if (!Array.isArray(data.triggers)) {
+        data.triggers = [];
+    }
+    ensureIdCounters(data);
+    const id = generateId("trigger", data);
+    data.triggers.push({
+        id,
+        name: "",
+        x: roundCoord(x),
+        y: roundCoord(y),
+    });
+}
+
+/**
+ * Add a curve to the parsed scene with the given shape
+ * sub-object. The curve gets a freshly generated id, empty
+ * name, and the provided shape; curveThickness, cursorR,
+ * cursorL, and the callback slots fall through to the
+ * Curve constructor defaults. Shape coordinates are rounded
+ * to two decimal places via roundCoord to keep the stored
+ * JSON readable, mirroring the convention used by sprite
+ * and trigger position fields. The caller is responsible
+ * for supplying a shape consistent with one of the
+ * supported types (line / ellipse / piste); the toolbar's
+ * curve creation tool produces ellipse shapes.
+ *
+ * Newly-created curves have cursorR and cursorL at the
+ * Curve constructor default of 0, which under the cursor-
+ * as-collider model means the curve does not yet fire
+ * patterns. The composer sets cursor extents via the
+ * inspector once the geometry is in place. Mutates `data`
+ * in place.
+ *
+ * @param {any} data
+ * @param {{type: string, cx?: number, cy?: number, w?: number, h?: number, x1?: number, y1?: number, x2?: number, y2?: number, points?: Array<[number, number]>, closed?: boolean}} shape
+ */
+export function addCurveAt(data, shape) {
+    if (!Array.isArray(data.curves)) {
+        data.curves = [];
+    }
+    ensureIdCounters(data);
+    const id = generateId("curve", data);
+    /** @type {Record<string, any>} */
+    const roundedShape = { type: shape.type };
+    if (shape.type === "ellipse") {
+        roundedShape.cx = roundCoord(shape.cx ?? 0);
+        roundedShape.cy = roundCoord(shape.cy ?? 0);
+        roundedShape.w = roundCoord(shape.w ?? 0);
+        roundedShape.h = roundCoord(shape.h ?? 0);
+    } else if (shape.type === "line") {
+        roundedShape.x1 = roundCoord(shape.x1 ?? 0);
+        roundedShape.y1 = roundCoord(shape.y1 ?? 0);
+        roundedShape.x2 = roundCoord(shape.x2 ?? 0);
+        roundedShape.y2 = roundCoord(shape.y2 ?? 0);
+    } else if (shape.type === "piste") {
+        const pts = Array.isArray(shape.points) ? shape.points : [];
+        roundedShape.points = pts.map((p) => [
+            roundCoord(Array.isArray(p) && typeof p[0] === "number" ? p[0] : 0),
+            roundCoord(Array.isArray(p) && typeof p[1] === "number" ? p[1] : 0),
+        ]);
+        if (shape.closed) roundedShape.closed = true;
+    }
+    data.curves.push({
+        id,
+        name: "",
+        shape: roundedShape,
+    });
+}
+
+/**
  * Remove objects from the scene by kind and index. Indexes
  * refer to positions in the original arrays at the time of
  * the call; the function filters them out and the resulting

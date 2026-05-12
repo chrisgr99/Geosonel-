@@ -568,7 +568,11 @@ export class Canvas {
     /**
      * Update which tool, if any, is armed. Drives the cursor
      * style and the click behaviour. Pass null to enter
-     * selection mode.
+     * selection mode. If a create-ellipse gesture is in
+     * progress when the tool disarms (typically via Esc),
+     * the gesture is cancelled so the eventual mouseup
+     * doesn't commit an ellipse the user has already
+     * abandoned.
      * @param {string | null} toolName
      * @param {boolean} locked
      */
@@ -576,6 +580,12 @@ export class Canvas {
         this._activeTool = toolName;
         this._activeToolLocked = locked;
         this.canvasEl.style.cursor = toolName === null ? "default" : "crosshair";
+        if (toolName === null &&
+            this._gesture !== null &&
+            this._gesture.kind === "createEllipse") {
+            this._gesture = null;
+            this.scheduleDraw();
+        }
     }
 
     /**
@@ -767,6 +777,7 @@ export class Canvas {
         this._drawScene();
         this._drawSelectionMarkers();
         this._drawMarqueeRect();
+        this._drawCreateEllipseGesture();
 
         ctx.restore();
     }
@@ -1142,6 +1153,84 @@ export class Canvas {
         ctx.restore();
     }
 
+    /**
+     * Render the in-progress ellipse-creation gesture. Draws
+     * the bounding box as a yellow dotted rectangle (matching
+     * the selection-marker convention so the user reads it
+     * as "about to become a curve") and the inscribed
+     * ellipse in solid curve-green so the eventual geometry
+     * is visible live as the corner is dragged. Shift-held
+     * collapses the bounding box to a square in the same
+     * pre-commit logic the mouseup handler uses, so the
+     * preview matches what gets committed.
+     */
+    _drawCreateEllipseGesture() {
+        if (this._gesture === null || this._gesture.kind !== "createEllipse") return;
+        const g = this._gesture;
+
+        // Apply the Shift-constrain-to-square modifier so the
+        // preview tracks what the mouseup commit will produce.
+        let x1 = g.startX;
+        let y1 = g.startY;
+        let x2 = g.currentX;
+        let y2 = g.currentY;
+        if (g.shiftKey) {
+            const adx = Math.abs(x2 - x1);
+            const ady = Math.abs(y2 - y1);
+            const size = Math.max(adx, ady);
+            const sx = x2 >= x1 ? 1 : -1;
+            const sy = y2 >= y1 ? 1 : -1;
+            x2 = x1 + sx * size;
+            y2 = y1 + sy * size;
+        }
+
+        const lo_x = Math.min(x1, x2);
+        const hi_x = Math.max(x1, x2);
+        const lo_y = Math.min(y1, y2);
+        const hi_y = Math.max(y1, y2);
+
+        // Pixel-space rectangle. Canvas Y is up, pixel Y is
+        // down, so the rect's top in pixel space corresponds
+        // to hi_y in canvas units.
+        const pxL = this.toPixelX(lo_x);
+        const pxR = this.toPixelX(hi_x);
+        const pyT = this.toPixelY(hi_y);
+        const pyB = this.toPixelY(lo_y);
+
+        const ctx = this.ctx;
+        ctx.save();
+
+        // Yellow dotted bounding box, same style as selection
+        // markers around already-selected objects.
+        ctx.strokeStyle = SELECTION_MARKER_COLOUR;
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(
+            Math.round(pxL) + 0.5,
+            Math.round(pyT) + 0.5,
+            Math.round(pxR - pxL),
+            Math.round(pyB - pyT),
+        );
+
+        // Live ellipse inscribed in the bounding box, in
+        // curve-green so the eventual on-canvas shape is
+        // visible as the user drags.
+        ctx.setLineDash([]);
+        ctx.strokeStyle = CURVE_COLOUR;
+        ctx.lineWidth = 1.5;
+        const cx = (pxL + pxR) / 2;
+        const cy = (pyT + pyB) / 2;
+        const rx = (pxR - pxL) / 2;
+        const ry = (pyB - pyT) / 2;
+        if (rx > 0 && ry > 0) {
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        ctx.restore();
+    }
+
     // --- Mouse events ---
 
     /**
@@ -1333,18 +1422,51 @@ export class Canvas {
         const pos = this._eventToCanvas(e);
 
         // Tool-armed mode: clicks place a new object instead of
-        // performing selection.
+        // performing selection. Sprite and trigger tools are
+        // click-to-place (the edit fires on mousedown and the
+        // tool reverts immediately via afterPlacement). The
+        // curve tool is drag-to-define-ellipse: mousedown
+        // starts a createEllipse gesture, mouseup commits it.
         if (this._activeTool !== null) {
             e.preventDefault();
-            if (this._editCallback !== null) {
-                if (this._activeTool === "sprite") {
+            if (this._activeTool === "sprite" || this._activeTool === "trigger") {
+                if (this._editCallback !== null) {
                     this._editCallback({
-                        kind: "addSprite",
+                        kind: this._activeTool === "sprite" ? "addSprite" : "addTrigger",
                         x: pos.x,
                         y: pos.y,
                     });
                 }
+                if (this._toolbar !== null) {
+                    this._toolbar.afterPlacement();
+                }
+                return;
             }
+            if (this._activeTool === "curve") {
+                this._gesture = {
+                    kind: "createEllipse",
+                    startX: pos.x,
+                    startY: pos.y,
+                    currentX: pos.x,
+                    currentY: pos.y,
+                    shiftKey: e.shiftKey,
+                };
+                const onMove = (/** @type {MouseEvent} */ moveE) => this._onMouseMove(moveE);
+                const onUp = (/** @type {MouseEvent} */ upE) => {
+                    window.removeEventListener("mousemove", onMove);
+                    window.removeEventListener("mouseup", onUp);
+                    this._onMouseUp(upE);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+                this.scheduleDraw();
+                return;
+            }
+            // Unknown tool name — ignore the click but still
+            // disarm via afterPlacement so the toolbar can
+            // recover. Defensive only; the toolbar's TOOL_DEFS
+            // and the canvas's tool-name branches are kept in
+            // sync at the source.
             if (this._toolbar !== null) {
                 this._toolbar.afterPlacement();
             }
@@ -1516,6 +1638,17 @@ export class Canvas {
             this.scheduleDraw();
             return;
         }
+
+        if (g.kind === "createEllipse") {
+            g.currentX = pos.x;
+            g.currentY = pos.y;
+            // Re-read the shift state on every move so the
+            // user can toggle the constrain-to-circle modifier
+            // mid-drag and see the preview snap accordingly.
+            g.shiftKey = e.shiftKey;
+            this.scheduleDraw();
+            return;
+        }
     }
 
     /** @param {MouseEvent} e */
@@ -1637,6 +1770,59 @@ export class Canvas {
             }
             this.scheduleDraw();
             this._emitSelectionChanged();
+            return;
+        }
+        if (g.kind === "createEllipse") {
+            // Recompute the ellipse bounding box from the
+            // gesture's start and current points, applying
+            // the Shift-constrain-to-square modifier if held
+            // at mouseup. (Move events also track shiftKey,
+            // but the final commit reads the mouseup state so
+            // an end-of-drag modifier release matches the
+            // visible preview.)
+            let x1 = g.startX;
+            let y1 = g.startY;
+            let x2 = g.currentX;
+            let y2 = g.currentY;
+            const shiftAtUp = e.shiftKey || g.shiftKey;
+            if (shiftAtUp) {
+                const adx = Math.abs(x2 - x1);
+                const ady = Math.abs(y2 - y1);
+                const size = Math.max(adx, ady);
+                const sx = x2 >= x1 ? 1 : -1;
+                const sy = y2 >= y1 ? 1 : -1;
+                x2 = x1 + sx * size;
+                y2 = y1 + sy * size;
+            }
+            // Below-threshold drags (essentially a click with
+            // no measurable motion) abort without committing
+            // and without disarming the tool, so the user can
+            // try again from the same armed state. Above-
+            // threshold drags commit a new curve and call
+            // afterPlacement to revert the tool when not
+            // locked.
+            const dPx = Math.hypot(
+                (x2 - x1) * this.pixelsPerUnit,
+                (y2 - y1) * this.pixelsPerUnit,
+            );
+            if (dPx < DRAG_THRESHOLD_PX) {
+                this.scheduleDraw();
+                return;
+            }
+            const cx = (x1 + x2) / 2;
+            const cy = (y1 + y2) / 2;
+            const w = Math.abs(x2 - x1);
+            const h = Math.abs(y2 - y1);
+            if (this._editCallback !== null) {
+                this._editCallback({
+                    kind: "addCurve",
+                    shape: { type: "ellipse", cx, cy, w, h },
+                });
+            }
+            if (this._toolbar !== null) {
+                this._toolbar.afterPlacement();
+            }
+            this.scheduleDraw();
             return;
         }
     }
