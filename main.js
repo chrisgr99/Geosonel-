@@ -523,8 +523,15 @@ async function main() {
         // when the score name is unchanged, an external write
         // can have inserted, removed, or reordered objects, so
         // letting old indexes survive would silently rebind
-        // them to whatever object now sits at that slot.
+        // them to whatever object now sits at that slot. The
+        // undo stack is also cleared for the same reason:
+        // snapshots taken against the prior in-memory state
+        // are no longer coherent with the disk-driven state
+        // that just arrived, so Cmd-Z against them would
+        // apply stale text on top of fresh edits.
         canvas.setSelection({ sprites: [], triggers: [], curves: [] });
+        undoPast.length = 0;
+        undoFuture.length = 0;
         session.bundle = newBundle;
         imageImporter.setBundle(newBundle);
         await editor.setBundle(newBundle);
@@ -560,8 +567,14 @@ async function main() {
             // objects in different scenes. Clear up front so
             // setScene's filter logic doesn't rebind stale
             // entries to whatever lives at the same index in
-            // the new scene.
+            // the new scene. The undo stack is also cleared:
+            // snapshots from the previous score are scene.json
+            // texts that have no meaning under the new score,
+            // and letting them persist would let Cmd-Z apply
+            // foreign text to the active bundle.
             canvas.setSelection({ sprites: [], triggers: [], curves: [] });
+            undoPast.length = 0;
+            undoFuture.length = 0;
 
             // Before applying, reconcile with disk so the user
             // sees any external edits made while another score
@@ -743,6 +756,30 @@ async function main() {
         "onTick_" + objectId,
     ];
 
+    // --- Undo state for canvas-originated mutations ---
+    //
+    // Snapshot-based undo: each canvas edit pushes the prior
+    // scene.json text onto undoPast before mutating; Cmd-Z
+    // pops the most recent snapshot, writes it back, and
+    // reruns the scene. The current text moves onto
+    // undoFuture so Cmd-Shift-Z can redo. Capped at 50
+    // entries; the oldest snapshot drops off the bottom of
+    // undoPast when a new edit pushes past the cap. The
+    // future stack is cleared on every new edit so an undo
+    // followed by a new action discards the previously
+    // undone work, matching the standard linear-history
+    // model. Inspector edits, toolbar canvas-size edits,
+    // and Cmd-Enter pattern-promote edits stay outside the
+    // stack: they go through plain applySceneEdit so the
+    // stack tracks only object-level direct manipulation
+    // (create, drag, delete) — the activities the user
+    // most expects to undo.
+    /** @type {string[]} */
+    const undoPast = [];
+    /** @type {string[]} */
+    const undoFuture = [];
+    const UNDO_CAP = 50;
+
     /**
      * Apply a mutation to the active score's scene.json,
      * refresh the editor view, and re-run the scene. The
@@ -752,13 +789,19 @@ async function main() {
      * is skipped with a message rather than silently
      * corrupting the file.
      *
+     * Returns true iff the mutation actually applied, so
+     * applyCanvasEdit can decide whether to record a
+     * snapshot. Existing callers that ignore the result
+     * still work because they just `await` the call.
+     *
      * @param {(data: any) => void} mutate
+     * @returns {Promise<boolean>}
      */
     const applySceneEdit = async (mutate) => {
         const sceneFile = session.bundle.getFile("scene.json");
         if (sceneFile === null) {
             messages.write("No scene.json in this score.", "error");
-            return;
+            return false;
         }
         const parsed = parseScene(sceneFile.content);
         if (!parsed.ok) {
@@ -766,18 +809,96 @@ async function main() {
                 `Cannot edit canvas while scene.json has a parse error: ${parsed.error}`,
                 "error"
             );
-            return;
+            return false;
         }
         mutate(parsed.data);
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();
         await runScene();
+        return true;
+    };
+
+    /**
+     * Apply a canvas-originated mutation and record the
+     * pre-edit scene.json text on the undo stack. The
+     * snapshot is captured before applySceneEdit runs and
+     * only joins undoPast after applySceneEdit reports
+     * success, so a no-scene-file or parse-error path
+     * leaves the stack untouched. Used by every canvas
+     * gesture that mutates the scene (sprite, trigger,
+     * and curve creation, drag-end translate, Delete-key
+     * remove); inspector edits stay on plain
+     * applySceneEdit and therefore aren't undoable.
+     *
+     * @param {(data: any) => void} mutate
+     */
+    const applyCanvasEdit = async (mutate) => {
+        const sceneFile = session.bundle.getFile("scene.json");
+        const snapshot = sceneFile === null ? null : sceneFile.content;
+        const ok = await applySceneEdit(mutate);
+        if (!ok || snapshot === null) return;
+        undoPast.push(snapshot);
+        if (undoPast.length > UNDO_CAP) {
+            undoPast.shift();
+        }
+        // Any new edit clears the future stack; previously
+        // undone work is no longer reachable via redo once
+        // the user has taken a different path forward.
+        // Matches the standard linear-history undo model.
+        undoFuture.length = 0;
+    };
+
+    /**
+     * Restore the most recent undo snapshot. Pushes the
+     * current scene.json text onto the future stack so
+     * performRedo can come back, pops past, writes the
+     * popped text into the bundle, refreshes the editor's
+     * JSON view, and reruns the scene. Selection survives
+     * via setScene's index filter: indexes that still
+     * exist stay selected, indexes that no longer do are
+     * dropped — the right outcome for undo-of-drag (object
+     * still at same index, stays selected) and undo-of-
+     * create (the just-created object's index is now out
+     * of range, so its selection entry drops). No-op when
+     * the past stack is empty.
+     */
+    const performUndo = async () => {
+        if (undoPast.length === 0) return;
+        const sceneFile = session.bundle.getFile("scene.json");
+        if (sceneFile === null) return;
+        const target = undoPast.pop();
+        if (target === undefined) return;
+        undoFuture.push(sceneFile.content);
+        session.bundle.updateContent("scene.json", target);
+        editor.refreshActiveTabFromBundle();
+        await runScene();
+    };
+
+    /**
+     * Restore the most recent redo snapshot. Symmetric
+     * with performUndo: pushes the current text onto the
+     * past stack (capped), pops future, writes, reruns.
+     * No-op when the future stack is empty.
+     */
+    const performRedo = async () => {
+        if (undoFuture.length === 0) return;
+        const sceneFile = session.bundle.getFile("scene.json");
+        if (sceneFile === null) return;
+        const target = undoFuture.pop();
+        if (target === undefined) return;
+        undoPast.push(sceneFile.content);
+        if (undoPast.length > UNDO_CAP) {
+            undoPast.shift();
+        }
+        session.bundle.updateContent("scene.json", target);
+        editor.refreshActiveTabFromBundle();
+        await runScene();
     };
 
     canvas.setEditCallback(async (edit) => {
         if (edit.kind === "addSprite") {
-            await applySceneEdit((data) => addSpriteAt(data, edit.x, edit.y));
+            await applyCanvasEdit((data) => addSpriteAt(data, edit.x, edit.y));
             // Leave the just-placed sprite selected so the
             // user can immediately edit it — drag, tweak
             // via the inspector, or hit Delete to undo.
@@ -802,7 +923,7 @@ async function main() {
             // newly placed object. addTriggerAt appends so
             // the new trigger is the last entry after the
             // scene reloads.
-            await applySceneEdit((data) => addTriggerAt(data, edit.x, edit.y));
+            await applyCanvasEdit((data) => addTriggerAt(data, edit.x, edit.y));
             if (currentScene !== null && currentScene.triggers.length > 0) {
                 canvas.setSelection({
                     sprites: [],
@@ -818,7 +939,7 @@ async function main() {
             // kind). addCurveAt rounds coordinates and
             // appends, so the new curve is the last entry
             // after the scene reloads.
-            await applySceneEdit((data) => addCurveAt(data, edit.shape));
+            await applyCanvasEdit((data) => addCurveAt(data, edit.shape));
             if (currentScene !== null && currentScene.curves.length > 0) {
                 canvas.setSelection({
                     sprites: [],
@@ -833,8 +954,12 @@ async function main() {
             // same sceneEditor primitive. The selection
             // travels with the edit (snapshot taken at
             // drag start) so a partial-redraw race can't
-            // lose objects from the translation.
-            await applySceneEdit((data) =>
+            // lose objects from the translation. The
+            // canvas path goes through applyCanvasEdit so
+            // the drag is undoable; the inspector path
+            // uses plain applySceneEdit and is not
+            // undoable.
+            await applyCanvasEdit((data) =>
                 translateSelection(data, edit.selection, edit.dx, edit.dy),
             );
         } else if (edit.kind === "selectionChanged") {
@@ -1180,7 +1305,7 @@ async function main() {
         // and removeObjects renumbers the remaining entries
         // so any stale index would point at the wrong thing.
         canvas.setSelection({ sprites: [], triggers: [], curves: [] });
-        void applySceneEdit((data) => removeObjects(data, sel));
+        void applyCanvasEdit((data) => removeObjects(data, sel));
     });
 
     // --- Inline rename ---
@@ -1214,6 +1339,38 @@ async function main() {
     installFileMenu({ session, messages, imageImporter, diskMirror });
     installRunMenu({ runScene });
     installAppMenu({ diskMirror, messages });
+
+    // --- Undo / Redo shortcuts (Cmd-Z, Cmd-Shift-Z) ---
+    //
+    // Listening at the window level catches Cmd-Z anywhere
+    // outside text-editing contexts. The focus filter (same
+    // shape the Delete handler uses) skips when focus is in
+    // the Code tab's CodeMirror editor, an INPUT or
+    // TEXTAREA, or any other contenteditable element — those
+    // surfaces have their own undo (CodeMirror's edit
+    // history, the browser's contenteditable undo) and
+    // should keep handling Cmd-Z on their own. Outside text
+    // contexts, Cmd-Z runs performUndo and Cmd-Shift-Z runs
+    // performRedo. preventDefault fires only when the
+    // filters pass so unhandled cases let the browser do
+    // whatever it does by default.
+    window.addEventListener("keydown", (e) => {
+        const meta = e.metaKey || e.ctrlKey;
+        if (!meta) return;
+        if (e.key.toLowerCase() !== "z") return;
+        const target = e.target;
+        if (target instanceof HTMLElement) {
+            if (target.closest(".cm-editor") !== null) return;
+            if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+            if (target.isContentEditable) return;
+        }
+        e.preventDefault();
+        if (e.shiftKey) {
+            void performRedo();
+        } else {
+            void performUndo();
+        }
+    });
 
     // --- Save shortcut (Cmd-S) ---
     window.addEventListener("keydown", (e) => {
