@@ -63,6 +63,14 @@ const STRUDEL_NOT_LOADED_ERROR =
  * @property {true} ok
  * @property {number[]} positions  The fractional begin positions, filtered to [0, 1).
  * @property {ParsedHap[]} haps    Full Hap details for downstream consumers.
+ * @property {any} pattern         The compiled strudel Pattern object. Carries
+ *                                 a queryArc method so callers that need event
+ *                                 lists for cycles other than the unit interval
+ *                                 (e.g. the firing engine querying the current
+ *                                 per-source cycle counter) can do so directly
+ *                                 against this object rather than re-parsing.
+ *                                 Use sites that only need marker positions can
+ *                                 ignore this field.
  *
  * @typedef {Object} ParseFailure
  * @property {false} ok
@@ -88,7 +96,7 @@ const STRUDEL_NOT_LOADED_ERROR =
  */
 export function parsePatternToPositions(expressionString) {
     if (typeof expressionString !== "string" || expressionString.trim() === "") {
-        return { ok: true, positions: [], haps: [] };
+        return { ok: true, positions: [], haps: [], pattern: null };
     }
     // Strudel pattern constructors (note, s, n, stack, ...) are
     // installed as window globals by StrudelRuntime.init's call
@@ -151,7 +159,7 @@ export function parsePatternToPositions(expressionString) {
         // neighbouring cycle, not this one.
         if (begin >= 0 && begin < 1) positions.push(begin);
     }
-    return { ok: true, positions, haps: parsed };
+    return { ok: true, positions, haps: parsed, pattern };
 }
 
 /**

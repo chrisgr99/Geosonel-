@@ -58,6 +58,7 @@ import { Transport } from "./src/transport.js";
 import { Simulation } from "./src/simulation.js";
 import { TransportBarView } from "./src/transportBar.js";
 import { StrudelRuntime } from "./src/strudel/runtime.js";
+import { PatternFiringEngine } from "./src/strudel/firingEngine.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
 import { MessageArea } from "./src/messages.js";
@@ -234,9 +235,18 @@ async function main() {
     // appear after the next runScene call (Cmd-Enter or
     // similar). Once loaded, subsequent setScene calls
     // refresh markers naturally through their own code path.
+    //
+    // The firing engine gets the same treatment: its compiled
+    // pattern cache will hold null entries for every source
+    // whose cyclePattern was non-empty at scene load (parse
+    // returned the engine-not-loaded error and we stored
+    // null). recompileMissingPatterns walks the cache and
+    // compiles those entries against the now-available
+    // strudel globals.
     strudelRuntime.onStatusChange((status) => {
         if (status === "loaded") {
             canvas.refreshMarkers();
+            firingEngine.recompileMissingPatterns();
         }
     });
 
@@ -254,6 +264,29 @@ async function main() {
     const simulation = new Simulation(transport);
     canvas.setTransport(transport);
     canvas.setSimulation(simulation);
+
+    // --- Pattern firing engine (Tier 2 Phase 1) ---
+    //
+    // Drives audio output for continuous-firing sources
+    // (curves and sprites). Reads simulation cycle state
+    // each tick, detects per-source cycle wraps, queries
+    // the cached strudel Pattern, and commits scheduled
+    // events to superdough via the runtime's play wrapper.
+    // Triggers are excluded from Phase 1 scope; their one-
+    // shot firing model lands in Tier 5 with its own
+    // primitive.
+    //
+    // The firing engine is passive: like the Simulation it
+    // has no internal timer and no transport subscription.
+    // The canvas ticks it from the same render-loop frame
+    // that ticks the simulation, so the cycle-state read
+    // is consistent with the visual frame being painted.
+    // setScene is called from runScene after the
+    // simulation's setScene so the firing engine's compiled
+    // pattern cache reconciles to the freshly-loaded scene
+    // on the same code path.
+    const firingEngine = new PatternFiringEngine(strudelRuntime, simulation, transport);
+    canvas.setFiringEngine(firingEngine);
 
     // --- Dividers ---
     //
@@ -386,6 +419,7 @@ async function main() {
         if (result.success && result.scene !== null) {
             canvas.setScene(result.scene);
             simulation.setScene(result.scene);
+            firingEngine.setScene(result.scene);
             applySceneParamsToTransport(result.scene, transport);
             if (editor.inspector) {
                 editor.inspector.setScene(result.scene);

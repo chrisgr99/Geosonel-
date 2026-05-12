@@ -284,6 +284,18 @@ export class Canvas {
         this._simulation = null;
 
         /**
+         * Pattern firing engine reference. Ticked from the
+         * render loop right after the simulation tick so
+         * audio output stays aligned to the simulation
+         * state the canvas is about to paint. Null until
+         * setFiringEngine is called from main.js; the
+         * canvas remains fully usable without it (no
+         * audio output, all visuals work).
+         * @type {import("./strudel/firingEngine.js").PatternFiringEngine | null}
+         */
+        this._firingEngine = null;
+
+        /**
          * requestAnimationFrame handle for the continuous
          * render loop that runs during playback. Non-null
          * only while playing. The loop schedules a draw on
@@ -556,6 +568,21 @@ export class Canvas {
     }
 
     /**
+     * Attach the pattern firing engine so the canvas can
+     * tick it after the simulation each frame. The firing
+     * engine reads simulation cycle state and commits
+     * pattern events to the audio engine; ticking it from
+     * the same loop as the simulation keeps the cycle-state
+     * read consistent with what the canvas is about to
+     * paint. Currently called once at startup from main.js
+     * after the firing engine is constructed.
+     * @param {import("./strudel/firingEngine.js").PatternFiringEngine} firingEngine
+     */
+    setFiringEngine(firingEngine) {
+        this._firingEngine = firingEngine;
+    }
+
+    /**
      * Subscribe to scene-edit and selection-change events.
      * The callback receives a structured object with a kind
      * field. See _onMouseUp for the event shapes.
@@ -747,6 +774,16 @@ export class Canvas {
         // whatever state the sim is in via getCurveCursorT.
         if (this._simulation !== null) {
             this._simulation.tick();
+        }
+
+        // Tick the pattern firing engine after the
+        // simulation so its read of cycle state reflects
+        // any wraps that just happened. The firing engine
+        // gates internally on transport.isPlaying and on
+        // runtime status, so calls during pause or before
+        // the engine has loaded are cheap no-ops.
+        if (this._firingEngine !== null) {
+            this._firingEngine.tick();
         }
 
         ctx.save();

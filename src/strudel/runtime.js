@@ -134,6 +134,19 @@ export class StrudelRuntime {
         this._bpmUnsubscribe = null;
 
         /**
+         * @type {((value: any, deadline: number, duration?: number) => void) | null}
+         * The strudel superdough audio output function,
+         * captured from the @strudel/web umbrella import
+         * after initStrudel completes. Used by the Tier 2
+         * pattern firing engine via the play() method to
+         * schedule sample and synthesised events on the
+         * shared AudioContext. Stays null until init()
+         * has finished successfully; callers should check
+         * the runtime status before invoking play().
+         */
+        this._superdough = null;
+
+        /**
          * @type {Promise<void> | null}
          * In-flight init promise. Used to dedupe concurrent
          * init() calls.
@@ -168,6 +181,43 @@ export class StrudelRuntime {
         this._statusListeners.add(callback);
         callback(this._status);
         return () => { this._statusListeners.delete(callback); };
+    }
+
+    /**
+     * Schedule a strudel hap value through superdough at
+     * the given audio-context absolute time. The current
+     * @strudel/web superdough treats its second argument
+     * as an absolute audio-context time in seconds, not as
+     * an offset from currentTime, so we pass audioTime
+     * through directly. Older strudel versions used the
+     * offset convention; if a future version flips back,
+     * compute `audioTime - this._audioContext.currentTime`
+     * here.
+     *
+     * No-op when the engine is not yet loaded, when
+     * superdough was not captured during init (some older
+     * strudel versions don't expose it on the umbrella),
+     * or when the audio context is missing. Errors thrown
+     * by superdough are caught and logged so a malformed
+     * hap value doesn't tear down the firing loop.
+     *
+     * @param {any} value      Strudel hap value (e.g. {s: "bd"} or {note: 60}).
+     * @param {number} audioTime  Absolute audio-context time in seconds.
+     * @param {number} [duration]  Optional event duration in seconds.
+     */
+    play(value, audioTime, duration) {
+        if (this._status !== "loaded") return;
+        if (this._superdough === null) return;
+        if (this._audioContext === null) return;
+        try {
+            if (typeof duration === "number" && Number.isFinite(duration)) {
+                this._superdough(value, audioTime, duration);
+            } else {
+                this._superdough(value, audioTime);
+            }
+        } catch (err) {
+            console.warn(`${LOG_PREFIX} superdough failed:`, err);
+        }
     }
 
     /**
@@ -316,6 +366,23 @@ export class StrudelRuntime {
         // through it as the integration shape becomes clear.
         this._random = makeMulberry32(DEFAULT_SEED);
         /** @type {any} */ (window).gxwRandom = this._random;
+
+        // Capture superdough from the umbrella export so the
+        // Tier 2 firing engine can drive audio output without
+        // a second @strudel/web import (which would risk
+        // pulling duplicate copies of core). The umbrella
+        // re-exports superdough from @strudel/webaudio, so
+        // this is exactly the same function the spike
+        // verified against. Captured here once after
+        // initStrudel completes; null is acceptable when the
+        // export is missing (older strudel versions), and
+        // callers handle the null case as "no audio output
+        // available".
+        if (typeof (/** @type {any} */ (web).superdough) === "function") {
+            this._superdough = /** @type {any} */ (web).superdough;
+        } else {
+            console.warn(`${LOG_PREFIX} superdough not found on @strudel/web; audio output will not work`);
+        }
 
         console.log(`${LOG_PREFIX} engine ready`);
         this._setStatus("loaded");

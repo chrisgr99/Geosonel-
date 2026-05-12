@@ -595,6 +595,51 @@ export class Simulation {
     }
 
     /**
+     * Look up a curve's cycle-progress and cycle-counter
+     * state. Returns null when no state exists for this id
+     * (briefly possible during a scene reload before
+     * setScene runs, or for ids the simulation has never
+     * seen). Used by the pattern firing engine to detect
+     * cycle wraps and compute audio start times for
+     * pattern events.
+     *
+     * Returned shape: cycleCount is the number of completed
+     * cycles since rewind; cycleProgress is in [0, 1) and
+     * indicates how far into the current cycle the source
+     * has advanced. The returned object is a fresh literal,
+     * so mutating it does not affect simulation state.
+     *
+     * @param {string} curveId
+     * @returns {{cycleCount: number, cycleProgress: number} | null}
+     */
+    getCurveCycleState(curveId) {
+        const state = this._curveState.get(curveId);
+        if (state === undefined) return null;
+        return { cycleCount: state.cycleCount, cycleProgress: state.cycleProgress };
+    }
+
+    /**
+     * Look up a sprite's cycle-progress and cycle-counter
+     * state. Returns null when no state exists. Parallels
+     * getCurveCycleState; used by the pattern firing
+     * engine on the same continuous-firing path.
+     *
+     * Sprites also expose live position and velocity via
+     * getSpriteRuntime; this method returns only the
+     * cycle bookkeeping fields so the firing engine
+     * doesn't have to know about the broader sprite
+     * runtime shape.
+     *
+     * @param {string} spriteId
+     * @returns {{cycleCount: number, cycleProgress: number} | null}
+     */
+    getSpriteCycleState(spriteId) {
+        const state = this._spriteState.get(spriteId);
+        if (state === undefined) return null;
+        return { cycleCount: state.cycleCount, cycleProgress: state.cycleProgress };
+    }
+
+    /**
      * Look up a sprite's current runtime state. Returns
      * null when no state exists for this id (briefly
      * possible during a scene reload before setScene runs
