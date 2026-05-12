@@ -122,11 +122,61 @@ import {
 main();
 
 async function main() {
+    // --- Emergency storage wipe (?clearstorage) ---
+    //
+    // When the URL contains the query parameter
+    // ?clearstorage, delete IndexedDB for this origin
+    // before any other work runs. Used as a last-resort
+    // recovery when a persisted bundle contains content
+    // that hangs the app on a code path the ?norun bypass
+    // doesn't reach (typically the editor's initial mount
+    // pulling the broken bundle into a CodeMirror view).
+    // The deletion is destructive and irreversible: every
+    // GXW score in this browser is removed. After the
+    // delete completes a stub message replaces the
+    // document body and the rest of main() returns,
+    // leaving the user to reload without the parameter
+    // (which creates a fresh empty bundle through the
+    // normal resolveInitialBundle path).
+    if (new URLSearchParams(window.location.search).has("clearstorage")) {
+        const req = indexedDB.deleteDatabase("gxw");
+        await new Promise((resolve) => {
+            req.onsuccess = () => resolve(undefined);
+            req.onerror = () => resolve(undefined);
+            req.onblocked = () => resolve(undefined);
+        });
+        document.body.innerHTML =
+            "<div style='padding:24px;font:16px/1.4 system-ui;color:#ddd'>" +
+            "GXW storage cleared. All scores have been deleted from this browser. " +
+            "Reload without the clearstorage query parameter to start fresh." +
+            "</div>";
+        return;
+    }
+
     // --- Persistent storage request (best-effort, early) ---
     requestPersistentStorage().catch(() => {});
 
     // --- Initial bundle ---
-    const bundle = await resolveInitialBundle();
+    //
+    // Emergency bypass: when the URL contains the query
+    // parameter ?norun, we skip the persisted-bundle
+    // lookup entirely and create a fresh empty bundle.
+    // This is the strongest level of recovery, used when
+    // the persisted bundle contains content that hangs
+    // the app on any code path that touches it (parser,
+    // editor render, scene loader, firing engine, marker
+    // cache). With a fresh empty bundle in hand the rest
+    // of startup proceeds normally but with nothing
+    // dangerous to load. The persisted broken bundle
+    // remains in IndexedDB untouched; once the app is
+    // running in this safe mode, the File menu can be
+    // used to switch back to the broken bundle for
+    // hand-editing in the JSON tab once the cause is
+    // understood, or to a different known-good bundle.
+    const norunMode = new URLSearchParams(window.location.search).has("norun");
+    const bundle = norunMode
+        ? await createNewScore("Recovery")
+        : await resolveInitialBundle();
 
     // --- Canvas, message area ---
     const canvasAreaEl = document.getElementById("canvas-area");
@@ -1589,7 +1639,23 @@ async function main() {
     });
 
     // --- Initial auto-run so the canvas shows something ---
-    await runScene();
+    //
+    // Skipped in norun mode (see the bundle resolution
+    // above). With a fresh empty bundle in hand there's
+    // nothing dangerous to run, but skipping the initial
+    // run is still useful to keep the message area clean
+    // and surface the recovery banner instead.
+    if (norunMode) {
+        messages.write(
+            "Recovery mode active (norun). A fresh empty bundle has been created. " +
+            "Use the File menu to open a different score, or fix the broken one " +
+            "by switching to it and editing scene.json or behaviors.js by hand. " +
+            "Reload without the norun query parameter once the issue is resolved.",
+            "info",
+        );
+    } else {
+        await runScene();
+    }
 }
 
 /**
