@@ -346,17 +346,19 @@ export class Inspector {
 
     /**
      * Title bar. Empty selection shows "No selection" in the
-     * dim-italic placeholder style. Single selection of a
-     * named object shows the kind followed by the user-typed
-     * name ("Sprite drum1") since the name is the meaningful
-     * identity. Single selection without a typed name falls
-     * back to count phrasing ("1 Sprite") since the kind
-     * alone with no name doesn't add information that the
-     * Object ID field below isn't already showing. Multi-
-     * select always uses count phrasing ("2 Sprites, 1
-     * Curve") regardless of any names — listing names for
-     * many objects would be long; picking one would be
+     * dim-italic placeholder style. Single selection shows the
+     * kind followed by the object's system-assigned id
+     * (e.g. "Sprite SPR1", "Trigger TRG3", "Curve CRV2")
+     * — the title carries the per-object identity so a
+     * glance answers "what am I looking at?" without
+     * needing to read down to Band 1's Object ID field.
+     * Multi-select uses count phrasing ("2 Sprites, 1
+     * Curve") regardless of kinds, since listing ids for
+     * many objects would be long and picking one would be
      * misleading; the count is the right level of summary.
+     * Defensive fallback to the count phrasing covers the
+     * narrow window when the scene hasn't loaded yet or
+     * the selected index doesn't resolve.
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
     _buildTitleBar(ctx) {
@@ -372,8 +374,8 @@ export class Inspector {
             handleEl.textContent = "No selection";
             left.appendChild(handleEl);
         } else if (ctx.isSingle) {
-            const named = singleSelectNamedTitle(ctx, this._scene);
-            left.textContent = named ?? selectionSummaryTitle(ctx);
+            const idTitle = singleSelectIdTitle(ctx, this._scene);
+            left.textContent = idTitle ?? selectionSummaryTitle(ctx);
         } else {
             left.textContent = selectionSummaryTitle(ctx);
         }
@@ -1609,9 +1611,10 @@ function buildSelectionContext(selection) {
 
 /**
  * Compute the title text for any non-empty selection.
- * Always a count-and-kinds summary, never per-object
- * identity — the per-object id and name live in Band 1
- * below where they can be read and edited. Single-kind
+ * Used as the multi-select title verbatim, and as the
+ * single-select fallback when the scene hasn't loaded yet
+ * or the object's id can't be resolved (single-select
+ * normally uses singleSelectIdTitle below). Single-kind
  * selections read as "N Kind" or "N Kinds" with simple
  * pluralisation; multi-kind selections join the per-kind
  * counts with commas ("2 Sprites, 1 Curve").
@@ -1628,20 +1631,20 @@ function selectionSummaryTitle(ctx) {
 }
 
 /**
- * If the single selected object has a user-typed name,
- * compose the title as "Kind name" (e.g. "Sprite drum1").
+ * Compose the single-select title as "Kind ID" — for
+ * example "Sprite SPR1", "Trigger TRG3", "Curve CRV2".
  * Returns null when the scene isn't loaded yet, when the
- * selected object can't be resolved, or when the object
- * has no typed name — in those cases the caller falls
- * back to the count-based summary. Multi-select callers
- * shouldn't reach here; the function bails defensively if
- * they do.
+ * selected index can't be resolved against the scene's
+ * arrays, or when the object lacks an id; the caller
+ * falls back to the count-based summary in those narrow
+ * cases. Multi-select callers shouldn't reach here; the
+ * function bails defensively if they do.
  *
  * @param {ReturnType<typeof buildSelectionContext>} ctx
  * @param {import("./scene.js").Scene | null} scene
  * @returns {string | null}
  */
-function singleSelectNamedTitle(ctx, scene) {
+function singleSelectIdTitle(ctx, scene) {
     if (scene === null || !ctx.isSingle || ctx.singleKind === null) return null;
     const kind = ctx.singleKind;
     const idx = ctx.sprites[0] ?? ctx.triggers[0] ?? ctx.curves[0];
@@ -1650,10 +1653,10 @@ function singleSelectNamedTitle(ctx, scene) {
               : scene.curves;
     if (idx < 0 || idx >= arr.length) return null;
     const obj = arr[idx];
-    const name = typeof obj.name === "string" ? obj.name : "";
-    if (name.length === 0) return null;
+    const id = typeof obj.id === "string" ? obj.id : "";
+    if (id.length === 0) return null;
     const cap = kind.charAt(0).toUpperCase() + kind.slice(1);
-    return `${cap} ${name}`;
+    return `${cap} ${id}`;
 }
 
 /**
