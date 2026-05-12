@@ -10,9 +10,9 @@ respectively.
 
 What's done already (Tier 1 foundations, Stage A of Tier 3,
 the inspector bands 1-3, bidirectional navigation, the Code
-tab rename, the cleanup of pre-section-27 dead code) lives
-in git log and in the state file's "Where we are" prose;
-not repeated here.
+tab rename, the cleanup of pre-section-27 dead code, the
+integer-id naming refactor) lives in git log and in the
+state file's "Where we are" prose; not repeated here.
 
 ## Currently in flight
 
@@ -34,14 +34,6 @@ reason about. The audio-firing-path decision IS blocking.
   without committing to the full Tier 2 machinery; strudel
   is the long-term endpoint. The choice shapes how much of
   Tier 2 lands and in what order.
-- Object naming simplification: switch from the current
-  generated ids (sp_xxxxxx, tr_xxxxxx, cv_xxxxxx) to
-  integers assigned in creation order per object type, as
-  done in the related GX Strudel project. Affects
-  scene.json id generation, pattern-block labels, callback
-  function name conventions, and inspector display. Best
-  done before Tier 2 starts wiring up id references in
-  pattern firing, so the migration touches less code.
 - DESIGN.md project description paragraph rewrite, informed
   by the section 27 and 28 framing.
 - Pass through DESIGN.md sections 1-26 identifying parts
