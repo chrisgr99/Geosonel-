@@ -16,20 +16,37 @@
  *
  *   2. Parse behaviors.js with Acorn to find every top-level
  *      function declaration and every const/let bound to a
- *      function expression or arrow. Those names are the
- *      identifiers a scene.json function-ref field can refer
- *      to (hitBeat, hitTrigger, collision, motionUpdate,
- *      auto).
+ *      function expression or arrow, AND to split out every
+ *      top-level $objectId: expression labelled statement.
+ *      The function names are the identifiers a scene.json
+ *      function-ref field can refer to (hasHitFunction,
+ *      beenHitFunction, onTickFunction). The labelled
+ *      statements are pattern blocks per section 28; they
+ *      are extracted into a separate list and their source
+ *      ranges in the executable stream are replaced with
+ *      whitespace so the calls inside them (note, s, stack,
+ *      and so on) do not run at scene-load time. Cmd-Enter
+ *      on a labelled block in the Code tab is the only
+ *      path that activates one (Stage A4 of the section-28
+ *      pattern-authoring sequence).
  *
- *   3. Execute behaviors.js inside a wrapper that returns a
- *      name-to-function map. The user's code only contains
- *      declarations, no top-level side effects expected (and
- *      none required), so re-executing on every Run Scene is
- *      cheap.
+ *   3. Execute the stripped behaviors.js inside a wrapper
+ *      that returns a name-to-function map. The labelled
+ *      pattern blocks have been replaced with whitespace by
+ *      this point, so calls like note("c d e f") that would
+ *      otherwise execute at load time stay inert until
+ *      promoted via Cmd-Enter. The user's non-pattern code
+ *      only contains declarations, no top-level side
+ *      effects expected (and none required), so re-executing
+ *      on every Run Scene is cheap.
  *
- * After steps 2 and 3 we have a function map. The map is
- * attached to the Scene as scene.functionMap and consulted
- * by the simulation when a slot fires. Slot fields on Curve,
+ * After steps 2 and 3 we have a function map and a list of
+ * labelled pattern blocks. The function map is attached to
+ * the Scene as scene.functionMap and consulted by the
+ * simulation when a slot fires. The labelled blocks are
+ * attached as scene.labelledBlocks for the inspector's
+ * pattern row and the Code tab's active-tag highlighting to
+ * consume (Stages A3 through A5). Slot fields on Curve,
  * Trigger, and Sprite hold STRING NAMES throughout — the
  * loader passes them through to the constructors verbatim
  * and does NOT resolve them at load time. A name that
@@ -100,15 +117,21 @@ export class SceneLoader {
             return errorResult("scene.json must be a JSON object at top level.");
         }
 
-        // --- 2. Parse behaviors.js with Acorn for function names ---
-        const namesResult = extractTopLevelFunctionNames(behaviorsFile.content);
-        if (!namesResult.ok) {
-            return errorResult(namesResult.error);
+        // --- 2. Parse behaviors.js with Acorn for function ---
+        //        names and labelled pattern blocks.
+        const parseResult = extractTopLevelFunctionNames(behaviorsFile.content);
+        if (!parseResult.ok) {
+            return errorResult(parseResult.error);
         }
-        const functionNames = namesResult.names;
+        const functionNames = parseResult.names;
+        const { strippedSource, labelledBlocks } =
+            splitLabelledStatements(parseResult.ast, behaviorsFile.content);
 
-        // --- 3. Execute behaviors.js to get a function map ---
-        const execResult = executeScript(behaviorsFile.content, functionNames);
+        // --- 3. Execute the stripped behaviors.js to get a ---
+        //        function map. Labelled pattern blocks have
+        //        been replaced with whitespace, so they do
+        //        not run at load time.
+        const execResult = executeScript(strippedSource, functionNames);
         if (!execResult.ok) {
             return errorResult(execResult.error);
         }
@@ -117,6 +140,7 @@ export class SceneLoader {
         // --- 4. Build the Scene ---
         const scene = new Scene();
         scene.functionMap = functionMap;
+        scene.labelledBlocks = labelledBlocks;
 
         try {
             applyPieceLevelFields(scene, sceneData);
@@ -198,10 +222,12 @@ function applyPieceLevelFields(scene, data) {
  * Use Acorn to parse the behaviours source and extract the
  * names of every top-level function declaration plus every
  * top-level const/let/var bound to a function expression or
- * arrow.
+ * arrow. Returns the AST too on success so callers can run
+ * additional passes (e.g. splitLabelledStatements) over the
+ * same parse.
  *
  * @param {string} source
- * @returns {{ok: true, names: string[]} | {ok: false, error: string}}
+ * @returns {{ok: true, names: string[], ast: any} | {ok: false, error: string}}
  */
 function extractTopLevelFunctionNames(source) {
     /** @type {any} */
@@ -246,7 +272,62 @@ function extractTopLevelFunctionNames(source) {
             }
         }
     }
-    return { ok: true, names };
+    return { ok: true, names, ast };
+}
+
+/**
+ * Walk a behaviours.js AST for top-level labelled statements
+ * whose label is dollar-prefixed ($objectId form) and whose
+ * body is an expression statement. Each such labelled block
+ * is a strudel pattern block per section 28. Return the
+ * extracted blocks plus a stripped source where each block's
+ * range is replaced with whitespace, preserving the file's
+ * line layout so error line numbers from executing the
+ * remainder still match the user's original source.
+ *
+ * Labelled statements whose label does not start with a
+ * dollar, and labelled statements whose body is not an
+ * expression (a labelled block statement, a labelled var
+ * declaration), are left untouched in the stripped source
+ * and execute as ordinary JavaScript like anything else.
+ *
+ * @param {any} ast Acorn AST of the behaviours source.
+ * @param {string} source Original behaviours source.
+ * @returns {{strippedSource: string, labelledBlocks: import("./scene.js").LabelledBlock[]}}
+ */
+function splitLabelledStatements(ast, source) {
+    /** @type {import("./scene.js").LabelledBlock[]} */
+    const labelledBlocks = [];
+    const chars = source.split("");
+
+    for (const node of ast.body) {
+        if (node.type !== "LabeledStatement") continue;
+        const labelName = node.label && node.label.name;
+        if (!labelName || labelName[0] !== "$") continue;
+        if (!node.body || node.body.type !== "ExpressionStatement") continue;
+
+        const objectId = labelName.slice(1);
+        const expr = node.body.expression;
+        const expressionText = source.slice(expr.start, expr.end);
+
+        labelledBlocks.push({
+            objectId,
+            expressionText,
+            range: { start: node.start, end: node.end },
+        });
+
+        // Replace the block's source range with whitespace,
+        // keeping newlines in place so the stripped source
+        // has the same line count and layout as the
+        // original. Runtime errors from executing the
+        // remainder still report against line numbers that
+        // match the user's source.
+        for (let i = node.start; i < node.end; i++) {
+            if (chars[i] !== "\n") chars[i] = " ";
+        }
+    }
+
+    return { strippedSource: chars.join(""), labelledBlocks };
 }
 
 /**
