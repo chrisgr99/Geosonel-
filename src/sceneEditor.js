@@ -1148,21 +1148,28 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
 }
 
 /**
- * Append an empty labelled pattern block to behaviors.js for
- * the given object id. Used by the inspector's Band 1 pattern
+ * Append a labelled pattern block to behaviors.js for the
+ * given object id. Used by the inspector's Band 1 pattern
  * row Create button (Stage A3 of the section-28 pattern-
- * authoring sequence) when no labelled block for the selected
- * object yet exists. The scaffolded form is $id: sound("") —
- * a labelled ExpressionStatement whose body is a call to
- * strudel's `sound` constructor with an empty string. The
- * `sound("")` starter gives the user a typical pattern shape
- * to fill in (replacing the empty string with mini-notation
- * like "bd sn"), but is harmless if they want to use a
- * different constructor like note(...) or stack(...): they
- * can simply edit over it. Stage A2's splitLabelledStatements
- * recognises the block as a labelled ExpressionStatement and
- * strips it from the scene-load execution stream, so the
- * sound() call never runs at load time.
+ * authoring sequence) when no labelled block for the
+ * selected object yet exists. The scaffolded form is
+ * $id: sound("bd sn bd sn") — a labelled
+ * ExpressionStatement whose body is a call to strudel's
+ * `sound` constructor with a four-beat bass-drum / snare
+ * pattern. The `bd sn bd sn` starter parses cleanly under
+ * mini-notation, fires audibly through superdough once the
+ * engine is loaded, and renders four marker diamonds along
+ * the curve immediately on Cmd-Enter, so the user gets
+ * concrete feedback from the very first promote rather
+ * than a parse error from an empty string. The user is
+ * expected to edit the starter to something more
+ * interesting (or replace it with note(...), stack(...),
+ * or any other strudel constructor) as they work; the
+ * starter just makes the round trip from Create to audible
+ * output land cleanly. Stage A2's splitLabelledStatements
+ * recognises the block as a labelled ExpressionStatement
+ * and strips it from the scene-load execution stream, so
+ * the sound() call never runs at load time.
  *
  * The block is appended at the end of the file with a blank
  * line separator so the existing structure is left
@@ -1182,7 +1189,7 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
  * @returns {{ newContent: string }}
  */
 export function scaffoldPatternBlock(content, objectId) {
-    const block = "$" + objectId + ": sound(\"\");\n";
+    const block = "$" + objectId + ": sound(\"bd sn bd sn\");\n";
     const trimmed = content.replace(/\s+$/, "");
     const separator = trimmed.length === 0 ? "" : "\n\n";
     return { newContent: `${trimmed}${separator}${block}` };
