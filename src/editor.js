@@ -29,7 +29,7 @@ import { linter, lintGutter } from "https://esm.sh/@codemirror/lint@6?deps=@code
 import * as acorn from "https://esm.sh/acorn@8";
 import { Inspector } from "./inspector.js";
 import { customDarkTheme } from "./cmTheme.js";
-import { patternHighlightExtension, setSelectedObjectIdsEffect } from "./patternHighlight.js";
+import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect } from "./patternHighlight.js";
 
 /**
  * Sentinel name for the virtual Properties tab. The
@@ -425,6 +425,33 @@ export class TabbedEditor {
         if (this.view === null) return;
         this.view.dispatch({
             effects: setSelectedObjectIdsEffect.of(selectedObjectIds),
+        });
+    }
+
+    /**
+     * Update the editor's known-object-id state so the
+     * orphan-tag decoration in patternHighlight.js flags
+     * labelled blocks whose dollar-prefixed label does
+     * NOT match any object in the current scene. The
+     * decoration is a red wavy underline indicating the
+     * block fires no pattern. Dispatched to the
+     * underlying CodeMirror view as a
+     * setKnownObjectIdsEffect; the ViewPlugin reads the
+     * new set and recomputes its DecorationSet
+     * immediately.
+     *
+     * Called by main.js after each successful runScene so
+     * the orphan flags track scene mutations (objects
+     * being added, removed, or renamed). Safe to call
+     * before the view has mounted: the call is a no-op
+     * in that case.
+     *
+     * @param {Set<string>} knownObjectIds
+     */
+    setKnownObjectIds(knownObjectIds) {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: setKnownObjectIdsEffect.of(knownObjectIds),
         });
     }
 

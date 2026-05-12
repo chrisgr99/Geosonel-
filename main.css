@@ -540,6 +540,32 @@ html, body {
     color: #5fc858 !important;
 }
 
+/* Orphan-tag flag. The CodeMirror decoration in
+ * patternHighlight.js marks the $objectId: tag of a
+ * labelled pattern block as cm-pattern-orphan-tag when
+ * the objectId does not match any object in the current
+ * scene. A label with no object is a hard error: the
+ * block fires no pattern and the only sensible recovery
+ * is either to remove the block or to rename it to point
+ * at an existing object. The wavy red underline matches
+ * the inspector and toolbar's error-hard convention
+ * (text-decoration: underline wavy #d4564b) so the visual
+ * language reads consistently across surfaces. The
+ * decoration is applied to the wrapper and all
+ * descendants so the underline paints under both the
+ * label identifier (rendered by CodeMirror's syntax
+ * highlighter inside an inner span) and the colon
+ * (a direct text node next to it). Active-tag green
+ * and orphan-tag red are mutually exclusive on the same
+ * label by construction — a selected object exists in
+ * the scene, so its id is never in the orphan set. */
+#editor-area .cm-pattern-orphan-tag,
+#editor-area .cm-pattern-orphan-tag * {
+    text-decoration: underline wavy #d4564b;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 2px;
+}
+
 /* --- Property inspector --- */
 
 /* The inspector replicates the GeoSonix property editor's look

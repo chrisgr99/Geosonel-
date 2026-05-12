@@ -408,6 +408,7 @@ async function main() {
             // scene.json edit).
             currentScene = result.scene;
             dispatchSelectedObjectIds(canvas.getSelection());
+            dispatchKnownObjectIds();
             messages.write("Scene updated.");
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
@@ -727,6 +728,41 @@ async function main() {
             }
         }
         editor.setSelectedObjectIds(ids);
+    };
+
+    /**
+     * Build the set of all object ids in the current
+     * scene and dispatch it to the editor so the orphan-
+     * tag decoration in behaviors.js flags labelled
+     * blocks whose ids no longer correspond to any
+     * scene object. The decoration is a red wavy
+     * underline on the $objectId: tag, reading as a
+     * hard error since a labelled block with no matching
+     * object fires no pattern.
+     *
+     * Called after each successful runScene, alongside
+     * dispatchSelectedObjectIds. The two id sets are
+     * independent: selection tracks the canvas's focus
+     * (typically a small subset) and changes on every
+     * click, while known ids track the scene's full
+     * object set and change only when objects are added,
+     * removed, or renamed.
+     */
+    const dispatchKnownObjectIds = () => {
+        /** @type {Set<string>} */
+        const ids = new Set();
+        if (currentScene !== null) {
+            for (const obj of currentScene.sprites) {
+                if (typeof obj.id === "string") ids.add(obj.id);
+            }
+            for (const obj of currentScene.triggers) {
+                if (typeof obj.id === "string") ids.add(obj.id);
+            }
+            for (const obj of currentScene.curves) {
+                if (typeof obj.id === "string") ids.add(obj.id);
+            }
+        }
+        editor.setKnownObjectIds(ids);
     };
 
     /**
