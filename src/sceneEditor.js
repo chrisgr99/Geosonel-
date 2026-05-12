@@ -627,6 +627,123 @@ export function addCurveAt(data, shape) {
 }
 
 /**
+ * Duplicate every object in the given selection. Each
+ * duplicate is a deep clone of its source with two
+ * targeted changes: a freshly generated id (next in the
+ * same counter sequence the toolbar's creation tools use)
+ * and position offset by (dx, dy) in canvas units
+ * (sprites and triggers shift their top-level x and y;
+ * curves translate their shape geometry via
+ * translateShape). Everything else — including
+ * cyclePattern, size, color, cursor extents, callback
+ * function-name references, Can-X gates, harmony
+ * overrides, beatsPerCycle, name, mute, hide — carries
+ * over verbatim.
+ *
+ * Labelled pattern blocks in behaviors.js are NOT
+ * duplicated. The duplicate fires its inherited
+ * cyclePattern from the moment it is created, but does
+ * not appear in the Code tab until the user clicks
+ * Create on the inspector's pattern row. The Create
+ * button uses the duplicate's existing cyclePattern as
+ * the default expression for the scaffolded labelled
+ * block (see scaffoldPatternBlock's defaultExpression
+ * parameter), so the labelled block lands matching what
+ * is already playing rather than overwriting with the
+ * bd-sn starter. If the source's pattern was a variable
+ * reference like drumPat, the duplicate's cyclePattern
+ * is the same string, both objects resolve drumPat in
+ * behaviors.js's scope to the same value, and the
+ * sharing is preserved through the variable.
+ *
+ * Mutates `data` in place. Returns an array of id mappings
+ * (kind, oldId, newId) so the caller can locate the new
+ * objects after the mutation lands. Duplicates are
+ * appended to their respective arrays, so the new sprites
+ * occupy indexes [oldSpritesLen, oldSpritesLen + count -
+ * 1] and similarly for triggers and curves; the caller can
+ * compute these from the pre-mutation array lengths
+ * without consulting the returned mappings.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {number} dx
+ * @param {number} dy
+ * @returns {Array<{kind: "sprite" | "trigger" | "curve", oldId: string | null, newId: string}>}
+ */
+export function duplicateSelection(data, selection, dx, dy) {
+    ensureIdCounters(data);
+    /** @type {Array<{kind: "sprite" | "trigger" | "curve", oldId: string | null, newId: string}>} */
+    const mappings = [];
+    /** @type {Array<["sprite" | "trigger" | "curve", "sprites" | "triggers" | "curves"]>} */
+    const kindAndKey = [
+        ["sprite", "sprites"],
+        ["trigger", "triggers"],
+        ["curve", "curves"],
+    ];
+    for (const [kind, arrayKey] of kindAndKey) {
+        const indexes = selection[arrayKey];
+        if (indexes === undefined) continue;
+        const arr = data[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        // Capture the source entries before we start
+        // appending. Pushing duplicates extends the array,
+        // and a naive in-place iteration that consulted
+        // arr[idx] after each push would risk picking up a
+        // freshly-appended duplicate as a source on the
+        // next round of a multi-select duplicate (an
+        // out-of-range index here is harmless, but a
+        // newly-duplicated entry at the original
+        // selection's position would lead to a runaway
+        // chain). Snapshotting the sources up front keeps
+        // the loop bounded to the original selection.
+        /** @type {any[]} */
+        const sources = [];
+        for (const idx of indexes) {
+            if (idx >= 0 && idx < arr.length) {
+                sources.push(arr[idx]);
+            }
+        }
+        for (const source of sources) {
+            if (source === null ||
+                typeof source !== "object" ||
+                Array.isArray(source)) continue;
+            // Deep clone via JSON roundtrip. Scene entries
+            // are JSON-safe by construction (no functions,
+            // no DOM refs, no cycles), so this is the
+            // simplest correct clone for our purposes.
+            /** @type {any} */
+            const dup = JSON.parse(JSON.stringify(source));
+            const newId = generateId(kind, data);
+            dup.id = newId;
+            // cyclePattern is intentionally NOT cleared.
+            // The deep clone above carried it over from
+            // the source, and we want the duplicate to
+            // fire the same pattern from the moment it
+            // appears. If the source's cyclePattern is a
+            // variable reference (e.g. "drumPat"), the
+            // duplicate's resolves to the same value via
+            // behaviors.js's scope, giving true sharing.
+            // If it's a literal expression, the duplicate
+            // gets its own independent copy.
+            if (kind === "sprite" || kind === "trigger") {
+                dup.x = roundCoord((typeof dup.x === "number" ? dup.x : 0) + dx);
+                dup.y = roundCoord((typeof dup.y === "number" ? dup.y : 0) + dy);
+            } else if (kind === "curve") {
+                translateShape(dup.shape, dx, dy);
+            }
+            arr.push(dup);
+            mappings.push({
+                kind,
+                oldId: typeof source.id === "string" ? source.id : null,
+                newId,
+            });
+        }
+    }
+    return mappings;
+}
+
+/**
  * Remove objects from the scene by kind and index. Indexes
  * refer to positions in the original arrays at the time of
  * the call; the function filters them out and the resulting
@@ -1266,12 +1383,29 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
  * wanting additional variants type them directly in the
  * Code tab.
  *
+ * The expression body defaults to the bd-sn starter
+ * described above, but the caller can override it via the
+ * defaultExpression parameter. The Create button path in
+ * main.js passes the object's current cyclePattern, which
+ * is non-empty for duplicates (which inherit the source's
+ * pattern) and for any other path that pre-populates the
+ * field without scaffolding a labelled block. With a
+ * non-empty override the scaffolded block matches what
+ * the object is already playing instead of replacing it
+ * with the generic starter.
+ *
  * @param {string} content  Current behaviors.js source.
  * @param {string} objectId  Identifier of the object to tag.
+ * @param {string} [defaultExpression]  Override for the
+ *   expression body. When omitted or empty, the bd-sn
+ *   starter is used.
  * @returns {{ newContent: string }}
  */
-export function scaffoldPatternBlock(content, objectId) {
-    const block = "$" + objectId + ": sound(\"bd sn bd sn\");\n";
+export function scaffoldPatternBlock(content, objectId, defaultExpression) {
+    const expression = (typeof defaultExpression === "string" && defaultExpression.length > 0)
+        ? defaultExpression
+        : "sound(\"bd sn bd sn\")";
+    const block = "$" + objectId + ": " + expression + ";\n";
     const trimmed = content.replace(/\s+$/, "");
     const separator = trimmed.length === 0 ? "" : "\n\n";
     return { newContent: `${trimmed}${separator}${block}` };

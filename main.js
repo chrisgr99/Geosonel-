@@ -65,6 +65,7 @@ import { ImageImporter } from "./src/imageImporter.js";
 import { installViewMenu } from "./src/viewMenu.js";
 import { installFileMenu } from "./src/fileMenu.js";
 import { installRunMenu } from "./src/runMenu.js";
+import { installEditMenu } from "./src/editMenu.js";
 import { installAppMenu } from "./src/appMenu.js";
 import { SceneLoader } from "./src/sceneLoader.js";
 import { DiskMirror } from "./src/diskMirror.js";
@@ -80,6 +81,7 @@ import {
     addSpriteAt,
     addTriggerAt,
     addCurveAt,
+    duplicateSelection,
     removeObjects,
     fillMissingIds,
     fillEmptyNames,
@@ -896,6 +898,86 @@ async function main() {
         await runScene();
     };
 
+    /**
+     * Duplicate every currently selected canvas object.
+     * Each duplicate is a deep clone of its source with a
+     * fresh id and position offset by plus one in canvas X
+     * and minus one in canvas Y (rendering as one unit
+     * right and one unit down on screen, since canvas Y
+     * is up). cyclePattern carries over from the source
+     * so the duplicate fires the same pattern from the
+     * moment it appears. The labelled pattern blocks in
+     * behaviors.js are intentionally not duplicated; the
+     * duplicate becomes visible in the Code tab only when
+     * the user clicks Create on the inspector's pattern
+     * row, and at that point scaffoldPatternBlock uses
+     * the duplicate's existing cyclePattern as the
+     * default expression so the scaffolded block matches
+     * what is already playing.
+     *
+     * Newly created duplicates are auto-selected, replacing
+     * the source selection. The user can immediately drag
+     * the new objects, duplicate them again, or tweak
+     * properties in the inspector. No-op when the selection
+     * is empty.
+     *
+     * Undoable via applyCanvasEdit. Behaviors.js is not
+     * touched by the duplicate operation itself, so the
+     * asymmetric-undo issue that would arise from
+     * duplicating labelled blocks does not apply here.
+     */
+    const performDuplicate = async () => {
+        const sel = canvas.getSelection();
+        const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
+        if (total === 0) return;
+
+        // Capture array lengths before the mutation so we
+        // can compute the indexes of the newly appended
+        // duplicates without re-scanning the scene by id.
+        // duplicateSelection always appends to each kind's
+        // array, so the new objects land at indexes
+        // [oldLen, oldLen + count - 1] for each kind.
+        const oldSpriteLen = currentScene !== null ? currentScene.sprites.length : 0;
+        const oldTriggerLen = currentScene !== null ? currentScene.triggers.length : 0;
+        const oldCurveLen = currentScene !== null ? currentScene.curves.length : 0;
+
+        /** @type {Array<{kind: "sprite" | "trigger" | "curve", oldId: string | null, newId: string}>} */
+        let mappings = [];
+        await applyCanvasEdit((data) => {
+            mappings = duplicateSelection(data, sel, 1, -1);
+        });
+        if (mappings.length === 0) return;
+
+        // Count duplicates per kind from the mappings
+        // (rather than from the input selection length) so
+        // any source entries that were filtered out by
+        // duplicateSelection's range check don't throw off
+        // the resulting selection indexes.
+        let newSpriteCount = 0;
+        let newTriggerCount = 0;
+        let newCurveCount = 0;
+        for (const m of mappings) {
+            if (m.kind === "sprite") newSpriteCount++;
+            else if (m.kind === "trigger") newTriggerCount++;
+            else if (m.kind === "curve") newCurveCount++;
+        }
+        /** @type {number[]} */
+        const newSprites = [];
+        for (let i = 0; i < newSpriteCount; i++) newSprites.push(oldSpriteLen + i);
+        /** @type {number[]} */
+        const newTriggers = [];
+        for (let i = 0; i < newTriggerCount; i++) newTriggers.push(oldTriggerLen + i);
+        /** @type {number[]} */
+        const newCurves = [];
+        for (let i = 0; i < newCurveCount; i++) newCurves.push(oldCurveLen + i);
+
+        canvas.setSelection({
+            sprites: newSprites,
+            triggers: newTriggers,
+            curves: newCurves,
+        });
+    };
+
     canvas.setEditCallback(async (edit) => {
         if (edit.kind === "addSprite") {
             await applyCanvasEdit((data) => addSpriteAt(data, edit.x, edit.y));
@@ -1146,19 +1228,51 @@ async function main() {
                 editor.selectTabAndScrollToFunction("behaviors.js", edit.functionName);
             } else if (edit.kind === "createPatternBlock") {
                 // Band 1 pattern row Create button. Append
-                // a $id: sound("") stub at the end of
+                // a $id: <expression> block at the end of
                 // behaviors.js, refresh the editor view,
                 // run the scene (so the loader picks up
                 // the new labelledBlocks entry), then
                 // switch to behaviors.js and scroll to the
-                // new stub so the user can fill in the
-                // pattern expression.
+                // new block so the user can fill in or
+                // edit the pattern expression.
+                //
+                // Default expression. If the selected
+                // object already has a cyclePattern set
+                // (typical for a duplicate, which inherits
+                // its source's cyclePattern, or for any
+                // path that populated the field without
+                // scaffolding a labelled block), pass
+                // that value to scaffoldPatternBlock as
+                // the default so the scaffolded block
+                // matches what is already playing. With
+                // an empty cyclePattern the function
+                // falls back to its built-in bd-sn
+                // starter.
                 const behaviorsFile = session.bundle.getFile("behaviors.js");
                 if (behaviorsFile === null) {
                     messages.write("No behaviors.js in this score.", "error");
                     return;
                 }
-                const { newContent } = scaffoldPatternBlock(behaviorsFile.content, edit.objectId);
+                let defaultExpression = "";
+                if (currentScene !== null) {
+                    const allObjects = [
+                        ...currentScene.sprites,
+                        ...currentScene.triggers,
+                        ...currentScene.curves,
+                    ];
+                    for (const obj of allObjects) {
+                        if (obj.id === edit.objectId &&
+                            typeof obj.cyclePattern === "string") {
+                            defaultExpression = obj.cyclePattern;
+                            break;
+                        }
+                    }
+                }
+                const { newContent } = scaffoldPatternBlock(
+                    behaviorsFile.content,
+                    edit.objectId,
+                    defaultExpression,
+                );
                 session.bundle.updateContent("behaviors.js", newContent);
                 editor.refreshActiveTabFromBundle();
                 await runScene();
@@ -1337,40 +1451,9 @@ async function main() {
         toggleHideInspector,
     });
     installFileMenu({ session, messages, imageImporter, diskMirror });
+    installEditMenu({ performUndo, performRedo, performDuplicate });
     installRunMenu({ runScene });
     installAppMenu({ diskMirror, messages });
-
-    // --- Undo / Redo shortcuts (Cmd-Z, Cmd-Shift-Z) ---
-    //
-    // Listening at the window level catches Cmd-Z anywhere
-    // outside text-editing contexts. The focus filter (same
-    // shape the Delete handler uses) skips when focus is in
-    // the Code tab's CodeMirror editor, an INPUT or
-    // TEXTAREA, or any other contenteditable element — those
-    // surfaces have their own undo (CodeMirror's edit
-    // history, the browser's contenteditable undo) and
-    // should keep handling Cmd-Z on their own. Outside text
-    // contexts, Cmd-Z runs performUndo and Cmd-Shift-Z runs
-    // performRedo. preventDefault fires only when the
-    // filters pass so unhandled cases let the browser do
-    // whatever it does by default.
-    window.addEventListener("keydown", (e) => {
-        const meta = e.metaKey || e.ctrlKey;
-        if (!meta) return;
-        if (e.key.toLowerCase() !== "z") return;
-        const target = e.target;
-        if (target instanceof HTMLElement) {
-            if (target.closest(".cm-editor") !== null) return;
-            if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-            if (target.isContentEditable) return;
-        }
-        e.preventDefault();
-        if (e.shiftKey) {
-            void performRedo();
-        } else {
-            void performUndo();
-        }
-    });
 
     // --- Save shortcut (Cmd-S) ---
     window.addEventListener("keydown", (e) => {
