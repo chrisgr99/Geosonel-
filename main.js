@@ -221,6 +221,21 @@ async function main() {
     new TransportBarView(transport, strudelRuntime);
     /** @type {any} */ (window).strudelRuntime = strudelRuntime;
 
+    // When the strudel engine finishes loading, re-parse
+    // every curve's cyclePattern so marker diamonds appear
+    // on the canvas for patterns that were present at scene
+    // load but couldn't be parsed yet (parsePatternToPositions
+    // requires window.note and friends, which initStrudel
+    // installs). Without this hook the markers would only
+    // appear after the next runScene call (Cmd-Enter or
+    // similar). Once loaded, subsequent setScene calls
+    // refresh markers naturally through their own code path.
+    strudelRuntime.onStatusChange((status) => {
+        if (status === "loaded") {
+            canvas.refreshMarkers();
+        }
+    });
+
     // --- Simulation ---
     //
     // Advances scene state forward in time during playback.

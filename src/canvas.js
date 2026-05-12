@@ -8,18 +8,17 @@
  * Drawn elements: the reference grid, the optional background
  * image, and the scene's curves, triggers, and sprites. Curves
  * render as their geometric shape with diamond markers at
- * each beat slot — active beats ("x") drawn as miniature
- * triggers (image-filled, blue-bordered, rotated so two
- * opposite vertices lie along the curve's tangent), inactive
- * beats (".") drawn as small hollow green diamonds at the
- * same orientation. The Unified Bound-Trigger Model in
- * DESIGN.md §10.5 treats active beat points as triggers
- * bound to the curve, so they share the trigger's visual
- * treatment here. The cursor (a perpendicular segment when
- * the cursor extent is non-zero, a small dot otherwise)
+ * each event position derived from the curve's cyclePattern
+ * (per section 28's marker layout interpretation: the parsed
+ * Pattern is queried for one cycle's events, each event's
+ * fractional begin position is mapped onto the curve's
+ * geometry, and a small image-filled, blue-bordered diamond
+ * is drawn there rotated so two opposite vertices lie along
+ * the curve's tangent). The cursor (a perpendicular segment
+ * when the cursor extent is non-zero, a small dot otherwise)
  * draws at the position the Simulation reports for that
- * curve. During playback the canvas runs a render loop
- * driven by transport's play event so the cursor advances
+ * curve. During playback the canvas runs a render loop driven
+ * by transport's play event so the cursor advances
  * continuously; while paused, the cursor stays put. See
  * simulation.js for the cursor advancement model.
  *
@@ -45,6 +44,7 @@
 
 import { applyBrightnessReduction } from "./imageTransform.js";
 import { getPreference, subscribePreference } from "./preferences.js";
+import { parsePatternToPositions } from "./strudel/patternParse.js";
 
 const DEFAULT_HALF_WIDTH = 16;   // \u00b116 units horizontally at zoom 1
 const DEFAULT_HALF_HEIGHT = 12;  // \u00b112 units vertically at zoom 1
@@ -95,13 +95,13 @@ const CANVAS_BORDER_COLOUR = "#b8b8b8";
 const CANVAS_BORDER_WIDTH_PX = 3;
 
 // Colours for scene elements. Curves are soft green, picking
-// up on GeoSonix's accent colour. Inactive beat-point markers
-// reuse the same brighter green so they read as a curve
-// detail rather than as content. Active beat points use the
-// trigger's blue boundary colour instead, since under the
-// Bound-Trigger Model (DESIGN.md §10.5) they ARE triggers
-// bound to the curve. Cursors are warm amber to stand out
-// from everything else.
+// up on GeoSonix's accent colour. Pattern-event marker
+// diamonds along a curve use the trigger's blue boundary
+// colour since they share the trigger's visual treatment
+// per section 28's marker layout interpretation (each
+// marker is a miniature trigger bound to the curve at the
+// pattern event's fractional position). Cursors are warm
+// amber to stand out from everything else.
 //
 // Triggers and sprites both fill their interior with the
 // background image's pixel colour at the object's centre
@@ -117,10 +117,6 @@ const CANVAS_BORDER_WIDTH_PX = 3;
 // cue that distinguishes a moving sprite from a static
 // trigger once the simulation loop runs.
 const CURVE_COLOUR = "#7dd68a";
-// Used for inactive beat-point diamonds ("." entries in
-// activeBeats). Active beats borrow OBJECT_BOUNDARY_COLOUR
-// since they render as triggers per the Bound-Trigger Model.
-const BEAT_INACTIVE_COLOUR = "#b8e8c0";
 const CURSOR_COLOUR = "#ffb060";
 const OBJECT_BOUNDARY_COLOUR = "#7db8d6";
 const NO_IMAGE_FILL_COLOUR = "#404040";
@@ -238,6 +234,32 @@ export class Canvas {
          * @type {import("./scene.js").Scene | null}
          */
         this._scene = null;
+
+        /**
+         * Cached pattern-event marker positions per curve,
+         * keyed by curve id. Each value is the array of
+         * fractional cycle positions (in [0, 1)) produced by
+         * parsePatternToPositions for that curve's
+         * cyclePattern at the time of the last refresh. The
+         * canvas re-derives marker positions from this map
+         * on every draw rather than re-parsing every frame,
+         * which keeps draw cost flat regardless of pattern
+         * complexity and keeps stochastic patterns visually
+         * stable within a cycle (the positions only change
+         * when the cache is refreshed). Refreshed on every
+         * setScene call (so Cmd-Enter promote and any other
+         * scene-reloading edit pick up the new positions)
+         * and on strudel-runtime status change to "loaded"
+         * (so a score whose patterns couldn't be parsed at
+         * scene load — because the engine hadn't been
+         * loaded yet — picks up its markers when the
+         * engine becomes available). Curves whose patterns
+         * are empty, fail to parse, or whose curve was
+         * dropped from the scene are absent from the map;
+         * absent entries render no markers.
+         * @type {Map<string, number[]>}
+         */
+        this._curveMarkerPositions = new Map();
 
         /**
          * Transport reference. Used to subscribe to the
@@ -390,6 +412,22 @@ export class Canvas {
             };
         }
         this._gesture = null;
+        this._refreshCurveMarkerPositions();
+        this.scheduleDraw();
+    }
+
+    /**
+     * Re-parse every curve's cyclePattern and refresh the
+     * cached marker positions. Public entry point used by
+     * main.js when the strudel runtime transitions to
+     * "loaded" so a score whose patterns couldn't be parsed
+     * at scene load (no engine yet) picks up its markers
+     * without requiring the user to re-run the scene.
+     * Schedules a draw on the next frame so the new
+     * markers become visible.
+     */
+    refreshMarkers() {
+        this._refreshCurveMarkerPositions();
         this.scheduleDraw();
     }
 
@@ -744,6 +782,7 @@ export class Canvas {
         if (this._scene === null) return;
         for (const curve of this._scene.curves) {
             this._strokeCurveShape(curve);
+            this._drawCurveMarkers(curve);
             this._drawCurveCursor(curve);
         }
     }
@@ -780,63 +819,78 @@ export class Canvas {
         ctx.stroke();
     }
 
-    _drawCurveBeatPoints(curve) {
+    _drawCurveMarkers(curve) {
+        const positions = this._curveMarkerPositions.get(curve.id);
+        if (positions === undefined || positions.length === 0) return;
+
         const ctx = this.ctx;
 
-        // Beat slots render as diamonds rotated so two opposite
-        // vertices lie along the curve's tangent at each
-        // sample point. Active beats ("x") render as miniature
-        // triggers — filled with the image pixel under the
-        // beat position, stroked in the trigger boundary
-        // colour — because the Unified Bound-Trigger Model
-        // (DESIGN.md §10.5) treats them as triggers bound to
-        // the curve. Inactive beats (".") render as smaller
-        // hollow diamonds in the inactive-beat green so the
-        // full rhythm pattern is readable on the curve
-        // without inactive positions competing visually with
-        // the active ones.
-        //
-        // Sizes are constant in CSS pixels so beat points
-        // stay legible at every zoom level. The active-beats
-        // string cycles modulo its length under the new model:
-        // it can be any length the composer chooses, and
-        // indexes wrap so a string shorter than cycleDuration
-        // repeats and one longer truncates per cycle.
-        const activeHalfPx = 6;
-        const inactiveHalfPx = 3;
+        // Markers render as miniature triggers per section
+        // 28's marker layout interpretation: image-filled
+        // with the trigger boundary colour, rotated so two
+        // opposite vertices lie along the curve's tangent
+        // at the sample point. Marker size is constant in
+        // CSS pixels rather than scaled with zoom so the
+        // markers stay legible at every zoom level without
+        // disappearing when zoomed out or overwhelming the
+        // curve when zoomed in. 5 px half-size sits a touch
+        // above the typical trigger pixel radius at default
+        // zoom, so a marker reads visually as a slightly
+        // chunkier trigger — enough to register as a beat
+        // position without competing with the curve itself.
+        const halfPx = 5;
 
-        const ab = curve.activeBeats;
-        const len = curve.cycleDuration;
-        if (ab.length === 0 || len === 0) return;
-        for (let i = 0; i < len; i++) {
-            const ch = ab[i % ab.length];
-            if (ch !== "x" && ch !== ".") continue;
-            const t = i / len;
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
+
+        for (const t of positions) {
             const sample = sampleCurve(curve.shape, t);
             if (sample === null) continue;
             const px = this.toPixelX(sample.x);
             const py = this.toPixelY(sample.y);
             const axes = pixelTangentAndPerp(sample.tx, sample.ty);
-            const r = ch === "x" ? activeHalfPx : inactiveHalfPx;
 
             ctx.beginPath();
-            ctx.moveTo(px + axes.tx * r, py + axes.ty * r);
-            ctx.lineTo(px + axes.px * r, py + axes.py * r);
-            ctx.lineTo(px - axes.tx * r, py - axes.ty * r);
-            ctx.lineTo(px - axes.px * r, py - axes.py * r);
+            ctx.moveTo(px + axes.tx * halfPx, py + axes.ty * halfPx);
+            ctx.lineTo(px + axes.px * halfPx, py + axes.py * halfPx);
+            ctx.lineTo(px - axes.tx * halfPx, py - axes.ty * halfPx);
+            ctx.lineTo(px - axes.px * halfPx, py - axes.py * halfPx);
             ctx.closePath();
 
-            if (ch === "x") {
-                ctx.fillStyle = this._sampleImageAt(sample.x, sample.y);
-                ctx.fill();
-                ctx.lineWidth = 1.5;
-                ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
-                ctx.stroke();
-            } else {
-                ctx.lineWidth = 1;
-                ctx.strokeStyle = BEAT_INACTIVE_COLOUR;
-                ctx.stroke();
-            }
+            ctx.fillStyle = this._sampleImageAt(sample.x, sample.y);
+            ctx.fill();
+            ctx.stroke();
+        }
+    }
+
+    /**
+     * Refresh the cached pattern-event marker positions for
+     * every curve in the current scene. Walks the scene's
+     * curves, parses each curve's cyclePattern via
+     * parsePatternToPositions, and stores the resulting
+     * positions in _curveMarkerPositions keyed by curve id.
+     * Curves whose cyclePattern is empty, fails to parse
+     * (e.g. strudel engine not loaded yet), or otherwise
+     * produces no positions are absent from the map after
+     * the refresh — absent entries render no markers, so
+     * the visual outcome is a curve with no diamonds. The
+     * map is cleared on every refresh so a curve that was
+     * removed from the scene since the last refresh loses
+     * its entry naturally.
+     *
+     * Cheap to call: parsing is fast (small patterns) and
+     * runs only on setScene and on strudel-runtime status
+     * transitions, not on every render-loop frame.
+     */
+    _refreshCurveMarkerPositions() {
+        this._curveMarkerPositions.clear();
+        if (this._scene === null) return;
+        for (const curve of this._scene.curves) {
+            if (typeof curve.id !== "string" || curve.id.length === 0) continue;
+            if (typeof curve.cyclePattern !== "string" || curve.cyclePattern.length === 0) continue;
+            const result = parsePatternToPositions(curve.cyclePattern);
+            if (!result.ok || result.positions.length === 0) continue;
+            this._curveMarkerPositions.set(curve.id, result.positions);
         }
     }
 
