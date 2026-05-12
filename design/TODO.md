@@ -18,35 +18,52 @@ state file's "Where we are" prose; not repeated here.
 
 Nothing.
 
-## Pre-Tier-2 prep
-
-Items worth landing before Tier 2 implementation begins in
-earnest. The documentation passes don't block code work
-strictly, but they make the rest of the work easier to
-reason about. The audio-firing-path decision IS blocking.
-
-- Decide the audio firing path. Two options on the table:
-  the strudel-driven path per section 27 (the pattern
-  evaluation primitive that queries patterns and schedules
-  superdough events) or a simpler intermediate path that
-  calls JS functions named in the slot fields when cycles
-  wrap. The simpler path lets us hear something earlier
-  without committing to the full Tier 2 machinery; strudel
-  is the long-term endpoint. The choice shapes how much of
-  Tier 2 lands and in what order.
-- Pass through DESIGN.md sections 1-26 identifying parts
-  that fit naturally under the section 27/28 framing and
-  parts that need revision. Some pre-pivot work items may
-  become irrelevant; others may need restating. Output is
-  either edits to the existing sections or a list of items
-  worth opening as their own TODO entries.
-
 ## Tier 2: pattern evaluation primitive
 
 Section 27 has the architecture and the resolved design
 questions (the four "Resolved" items in its
-Pre-implementation design tasks subsection). Concrete
-deliverables:
+Pre-implementation design tasks subsection). The audio
+firing path decision is also resolved: full strudel-driven
+path, implemented in phases. See section 27's "Audio
+firing path: full strudel, phased rollout" subsection for
+the reasoning.
+
+Implementation proceeds in four phases so each step is
+testable before the next builds on it.
+
+Phase 1 — first sound. The minimum to fire a deterministic
+pattern through superdough on a curve cursor sweep:
+pattern primitive function, per-source cycle counter,
+audio commit window, mute/solo gating, continuous firing
+path. Static signals (sine, saw, square, tri, perlin) work
+for free at this stage because they're pure functions of
+cycle position.
+
+Phase 2 — edit-time polish. Cancellation of pre-scheduled
+events on pattern change, continue-on-edit cycle counter
+semantics, concurrent firings tested with multiple sources.
+
+Phase 3 — dynamic-signal substrate (plumbing only, no new
+signals). Firing-context pointer in try-finally, two-pass
+evaluation, per-tick state snapshot. Nothing observable
+changes; the infrastructure regression surface is decoupled
+from the new-signal behaviour.
+
+Phase 4 — first dynamic signals. spriteV first (the
+simulation already has velocity data), then spriteX and
+spriteY, then the image-reading signals (imageLightness,
+imageColor, imageColorAt). Phase 4 overlaps with what Tier
+4 originally captured; that overlap is intentional now that
+the plumbing dynamic signals consume lives in Tier 2.
+
+The natural stop-and-back-out point is between Phase 2 and
+Phase 3. If Phase 1 and 2 land but dynamic-signal
+integration turns out intractable, the system is left in a
+working hybrid state — full deterministic and static-signal
+patterns work, dynamic signals don't — while the issue is
+worked out.
+
+Concrete deliverables across the phases:
 
 - The pattern primitive function itself: takes a parsed
   Pattern, a cycle range, a wall-clock window, and a firing
@@ -226,6 +243,11 @@ Tier 6 is what's left.
 Items that don't sit in a single tier but are worth
 tracking:
 
+- Pass through DESIGN.md sections 1-26 identifying parts
+  that fit naturally under the section 27/28 framing and
+  parts that need revision. Deferred indefinitely as a big
+  pass; instead, picked up section by section when adjacent
+  work surfaces a stale piece worth fixing.
 - Per-source flourish duration default shape: scene-level,
   per-kind, or per-source. Real use during Tier 5 will tell
   us which feels right.
