@@ -57,7 +57,33 @@
 
 // @ts-check
 
-import { generateId } from "./idGen.js";
+import { generateId, ensureIdCounters } from "./idGen.js";
+
+/**
+ * One $objectId: expression labelled statement extracted from
+ * behaviors.js at scene-load time. The loader walks the
+ * top-level statements via Acorn, pulls out the ones whose
+ * label is dollar-prefixed and whose body is an expression
+ * statement, and attaches the resulting list to
+ * Scene.labelledBlocks. The blocks are inert at scene-load:
+ * the loader replaces their source ranges with whitespace
+ * before executing behaviors.js, so the pattern constructor
+ * calls inside them do not run. The blocks are held here for
+ * the Code tab and inspector to consult (active-tag
+ * highlighting, scaffolding, Cmd-Enter routing in the
+ * section-28 pattern-authoring stages A3 through A5).
+ *
+ * @typedef {Object} LabelledBlock
+ * @property {string} objectId The object id parsed from the
+ *     dollar-prefixed label (label name with the leading
+ *     dollar stripped).
+ * @property {string} expressionText The expression body as
+ *     source text, ready to be parsed by the strudel
+ *     mini-notation parser at Cmd-Enter time.
+ * @property {{start: number, end: number}} range Character
+ *     range of the whole labelled statement in the original
+ *     behaviors.js source.
+ */
 
 export class Scene {
     constructor() {
@@ -184,6 +210,24 @@ export class Scene {
         // present.
         /** @type {Object<string, Function>} */
         this.functionMap = {};
+
+        // --- Labelled pattern blocks ---
+        // List of $objectId: expression labelled statements
+        // extracted from behaviors.js by the scene loader
+        // (Stage A2 of the section-28 pattern-authoring
+        // sequence). Each entry is one top-level labelled
+        // block found in behaviors.js. The blocks are inert
+        // at scene-load: the loader replaces their source
+        // ranges with whitespace before executing the file,
+        // so a $spr1: note("c d e f") block does not call
+        // note() at load time. Cmd-Enter on a block in the
+        // Code tab (Stage A4) is the only path that
+        // activates one, writing the expression body to the
+        // named object's cyclePattern field in scene.json.
+        // The blocks are held here for later stages (A3
+        // through A5) to consult.
+        /** @type {LabelledBlock[]} */
+        this.labelledBlocks = [];
     }
 
     /**
@@ -231,15 +275,38 @@ export class Scene {
      * built in memory without going through scene.json (e.g.
      * tests, or future programmatic-construction APIs).
      *
+     * The counter is derived fresh from the in-memory arrays
+     * on each call rather than persisted on the Scene, since
+     * the Scene runtime model has no notion of id-counter
+     * persistence — that lives in scene.json. Practical
+     * consequence: in a create-delete-create sequence on a
+     * Scene that wasn't built from scene.json, the deleted
+     * id's number could be reused by the next call, where
+     * the scene.json path's persisted counters would advance
+     * past it. sceneLoader doesn't hit this path because it
+     * always passes explicit ids from scene.json; direct
+     * programmatic Scene construction (limited to tests
+     * today) is the only caller that reaches here.
+     *
      * @param {"curve" | "trigger" | "sprite"} kind
      * @returns {string}
      */
     _nextId(kind) {
-        const existing = new Set();
-        for (const c of this.curves) existing.add(c.id);
-        for (const t of this.triggers) existing.add(t.id);
-        for (const s of this.sprites) existing.add(s.id);
-        return generateId(kind, existing);
+        // Build a synthetic scene-data object so the same
+        // ensureIdCounters + generateId pair that scene.json's
+        // load path uses applies cleanly here. ensureIdCounters
+        // walks the in-memory arrays, finds the max integer in
+        // any conventional id per kind, and seeds the synthetic
+        // counters past it; generateId then reads from those
+        // counters to produce the next id.
+        /** @type {any} */
+        const data = {
+            curves: this.curves,
+            triggers: this.triggers,
+            sprites: this.sprites,
+        };
+        ensureIdCounters(data);
+        return generateId(kind, data);
     }
 }
 
