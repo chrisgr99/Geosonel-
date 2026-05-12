@@ -267,6 +267,26 @@ Utility code that supports score authoring in
 behaviors.js. Not tier-aligned; pick up whenever appetite
 arises.
 
+- Strudel code completion and popup keyword help in the
+  Code tab editor. Autocomplete for sound, note, gain,
+  legato, and the rest of the strudel vocabulary; popup
+  help when the cursor lands on a keyword (signature,
+  short description, example). Strudel exposes its
+  CodeMirror completion sources as reusable packages, so
+  the integration is largely a matter of pulling those in
+  and wiring them into GXW's editor; the customisation
+  layer adds GXW-specific tokens on top — the dynamic
+  signal names once they land in Phase 4 (spriteV,
+  spriteX, spriteY, imageLightness, imageColor,
+  imageColorAt), the labelled-block syntax ($id: ...), and
+  the callback function name templates with object-id
+  completion drawn from the current scene's objects
+  (hasHit_SPR1, beenHit_TRG3, onTick_CRV1, etc.). Worth
+  pulling forward to the start of Tier 2 phase work —
+  having strudel's vocabulary autocomplete materially
+  reduces friction when sketching test patterns to hear,
+  and the GXW-specific extensions can grow alongside the
+  rest of Tier 2 as new signals and conventions land.
 - MIDI note helpers for Web MIDI output: functions that
   construct MIDI events (note on, note off, controllers,
   channel routing) for use from behaviors.js, providing a
@@ -284,6 +304,26 @@ These describe what "finished" looks like for GXW. Items
 here are intentionally general; they sharpen as earlier
 tiers land.
 
+- Package GXW as a desktop application via Electron (or
+  Tauri if bundle size becomes a concern). Reclaims the
+  browser chrome's vertical space, which matters more for
+  an accessibility-zoom user than the average — Chrome's
+  URL bar plus tab strip plus bookmarks bar costs roughly
+  100-150 vertical pixels of canvas real estate at typical
+  zoom levels. Also eliminates accidental browser-shortcut
+  firing (Cmd-W closing a tab, Cmd-T opening one, Cmd-L
+  jumping to the URL bar) and stray URL-bar dictation
+  capture, gives native macOS file dialogs and persistent
+  window state, removes the network dependency on esm.sh
+  by bundling imports locally so the app runs fully
+  offline, and lets right-click context menus carry useful
+  GXW operations rather than the browser's defaults.
+  Conversion is mechanical for an app structured like
+  GXW: small Electron main-process entry point opens a
+  BrowserWindow on index.html, local-bundling of CDN
+  imports, Electron Builder configuration for distribution.
+  A session or two of focused work once the browser-mode
+  core is doing useful musical work.
 - Performance pass: profiling and optimisation for scenes
   with many sources, large cycle counts, dense patterns.
 - Accessibility pass: keyboard navigation through the
