@@ -18,17 +18,34 @@
  * state with a console.warn when no outputs are available at
  * all; subsequent send() calls become no-ops.
  *
- * Timing. The Web MIDI API takes timestamps in
- * performance.now() milliseconds; the firing engine emits
- * audioTime values in audioContext.currentTime seconds. The
- * MIDISender captures the offset once on its first send
- * (lazy because the AudioContext doesn't exist at app load,
- * only after the user clicks Play or Load Engine) and
- * applies the same offset to every subsequent conversion.
- * The two clocks could drift slightly over long sessions but
- * for the cycle-length time windows we care about (sub-
- * second scheduling horizons) the single-capture offset is
- * accurate enough.
+ * Timing model. noteOn dispatch uses Web MIDI's scheduled
+ * timestamp: output.send(data, audioToMidiTime(audioTime))
+ * lets the OS schedule the noteOn at the exact moment in
+ * audio time, with sub-millisecond precision on macOS
+ * CoreMIDI. noteOff dispatch goes through our own scheduler
+ * instead. send() queues each event's noteOff into an
+ * internal pending list keyed by audio time; tick() (called
+ * from the firing engine on every render frame) walks the
+ * list and dispatches any noteOff whose audio time has
+ * arrived. This means noteOff precision is bounded by the
+ * tick rate (typically 60Hz / 16.6ms), which is more than
+ * fine for musical timing. The reason we hand-roll noteOff
+ * scheduling rather than reusing Web MIDI's: empirical
+ * testing showed Chrome's Web MIDI noteOff timestamps were
+ * unreliable at the cycle-length time horizons we use —
+ * scheduled noteOffs sometimes fired earlier than their
+ * timestamp, producing staccato when the pattern specified
+ * legato. Owning the noteOff queue ourselves also opens up
+ * the voice-management features that GeoSonix-style
+ * authoring needs (max polyphony with oldest-note-steal,
+ * sustain-pedal interaction, channel reassignment) since
+ * we can inspect and mutate the active-note set directly.
+ *
+ * The two clocks (audioContext.currentTime and
+ * performance.now()) could drift slightly over long
+ * sessions but for the cycle-length time windows we care
+ * about (sub-second scheduling horizons) the single-capture
+ * offset is accurate enough.
  *
  * Value mapping. Reads fields off the strudel Hap value as
  * confirmed by the MIDI integration spike:
@@ -100,6 +117,19 @@ export class MIDISender {
         this._listeners = new Set();
         /** @type {boolean} */
         this._warnedNoNote = false;
+        /**
+         * Pending noteOffs awaiting their audio time. Each
+         * entry carries the audioContext time at which the
+         * noteOff should fire, plus the channel and note
+         * number needed to construct the MIDI message. The
+         * list is unsorted; tick() walks all entries and
+         * dispatches any whose time has arrived. Bounded
+         * growth: each send() adds one entry, each tick()
+         * removes any whose time has come, and panic()
+         * flushes the list entirely.
+         * @type {Array<{channel: number, noteNumber: number, audioOffTime: number}>}
+         */
+        this._pendingNoteOffs = [];
     }
 
     /**
@@ -197,10 +227,26 @@ export class MIDISender {
     /**
      * Send a pattern event as a MIDI noteOn followed by a
      * matching noteOff. The audioTime is in audioContext
-     * seconds and gets converted to Web MIDI's
-     * performance.now() millisecond timeline. The duration
-     * times the value.clip multiplier (defaulting to 1)
-     * gives the noteOff offset from noteOn.
+     * seconds and is used as the Web MIDI scheduled
+     * timestamp for the noteOn; the noteOff is queued into
+     * the internal pending list and dispatched by tick()
+     * when its audio time arrives.
+     *
+     * Same-note-same-channel voice management. If a noteOff
+     * is already pending for the same channel and note
+     * number (meaning the previous noteOn for that pitch
+     * has not yet had its noteOff fired), the pending
+     * noteOff is dispatched immediately and removed from
+     * the queue BEFORE the new noteOn is scheduled. This
+     * enforces the invariant that a given (channel, note)
+     * pair can have at most one active voice at a time;
+     * the new noteOn always re-triggers cleanly rather
+     * than overlapping with itself. Cutting the old note
+     * off at "now" rather than at the new noteOn's
+     * scheduled time is a small audible compromise (the
+     * note ends slightly earlier than its legato value
+     * would otherwise extend it) made in exchange for
+     * predictable polyphony.
      *
      * Skips silently when not ready or when the value has
      * no recognisable note field. The first skip due to a
@@ -248,12 +294,32 @@ export class MIDISender {
 
         const noteOnMidiTime = this._audioToMidiTime(audioTime);
         if (noteOnMidiTime === null) return;
-        const noteOffMidiTime = noteOnMidiTime + offDuration * 1000;
+        const audioOffTime = audioTime + offDuration;
+
+        // Same-note voice management. If a pending noteOff
+        // for this channel+note exists from a previous
+        // noteOn, dispatch it immediately so the new noteOn
+        // re-triggers cleanly rather than overlapping with
+        // itself. We find at most one such entry because
+        // every noteOn pushes exactly one noteOff to the
+        // queue and we never queue duplicates.
+        for (let i = 0; i < this._pendingNoteOffs.length; i++) {
+            const off = this._pendingNoteOffs[i];
+            if (off.channel === channel && off.noteNumber === noteNumber) {
+                const status = 0x80 | (off.channel - 1);
+                this._output.send([status, off.noteNumber, 0]);
+                this._pendingNoteOffs.splice(i, 1);
+                break;
+            }
+        }
 
         const statusOn = 0x90 | (channel - 1);
-        const statusOff = 0x80 | (channel - 1);
         this._output.send([statusOn, noteNumber, velocity], noteOnMidiTime);
-        this._output.send([statusOff, noteNumber, 0], noteOffMidiTime);
+        this._pendingNoteOffs.push({
+            channel,
+            noteNumber,
+            audioOffTime,
+        });
 
         this._emit({
             type: "send",
@@ -261,6 +327,55 @@ export class MIDISender {
             velocity,
             channel,
         });
+    }
+
+    /**
+     * Dispatch any pending noteOffs whose audio time has
+     * arrived. Called from the firing engine's tick on
+     * every render frame. noteOff messages are sent through
+     * Web MIDI with no timestamp argument so the OS forwards
+     * them immediately; the timing precision is bounded by
+     * the tick rate (typically 16.6ms) which is fine for
+     * musical purposes.
+     *
+     * @param {number} audioNow Current audioContext.currentTime in seconds.
+     */
+    tick(audioNow) {
+        if (!this._isReady || this._output === null) return;
+        if (this._pendingNoteOffs.length === 0) return;
+        /** @type {Array<{channel: number, noteNumber: number, audioOffTime: number}>} */
+        const remaining = [];
+        for (const off of this._pendingNoteOffs) {
+            if (off.audioOffTime <= audioNow) {
+                const status = 0x80 | (off.channel - 1);
+                this._output.send([status, off.noteNumber, 0]);
+            } else {
+                remaining.push(off);
+            }
+        }
+        this._pendingNoteOffs = remaining;
+    }
+
+    /**
+     * Silence all currently-pending notes immediately. Used
+     * by the firing engine when the transport pauses, when
+     * the scene changes, and when a pattern edit drops
+     * events past the edit point. Without this, a paused
+     * transport would leave notes ringing indefinitely
+     * because our tick() loop is what drives noteOff
+     * dispatch and the firing engine stops ticking the
+     * scheduler on pause.
+     */
+    panic() {
+        if (!this._isReady || this._output === null) {
+            this._pendingNoteOffs = [];
+            return;
+        }
+        for (const off of this._pendingNoteOffs) {
+            const status = 0x80 | (off.channel - 1);
+            this._output.send([status, off.noteNumber, 0]);
+        }
+        this._pendingNoteOffs = [];
     }
 
     /**

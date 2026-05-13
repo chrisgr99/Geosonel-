@@ -178,6 +178,27 @@ export class PatternFiringEngine {
          * frequent ticks.
          */
         this.commitWindowSeconds = DEFAULT_COMMIT_WINDOW_SECONDS;
+
+        // Subscribe to transport play-state changes so we
+        // can panic the MIDI sender immediately when the
+        // user pauses. The pause-path inside tick() also
+        // panics, but the canvas's render loop stops
+        // calling tick() when isPlaying flips to false, so
+        // the tick path alone doesn't guarantee panic
+        // fires. The listener does. The play transition
+        // doesn't need any action here — the next tick
+        // will bootstrap the current and next cycle
+        // through the normal populate path.
+        this._transport.on("play", () => {
+            if (!this._transport.isPlaying) {
+                for (const state of this._sources.values()) {
+                    state.pendingEvents = [];
+                    state.populatedCycles.clear();
+                    state.patternDirty = false;
+                }
+                this._midiSender.panic();
+            }
+        });
     }
 
     /**
@@ -337,11 +358,17 @@ export class PatternFiringEngine {
             // pause, which is acceptable: pause-mid-cycle
             // resume cleanly is more important than
             // preserving the exact remaining beats.
+            // Also panic the MIDI sender so any notes that
+            // already had noteOns dispatched (and have
+            // pending noteOffs queued in the midiSender's
+            // own scheduler) get silenced immediately
+            // rather than ringing indefinitely.
             for (const state of this._sources.values()) {
                 state.pendingEvents = [];
                 state.populatedCycles.clear();
                 state.patternDirty = false;
             }
+            this._midiSender.panic();
             return;
         }
 
@@ -482,6 +509,16 @@ export class PatternFiringEngine {
             }
             state.pendingEvents = remaining;
         }
+
+        // Drive the midiSender's noteOff scheduler. Each
+        // pending noteOff whose audio time has arrived
+        // gets dispatched immediately. We call this after
+        // the per-source commit loops so any noteOns
+        // committed this tick that fall due immediately
+        // (rare but possible for very short slot durations
+        // or large negative-clip values) get their noteOff
+        // fired in the same tick.
+        this._midiSender.tick(audioNow);
     }
 
     /**
@@ -519,6 +556,7 @@ export class PatternFiringEngine {
             return;
         }
         if (!Array.isArray(haps)) return;
+
         for (const hap of haps) {
             const begin = hapBegin(hap);
             const end = hapEnd(hap);
