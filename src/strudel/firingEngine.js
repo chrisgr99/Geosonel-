@@ -1,5 +1,5 @@
 /**
- * Pattern firing engine — Tier 2 Phase 2.
+ * Pattern firing engine — Tier 2 Phase 3.
  *
  * Drives audio output for continuous-firing sources (curves
  * and sprites) by scheduling their per-source cycle wraps
@@ -81,6 +81,31 @@
  * the blended audio (old beats before edit, new beats after)
  * sounded messier than the clean boundary transition.
  *
+ * Late-refresh dispatch (Phase 3 substrate). Pending events
+ * stay in the queue until they are within
+ * lateRefreshWindowSeconds of their audio time, rather than
+ * being dispatched up to a full commit-window in advance.
+ * At dispatch time, the commit walker passes a per-tick
+ * snapshot of simulation state and a firing-context pointer
+ * (set via withFiringContext from firingContext.js, a
+ * try-finally helper that cannot strand the pointer if
+ * queryArc throws) into a re-query of the pattern for a
+ * tiny range around the event's fractional position. Pass
+ * 1 (at population time) established the event's structure
+ * (audioTime, duration, channel, note number, and any
+ * static-signal value fields); Pass 2 here refreshes any
+ * value fields that read dynamic signals through the
+ * firing-context pointer. If Pass 2 returns exactly one
+ * Hap, its value replaces the population-time value;
+ * anything else (no Hap, multiple Haps, queryArc throw)
+ * falls back to the Pass 1 value, keeping the schedule
+ * deterministic relative to cycle-start state. In Phase 3
+ * no dynamic signals exist yet so Pass 2 is functionally a
+ * no-op for every pattern — but the path runs unconditionally
+ * so any substrate regression is debuggable independently
+ * of the Phase 4 signal definitions that will land on top
+ * of it.
+ *
  * Continue-on-edit semantics for cross-cycle modifiers
  * (alternation, every, iter) are preserved across edits.
  * The simulation's per-source cycleCount keeps advancing
@@ -98,6 +123,7 @@
 // @ts-check
 
 import { parsePatternToPositions } from "./patternParse.js";
+import { withFiringContext } from "./firingContext.js";
 
 /** @typedef {import("./runtime.js").StrudelRuntime} StrudelRuntime */
 /** @typedef {import("./midiSender.js").MIDISender} MIDISender */
@@ -106,17 +132,47 @@ import { parsePatternToPositions } from "./patternParse.js";
 /** @typedef {import("../scene.js").Scene} Scene */
 
 /**
- * Audio commit window in seconds. Events whose absolute
- * audio time falls within currentTime + this many seconds
- * get scheduled to superdough on the tick that observes
- * them; later events stay on the per-source pending list
- * until a later tick reaches them. Matches Web Audio's
- * recommended forward scheduling window of ~100ms and
- * what strudel's own cyclist uses; section 27's audio-
- * commit-window decision picked 100ms as the starting
- * value.
+ * Late-refresh window in seconds. Pending events with
+ * audio times further in the future than audioNow plus
+ * this value stay queued; events within the window get a
+ * Pass 2 refresh (queryArc with the firing-context pointer
+ * active) and dispatch to Web MIDI on this tick. Section
+ * 27's one-cycle-ahead-scheduling-and-dynamic-signal-late-
+ * refresh subsection picked roughly 20ms as the design
+ * starting value; 30ms here gives the window comfortably
+ * more room than the typical 16ms inter-frame interval so
+ * a single dropped frame does not push an event past the
+ * dispatch window before the next tick reaches it. The
+ * cost of widening the window is that Pass 2 reads
+ * simulation state up to 30ms before the event's audio
+ * time, which is well below the audible threshold for the
+ * dynamic signals planned for Phase 4.
+ *
+ * The pre-Phase-3 name for this constant was DEFAULT_-
+ * COMMIT_WINDOW_SECONDS and the value was 0.1; the rename
+ * marks the architectural shift from "commit now if within
+ * audio lookahead" to "hold until late-refresh window then
+ * dispatch with refreshed values".
  */
-const DEFAULT_COMMIT_WINDOW_SECONDS = 0.1;
+const DEFAULT_LATE_REFRESH_WINDOW_SECONDS = 0.03;
+
+/**
+ * Debug flag for Pass 2 logging. When true, each Pass 2
+ * refresh dispatch logs a one-line console message naming
+ * the source, cycle index, fractional position, and the
+ * refreshed value's note field (the most useful field for
+ * eyeballing whether the pattern is firing what was
+ * expected). Defaults to true through Phase 3 so the
+ * substrate is visibly exercised; expected to flip to
+ * false when Phase 4's first dynamic signal lands and
+ * audible verification of the substrate becomes the
+ * primary test. Useful to flip back on temporarily when
+ * diagnosing any future Pass 2 regression. Unconditional
+ * console.warn on the queryArc-throw fallback path is
+ * unaffected by this flag so a genuinely broken pattern
+ * still surfaces.
+ */
+const LOG_PASS2 = true;
 
 /**
  * Per-source firing state. Keyed by source id in the
@@ -141,11 +197,19 @@ const DEFAULT_COMMIT_WINDOW_SECONDS = 0.1;
  *                                    after it has filtered future-cycle events
  *                                    and dropped future-cycle entries from
  *                                    populatedCycles.
- * @property {Array<{audioTime: number, value: any, duration: number, cycleIndex: number}>} pendingEvents
+ * @property {Array<{audioTime: number, value: any, duration: number, cycleIndex: number, fractional: number}>} pendingEvents
  *                            Events awaiting commit, tagged with the cycle
  *                            they belong to so pattern edits can preserve
  *                            current-cycle events while dropping future ones.
- *                            Sorted by audioTime ascending.
+ *                            The fractional field stores the event's begin
+ *                            position within its cycle, in [0, 1); Pass 2
+ *                            uses it to construct the queryArc range
+ *                            (cycleIndex + fractional, cycleIndex + fractional
+ *                             + epsilon) for the late-refresh re-query without
+ *                            having to recover that position from audioTime
+ *                            arithmetic (which would drift slightly under
+ *                            floating-point round-trip). Sorted by audioTime
+ *                            ascending.
  */
 
 export class PatternFiringEngine {
@@ -168,16 +232,16 @@ export class PatternFiringEngine {
         this._sources = new Map();
 
         /**
-         * Audio commit window in seconds. Exposed as a public
-         * property so callers can adjust without recompiling
-         * the engine; the default is conservative and matches
-         * section 27's starting value. Set this larger to
-         * tolerate slower simulation tick rates at the cost
-         * of less responsive pause behaviour; set smaller for
-         * tighter pause response at the cost of needing more
-         * frequent ticks.
+         * Late-refresh window in seconds. Public property so
+         * callers can adjust without recompiling the engine.
+         * See DEFAULT_LATE_REFRESH_WINDOW_SECONDS at module
+         * top for the rationale. Set larger to tolerate
+         * dropped frames at the cost of slightly staler
+         * dynamic-signal reads at Pass 2 time; set smaller
+         * for tighter Pass 2 freshness at the cost of needing
+         * tick to run reliably between event audioTimes.
          */
-        this.commitWindowSeconds = DEFAULT_COMMIT_WINDOW_SECONDS;
+        this.lateRefreshWindowSeconds = DEFAULT_LATE_REFRESH_WINDOW_SECONDS;
 
         // Subscribe to transport play-state changes so we
         // can panic the MIDI sender immediately when the
@@ -379,7 +443,8 @@ export class PatternFiringEngine {
         const bpm = this._transport.bpm;
         if (bpm === null || !Number.isFinite(bpm) || bpm <= 0) return;
 
-        const horizon = audioNow + this.commitWindowSeconds;
+        const lateRefreshHorizon = audioNow + this.lateRefreshWindowSeconds;
+        const snapshot = this._captureSnapshot(audioNow);
 
         for (const state of this._sources.values()) {
             const source = this._lookupSource(state);
@@ -485,27 +550,35 @@ export class PatternFiringEngine {
                 }
             }
 
-            // Commit pending events whose audio time is
-            // within the commit window. Events older than
-            // the past-slack window get dropped silently:
-            // those are genuinely stale (typically a resume
-            // from pause where the simulation's cycleProgress
-            // is well past the event's fractional position).
-            // Events slightly in the past pass straight
-            // through to Web MIDI, which sends them
-            // immediately per spec; no forward clamp needed
-            // since Web MIDI does not reject past timestamps
-            // the way superdough does.
-            /** @type {Array<{audioTime: number, value: any, duration: number, cycleIndex: number}>} */
+            // Late-refresh dispatch (Phase 3 substrate).
+            // Pending events whose audio time is further
+            // than lateRefreshWindowSeconds in the future
+            // stay pending; events within the window get a
+            // Pass 2 refresh of any dynamic-signal-dependent
+            // value fields (the firing-context pointer is
+            // active during the re-query so signal
+            // implementations can read snapshot state) and
+            // dispatch to Web MIDI immediately afterward.
+            // Events older than the past-slack window get
+            // dropped silently — those are genuinely stale,
+            // typically a resume from pause where the
+            // simulation's cycleProgress is well past the
+            // event's fractional position. Events slightly
+            // in the past dispatch through Web MIDI's
+            // send-now semantics with no forward clamp
+            // needed; Web MIDI does not reject past
+            // timestamps the way superdough does.
+            /** @type {Array<{audioTime: number, value: any, duration: number, cycleIndex: number, fractional: number}>} */
             const remaining = [];
             for (const ev of state.pendingEvents) {
-                if (ev.audioTime <= horizon && ev.audioTime >= audioNow - 0.2) {
-                    this._midiSender.send(ev.value, ev.audioTime, ev.duration);
-                } else if (ev.audioTime > horizon) {
+                if (ev.audioTime > lateRefreshHorizon) {
                     remaining.push(ev);
+                } else if (ev.audioTime < audioNow - 0.2) {
+                    // stale — drop without dispatch.
+                } else {
+                    const refreshedValue = this._pass2RefreshValue(state, ev, snapshot);
+                    this._midiSender.send(refreshedValue, ev.audioTime, ev.duration);
                 }
-                // ev.audioTime older than audioNow - 0.2 falls
-                // through (no push, no commit) — dropped.
             }
             state.pendingEvents = remaining;
         }
@@ -575,6 +648,7 @@ export class PatternFiringEngine {
                 value: hap.value,
                 duration,
                 cycleIndex,
+                fractional,
             });
         }
         // Keep pendingEvents sorted by audioTime so the
@@ -606,6 +680,172 @@ export class PatternFiringEngine {
             }
         }
         return null;
+    }
+
+    /**
+     * Capture a per-tick snapshot of simulation state for
+     * the dynamic-signal substrate (Phase 3). Dynamic-
+     * signal definitions landing in Phase 4 read from this
+     * snapshot via the firing-context pointer during Pass 2
+     * refresh, so the value they emit reflects simulation
+     * state at near-audio-time rather than at population
+     * time. Capturing once per tick (rather than per event)
+     * gives every Pass 2 within a single tick a consistent
+     * view; with tick running right after simulation.tick
+     * in the canvas's render loop, the snapshot is also
+     * free of any live mutation that could race with reads.
+     *
+     * The snapshot copies primitive values (numbers) out of
+     * the simulation's runtime state into a fresh per-entry
+     * object. References to mutable structures (like the
+     * live SpriteRuntimeState that getSpriteRuntime
+     * returns) are NOT held; the read-only contract of the
+     * snapshot is enforced by composition rather than by
+     * Object.freeze, which would impose a per-tick cost for
+     * no extra safety here.
+     *
+     * Sources with no current simulation state (briefly
+     * possible during scene reload) are omitted from the
+     * sources Map; signals consulting the snapshot for a
+     * missing source should fall back to a safe default.
+     *
+     * Phase 3 captures only the fields that Phase 4's
+     * planned signals already know they need: cursor t for
+     * curves; position, velocity, and cycle bookkeeping for
+     * sprites. Image-reading signals (imageLightness,
+     * imageColor) will need an image-pixel lookup function
+     * added when Phase 4 reaches that signal; deferred
+     * because the snapshot consumer for it does not exist
+     * yet and adding the field speculatively would commit
+     * to a lookup-function shape we have not designed.
+     *
+     * @param {number} audioNow
+     * @returns {import("./firingContext.js").FiringSnapshot}
+     */
+    _captureSnapshot(audioNow) {
+        /** @type {Map<string, import("./firingContext.js").FiringSnapshotEntry>} */
+        const sources = new Map();
+        for (const state of this._sources.values()) {
+            if (state.kind === "curve") {
+                const cycleState = this._simulation.getCurveCycleState(state.id);
+                if (cycleState === null) continue;
+                sources.set(state.id, {
+                    kind: "curve",
+                    cycleCount: cycleState.cycleCount,
+                    cycleProgress: cycleState.cycleProgress,
+                    t: this._simulation.getCurveCursorT(state.id),
+                });
+            } else {
+                const cycleState = this._simulation.getSpriteCycleState(state.id);
+                const runtime = this._simulation.getSpriteRuntime(state.id);
+                if (cycleState === null || runtime === null) continue;
+                sources.set(state.id, {
+                    kind: "sprite",
+                    cycleCount: cycleState.cycleCount,
+                    cycleProgress: cycleState.cycleProgress,
+                    x: runtime.x,
+                    y: runtime.y,
+                    vx: runtime.vx,
+                    vy: runtime.vy,
+                });
+            }
+        }
+        return { audioNow, sources };
+    }
+
+    /**
+     * Pass 2 of the two-pass evaluation. Re-query the
+     * pattern for a tiny range around an event's fractional
+     * position with the firing-context pointer active, and
+     * return the value field to use for MIDI dispatch.
+     * Pass 1 (at _populatePending time) established the
+     * event's structure (audioTime, duration, cycleIndex,
+     * channel, note number, static-signal value fields);
+     * this Pass 2 refreshes any value fields that read
+     * dynamic signals through the firing-context pointer.
+     *
+     * Fallback shape per section 27's resolved-design-task
+     * #2 ("Pass 2 edge cases"): trust Pass 1's structure
+     * absolutely. If Pass 2 returns exactly one Hap, use
+     * its value; if Pass 2 returns zero Haps, more than one
+     * Hap, or throws, fall back to the Pass 1 value already
+     * on the event. This keeps the schedule deterministic
+     * relative to cycle-start state and isolates dynamic-
+     * signal influence to value fields, which is the
+     * intended behaviour.
+     *
+     * The withFiringContext helper enforces try-finally
+     * around the queryArc call so a throw cannot strand the
+     * pointer; the local try/catch here catches the throw
+     * after the pointer has already been cleared by
+     * withFiringContext's finally block.
+     *
+     * Phase 3 has no dynamic signal definitions, so for
+     * every existing pattern Pass 2 returns the same value
+     * as Pass 1 and the dispatch is functionally identical
+     * to the pre-Phase-3 commit path. Running the query
+     * anyway exercises the substrate continuously; any
+     * regression in queryArc semantics, firing-context
+     * mechanics, or snapshot construction surfaces here
+     * rather than waiting for Phase 4's first signal to
+     * make it audible.
+     *
+     * @param {SourceFiringState} state
+     * @param {{audioTime: number, value: any, duration: number, cycleIndex: number, fractional: number}} ev
+     * @param {import("./firingContext.js").FiringSnapshot} snapshot
+     * @returns {any}
+     */
+    _pass2RefreshValue(state, ev, snapshot) {
+        if (state.compiled === null) return ev.value;
+        const begin = ev.cycleIndex + ev.fractional;
+        const PASS2_EPSILON = 1e-6;
+        const end = begin + PASS2_EPSILON;
+        /** @type {import("./firingContext.js").FiringContext} */
+        const ctx = {
+            sourceId: state.id,
+            kind: state.kind,
+            audioTime: ev.audioTime,
+            snapshot,
+        };
+        let haps;
+        try {
+            haps = withFiringContext(ctx, () => state.compiled.queryArc(begin, end));
+        } catch (err) {
+            console.warn(
+                "[pass2] queryArc threw for " + state.id +
+                " cycle " + ev.cycleIndex +
+                " frac " + ev.fractional.toFixed(4) +
+                "; falling back to Pass 1 value.",
+                err,
+            );
+            return ev.value;
+        }
+        if (!Array.isArray(haps) || haps.length !== 1) {
+            if (LOG_PASS2) {
+                const n = Array.isArray(haps) ? String(haps.length) : "non-array";
+                console.log(
+                    "[pass2] " + state.id +
+                    " cycle " + ev.cycleIndex +
+                    " frac " + ev.fractional.toFixed(4) +
+                    ": " + n + " haps from re-query, " +
+                    "falling back to Pass 1 value.",
+                );
+            }
+            return ev.value;
+        }
+        const refreshed = haps[0].value;
+        if (LOG_PASS2) {
+            const noteStr = (refreshed !== null && typeof refreshed === "object" && typeof refreshed.note === "string")
+                ? refreshed.note
+                : "(no note)";
+            console.log(
+                "[pass2] " + state.id +
+                " cycle " + ev.cycleIndex +
+                " frac " + ev.fractional.toFixed(4) +
+                " -> " + noteStr,
+            );
+        }
+        return refreshed;
     }
 }
 
