@@ -58,12 +58,21 @@ the detailed design. Nothing observable changes at Phase
 3; the infrastructure regression surface is decoupled
 from the new-signal behaviour.
 
-Phase 4 — first dynamic signals. spriteV first (the
-simulation already has velocity data), then spriteX and
-spriteY, then the image-reading signals (imageLightness,
-imageColor, imageColorAt). Phase 4 overlaps with what Tier
-4 originally captured; that overlap is intentional now that
-the plumbing dynamic signals consume lives in Tier 2.
+Phase 4 — first dynamic signals. Image-colour signals first
+because sprite kinematic signals have no varying state to
+read until image-driven physics lands. imageLightness as
+the first end-to-end signal exercising the full pixel-
+lookup and OKLCh-conversion pipeline; the rest of the
+OKLCh set (imageChroma, imageLum, imageRedness,
+imageGreenness, imageYellowness, imageBlueness) following
+in close succession since they share the conversion.
+Sprite kinematic signals (spriteX, spriteY, spriteV) as a
+separate later step. Phase 4 overlaps with what Tier 4
+originally captured; that overlap is intentional now that
+the plumbing dynamic signals consume lives in Tier 2. See
+section 27 for the OKLCh rationale and the deferred items
+(distance-derivatives, EMA smoothing, composer-defined
+defineSignal).
 
 The natural stop-and-back-out point is between Phase 2 and
 Phase 3. If Phase 1 and 2 land but dynamic-signal
@@ -237,16 +246,37 @@ tier adds the signals themselves.
 - SignalRegistry: shared registry mapping signal name to
   query function. Signals consult the firing-context
   pointer to learn which source's state to read.
-- spriteV (sprite velocity magnitude): natural first
-  signal since the simulation already has the data.
-- spriteX, spriteY: position signals.
-- imageLightness, imageColor, imageColorAt: pixel readings
-  under the firing source.
+- Image-colour signals derived from the OKLCh
+  perceptually-uniform colour space and the source's
+  canvas position: imageLightness (perceptual brightness),
+  imageChroma (perceptual saturation), imageRedness and
+  imageGreenness (opposite ends of the red-green opponent
+  axis, each the negation of the other), imageYellowness
+  and imageBlueness (the same shape on the yellow-blue
+  axis), and imageLum (a separate grayscale Rec. 709 luma
+  convenience field). See section 27 for why OKLCh and
+  why opponent axes rather than angular hue.
+- Sprite kinematic signals: spriteX, spriteY, spriteVx,
+  spriteVy, spriteV (scalar speed).
 - currentScale and the tonal-context signals (defer until
   a tonal integration decision lands; see ongoing items).
-- Per-tick state snapshot mechanism so Pass 2 readings
-  reflect simulation state at near-play time rather than
-  cycle-start time.
+- Per-tick state snapshot mechanism: landed in Tier 2
+  Phase 3 (snapshot captured in firingEngine._capture-
+  Snapshot, exposed to dynamic signals via
+  firingContext.js). Phase 4 signals read from it via the
+  firing-context pointer.
+- Distance-derivatives of image signals (dlightness_ds,
+  dredness_ds, and so on) computed against arc length
+  traversed, and EMA smoothing of values: deferred to a
+  follow-up phase once the raw signals are working. Both
+  layer on top of the basic plumbing rather than altering
+  it.
+- defineSignal helper for composer-defined signals
+  expressed as plain JavaScript formulas over the
+  standard signal vocabulary: deferred to a follow-up
+  phase. Once it lands, composers can write things like
+  defineSignal('warmth', ({redness, yellowness}) => ...)
+  in their behaviors.js.
 
 ## Score-level harmony and tonal context
 
@@ -356,9 +386,10 @@ arises.
   the integration is largely a matter of pulling those in
   and wiring them into GXW's editor; the customisation
   layer adds GXW-specific tokens on top — the dynamic
-  signal names once they land in Phase 4 (spriteV,
-  spriteX, spriteY, imageLightness, imageColor,
-  imageColorAt), the labelled-block syntax ($id: ...), and
+  signal names once they land in Phase 4 (imageLightness,
+  imageChroma, imageLum, imageRedness, imageGreenness,
+  imageYellowness, imageBlueness, spriteX, spriteY,
+  spriteV), the labelled-block syntax ($id: ...), and
   the callback function name templates with object-id
   completion drawn from the current scene's objects
   (hasHit_SPR1, beenHit_TRG3, onTick_CRV1, etc.). Worth
