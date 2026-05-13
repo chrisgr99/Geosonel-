@@ -31,17 +31,30 @@ the reasoning.
 Implementation proceeds in four phases so each step is
 testable before the next builds on it.
 
-Phase 1 — first sound. The minimum to fire a deterministic
-pattern through superdough on a curve cursor sweep:
-pattern primitive function, per-source cycle counter,
-audio commit window, mute/solo gating, continuous firing
-path. Static signals (sine, saw, square, tri, perlin) work
-for free at this stage because they're pure functions of
-cycle position.
+Phase 1 — first sound. Landed. The minimum to fire a
+deterministic pattern through superdough on a curve
+cursor sweep: pattern primitive function, per-source
+cycle counter, audio commit window, mute/solo gating,
+continuous firing path. Static signals (sine, saw,
+square, tri, perlin) work for free at this stage because
+they're pure functions of cycle position.
 
-Phase 2 — edit-time polish. Cancellation of pre-scheduled
-events on pattern change, continue-on-edit cycle counter
-semantics, concurrent firings tested with multiple sources.
+Phase 2 — edit-time polish. Landed. A clean cycle-
+boundary takeover when the user edits a pattern (old
+pattern's pending events play through the rest of the
+current cycle, new pattern takes effect at the next wrap,
+no silence gap and no blended-audio messiness; pre-
+scheduled-event cancellation primitives stay unused),
+position-zero downbeat fires reliably on every cycle (the
+cycle-progress filter was removed from populate and the
+commit-walker past-slack widened plus a forward clamp
+margin handle the simulation's typical wrap-detection
+timing), and editor undo/redo survives Cmd-Enter promote
+(refreshActiveTabFromBundle skips its dispatch when the
+active tab's content is already in sync). Two emergency
+recovery bypasses landed alongside (?norun and
+?clearstorage URL parameters) for when a persisted bundle
+hangs the app on load.
 
 Phase 3 — dynamic-signal substrate (plumbing only, no new
 signals). Firing-context pointer in try-finally, two-pass
@@ -85,11 +98,19 @@ Concrete deliverables across the phases:
   Window size exposed as a configurable value for
   per-environment tuning.
 - Cancellation of pre-scheduled events when a pattern
-  changes mid-cycle. Provisional decision (section 27): always
-  cancel; revisit once a working integration exists.
-- Per-source cycle counter management. Provisional decision
-  (section 27): continue-on-edit; an explicit reset
-  inspector control covers the rare deliberate-restart case.
+  changes mid-cycle. Resolved by Phase 2's shipped
+  behaviour to no-cancellation: pattern edits preserve
+  pending events so the old pattern's current cycle plays
+  through cleanly to the next cycle wrap; superdough
+  cancellation primitives stay unused for this Tier 2
+  pattern-edit case. (Tier 5 one-shot work may still need
+  cancellation machinery for trigger-deletion edge cases.)
+- Per-source cycle counter management. Confirmed by
+  Phase 2 to continue-on-edit: cycle counter preserved
+  across pattern recompile, alternation continues across
+  edits at the next cycle index. An explicit reset
+  inspector control covers the rare deliberate-restart
+  case (TODO).
 - Mute and solo gating in the primitive. The pattern
   evaluation layer respects mute and solo by skipping
   queryArc entirely when a source is silenced.
@@ -109,6 +130,24 @@ Concrete deliverables across the phases:
 
 Stage A (the pattern-authoring surface) is complete.
 Remaining Tier 3 polish items, none blocking Tier 2:
+
+- Cmd-Plus and Cmd-Minus globally hijacked by canvas
+  zoom. The canvas's own keyboard handler for zoom-in /
+  zoom-out intercepts these keystrokes regardless of
+  where focus is, which means Chrome's page-zoom shortcut
+  never reaches the browser; only the Chrome View menu's
+  zoom command works. The handler is presumably attached
+  at window level rather than scoped to the canvas DOM
+  node. Fix is to make the handler focus-aware so the
+  browser handles Cmd-Plus when focus is outside the
+  canvas (in the editor, the inspector, the message bar,
+  the menu bar). Worth a small pass; cosmetic but it gets
+  in the way for users who rely on Chrome page-zoom.
+- Canvas objects look noticeably fainter than in earlier
+  sessions at a normal canvas zoom level. Cause unknown
+  as of 2026-05-12; possibly a CSS or DPR side-effect
+  from a recent commit, possibly orthogonal. Worth
+  investigating when next touching canvas rendering.
 
 - Toolbar buildout: extend the canvas toolbar with the
   ability to create triggers and curves (currently sprites
@@ -234,9 +273,11 @@ Tier 6 is what's left.
   dynamic-signal-driven).
 - Cursor-trail effects (optional polish).
 - Resolution of section 27's deferred design questions as
-  they surface in practice: provisional decisions on
-  pre-scheduled cancellation and cycle-counter-on-edit get
-  revisited here with real audio to listen to.
+  they surface in practice: most provisional decisions
+  (pre-scheduled cancellation, cycle-counter-on-edit) were
+  revisited and resolved firmly during Tier 2 Phase 2.
+  Any remaining ones get revisited here as Tier 5 and
+  Tier 6 work surfaces them.
 
 ## Ongoing or future considerations
 
