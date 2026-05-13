@@ -28,38 +28,34 @@ path, implemented in phases. See section 27's "Audio
 firing path: full strudel, phased rollout" subsection for
 the reasoning.
 
-Implementation proceeds in four phases so each step is
-testable before the next builds on it.
+MIDI output integration is landed. Phase 3 is the next
+concrete action. The order:
 
-Phase 1 — first sound. Landed. The minimum to fire a
-deterministic pattern through superdough on a curve
-cursor sweep: pattern primitive function, per-source
-cycle counter, audio commit window, mute/solo gating,
-continuous firing path. Static signals (sine, saw,
-square, tri, perlin) work for free at this stage because
-they're pure functions of cycle position.
+Phase 1 — first sound. Landed.
 
-Phase 2 — edit-time polish. Landed. A clean cycle-
-boundary takeover when the user edits a pattern (old
-pattern's pending events play through the rest of the
-current cycle, new pattern takes effect at the next wrap,
-no silence gap and no blended-audio messiness; pre-
-scheduled-event cancellation primitives stay unused),
-position-zero downbeat fires reliably on every cycle (the
-cycle-progress filter was removed from populate and the
-commit-walker past-slack widened plus a forward clamp
-margin handle the simulation's typical wrap-detection
-timing), and editor undo/redo survives Cmd-Enter promote
-(refreshActiveTabFromBundle skips its dispatch when the
-active tab's content is already in sync). Two emergency
-recovery bypasses landed alongside (?norun and
-?clearstorage URL parameters) for when a persisted bundle
-hangs the app on load.
+Phase 2 — edit-time polish. Landed. Cycle-boundary takeover,
+position-zero downbeat reliability via one-cycle-ahead
+scheduling, editor undo/redo across Cmd-Enter promote.
+
+MIDI output integration. Landed. Routes GXW pattern firing
+through Web MIDI as the default output, replacing strudel's
+built-in samples for real-time external synth playback.
+See section 27's One-cycle-ahead scheduling and dynamic-
+signal late-refresh subsection for how it interacts with
+the Phase 3 dynamic-signal substrate. The "MIDI output
+integration" subsection below remains for follow-up items.
 
 Phase 3 — dynamic-signal substrate (plumbing only, no new
 signals). Firing-context pointer in try-finally, two-pass
-evaluation, per-tick state snapshot. Nothing observable
-changes; the infrastructure regression surface is decoupled
+evaluation reconciled with the Phase 2 one-cycle-ahead
+scheduling via late-refresh dispatch (events are populated
+at cycle start for timing accuracy, but value fields
+refresh just before each event's audioTime so dynamic
+signals read simulation state at audible-near-play time),
+per-tick state snapshot. See section 27's One-cycle-ahead
+scheduling and dynamic-signal late-refresh subsection for
+the detailed design. Nothing observable changes at Phase
+3; the infrastructure regression surface is decoupled
 from the new-signal behaviour.
 
 Phase 4 — first dynamic signals. spriteV first (the
@@ -125,6 +121,49 @@ Concrete deliverables across the phases:
 - Concurrent firings: confirm per-source cycle counter
   management behaves cleanly when multiple sources fire
   patterns at the same simulation tick.
+
+## MIDI output integration follow-ups
+
+The initial MIDI output integration is landed (see section
+27 for the architecture and the state file for what
+shipped). Remaining follow-up work:
+
+First-cut scope, landed:
+
+- Web MIDI initialisation in MIDISender class.
+- Audio-to-MIDI time conversion.
+- send(value, audioTime, duration) producing noteOn /
+  noteOff with note from value.note, velocity from
+  value.gain (default 64), channel from value.midichan
+  (default 1), duration multiplied by value.clip.
+- Firing engine routes through midiSender.send instead
+  of runtime.play; the superdough path is dormant but the
+  module remains in place.
+- IAC bus preference with first-output fallback.
+- Transport bar MIDI indicator with port name and per-
+  send flash.
+
+Follow-ups, separate sessions:
+
+- Port selection UI. Dropdown in the inspector top bar
+  or a small menu in the Run menu, populated from
+  MIDIAccess.outputs. Persisted per-bundle so a score's
+  MIDI routing is part of its scene state.
+- Per-source output routing. Each curve or sprite
+  selects audio (superdough), MIDI, or both. Without
+  this, all sources go to the global default output.
+- Per-pattern routing via the strudel .midi() modifier.
+  Patterns with .midi() force MIDI regardless of
+  per-source default.
+- Polyphony tracking. When the same note number on the
+  same channel retriggers before its first noteOff fires,
+  decide whether to insert an explicit noteOff first
+  (cleaner) or rely on the receiving synth's voice
+  handling (simpler but synth-dependent).
+- Audio output preservation. Once MIDI is default, the
+  superdough path may still be useful for monitoring or
+  for sources that explicitly want audio. Keep both
+  paths alive.
 
 ## Tier 3 deferred polish
 
@@ -328,11 +367,19 @@ arises.
   reduces friction when sketching test patterns to hear,
   and the GXW-specific extensions can grow alongside the
   rest of Tier 2 as new signals and conventions land.
-- MIDI note helpers for Web MIDI output: functions that
-  construct MIDI events (note on, note off, controllers,
-  channel routing) for use from behaviors.js, providing a
-  parallel MIDI output channel alongside the strudel audio
-  path.
+- MIDI note helpers for Web MIDI output for callback-
+  driven authoring. The MIDI output integration described
+  in the Tier 2 section above routes pattern firing
+  through Web MIDI as the default output; this entry is
+  the complementary piece for behaviors.js callbacks that
+  want to construct MIDI events procedurally. Functions
+  like noteOn(channel, note, velocity), noteOff(channel,
+  note), controlChange(channel, controller, value),
+  pitchBend(channel, value). Callable from hasHit,
+  beenHit, onTick handlers. Useful when a one-off event
+  tied to canvas state doesn't fit into a pattern.
+  Lower priority than the pattern-driven MIDI work; lands
+  when there's a real use case from authoring scores.
 - JavaScript helper library for the declarative features
   GeoSonix offered, ported and adapted for GXW. Specific
   targets for porting determined by which GeoSonix

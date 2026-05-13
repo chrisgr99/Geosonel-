@@ -1,93 +1,98 @@
 /**
- * Pattern firing engine — Tier 2 Phase 1.
+ * Pattern firing engine — Tier 2 Phase 2.
  *
  * Drives audio output for continuous-firing sources (curves
- * and sprites) by mapping their per-source cycle wraps into
- * scheduled superdough events on the shared AudioContext.
+ * and sprites) by scheduling their per-source cycle wraps
+ * into MIDI events sent through MIDISender. The engine
+ * stays output-agnostic; flipping back to superdough audio
+ * is a one-line change at the commit walker.
  *
  * Sits between three existing modules:
  *
  *   - StrudelRuntime: provides the loaded-status gate, the
- *     shared AudioContext, and the play(value, audioTime)
- *     wrapper around superdough that handles the offset-
- *     from-now calling convention.
+ *     shared AudioContext (for audioContext.currentTime as
+ *     the master scheduling clock), and the play(value,
+ *     audioTime) wrapper for audio output if reactivated.
+ *   - MIDISender: receives (value, audioTime, duration) for
+ *     each event and dispatches noteOn/noteOff via Web MIDI.
  *   - Simulation: provides per-source cycleCount and
  *     cycleProgress via getCurveCycleState and
- *     getSpriteCycleState. The simulation already advances
- *     these fields uniformly for curves and sprites; the
- *     firing engine just reads.
- *   - Transport: provides master BPM (used with the source's
- *     beatsPerCycle to derive cycle duration) and isPlaying
- *     (gates firing during pause).
+ *     getSpriteCycleState.
+ *   - Transport: provides master BPM and isPlaying.
  *
- * Section 27's continuous-firing path. Each tick:
+ * One-cycle-ahead scheduling. Each tick the engine ensures
+ * events for BOTH the current cycle and the next cycle are
+ * populated and queued. Pre-populating the next cycle is
+ * the only way to fire the position-zero downbeat at its
+ * true audio time: detection of a cycle wrap necessarily
+ * happens slightly after the wrap (the simulation overshoots
+ * by 1-2 fixed steps then the render loop reads it 0-16ms
+ * later), so a populate-on-wrap approach would always have
+ * the new cycle's first event arrive with detection lag.
+ * By populating cycle N+1's events with their true future
+ * audioTimes during cycle N, Web MIDI schedules each
+ * position-zero event accurately at the cycle boundary,
+ * eliminating the wrap-induced stutter that an earlier
+ * design exhibited.
  *
- *   1. Walk every curve and sprite source with a compiled
- *      pattern.
- *   2. Read the simulation's current cycleCount and
- *      cycleProgress for that source.
- *   3. If the cycleCount has changed since this engine last
- *      saw the source (or is being seen for the first time),
- *      treat it as a new cycle: call pattern.queryArc(n, n+1)
- *      where n is the new cycleCount, convert each Hap's
- *      fractional position into an absolute audio time
- *      against an audio cycle start derived from
- *      currentTime - cycleProgress * cycleDuration, and add
- *      the events to a per-source pending list.
- *   4. Walk the pending list and commit any events whose
- *      audio time falls within the audio commit window (the
- *      Web Audio recommended ~100ms forward scheduling
- *      horizon). Committed events get scheduled via the
- *      runtime's play() wrapper and removed from the
- *      pending list.
+ * The state-tracking shape per source:
+ *
+ *   - populatedCycles: Map<cycleIndex, cycleAudioStart>.
+ *     Records which cycles have had events generated and
+ *     queued, along with the audio time each cycle started
+ *     (or will start). New entries are added by populate;
+ *     old entries (cycleIndex < currentCycle) get pruned
+ *     each tick to bound memory.
+ *   - pendingEvents: Array<{audioTime, value, duration,
+ *     cycleIndex}>. Events awaiting commit. The cycleIndex
+ *     tag lets pattern edits drop only events from cycles
+ *     past the edit point while preserving the current
+ *     cycle's events for Version B clean-takeover behaviour.
+ *   - patternDirty: boolean. Set by _reconcileSource when
+ *     cyclePattern text changes; cleared by the tick after
+ *     it has filtered future-cycle events and dropped
+ *     future-cycle entries from populatedCycles. The next
+ *     populate (for current cycle if not already populated
+ *     and for cycle+1) then uses the new pattern.
  *
  * Pause handling. When the transport is not playing, the
- * tick resets every source's lastFiredCycle to null and
- * clears pending events, then returns. On resume the engine
- * re-detects the current cycle and re-queries the pattern
- * against the resumed audio clock. The cycleProgress filter
- * on detection (only include events whose fractional
- * position is greater than or equal to cycleProgress at
- * detection time) means the engine only fires events that
- * haven't already gone past in the cycle, so a mid-cycle
- * resume picks up cleanly from wherever the cycle was when
- * paused. The cost is losing the rest of the in-flight
- * cycle's events on pause, which is acceptable Phase 1
- * behaviour; the next wrap recovers.
+ * tick clears all per-source state (pendingEvents,
+ * populatedCycles, patternDirty). Resume re-detects the
+ * current cycle, bootstraps cycle N from cycleProgress, and
+ * pre-populates cycle N+1. The cost is losing the rest of
+ * the in-flight cycle's events on pause; acceptable since
+ * pause-mid-cycle resume cleanly is more important than
+ * preserving the exact remaining beats.
  *
- * Edit handling. When setScene observes a changed
- * cyclePattern text on an existing source, the compiled
- * Pattern is replaced but pending events are PRESERVED.
- * The old pattern's already-queued events for the current
- * cycle play through to the cycle boundary, then the new
- * pattern takes effect cleanly at the next cycle wrap.
- * The user hears the current cycle complete on the old
- * pattern, with no silence gap, before the new pattern
- * starts on the next downbeat. A mid-cycle takeover was
- * tried briefly and reverted because the blended audio
- * (old beats from before the edit plus new beats from
- * after) sounded messier than the clean cycle-boundary
- * transition. An earlier draft also cleared pendingEvents
- * on the text change, which left the rest of the current
- * cycle silent until the next wrap; preserving the
- * pending events removes that silence gap.
+ * Edit handling (Version B clean cycle-boundary takeover).
+ * When setScene observes a changed cyclePattern text on an
+ * existing source, the compiled Pattern is replaced and
+ * patternDirty is set; pendingEvents and populatedCycles
+ * are NOT touched here. The next tick filters pendingEvents
+ * to keep only events with cycleIndex <= currentCycle
+ * (preserving the current cycle's old-pattern events for
+ * the rest of the cycle), drops cycles past currentCycle
+ * from populatedCycles (so the new pattern repopulates them
+ * fresh), and clears patternDirty. The result: the current
+ * cycle finishes out on the old pattern with no silence
+ * gap, then the new pattern takes effect cleanly at the
+ * next cycle boundary on its own pre-scheduled events. A
+ * mid-cycle takeover was tried earlier and reverted because
+ * the blended audio (old beats before edit, new beats after)
+ * sounded messier than the clean boundary transition.
  *
  * Continue-on-edit semantics for cross-cycle modifiers
  * (alternation, every, iter) are preserved across edits.
  * The simulation's per-source cycleCount keeps advancing
  * regardless of pattern changes, and the firing engine
- * queries the new pattern at (cycleCount, cycleCount + 1)
- * on the next wrap. An alternation pattern `<a b c d>`
- * edited at cycle 7 picks up at cycle 8 of the new pattern
- * (which is `cycle 8 modulo new pattern length` for cyclic
- * patterns), not at cycle 0.
+ * queries the new pattern at the next cycle's index via
+ * queryArc(C+1, C+2). An alternation pattern <a b c d>
+ * edited at cycle 7 picks up at cycle 8 of the new pattern.
  *
  * Scope. Curves and sprites only. Triggers are excluded
  * because their natural firing model is one-shot (a
  * collision flourish, not a continuous loop), which lives
- * in Tier 5 with its own primitive. The simulation still
- * advances trigger cycle counters; the firing engine just
- * doesn't read them.
+ * in Tier 5 with its own primitive.
  */
 
 // @ts-check
@@ -115,27 +120,32 @@ const DEFAULT_COMMIT_WINDOW_SECONDS = 0.1;
 
 /**
  * Per-source firing state. Keyed by source id in the
- * PatternFiringEngine's _sources map. Each entry tracks the
- * compiled Pattern, the last cycle counter observed by the
- * firing engine, and the list of pending events for the
- * current cycle awaiting commit to superdough.
+ * PatternFiringEngine's _sources map.
  *
  * @typedef {Object} SourceFiringState
  * @property {string} id
  * @property {"curve" | "sprite"} kind
  * @property {string} cyclePatternText  Raw cyclePattern source string; compared
  *                                       on each setScene to decide whether to
- *                                       recompile.
+ *                                       set patternDirty.
  * @property {any} compiled  Compiled strudel Pattern object (carries queryArc),
  *                            or null when the text was empty or failed to parse.
- * @property {number | null} lastFiredCycle  The cycleCount this engine has
- *                                            already populated pending events
- *                                            for, or null when no cycle has
- *                                            been observed yet (initial state
- *                                            or post-pause reset).
- * @property {Array<{audioTime: number, value: any, duration: number}>} pendingEvents  Events for
- *                                            the current cycle awaiting commit.
- *                                            Sorted by audioTime ascending.
+ * @property {Map<number, number>} populatedCycles  Map from cycleIndex to the
+ *                                                   audio time that cycle
+ *                                                   started (or will start).
+ *                                                   Drives the populate
+ *                                                   one-ahead logic and the
+ *                                                   pattern-edit cleanup.
+ * @property {boolean} patternDirty  Set by _reconcileSource when cyclePattern
+ *                                    text changes; cleared by the next tick
+ *                                    after it has filtered future-cycle events
+ *                                    and dropped future-cycle entries from
+ *                                    populatedCycles.
+ * @property {Array<{audioTime: number, value: any, duration: number, cycleIndex: number}>} pendingEvents
+ *                            Events awaiting commit, tagged with the cycle
+ *                            they belong to so pattern edits can preserve
+ *                            current-cycle events while dropping future ones.
+ *                            Sorted by audioTime ascending.
  */
 
 export class PatternFiringEngine {
@@ -213,12 +223,14 @@ export class PatternFiringEngine {
 
     /**
      * Internal: reconcile one source against the cache.
-     * Adds an entry if missing; recompiles the pattern if
-     * the cyclePattern text changed but preserves both
-     * lastFiredCycle and pendingEvents so the old pattern's
-     * already-queued events play through the rest of the
-     * current cycle. The new pattern takes effect on the
-     * next cycle wrap via the normal detection path.
+     * Adds an entry if missing; flags the entry as
+     * patternDirty when its cyclePattern text changes so
+     * the next tick can filter future-cycle events from
+     * pendingEvents and drop future cycles from
+     * populatedCycles, preparing the source for the new
+     * pattern's events to be populated at the next tick.
+     * The current cycle's already-queued events stay in
+     * pendingEvents for Version B clean-takeover behaviour.
      *
      * @param {string} id
      * @param {"curve" | "sprite"} kind
@@ -233,20 +245,14 @@ export class PatternFiringEngine {
             if (existing.cyclePatternText !== cyclePatternText) {
                 existing.cyclePatternText = cyclePatternText;
                 existing.compiled = this._compile(cyclePatternText);
-                // pendingEvents is INTENTIONALLY not cleared.
-                // The old pattern's events queued for the
-                // rest of this cycle stay queued and fire
-                // through to the cycle boundary, so the
-                // current cycle finishes cleanly on the
-                // old pattern. lastFiredCycle also stays
-                // at its current value, so the next tick
-                // does not re-detect this cycle against
-                // the new pattern (which would double-fire
-                // the rest of the cycle). On the next
-                // genuine cycle wrap the firing engine sees
-                // cycleCount advance, detects the wrap, and
-                // queries the new compiled pattern via the
-                // normal path.
+                // patternDirty: next tick handles the cleanup
+                // (drop future-cycle events, drop future
+                // cycles from populatedCycles). Current-cycle
+                // events stay queued for the rest of the
+                // cycle so the user hears the old pattern
+                // finish out before the new pattern takes
+                // effect on the next cycle boundary.
+                existing.patternDirty = true;
             }
             existing.kind = kind;
             return;
@@ -256,7 +262,8 @@ export class PatternFiringEngine {
             kind,
             cyclePatternText,
             compiled: this._compile(cyclePatternText),
-            lastFiredCycle: null,
+            populatedCycles: new Map(),
+            patternDirty: false,
             pendingEvents: [],
         });
     }
@@ -270,12 +277,11 @@ export class PatternFiringEngine {
      * whose patterns couldn't be parsed at scene load
      * (because the engine hadn't been clicked yet) picks
      * up its compiled patterns when the engine becomes
-     * available. Parallels canvas.refreshMarkers, which
-     * does the same for marker rendering.
+     * available. Parallels canvas.refreshMarkers.
      *
-     * Pending events are cleared for any source that
-     * recompiles, so detection on the next tick re-runs
-     * cleanly against the resumed audio clock.
+     * Pending events and populatedCycles are cleared for
+     * any source that recompiles, so the next tick
+     * re-bootstraps from the current simulation state.
      */
     recompileMissingPatterns() {
         for (const state of this._sources.values()) {
@@ -283,6 +289,7 @@ export class PatternFiringEngine {
             if (state.cyclePatternText.trim() === "") continue;
             state.compiled = this._compile(state.cyclePatternText);
             state.pendingEvents = [];
+            state.populatedCycles.clear();
         }
     }
 
@@ -323,20 +330,17 @@ export class PatternFiringEngine {
         if (this._scene === null) return;
 
         if (!this._transport.isPlaying) {
-            // Paused. Reset per-source firing state so that
-            // on resume the firing engine re-detects the
-            // current cycle, re-queries the pattern, and
-            // recomputes audio times against the resumed
-            // audio clock. The cycleProgress filter on
-            // detection means only future events (relative
-            // to the cycle's current position) are queued,
-            // so a mid-cycle resume picks up where it left
-            // off. The trade-off is that the rest of the
-            // in-flight cycle's events are dropped on pause;
-            // acceptable Phase 1 behaviour.
+            // Paused. Clear all per-source firing state
+            // so resume re-bootstraps from the resumed
+            // simulation state. The cost is losing the
+            // rest of the in-flight cycle's events on
+            // pause, which is acceptable: pause-mid-cycle
+            // resume cleanly is more important than
+            // preserving the exact remaining beats.
             for (const state of this._sources.values()) {
-                state.lastFiredCycle = null;
                 state.pendingEvents = [];
+                state.populatedCycles.clear();
+                state.patternDirty = false;
             }
             return;
         }
@@ -354,15 +358,14 @@ export class PatternFiringEngine {
             const source = this._lookupSource(state);
             if (source === null) continue;
             // Mute gate. A muted source consumes no firings —
-            // pending events are dropped and detection is
-            // skipped. Unmuting on the fly will re-detect on
-            // the next tick (lastFiredCycle stays at its
-            // previous value, which may differ from the
-            // current cycleCount if a wrap happened while
-            // muted, so the unmute lands on the same cycle
-            // boundary as the first detection on play).
+            // pending events are dropped and population is
+            // skipped. Unmuting on the fly re-bootstraps on
+            // the next tick from whatever cycle the
+            // simulation is currently in, so unmute lands
+            // cleanly on the next cycle boundary.
             if (source.mute === true) {
                 state.pendingEvents = [];
+                state.populatedCycles.clear();
                 continue;
             }
             if (state.compiled === null) continue;
@@ -378,26 +381,81 @@ export class PatternFiringEngine {
                 : this._simulation.getSpriteCycleState(source.id);
             if (cycleState === null) continue;
 
-            // New-cycle detection. The first time the engine
-            // sees this source (lastFiredCycle null), or
-            // whenever the simulation's cycleCount has changed
-            // since the last tick (a wrap or rewind happened),
-            // query the pattern for the new cycle and populate
-            // pending events with absolute audio times. The
-            // commit-window walker below will drop any events
-            // whose audioTime is more than 0.05 seconds in the
-            // past, so populate can safely include every event
-            // in the new cycle without worrying about
-            // retroactive bursts on initial Play, skipped
-            // cycles, or mid-cycle resume from pause.
-            if (state.lastFiredCycle !== cycleState.cycleCount) {
-                state.lastFiredCycle = cycleState.cycleCount;
-                this._populatePending(
-                    state,
-                    cycleState,
-                    cycleDuration,
-                    audioNow,
+            const C = cycleState.cycleCount;
+
+            // Pattern-edit cleanup. _reconcileSource set
+            // patternDirty when the cyclePattern text
+            // changed; the next tick (this one, if the
+            // change happened in the last frame) drops
+            // future-cycle events and future cycles from
+            // populatedCycles so the populate calls below
+            // generate fresh events from the new pattern.
+            // Current-cycle events stay queued for the rest
+            // of the cycle; Version B clean-takeover.
+            if (state.patternDirty) {
+                state.pendingEvents = state.pendingEvents.filter(
+                    (e) => e.cycleIndex <= C,
                 );
+                for (const c of state.populatedCycles.keys()) {
+                    if (c > C) state.populatedCycles.delete(c);
+                }
+                state.patternDirty = false;
+            }
+
+            // Prune old cycles from populatedCycles. Any
+            // cycle index strictly less than the current
+            // is firmly in the past; its events have either
+            // been committed or dropped by the past-slack
+            // guard in the commit walker. Pruning bounds
+            // memory over long sessions; populatedCycles
+            // would otherwise accumulate one entry per
+            // cycle indefinitely.
+            for (const c of state.populatedCycles.keys()) {
+                if (c < C) state.populatedCycles.delete(c);
+            }
+
+            // Bootstrap the current cycle if not already
+            // populated. This is the path the first detection
+            // after Play takes, and also any tick after a
+            // pattern edit dropped the current cycle (which
+            // shouldn't happen since the filter above keeps
+            // current-cycle events, but the populatedCycles
+            // entry for C might still be missing after the
+            // edit path — actually no, the filter above
+            // drops only cycles > C, so C stays in the map.
+            // The bootstrap path is specifically for fresh
+            // start / resume from pause).
+            if (!state.populatedCycles.has(C)) {
+                const cycleAudioStart =
+                    audioNow - cycleState.cycleProgress * cycleDuration;
+                state.populatedCycles.set(C, cycleAudioStart);
+                this._populatePending(state, C, cycleAudioStart, cycleDuration);
+            }
+
+            // Pre-populate the next cycle if not yet done.
+            // This is the timing fix: by scheduling cycle
+            // C+1's events one cycle in advance, their
+            // audioTimes (especially the position-zero
+            // downbeat at cycleAudioStart_{C+1}) are in the
+            // future when Web MIDI receives them, so they
+            // fire at their exact intended times. Without
+            // pre-population, the position-zero event of
+            // each new cycle would be slightly in the past
+            // at wrap-detection time and fire late (about
+            // 25ms of detection lag), producing an audible
+            // stutter at every cycle boundary.
+            if (!state.populatedCycles.has(C + 1)) {
+                const startC = state.populatedCycles.get(C);
+                if (typeof startC === "number") {
+                    const cycleAudioStartNext = startC + cycleDuration;
+                    state.populatedCycles.set(C + 1, cycleAudioStartNext);
+                    this._populatePending(
+                        state,
+                        C + 1,
+                        cycleAudioStartNext,
+                        cycleDuration,
+                    );
+                }
             }
 
             // Commit pending events whose audio time is
@@ -406,55 +464,16 @@ export class PatternFiringEngine {
             // those are genuinely stale (typically a resume
             // from pause where the simulation's cycleProgress
             // is well past the event's fractional position).
-            // Events slightly in the past — typical of a
-            // wrap-detection tick that landed a few frames
-            // after the cycle boundary — get clamped to
-            // audioNow and fire.
-            //
-            // The past-slack is generous (0.2 seconds, about
-            // 12 frames at 60fps) so position-zero events
-            // reliably fire even when the wrap-detection
-            // tick is slightly late. With a tighter slack
-            // the downbeat of each cycle gets dropped
-            // intermittently whenever the simulation's tick
-            // advances even a few tens of milliseconds past
-            // the cycle boundary in the same step that
-            // detected the wrap.
-            /** @type {Array<{audioTime: number, value: any, duration: number}>} */
+            // Events slightly in the past pass straight
+            // through to Web MIDI, which sends them
+            // immediately per spec; no forward clamp needed
+            // since Web MIDI does not reject past timestamps
+            // the way superdough does.
+            /** @type {Array<{audioTime: number, value: any, duration: number, cycleIndex: number}>} */
             const remaining = [];
             for (const ev of state.pendingEvents) {
                 if (ev.audioTime <= horizon && ev.audioTime >= audioNow - 0.2) {
-                    // Forward safety margin. The walker's
-                    // clamp ensures the target is at least
-                    // audioNow + 0.02s, not just audioNow.
-                    // A few milliseconds elapse between the
-                    // clamp here and when superdough's play
-                    // implementation reads ctx.currentTime
-                    // to validate the schedule; without the
-                    // margin, a target clamped exactly at
-                    // audioNow regularly arrives a few ms
-                    // in the past at superdough, which
-                    // rejects with "cannot schedule sounds
-                    // in the past" and silently drops the
-                    // event. The position-zero event of
-                    // every cycle is the one most affected
-                    // because the simulation's tick
-                    // typically detects the wrap a few
-                    // simulation steps past zero, so the
-                    // position-zero audioTime is the
-                    // furthest in the past in the cycle.
-                    const t = Math.max(audioNow + 0.02, ev.audioTime);
-                    // Route to MIDI as the default output for
-                    // pattern firing. The runtime.play
-                    // (superdough audio) path is intentionally
-                    // unused for now: the user prefers an
-                    // external synth driven by MIDI over
-                    // strudel's built-in samples. The runtime
-                    // remains constructed and the StrudelRuntime
-                    // module remains imported so flipping back
-                    // is a one-line change here; the rest of
-                    // the firing engine is output-agnostic.
-                    this._midiSender.send(ev.value, t, ev.duration);
+                    this._midiSender.send(ev.value, ev.audioTime, ev.duration);
                 } else if (ev.audioTime > horizon) {
                     remaining.push(ev);
                 }
@@ -466,65 +485,40 @@ export class PatternFiringEngine {
     }
 
     /**
-     * Internal: query the pattern for the cycle the
-     * simulation has just entered and populate pending
-     * events. Uses queryArc(cycleCount, cycleCount + 1) so
-     * cross-cycle modifiers (alternation, every, iter)
-     * advance correctly across firings; sequential cycle
-     * counters give sequential queries.
+     * Internal: query the pattern for the given cycle index
+     * and append events to pendingEvents with audioTimes
+     * derived from the given cycleAudioStart. Used by tick()
+     * for both the current cycle bootstrap and the one-
+     * cycle-ahead pre-population.
      *
-     * Pattern events whose audioTime is more than 0.05
-     * seconds in the past at commit time get dropped by
-     * the commit-window walker; that mechanism handles
-     * retroactive-burst prevention uniformly across initial
-     * Play, normal wraps, skipped cycles, and mid-cycle
-     * resume from pause. Populate just generates every
-     * event in the cycle and lets the walker decide what
-     * fires. An earlier version of this function applied a
-     * cycle-progress filter here to drop events whose
-     * fractional position was less than the cycleProgress
-     * at detection time, but that filter dropped the
-     * position-zero event whenever the simulation's tick
-     * caught the cycle slightly past the boundary (a tiny
-     * positive cycleProgress at wrap-detection time is
-     * typical because the tick crosses the boundary and
-     * advances slightly past zero in the same step).
-     * Removing the filter and relying on the commit
-     * walker's audioTime guard is simpler and correct.
+     * Events are appended (not replaced) so a tick that
+     * populates both C and C+1 in one pass produces a unified
+     * pendingEvents list sorted by audioTime. Existing
+     * events from earlier populates (including the current
+     * cycle's remaining events after a pattern edit) survive
+     * the append.
      *
-     * Stochastic patterns (degradeBy, choose, the rand and
-     * irand signals) are seeded by strudel's internal RNG;
-     * a fresh detection of the same cycleCount would give
-     * the same Haps because strudel's hash is deterministic
-     * over cycle counter and tag. So a resume that re-
-     * detects the same cycle observes the same events.
+     * Cross-cycle modifiers (alternation, every, iter)
+     * advance correctly because queryArc gets called with
+     * the sequential cycle index. Stochastic patterns
+     * (degradeBy, choose, rand, irand) are seeded by
+     * strudel's internal hash over cycle counter and tag,
+     * so the events for cycle N are deterministic.
      *
      * @param {SourceFiringState} state
-     * @param {{cycleCount: number, cycleProgress: number}} cycleState
+     * @param {number} cycleIndex
+     * @param {number} cycleAudioStart
      * @param {number} cycleDuration
-     * @param {number} audioNow
      */
-    _populatePending(state, cycleState, cycleDuration, audioNow) {
-        const cycleIndex = cycleState.cycleCount;
-        const cycleProgressAtDetection = cycleState.cycleProgress;
-        // The cycle effectively started cycleProgress * cycleDuration
-        // seconds ago in audio time. Events at fractional positions
-        // beyond the current cycleProgress map to future audio times.
-        const cycleAudioStart = audioNow - cycleProgressAtDetection * cycleDuration;
+    _populatePending(state, cycleIndex, cycleAudioStart, cycleDuration) {
         let haps;
         try {
             haps = state.compiled.queryArc(cycleIndex, cycleIndex + 1);
         } catch (err) {
             console.warn(`[firing] queryArc failed for ${state.id}:`, err);
-            state.pendingEvents = [];
             return;
         }
-        if (!Array.isArray(haps)) {
-            state.pendingEvents = [];
-            return;
-        }
-        /** @type {Array<{audioTime: number, value: any, duration: number}>} */
-        const pending = [];
+        if (!Array.isArray(haps)) return;
         for (const hap of haps) {
             const begin = hapBegin(hap);
             const end = hapEnd(hap);
@@ -538,16 +532,18 @@ export class PatternFiringEngine {
             if (fractional < 0 || fractional >= 1) continue;
             const audioTime = cycleAudioStart + fractional * cycleDuration;
             const duration = Math.max(0, (fractionalEnd - fractional) * cycleDuration);
-            pending.push({ audioTime, value: hap.value, duration });
+            state.pendingEvents.push({
+                audioTime,
+                value: hap.value,
+                duration,
+                cycleIndex,
+            });
         }
-        // Sort ascending by audioTime so the commit-window
-        // walk sees events in time order. queryArc usually
-        // returns them in order already, but some modifier
-        // compositions (parallel layers, jux) can return
-        // multiple events with overlapping or non-monotonic
-        // begins.
-        pending.sort((a, b) => a.audioTime - b.audioTime);
-        state.pendingEvents = pending;
+        // Keep pendingEvents sorted by audioTime so the
+        // commit walker sees events in time order. With
+        // multi-cycle populates and pattern-edit filters
+        // the natural ordering would otherwise mix cycles.
+        state.pendingEvents.sort((a, b) => a.audioTime - b.audioTime);
     }
 
     /**
