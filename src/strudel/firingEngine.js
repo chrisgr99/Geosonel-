@@ -57,17 +57,20 @@
  *
  * Edit handling. When setScene observes a changed
  * cyclePattern text on an existing source, the compiled
- * Pattern is replaced and pending events are cleared, but
- * lastFiredCycle is preserved. The new pattern therefore
- * takes effect on the next cycle wrap, not mid-cycle.
- * Already-committed events (those superdough has accepted)
- * play through to completion. The user hears the rest of
- * the old pattern's current cycle play out, then the new
- * pattern starts cleanly on the next downbeat. A mid-cycle
- * takeover was tried briefly and reverted because the
- * blended audio (old beats from before the edit plus new
- * beats from after) sounded messier than the clean cycle-
- * boundary transition.
+ * Pattern is replaced but pending events are PRESERVED.
+ * The old pattern's already-queued events for the current
+ * cycle play through to the cycle boundary, then the new
+ * pattern takes effect cleanly at the next cycle wrap.
+ * The user hears the current cycle complete on the old
+ * pattern, with no silence gap, before the new pattern
+ * starts on the next downbeat. A mid-cycle takeover was
+ * tried briefly and reverted because the blended audio
+ * (old beats from before the edit plus new beats from
+ * after) sounded messier than the clean cycle-boundary
+ * transition. An earlier draft also cleared pendingEvents
+ * on the text change, which left the rest of the current
+ * cycle silent until the next wrap; preserving the
+ * pending events removes that silence gap.
  *
  * Continue-on-edit semantics for cross-cycle modifiers
  * (alternation, every, iter) are preserved across edits.
@@ -207,10 +210,12 @@ export class PatternFiringEngine {
 
     /**
      * Internal: reconcile one source against the cache.
-     * Adds an entry if missing; recompiles and clears
-     * pending events if the cyclePattern text changed;
-     * preserves lastFiredCycle either way so cross-cycle
-     * modifiers continue across edits.
+     * Adds an entry if missing; recompiles the pattern if
+     * the cyclePattern text changed but preserves both
+     * lastFiredCycle and pendingEvents so the old pattern's
+     * already-queued events play through the rest of the
+     * current cycle. The new pattern takes effect on the
+     * next cycle wrap via the normal detection path.
      *
      * @param {string} id
      * @param {"curve" | "sprite"} kind
@@ -225,15 +230,20 @@ export class PatternFiringEngine {
             if (existing.cyclePatternText !== cyclePatternText) {
                 existing.cyclePatternText = cyclePatternText;
                 existing.compiled = this._compile(cyclePatternText);
-                // Clear pending events from the previous
-                // pattern; lastFiredCycle stays so the new
-                // pattern picks up at the next wrap with
-                // continue-on-edit cross-cycle modifier
-                // semantics. The user hears the rest of
-                // the old pattern's current cycle play
-                // out before the new pattern takes over
-                // on the next downbeat.
-                existing.pendingEvents = [];
+                // pendingEvents is INTENTIONALLY not cleared.
+                // The old pattern's events queued for the
+                // rest of this cycle stay queued and fire
+                // through to the cycle boundary, so the
+                // current cycle finishes cleanly on the
+                // old pattern. lastFiredCycle also stays
+                // at its current value, so the next tick
+                // does not re-detect this cycle against
+                // the new pattern (which would double-fire
+                // the rest of the cycle). On the next
+                // genuine cycle wrap the firing engine sees
+                // cycleCount advance, detects the wrap, and
+                // queries the new compiled pattern via the
+                // normal path.
             }
             existing.kind = kind;
             return;
@@ -370,54 +380,73 @@ export class PatternFiringEngine {
             // whenever the simulation's cycleCount has changed
             // since the last tick (a wrap or rewind happened),
             // query the pattern for the new cycle and populate
-            // pending events with absolute audio times.
-            //
-            // isCleanWrap distinguishes a contiguous N to N+1
-            // advance from initial detection or a rewind. On a
-            // clean wrap every event in the new cycle should
-            // fire, including the one at fractional position
-            // zero, so the cycle-progress filter inside
-            // _populatePending must not drop it. On initial
-            // detection (after Play or after a resume from
-            // pause) the filter still applies so retroactive
-            // events earlier in the cycle don't burst-fire.
-            const previousLastFiredCycle = state.lastFiredCycle;
-            if (previousLastFiredCycle !== cycleState.cycleCount) {
+            // pending events with absolute audio times. The
+            // commit-window walker below will drop any events
+            // whose audioTime is more than 0.05 seconds in the
+            // past, so populate can safely include every event
+            // in the new cycle without worrying about
+            // retroactive bursts on initial Play, skipped
+            // cycles, or mid-cycle resume from pause.
+            if (state.lastFiredCycle !== cycleState.cycleCount) {
                 state.lastFiredCycle = cycleState.cycleCount;
-                const isCleanWrap = previousLastFiredCycle !== null &&
-                    cycleState.cycleCount === previousLastFiredCycle + 1;
                 this._populatePending(
                     state,
                     cycleState,
                     cycleDuration,
                     audioNow,
-                    isCleanWrap,
                 );
             }
 
             // Commit pending events whose audio time is
             // within the commit window. Events older than
-            // a small slack get dropped silently — they were
-            // missed (typical cause: a slow frame), and
-            // scheduling them now would produce a burst at
-            // the current audio time.
+            // the past-slack window get dropped silently:
+            // those are genuinely stale (typically a resume
+            // from pause where the simulation's cycleProgress
+            // is well past the event's fractional position).
+            // Events slightly in the past — typical of a
+            // wrap-detection tick that landed a few frames
+            // after the cycle boundary — get clamped to
+            // audioNow and fire.
+            //
+            // The past-slack is generous (0.2 seconds, about
+            // 12 frames at 60fps) so position-zero events
+            // reliably fire even when the wrap-detection
+            // tick is slightly late. With a tighter slack
+            // the downbeat of each cycle gets dropped
+            // intermittently whenever the simulation's tick
+            // advances even a few tens of milliseconds past
+            // the cycle boundary in the same step that
+            // detected the wrap.
             /** @type {Array<{audioTime: number, value: any, duration: number}>} */
             const remaining = [];
             for (const ev of state.pendingEvents) {
-                if (ev.audioTime <= horizon && ev.audioTime >= audioNow - 0.05) {
-                    // Clamp into the future for safety. With
-                    // a healthy frame rate the clamp is a
-                    // no-op since audioTime >= audioNow by
-                    // the time we reach this branch (any
-                    // older events have been filtered out
-                    // above).
-                    const t = Math.max(audioNow, ev.audioTime);
+                if (ev.audioTime <= horizon && ev.audioTime >= audioNow - 0.2) {
+                    // Forward safety margin. The walker's
+                    // clamp ensures the target is at least
+                    // audioNow + 0.02s, not just audioNow.
+                    // A few milliseconds elapse between the
+                    // clamp here and when superdough's play
+                    // implementation reads ctx.currentTime
+                    // to validate the schedule; without the
+                    // margin, a target clamped exactly at
+                    // audioNow regularly arrives a few ms
+                    // in the past at superdough, which
+                    // rejects with "cannot schedule sounds
+                    // in the past" and silently drops the
+                    // event. The position-zero event of
+                    // every cycle is the one most affected
+                    // because the simulation's tick
+                    // typically detects the wrap a few
+                    // simulation steps past zero, so the
+                    // position-zero audioTime is the
+                    // furthest in the past in the cycle.
+                    const t = Math.max(audioNow + 0.02, ev.audioTime);
                     this._runtime.play(ev.value, t, ev.duration);
                 } else if (ev.audioTime > horizon) {
                     remaining.push(ev);
                 }
-                // ev.audioTime older than audioNow - 0.05 falls
-                // through here (no push, no commit) — dropped.
+                // ev.audioTime older than audioNow - 0.2 falls
+                // through (no push, no commit) — dropped.
             }
             state.pendingEvents = remaining;
         }
@@ -431,29 +460,24 @@ export class PatternFiringEngine {
      * advance correctly across firings; sequential cycle
      * counters give sequential queries.
      *
-     * Filters out events whose fractional position is less
-     * than the cycle progress at detection time — but ONLY
-     * when isCleanWrap is false. On a clean cycle wrap from
-     * N to N+1, every event in the new cycle should fire,
-     * including the one at fractional position zero. The
-     * simulation's tick crosses the cycle boundary and
-     * advances slightly past zero in the same step, so by
-     * the time the firing engine reads cycleProgress it is
-     * a small positive number rather than exactly zero. A
-     * naive "fractional < cycleProgress" filter would drop
-     * the position-zero event on every wrap because zero is
-     * less than (say) 0.005 — silently swallowing the
-     * downbeat of every cycle. The isCleanWrap path skips
-     * the filter entirely; the still-in-the-future commit-
-     * window walk handles the actual scheduling, including
-     * clamping events slightly in the past up to audioNow
-     * so they fire immediately rather than late.
-     *
-     * On non-clean-wrap detection (first detection after
-     * Play, or after resume from pause, where the user may
-     * have pressed Play mid-cycle on a previously paused
-     * transport), the filter still applies so retroactive
-     * events earlier in the cycle don't burst-fire.
+     * Pattern events whose audioTime is more than 0.05
+     * seconds in the past at commit time get dropped by
+     * the commit-window walker; that mechanism handles
+     * retroactive-burst prevention uniformly across initial
+     * Play, normal wraps, skipped cycles, and mid-cycle
+     * resume from pause. Populate just generates every
+     * event in the cycle and lets the walker decide what
+     * fires. An earlier version of this function applied a
+     * cycle-progress filter here to drop events whose
+     * fractional position was less than the cycleProgress
+     * at detection time, but that filter dropped the
+     * position-zero event whenever the simulation's tick
+     * caught the cycle slightly past the boundary (a tiny
+     * positive cycleProgress at wrap-detection time is
+     * typical because the tick crosses the boundary and
+     * advances slightly past zero in the same step).
+     * Removing the filter and relying on the commit
+     * walker's audioTime guard is simpler and correct.
      *
      * Stochastic patterns (degradeBy, choose, the rand and
      * irand signals) are seeded by strudel's internal RNG;
@@ -466,9 +490,8 @@ export class PatternFiringEngine {
      * @param {{cycleCount: number, cycleProgress: number}} cycleState
      * @param {number} cycleDuration
      * @param {number} audioNow
-     * @param {boolean} isCleanWrap
      */
-    _populatePending(state, cycleState, cycleDuration, audioNow, isCleanWrap) {
+    _populatePending(state, cycleState, cycleDuration, audioNow) {
         const cycleIndex = cycleState.cycleCount;
         const cycleProgressAtDetection = cycleState.cycleProgress;
         // The cycle effectively started cycleProgress * cycleDuration
@@ -500,17 +523,6 @@ export class PatternFiringEngine {
             const fractional = begin - cycleIndex;
             const fractionalEnd = end - cycleIndex;
             if (fractional < 0 || fractional >= 1) continue;
-            // Cycle-progress filter. Drops events that have
-            // already passed at detection time, but only on
-            // initial-detection paths (after Play, or after
-            // resume from pause). On a clean N to N+1 wrap
-            // every event in the new cycle fires, including
-            // the one at fractional zero — see the
-            // _populatePending docstring for why the
-            // simulation's tiny positive cycleProgress at
-            // wrap detection would otherwise swallow the
-            // downbeat.
-            if (!isCleanWrap && fractional < cycleProgressAtDetection) continue;
             const audioTime = cycleAudioStart + fractional * cycleDuration;
             const duration = Math.max(0, (fractionalEnd - fractional) * cycleDuration);
             pending.push({ audioTime, value: hap.value, duration });

@@ -361,6 +361,24 @@ export class TabbedEditor {
      * Cmd-S out to disk. The non-active tab's content lives
      * only in the bundle until the user switches to it; that's
      * fine since selectTab pulls from the bundle each time.
+     *
+     * No-op dispatch when the active tab's bundle content
+     * equals the editor's current document. Cmd-Enter promote
+     * is the case that motivates the guard: it mutates
+     * scene.json (via applySceneEdit) but never touches
+     * behaviors.js, yet applySceneEdit calls
+     * refreshActiveTabFromBundle unconditionally. Without the
+     * guard, the active behaviors.js tab gets a
+     * full-document replace transaction that inserts the
+     * same content it already has — a logical no-op as far
+     * as text is concerned, but a real transaction in
+     * CodeMirror's history that interferes with the redo
+     * stack and breaks Cmd-Shift-Z after the user undoes
+     * past the promote. Skipping the dispatch when content
+     * is unchanged preserves the history exactly. The
+     * dirty flag is still set so the bundle (which DOES
+     * differ from disk after scene.json was mutated) is
+     * saved on the next Cmd-S or Run Scene.
      */
     refreshActiveTabFromBundle() {
         if (this.activeName === null) return;
@@ -378,6 +396,15 @@ export class TabbedEditor {
         if (this.view === null) return;
         const file = this.bundle.getFile(this.activeName);
         if (file === null) return;
+        if (file.content === this.view.state.doc.toString()) {
+            // Content is already in sync. Skip the dispatch
+            // to preserve CodeMirror's undo/redo history.
+            // Still mark dirty: another file in the bundle
+            // may have changed and this method's contract
+            // is bundle-level dirty signalling.
+            this._setDirty(true);
+            return;
+        }
         this._suppressDirty = true;
         this.view.dispatch({
             changes: {
