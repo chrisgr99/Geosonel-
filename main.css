@@ -284,6 +284,53 @@ html, body {
     align-items: center;
 }
 
+/* MIDI output indicator in the transport bar.
+ *
+ * Shows the chosen MIDI port name once MIDISender.init
+ * completes ("MIDI: IAC Bus 1" for the typical macOS
+ * setup) and flashes a brighter green outline on each
+ * note dispatched so the user has a live confirmation
+ * that audio is going out the port. Before init the
+ * placeholder text "MIDI: —" sits in a dimmed state
+ * showing the indicator's footprint without committing
+ * to a port; once active, the text brightens to match
+ * the other transport bar elements.
+ *
+ * The flash adds an outline rather than a background fill
+ * because background flicker would draw the eye too
+ * strongly given how often it fires (4-16 times per
+ * cycle on typical patterns). The 80ms decay (set in
+ * main.js's wireMidiIndicator) lands long enough to
+ * register and short enough not to merge into a steady
+ * outline at high event rates; a single deferred timer
+ * resets on every send so back-to-back notes produce one
+ * extended flash rather than rapid on-off flicker. */
+.midi-indicator {
+    background-color: #2a2a2a;
+    color: #a8a8a8;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 2px 10px;
+    font-size: 11pt;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    user-select: none;
+    transition: border-color 80ms ease-out, color 80ms ease-out;
+}
+
+.midi-indicator-active {
+    color: #f0f0f0;
+    border-color: #777777;
+}
+
+.midi-indicator-flash {
+    border-color: #5fc858;
+    color: #5fc858;
+    box-shadow: 0 0 6px rgba(95, 200, 88, 0.4);
+}
+
 /* --- Dividers --- */
 
 .divider-horizontal {

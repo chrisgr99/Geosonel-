@@ -58,6 +58,7 @@ import { Transport } from "./src/transport.js";
 import { Simulation } from "./src/simulation.js";
 import { TransportBarView } from "./src/transportBar.js";
 import { StrudelRuntime } from "./src/strudel/runtime.js";
+import { MIDISender } from "./src/strudel/midiSender.js";
 import { PatternFiringEngine } from "./src/strudel/firingEngine.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
@@ -276,6 +277,17 @@ async function main() {
     new TransportBarView(transport, strudelRuntime);
     /** @type {any} */ (window).strudelRuntime = strudelRuntime;
 
+    // MIDI output adapter. Web MIDI initialisation is async
+    // (requestMIDIAccess returns a promise); kicked off here
+    // without await so the rest of app load proceeds. Sends
+    // before init completes are no-ops gated by the sender's
+    // internal ready flag. The transport bar indicator
+    // subscribes via wireMidiIndicator and updates its label
+    // on the ready event, flashing on each note send.
+    const midiSender = new MIDISender(transport);
+    void midiSender.init();
+    wireMidiIndicator(midiSender);
+
     // When the strudel engine finishes loading, re-parse
     // every curve's cyclePattern so marker diamonds appear
     // on the canvas for patterns that were present at scene
@@ -335,7 +347,7 @@ async function main() {
     // simulation's setScene so the firing engine's compiled
     // pattern cache reconciles to the freshly-loaded scene
     // on the same code path.
-    const firingEngine = new PatternFiringEngine(strudelRuntime, simulation, transport);
+    const firingEngine = new PatternFiringEngine(strudelRuntime, midiSender, simulation, transport);
     canvas.setFiringEngine(firingEngine);
 
     // --- Dividers ---
@@ -1656,6 +1668,43 @@ async function main() {
     } else {
         await runScene();
     }
+}
+
+/**
+ * Wire the MIDI indicator in the transport bar to the
+ * MIDISender's event stream. The indicator shows the chosen
+ * port name once init completes and flashes a CSS class on
+ * each note sent so the user can see audio is actually
+ * going out the port.
+ *
+ * The flash is brief (a CSS transition removes it shortly
+ * after the class is added). Because notes can fire in
+ * rapid succession on short patterns, the indicator schedules
+ * the flash-off through a single deferred timer that resets
+ * on every send; multiple sends in a row produce a single
+ * extended flash rather than rapid on-off flicker.
+ *
+ * @param {MIDISender} midiSender
+ */
+function wireMidiIndicator(midiSender) {
+    const el = document.getElementById("midi-indicator");
+    if (!(el instanceof HTMLElement)) return;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let flashTimeout = null;
+    midiSender.onEvent((event) => {
+        if (event.type === "ready") {
+            const portName = event.portName ?? "(unknown)";
+            el.textContent = `MIDI: ${portName}`;
+            el.classList.add("midi-indicator-active");
+        } else if (event.type === "send") {
+            el.classList.add("midi-indicator-flash");
+            if (flashTimeout !== null) clearTimeout(flashTimeout);
+            flashTimeout = setTimeout(() => {
+                el.classList.remove("midi-indicator-flash");
+                flashTimeout = null;
+            }, 80);
+        }
+    });
 }
 
 /**

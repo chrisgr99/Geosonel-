@@ -95,6 +95,7 @@
 import { parsePatternToPositions } from "./patternParse.js";
 
 /** @typedef {import("./runtime.js").StrudelRuntime} StrudelRuntime */
+/** @typedef {import("./midiSender.js").MIDISender} MIDISender */
 /** @typedef {import("../simulation.js").Simulation} Simulation */
 /** @typedef {import("../transport.js").Transport} Transport */
 /** @typedef {import("../scene.js").Scene} Scene */
@@ -140,11 +141,13 @@ const DEFAULT_COMMIT_WINDOW_SECONDS = 0.1;
 export class PatternFiringEngine {
     /**
      * @param {StrudelRuntime} runtime
+     * @param {MIDISender} midiSender
      * @param {Simulation} simulation
      * @param {Transport} transport
      */
-    constructor(runtime, simulation, transport) {
+    constructor(runtime, midiSender, simulation, transport) {
         this._runtime = runtime;
+        this._midiSender = midiSender;
         this._simulation = simulation;
         this._transport = transport;
 
@@ -441,7 +444,17 @@ export class PatternFiringEngine {
                     // position-zero audioTime is the
                     // furthest in the past in the cycle.
                     const t = Math.max(audioNow + 0.02, ev.audioTime);
-                    this._runtime.play(ev.value, t, ev.duration);
+                    // Route to MIDI as the default output for
+                    // pattern firing. The runtime.play
+                    // (superdough audio) path is intentionally
+                    // unused for now: the user prefers an
+                    // external synth driven by MIDI over
+                    // strudel's built-in samples. The runtime
+                    // remains constructed and the StrudelRuntime
+                    // module remains imported so flipping back
+                    // is a one-line change here; the rest of
+                    // the firing engine is output-agnostic.
+                    this._midiSender.send(ev.value, t, ev.duration);
                 } else if (ev.audioTime > horizon) {
                     remaining.push(ev);
                 }
