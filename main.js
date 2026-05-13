@@ -60,6 +60,7 @@ import { TransportBarView } from "./src/transportBar.js";
 import { StrudelRuntime } from "./src/strudel/runtime.js";
 import { MIDISender } from "./src/strudel/midiSender.js";
 import { PatternFiringEngine } from "./src/strudel/firingEngine.js";
+import { installImageSignals } from "./src/strudel/signals.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
 import { MessageArea } from "./src/messages.js";
@@ -346,6 +347,14 @@ async function main() {
     // strudel globals.
     strudelRuntime.onStatusChange((status) => {
         if (status === "loaded") {
+            // Install dynamic image-colour signals (Phase 4)
+            // as window globals before refreshing markers
+            // or recompiling patterns, so any pattern that
+            // references imageLightness or its OKLCh
+            // siblings parses cleanly against the freshly-
+            // installed globals rather than failing with a
+            // ReferenceError.
+            installImageSignals();
             canvas.refreshMarkers();
             firingEngine.recompileMissingPatterns();
         }
@@ -388,6 +397,7 @@ async function main() {
     // on the same code path.
     const firingEngine = new PatternFiringEngine(strudelRuntime, midiSender, simulation, transport);
     canvas.setFiringEngine(firingEngine);
+    firingEngine.setCanvas(canvas);
 
     // --- Dividers ---
     //

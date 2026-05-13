@@ -228,6 +228,24 @@ export class PatternFiringEngine {
         /** @type {Scene | null} */
         this._scene = null;
 
+        /**
+         * Canvas reference, set via setCanvas after
+         * construction. Used by _captureSnapshot to read
+         * image OKLCh data and to compute curve cursor
+         * canvas positions. Null until setCanvas is
+         * called; functions that depend on it gate on
+         * null and fall back to sensible defaults (image
+         * signals to null imageOKLCh, curves skipped from
+         * the snapshot because their canvas-space firing
+         * position cannot be derived without geometry).
+         * Sprites work without a canvas attached because
+         * the simulation already exposes their canvas
+         * position directly; only the imageOKLCh field
+         * on the snapshot entry comes back null.
+         * @type {import("../canvas.js").Canvas | null}
+         */
+        this._canvas = null;
+
         /** @type {Map<string, SourceFiringState>} */
         this._sources = new Map();
 
@@ -263,6 +281,32 @@ export class PatternFiringEngine {
                 this._midiSender.panic();
             }
         });
+    }
+
+    /**
+     * Attach the canvas so the firing engine can query
+     * canvas-managed scene state at snapshot-capture time:
+     * the image-OKLCh pixel-lookup buffer and the curve
+     * cursor's canvas-space position derived from its
+     * parameter t. Called from main.js once at startup,
+     * right after canvas.setFiringEngine(firingEngine)
+     * wires the engine into the canvas's render-loop
+     * tick. Calling order between the two setters does
+     * not matter — both are static one-time wirings.
+     *
+     * The firing engine continues to function without a
+     * canvas reference: image-colour signals on sprites
+     * read null imageOKLCh and fall back to their
+     * documented no-image defaults; curves are skipped
+     * from the snapshot entirely (no canvas-space
+     * position available). Attaching the canvas just
+     * enables the image-pixel and curve-geometry reads
+     * that Phase 4 signals need.
+     *
+     * @param {import("../canvas.js").Canvas} canvas
+     */
+    setCanvas(canvas) {
+        this._canvas = canvas;
     }
 
     /**
@@ -729,16 +773,36 @@ export class PatternFiringEngine {
             if (state.kind === "curve") {
                 const cycleState = this._simulation.getCurveCycleState(state.id);
                 if (cycleState === null) continue;
+                // Curves need canvas-space xy derived from
+                // their cursor t plus geometry. Skip the
+                // entry when no canvas is attached or the
+                // curve has no resolvable position; image-
+                // colour signals on this source then fall
+                // back to their no-context default rather
+                // than reading from a missing entry.
+                const cursorPos = this._canvas === null
+                    ? null
+                    : this._canvas.getCurveCursorCanvasPosition(state.id);
+                if (cursorPos === null) continue;
+                const imageOKLCh = this._canvas === null
+                    ? null
+                    : this._canvas.sampleImageOKLCh(cursorPos.x, cursorPos.y);
                 sources.set(state.id, {
                     kind: "curve",
                     cycleCount: cycleState.cycleCount,
                     cycleProgress: cycleState.cycleProgress,
                     t: this._simulation.getCurveCursorT(state.id),
+                    x: cursorPos.x,
+                    y: cursorPos.y,
+                    imageOKLCh,
                 });
             } else {
                 const cycleState = this._simulation.getSpriteCycleState(state.id);
                 const runtime = this._simulation.getSpriteRuntime(state.id);
                 if (cycleState === null || runtime === null) continue;
+                const imageOKLCh = this._canvas === null
+                    ? null
+                    : this._canvas.sampleImageOKLCh(runtime.x, runtime.y);
                 sources.set(state.id, {
                     kind: "sprite",
                     cycleCount: cycleState.cycleCount,
@@ -747,6 +811,7 @@ export class PatternFiringEngine {
                     y: runtime.y,
                     vx: runtime.vx,
                     vy: runtime.vy,
+                    imageOKLCh,
                 });
             }
         }

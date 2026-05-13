@@ -45,6 +45,7 @@
 import { applyBrightnessReduction } from "./imageTransform.js";
 import { getPreference, subscribePreference } from "./preferences.js";
 import { parsePatternToPositions } from "./strudel/patternParse.js";
+import { buildOKLChBuffer } from "./strudel/oklch.js";
 
 const DEFAULT_HALF_WIDTH = 16;   // \u00b116 units horizontally at zoom 1
 const DEFAULT_HALF_HEIGHT = 12;  // \u00b112 units vertically at zoom 1
@@ -227,6 +228,23 @@ export class Canvas {
          * @type {ImageData | null}
          */
         this._imagePixels = null;
+
+        /**
+         * A 1000×1000 OKLCh buffer (four channels per pixel:
+         * L, C, a, b stored as Float32) precomputed from
+         * _imagePixels at image-load time. Used by the firing
+         * engine's snapshot capture to read image-colour
+         * values at firing-source positions without redoing
+         * the sRGB-to-OKLCh conversion per event. Built
+         * whenever _imagePixels is built; null when no image
+         * is loaded or the build failed. Float32 storage
+         * (16 MB for a 1000×1000 image) trades 4× the memory
+         * of the source ImageData for full precision in the
+         * OKLCh space, which is a fine deal for an image-
+         * load cost paid once.
+         * @type {Float32Array | null}
+         */
+        this._imageOKLCh = null;
 
         /**
          * The scene to render on top of the grid, or null if
@@ -460,6 +478,7 @@ export class Canvas {
             this._imageBitmapOriginal = null;
             this._imageBitmap = null;
             this._imagePixels = null;
+            this._imageOKLCh = null;
             this.scheduleDraw();
             return;
         }
@@ -482,6 +501,17 @@ export class Canvas {
             // accessibility-driven brightness reduction stays
             // purely a display concern.
             this._imagePixels = this._buildPixelSamplingArray(original);
+            // Also build the OKLCh buffer in parallel from
+            // the unmodified original. The buffer is
+            // consumed by the firing engine's snapshot
+            // capture for dynamic image-colour signals
+            // (Phase 4). Builds only when _imagePixels
+            // succeeded; null when the source path failed
+            // (typically a cross-origin taint that prevents
+            // getImageData on the offscreen canvas).
+            this._imageOKLCh = this._imagePixels === null
+                ? null
+                : buildOKLChBuffer(this._imagePixels);
             // Compute the displayed bitmap. _recomputeDisplayBitmap
             // looks at the bypass preference and either uses
             // the original directly or runs the transform with
@@ -493,6 +523,7 @@ export class Canvas {
             this._imageBitmapOriginal = null;
             this._imageBitmap = null;
             this._imagePixels = null;
+            this._imageOKLCh = null;
             this.scheduleDraw();
         }
     }
@@ -2031,6 +2062,94 @@ export class Canvas {
         const idx = (py * w + px) * 4;
         const data = this._imagePixels.data;
         return `rgb(${data[idx]}, ${data[idx + 1]}, ${data[idx + 2]})`;
+    }
+
+    /**
+     * Sample the precomputed OKLCh values at canvas position
+     * (x, y). Returns a {L, C, a, b} object, or null when the
+     * position is outside the canvas region or no image is
+     * loaded. Used by the firing engine's snapshot capture
+     * for dynamic image-colour signals (Phase 4) such as
+     * imageLightness.
+     *
+     * Mirrors _sampleImageAt's coordinate mapping (canvas
+     * coords to image-buffer coords via the scene's
+     * canvasW/canvasH region), but reads from the OKLCh
+     * Float32 buffer rather than the RGB ImageData and
+     * returns numeric values rather than a CSS rgb() string.
+     * The duplication of the coordinate-mapping logic is
+     * intentional: the RGB sampling path is in the canvas
+     * draw hot loop and benefits from staying simple with
+     * inlined string construction; the OKLCh sampling path
+     * is in the firing-engine tick and returns structured
+     * data. A shared helper would force a branch on output
+     * format that neither caller wants.
+     *
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {{L: number, C: number, a: number, b: number} | null}
+     */
+    sampleImageOKLCh(canvasX, canvasY) {
+        if (this._imageOKLCh === null) return null;
+        if (this._imagePixels === null) return null;
+
+        const halfW = this._getCanvasW() / 2;
+        const halfH = this._getCanvasH() / 2;
+        const u = (canvasX + halfW) / (2 * halfW);
+        const v = (halfH - canvasY) / (2 * halfH);
+        if (u < 0 || u >= 1 || v < 0 || v >= 1) return null;
+
+        const w = this._imagePixels.width;
+        const h = this._imagePixels.height;
+        const px = Math.min(w - 1, Math.floor(u * w));
+        const py = Math.min(h - 1, Math.floor(v * h));
+        const idx = (py * w + px) * 4;
+        return {
+            L: this._imageOKLCh[idx],
+            C: this._imageOKLCh[idx + 1],
+            a: this._imageOKLCh[idx + 2],
+            b: this._imageOKLCh[idx + 3],
+        };
+    }
+
+    /**
+     * Return the canvas-space (x, y) position of a curve's
+     * cursor at its current simulation t. Returns null when
+     * the scene isn't loaded, the curve isn't in the scene,
+     * the simulation hasn't built runtime state yet, or the
+     * curve's geometry is degenerate (sampleCurve returns
+     * null for the t). Used by the firing engine's snapshot
+     * capture so dynamic image-colour signals can read the
+     * image pixel under a curve's cursor at its current
+     * sweep position.
+     *
+     * Sprites already expose canvas position via the
+     * simulation's getSpriteRuntime, so the firing engine
+     * reads sprite positions directly; this method completes
+     * the symmetry for curves, whose runtime state holds
+     * only the parametric cursor t. Canvas-space xy for a
+     * curve is derived from t plus the curve's shape via the
+     * sampleCurve helper that is module-private to this
+     * file.
+     *
+     * @param {string} curveId
+     * @returns {{x: number, y: number} | null}
+     */
+    getCurveCursorCanvasPosition(curveId) {
+        if (this._scene === null) return null;
+        if (this._simulation === null) return null;
+        let foundCurve = null;
+        for (const curve of this._scene.curves) {
+            if (curve !== null && typeof curve === "object" && curve.id === curveId) {
+                foundCurve = curve;
+                break;
+            }
+        }
+        if (foundCurve === null) return null;
+        const t = this._simulation.getCurveCursorT(curveId);
+        const sample = sampleCurve(foundCurve.shape, t);
+        if (sample === null) return null;
+        return { x: sample.x, y: sample.y };
     }
 
     /**

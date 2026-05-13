@@ -34,11 +34,23 @@
  * @property {"curve" | "sprite"} kind
  * @property {number} cycleCount
  * @property {number} cycleProgress
+ * @property {number} x   Canvas-space x of the firing position. For sprites,
+ *                        the sprite's current position. For curves, the
+ *                        cursor's canvas-space position derived from t and
+ *                        the curve's geometry by canvas.getCurveCursorCanvas-
+ *                        Position. Required for both kinds: image-colour
+ *                        signals read from this position via the snapshot's
+ *                        imageOKLCh field.
+ * @property {number} y   Canvas-space y of the firing position. Same shape
+ *                        as x.
  * @property {number} [t]   Curve cursor parameter in [0, 1), if kind is "curve".
- * @property {number} [x]   Sprite x position in canvas units, if kind is "sprite".
- * @property {number} [y]   Sprite y position in canvas units, if kind is "sprite".
  * @property {number} [vx]  Sprite x velocity, if kind is "sprite".
  * @property {number} [vy]  Sprite y velocity, if kind is "sprite".
+ * @property {{L: number, C: number, a: number, b: number} | null} imageOKLCh
+ *           OKLCh values at the firing position, or null when no image is
+ *           loaded or the position is outside the canvas region. Read by
+ *           image-colour dynamic signals (imageLightness and its OKLCh
+ *           siblings) at Pass 2 refresh time.
  *
  * @typedef {Object} FiringSnapshot
  * @property {number} audioNow                          AudioContext.currentTime
