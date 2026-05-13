@@ -164,15 +164,21 @@ export class TransportBarView {
             }
         });
 
-        // Keyboard shortcuts.
+        // Keyboard shortcuts. Spacebar (transport toggle) is
+        // handled centrally in main.js alongside Cmd-Period
+        // and the canvas-background double-click gesture, so
+        // it's not bound here — a duplicate binding would
+        // toggle twice per keystroke (once here, once in
+        // main.js) and cancel itself out. R/r is the only
+        // shortcut left at this layer; it stays here because
+        // rewind is a transport-bar concern that doesn't
+        // overlap with the canvas/editor ergonomics main.js
+        // owns.
         window.addEventListener("keydown", (e) => {
             // Don't intercept keys while the user is typing in an
             // input, textarea, or the CodeMirror editor.
             if (this._isTypingTarget(e.target)) return;
-            if (e.key === " ") {
-                e.preventDefault();
-                this.transport.toggle();
-            } else if (e.key === "r" || e.key === "R") {
+            if (e.key === "r" || e.key === "R") {
                 e.preventDefault();
                 this.transport.rewind();
             }

@@ -190,6 +190,22 @@ async function main() {
     const canvas = new Canvas(canvasAreaEl);
     const messages = new MessageArea(messageAreaEl);
 
+    // Make the canvas area focusable so Spacebar (a transport
+    // toggle outside text contexts) works after clicking the
+    // canvas. Plain <div> elements aren't focusable by default,
+    // so without this the editor retains focus across canvas
+    // clicks and Spacebar continues to type into the editor
+    // (the text-context exception in the keyboard handler
+    // matches CodeMirror focus). tabIndex -1 makes the element
+    // focusable programmatically and via click without
+    // inserting it into the Tab key cycle. The CSS rule in
+    // main.css removes the focus ring so the canvas area
+    // doesn't gain a visible outline when focused.
+    canvasAreaEl.tabIndex = -1;
+    canvasAreaEl.addEventListener("mousedown", () => {
+        canvasAreaEl.focus();
+    });
+
     if (bundle.getCurrentImage() !== null) {
         const img = bundle.getCurrentImage();
         if (img !== null) {
@@ -265,17 +281,40 @@ async function main() {
 
     // --- Transport and audio engine ---
     //
-    // The StrudelRuntime is constructed here but not initialised
-    // until the user clicks Load Engine in the transport bar.
-    // The click is the browser gesture that allows the shared
-    // AudioContext (owned by Transport, used by both Transport
-    // and strudel's webaudio layer) to start. Tier 1 leaves the
-    // runtime idle; Tier 2 will add the pattern evaluation
-    // primitive that drives output.
+    // The StrudelRuntime is constructed here. It used to wait
+    // for the user to click the Load Engine button in the
+    // transport bar before its async init runs (the click was
+    // the browser gesture the AudioContext needs to start),
+    // but that's an awkward extra step on every page load. We
+    // now trigger init on the FIRST user interaction of any
+    // kind — a click anywhere, a keypress anywhere — which
+    // also counts as the browser gesture and saves the user
+    // from hunting down a specific button each time.
+    //
+    // The Load Engine button still exists in the transport bar
+    // and still works; clicking it is just one of many
+    // possible first interactions that trip the auto-trigger.
+    // Once init starts (or is already running), the listeners
+    // remove themselves via AbortController so they don't pile
+    // up over the session.
     const transport = new Transport();
     const strudelRuntime = new StrudelRuntime(transport);
     new TransportBarView(transport, strudelRuntime);
     /** @type {any} */ (window).strudelRuntime = strudelRuntime;
+
+    {
+        const abortController = new AbortController();
+        const triggerEngineLoad = () => {
+            abortController.abort();
+            void strudelRuntime.init();
+        };
+        document.addEventListener("pointerdown", triggerEngineLoad, {
+            signal: abortController.signal,
+        });
+        document.addEventListener("keydown", triggerEngineLoad, {
+            signal: abortController.signal,
+        });
+    }
 
     // MIDI output adapter. Web MIDI initialisation is async
     // (requestMIDIAccess returns a promise); kicked off here
@@ -1259,6 +1298,28 @@ async function main() {
             } else {
                 editor.selectInspectorTab();
             }
+        } else if (edit.kind === "toggleTransport") {
+            // Canvas double-click on empty background.
+            // Toggle the transport play state — starts if
+            // stopped, stops if playing. A convenient
+            // gesture for testing patterns without leaving
+            // the canvas to find the Play button. The
+            // Spacebar and Ctrl-Period keyboard shortcuts
+            // (wired below) share this same toggle.
+            //
+            // Gated on the strudel runtime being fully
+            // loaded. Without the gate, a user whose first
+            // interaction is a canvas double-click would
+            // see the engine load AND playback start in
+            // the same instant — the auto-trigger handler
+            // and this toggle handler both fire from the
+            // same event. With the gate, the first
+            // double-click only loads the engine; once
+            // "loaded", subsequent double-clicks toggle
+            // normally. Same gate applies to the Spacebar
+            // and Ctrl-Period handlers below.
+            if (strudelRuntime.status !== "loaded") return;
+            transport.toggle();
         }
     });
 
@@ -1568,6 +1629,68 @@ async function main() {
     window.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && toolbar.getState().tool !== null) {
             toolbar.setActive(null, false);
+        }
+    });
+
+    // Transport play/pause shortcuts. Two keyboard shortcuts
+    // plus the canvas-background double-click gesture (handled
+    // above via the toggleTransport edit) all collapse to the
+    // same toggle: start if stopped, stop if playing.
+    //
+    // Spacebar follows the universal music-app convention.
+    // Active globally EXCEPT when focus is in a text-input
+    // context (CodeMirror editor, input/textarea element, or
+    // contenteditable region) so typing into the Code tab
+    // still inserts space characters naturally. The text-
+    // context check mirrors the Delete-key handler below.
+    //
+    // Cmd-Period is the always-active alternative. Works
+    // everywhere including inside the Code tab and Properties
+    // JSON tab, so the user can toggle playback without
+    // leaving the editor. Cmd is the natural modifier for an
+    // audio app on macOS (matches the convention in Logic,
+    // GarageBand, and most others); the historical Cmd-Period
+    // = cancel macOS convention is not strong enough in
+    // modern macOS to interfere with deliberate bindings.
+    // Cmd-Space and Ctrl-Space were both considered and
+    // rejected (Cmd-Space is Spotlight, Ctrl-Space is the
+    // conventional autocomplete trigger in CodeMirror /
+    // strudel and we expect to add autocomplete to the Code
+    // tab eventually).
+    window.addEventListener("keydown", (e) => {
+        const isCmdPeriod = e.metaKey && !e.ctrlKey && !e.altKey && e.key === ".";
+        if (isCmdPeriod) {
+            e.preventDefault();
+            // Gated on engine being fully loaded; see
+            // the toggleTransport edit handler above for
+            // the rationale (first user gesture that
+            // loads the engine shouldn't also start
+            // playback).
+            if (strudelRuntime.status !== "loaded") return;
+            transport.toggle();
+            return;
+        }
+        if (e.key === " " || e.code === "Space") {
+            // Skip text-input contexts so Space still types
+            // a space character there. The check matches
+            // CodeMirror editors, plain inputs, textareas,
+            // and contenteditable regions; everywhere else
+            // (canvas, inspector buttons, menu bar, message
+            // area, body itself), Space toggles transport.
+            const target = e.target;
+            if (target instanceof HTMLElement) {
+                if (target.closest(".cm-editor") !== null) return;
+                if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+                if (target.isContentEditable) return;
+            }
+            // Prevent the default space-scrolls-page behaviour
+            // and the spurious activate-focused-button click
+            // that some browsers fire on Space.
+            e.preventDefault();
+            // Same engine-loaded gate as the Cmd-Period
+            // and dblclick paths.
+            if (strudelRuntime.status !== "loaded") return;
+            transport.toggle();
         }
     });
 

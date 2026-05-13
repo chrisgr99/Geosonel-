@@ -393,6 +393,16 @@ html, body {
     min-height: 0;
 }
 
+/* When canvas-area gains focus (via the mousedown handler in
+ * main.js that makes it focusable for the Spacebar transport
+ * shortcut), the browser would normally draw a focus ring
+ * around it. Suppress that ring so the canvas stays clean
+ * looking; the focus-receiving behaviour is purely about
+ * keyboard event routing, not about visible focus state. */
+#canvas-area:focus {
+    outline: none;
+}
+
 #message-area {
     flex: 0 0 140px;
     background-color: #262626;
