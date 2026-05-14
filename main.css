@@ -1826,3 +1826,34 @@ body.inspector-hidden #canvas-pane {
 #load-engine-btn.engine-state-failed:hover {
     background-color: #d65656;
 }
+
+/* --- CodeMirror selection highlight override --- */
+/*
+ * CodeMirror's selection background (oneDark default) sits
+ * very close in luminance to the near-black editor
+ * background, which is hard to see at high zoom levels with
+ * limited eyesight. Override here at the CSS level with
+ * !important to guarantee the rule wins regardless of
+ * CodeMirror's StyleModule mounting order or specificity
+ * games. Covers both rendering paths: the drawSelection()
+ * layer (.cm-selectionBackground div) and native browser
+ * selection (.cm-content ::selection plus ::selection).
+ *
+ * Focused state (cursor active in editor) is bright; the
+ * unfocused state (editor has selection but focus is
+ * elsewhere) dims to a less prominent companion color so
+ * the active editing surface still reads more visually
+ * strong.
+ */
+.cm-editor.cm-focused .cm-selectionLayer .cm-selectionBackground,
+.cm-editor.cm-focused .cm-content ::selection {
+    background-color: #9070c0 !important;
+    background: #9070c0 !important;
+}
+
+.cm-editor .cm-selectionLayer .cm-selectionBackground,
+.cm-editor .cm-selectionBackground,
+.cm-editor .cm-content ::selection {
+    background-color: #5a4580 !important;
+    background: #5a4580 !important;
+}

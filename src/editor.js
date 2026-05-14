@@ -19,7 +19,7 @@
 
 // @ts-check
 
-import { EditorView, keymap, lineNumbers } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
+import { EditorView, keymap, lineNumbers, drawSelection } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
 import { EditorState, Compartment } from "https://esm.sh/@codemirror/state@6.5.2";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
 import { indentOnInput, indentUnit, bracketMatching } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
@@ -520,6 +520,74 @@ export class TabbedEditor {
                 },
                 preventDefault: true,
             },
+            {
+                key: "Ctrl-/",
+                run: () => {
+                    // Toggle the wrap state of the modifier
+                    // chain at the cursor. On a single-line
+                    // chain, breaks each dot-method onto its
+                    // own indented line; on a wrapped chain,
+                    // collapses back to one line. See
+                    // _toggleModifierChainWrap for the
+                    // detection and formatting rules. The
+                    // explicit Ctrl- prefix (rather than
+                    // Mod-) means this binds to physical
+                    // Ctrl on every platform, not Cmd on
+                    // Mac — we deliberately leave Mod-/
+                    // (Cmd-/ on Mac) free for CodeMirror's
+                    // built-in toggle-comment, which the
+                    // composer relies on for the comment-
+                    // out-and-clear gesture.
+                    if (this._toggleModifierChainWrap()) return true;
+                    return false;
+                },
+                preventDefault: true,
+            },
+            {
+                key: "Enter",
+                run: (view) => {
+                    // Preserve the current line's leading
+                    // whitespace when starting a new line.
+                    // CodeMirror's default Enter binding
+                    // (insertNewlineAndIndent) consults the
+                    // active language's indent service,
+                    // which can return a different indent
+                    // than the current line's — sometimes
+                    // deeper, sometimes zero, depending on
+                    // syntax. The composer prefers the
+                    // simpler "match the current line"
+                    // rule so the indent level stays steady
+                    // when editing inside an already-
+                    // indented region and the cursor never
+                    // lands at an unexpected column. Bound
+                    // in appKeymap which sits before
+                    // defaultKeymap in the keymap stack, so
+                    // this binding consumes the keypress
+                    // before the default Enter handler
+                    // sees it.
+                    const { state } = view;
+                    const sel = state.selection.main;
+                    const line = state.doc.lineAt(sel.from);
+                    const leadingMatch = line.text.match(/^[ \t]*/);
+                    const indent = leadingMatch !== null
+                        ? leadingMatch[0]
+                        : "";
+                    view.dispatch({
+                        changes: {
+                            from: sel.from,
+                            to: sel.to,
+                            insert: "\n" + indent,
+                        },
+                        selection: {
+                            anchor: sel.from + 1 + indent.length,
+                        },
+                        scrollIntoView: true,
+                        userEvent: "input.type",
+                    });
+                    return true;
+                },
+                preventDefault: true,
+            },
         ];
 
         const state = EditorState.create({
@@ -527,6 +595,7 @@ export class TabbedEditor {
             extensions: [
                 lineNumbers(),
                 history(),
+                drawSelection(),
                 indentOnInput(),
                 indentUnit.of("    "),
                 bracketMatching(),
@@ -769,6 +838,210 @@ export class TabbedEditor {
      */
     selectInspectorTab() {
         this.selectTab(VIRTUAL_TAB_INSPECTOR);
+    }
+
+    /**
+     * Toggle the wrap state of the dot-method chain at the
+     * cursor in behaviors.js / behaviours.js. The composer
+     * uses this to break a long chain across multiple lines
+     * for readability under high zoom, or collapse a wrapped
+     * chain back into one line when horizontal space allows.
+     *
+     * Scope is the top-level statement containing the cursor.
+     * Two statement shapes are handled:
+     *
+     *   - LabeledStatement whose body is an
+     *     ExpressionStatement: e.g. `$CRV1: note("c4")
+     *     .fast(2);`. The expression body's chain is the
+     *     target.
+     *   - Plain ExpressionStatement: e.g.
+     *     `note("c4").fast(2);`. The expression's chain is
+     *     the target.
+     *
+     * Other statement types fall through (return false). The
+     * label tag and the trailing semicolon, if any, are
+     * outside the replaced range and stay untouched.
+     *
+     * Chain extraction walks the AST from the outermost
+     * CallExpression down through .callee.object so long as
+     * each callee is a MemberExpression. The bottom of that
+     * walk is the "base" (e.g. `note("c4")`), and the path
+     * up gives the ordered modifier list (.fast(2),
+     * .gain(0.5), ...). The modifier text for each step is
+     * sliced from the source at the dot, so any leading
+     * whitespace from a wrapped form is dropped and the
+     * modifier reads as `.method(args)`.
+     *
+     * Nested chains inside argument lists (e.g.
+     * .gain(perlin.range(0.5, 1))) are NOT touched. The
+     * walker only follows the outermost chain's callee.
+     * object spine; the argument list is copied verbatim
+     * as part of the parent modifier's text.
+     *
+     * State detection: the chain is considered "wrapped"
+     * iff at least one inter-modifier connector (the source
+     * span between one element's end and the next dot)
+     * contains a newline. Wrapped chains unwrap; unwrapped
+     * chains wrap. Robust against unrelated multi-line
+     * content like template literals in the base call's
+     * arguments, since those never appear as connectors.
+     *
+     * Wrap formatting indents each modifier line by the
+     * leading whitespace of the line containing the chain's
+     * base, plus one indent unit (four spaces). So an
+     * unindented top-level chain wraps to four-space-indented
+     * modifier lines; a chain inside a function body indents
+     * relative to that function's body indent level.
+     *
+     * Returns true if the keystroke was consumed (chain
+     * found and reformatted, or chain present but empty so
+     * nothing to do). Returns false if no chain expression
+     * is present at the cursor; the Ctrl-/ handler then
+     * leaves the keystroke unhandled and CodeMirror's
+     * default keymap (which doesn't bind Ctrl-/ on Mac)
+     * does whatever it would otherwise do.
+     *
+     * @returns {boolean}
+     */
+    _toggleModifierChainWrap() {
+        if (this.view === null) return false;
+        if (this.activeName !== "behaviors.js" &&
+            this.activeName !== "behaviours.js") return false;
+        const doc = this.view.state.doc;
+        const source = doc.toString();
+        const cursorPos = this.view.state.selection.main.head;
+
+        let ast;
+        try {
+            ast = acorn.parse(source, {
+                ecmaVersion: 2022,
+                sourceType: "script",
+                allowReturnOutsideFunction: true,
+                locations: false,
+            });
+        } catch (err) {
+            // Whole-file syntax error: silently ignore.
+            // The Mod-Enter / Run Scene path's load-fail
+            // mechanism is the right place for the
+            // diagnostic; surfacing it from Ctrl-/ would
+            // be confusing.
+            return false;
+        }
+        if (ast === null || !Array.isArray(ast.body)) return false;
+
+        // Find the top-level statement that contains the
+        // cursor. Loop rather than binary-search since
+        // top-level statement counts are small and the
+        // simplicity wins.
+        let stmt = null;
+        for (const node of ast.body) {
+            if (cursorPos >= node.start && cursorPos <= node.end) {
+                stmt = node;
+                break;
+            }
+        }
+        if (stmt === null) return false;
+
+        // Extract the expression to reformat. LabeledStatement
+        // wraps an inner statement; the typical strudel
+        // authoring shape is a labelled block whose body is
+        // an ExpressionStatement, so we unwrap one level.
+        // Plain ExpressionStatement is also accepted for
+        // callbacks that build their chain at top level.
+        let expr;
+        if (stmt.type === "LabeledStatement" &&
+            stmt.body !== null &&
+            stmt.body.type === "ExpressionStatement") {
+            expr = stmt.body.expression;
+        } else if (stmt.type === "ExpressionStatement") {
+            expr = stmt.expression;
+        } else {
+            return false;
+        }
+        if (expr === null || expr === undefined) return false;
+
+        // Walk the chain from the outermost CallExpression
+        // down through .callee.object. Each step yields a
+        // raw text span (potential whitespace before the
+        // dot, then the .method(args) call). The connector
+        // (the part before the dot) is used for wrap-state
+        // detection; the method text is the wrapped or
+        // unwrapped output.
+        /** @type {Array<{connector: string, methodText: string}>} */
+        const modifiers = [];
+        let current = expr;
+        while (current.type === "CallExpression" &&
+               current.callee !== null &&
+               current.callee.type === "MemberExpression") {
+            const rawText = source.slice(
+                current.callee.object.end,
+                current.end,
+            );
+            const dotIdx = rawText.indexOf(".");
+            // dotIdx should always be >= 0 for a valid AST,
+            // but guard defensively against any pathological
+            // input shape that slips past Acorn.
+            if (dotIdx === -1) return false;
+            const connector = rawText.slice(0, dotIdx);
+            const methodText = rawText.slice(dotIdx);
+            modifiers.unshift({ connector, methodText });
+            current = current.callee.object;
+        }
+        if (modifiers.length === 0) return false;
+
+        // current is now the base expression: the receiver
+        // of the first .method() call.
+        const baseText = source.slice(current.start, current.end);
+        const exprStart = current.start;
+        const exprEnd = expr.end;
+
+        // Wrap state: any connector with a newline counts as
+        // wrapped. A clean unwrapped chain has empty
+        // connectors throughout.
+        const isWrapped = modifiers.some(
+            (m) => m.connector.indexOf("\n") !== -1,
+        );
+
+        // Indent for each wrapped modifier line: the line
+        // indent of the line containing the base, plus one
+        // indent unit. doc.lineAt returns the line containing
+        // the given position; we extract its leading
+        // whitespace and append four spaces.
+        const baseLine = doc.lineAt(exprStart);
+        const lineLeadingMatch = baseLine.text.match(/^[ \t]*/);
+        const lineIndent = lineLeadingMatch !== null
+            ? lineLeadingMatch[0]
+            : "";
+        const chainIndent = lineIndent + "    ";
+
+        let newText;
+        if (isWrapped) {
+            // Unwrap. Concatenate base with each modifier's
+            // method text, no inter-modifier whitespace.
+            newText = baseText + modifiers.map((m) => m.methodText).join("");
+        } else {
+            // Wrap. Base, then each modifier on its own line
+            // prefixed with chainIndent.
+            const wrappedLines = modifiers.map(
+                (m) => chainIndent + m.methodText,
+            );
+            newText = baseText + "\n" + wrappedLines.join("\n");
+        }
+
+        // Single dispatch so the change is one undo step.
+        // The cursor lands at the start of the rewritten
+        // expression. A more elaborate version could try to
+        // preserve the cursor's logical position within the
+        // chain, but the simpler behaviour is usable and
+        // doesn't surprise the composer.
+        this.view.dispatch({
+            changes: {
+                from: exprStart,
+                to: exprEnd,
+                insert: newText,
+            },
+        });
+        return true;
     }
 
     /**

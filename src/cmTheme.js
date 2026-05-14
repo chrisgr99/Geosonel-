@@ -68,6 +68,16 @@ export const contrastOverrides = HighlightStyle.define([
  * the same token groups at default precedence). Without the
  * precedence boost, oneDark's colours would mask ours.
  *
+ * Selection-background contrast (oneDark's default sits very
+ * close to the editor background, hard to see under low
+ * vision) is handled at the CSS level in main.css rather
+ * than here, since CodeMirror's StyleModule extension path
+ * had a stubborn override-resistance issue that !important
+ * rules in main.css sidestep cleanly. drawSelection() is
+ * still enabled in editor.js so the selection renders as a
+ * .cm-selectionBackground div (full colour fidelity) rather
+ * than as native ::selection (browser-imposed translucency).
+ *
  * @returns {Array<any>}
  */
 export function customDarkTheme() {
