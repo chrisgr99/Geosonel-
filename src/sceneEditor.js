@@ -573,22 +573,27 @@ export function addTriggerAt(data, x, y) {
 /**
  * Add a curve to the parsed scene with the given shape
  * sub-object. The curve gets a freshly generated id, empty
- * name, and the provided shape; curveThickness, cursorR,
- * cursorL, and the callback slots fall through to the
- * Curve constructor defaults. Shape coordinates are rounded
- * to two decimal places via roundCoord to keep the stored
- * JSON readable, mirroring the convention used by sprite
- * and trigger position fields. The caller is responsible
- * for supplying a shape consistent with one of the
- * supported types (line / ellipse / piste); the toolbar's
- * curve creation tool produces ellipse shapes.
+ * name, the provided shape, and explicit cursorR and
+ * cursorL of 1 (one canvas unit on each side of the
+ * curve's path). curveThickness and the callback slots
+ * fall through to the Curve constructor defaults. Shape
+ * coordinates are rounded to two decimal places via
+ * roundCoord to keep the stored JSON readable, mirroring
+ * the convention used by sprite and trigger position
+ * fields. The caller is responsible for supplying a shape
+ * consistent with one of the supported types (line /
+ * ellipse / piste); the toolbar's curve creation tool
+ * produces ellipse shapes.
  *
- * Newly-created curves have cursorR and cursorL at the
- * Curve constructor default of 0, which under the cursor-
- * as-collider model means the curve does not yet fire
- * patterns. The composer sets cursor extents via the
- * inspector once the geometry is in place. Mutates `data`
- * in place.
+ * Cursor extents are set explicitly here rather than left
+ * to the schema's natural-zero default so newly-created
+ * curves have an audible firing surface from the moment
+ * they appear on the canvas. The composer can still
+ * widen, narrow, or zero them through the inspector once
+ * the geometry is in place. The schema default stays at
+ * 0 so a hand-edited scene.json that omits the cursor
+ * fields continues to behave as a no-cursor curve.
+ * Mutates `data` in place.
  *
  * @param {any} data
  * @param {{type: string, cx?: number, cy?: number, w?: number, h?: number, x1?: number, y1?: number, x2?: number, y2?: number, points?: Array<[number, number]>, closed?: boolean}} shape
@@ -623,6 +628,8 @@ export function addCurveAt(data, shape) {
         id,
         name: "",
         shape: roundedShape,
+        cursorR: 1,
+        cursorL: 1,
     });
 }
 
@@ -1115,6 +1122,38 @@ export function scaleSelectionAroundAnchor(data, selection, ax, ay, sx, sy) {
  */
 export function setSpriteDisplayDiameterOnSelection(data, selection, value) {
     setFieldOnSelection(data, { sprites: selection.sprites }, "displayDiameter", Number(value));
+}
+
+/**
+ * Set the starting X or Y axis velocity (vx or vy) on every
+ * selected sprite and curve. Triggers in the selection are
+ * silently ignored since triggers don't move under physics
+ * and carry no vx/vy fields. Used by the inspector's
+ * Starting State row vX and vY field commits, paralleling
+ * setPositionAxisOnSelection's axis-parameterised shape.
+ * The new value is the starting velocity for the next
+ * playback run; the live runtime velocity is not snapped,
+ * so a source already in motion when the edit lands
+ * continues with its current velocity until the next
+ * rewind or scene reload. Mutates `data` in place.
+ *
+ * Curves currently store the value without acting on it;
+ * the per-tick translation of the curve's shape by
+ * (vx, vy) lands with the curve-bounce work in a later
+ * milestone. Sprites consume vx and vy through the
+ * existing physics path.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {"x" | "y"} axis
+ * @param {string | number} value
+ */
+export function setVelocityAxisOnSelection(data, selection, axis, value) {
+    const field = axis === "x" ? "vx" : "vy";
+    setFieldOnSelection(data, {
+        sprites: selection.sprites,
+        curves: selection.curves,
+    }, field, Number(value));
 }
 
 /**
