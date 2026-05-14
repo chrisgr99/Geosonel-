@@ -102,6 +102,7 @@ import {
     setPositionAxisOnSelection,
     setSizeAxisOnSelection,
     setSpriteDisplayDiameterOnSelection,
+    setVelocityAxisOnSelection,
     setTriggerSizeOnSelection,
     setCursorROnSelection,
     setCursorLOnSelection,
@@ -1433,6 +1434,15 @@ async function main() {
             } else if (edit.kind === "setSpriteSize") {
                 await applySceneEdit((data) =>
                     setSpriteDisplayDiameterOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setVelocityAxis") {
+                // Starting State row's vX and vY fields.
+                // setVelocityAxisOnSelection applies to both
+                // sprites and curves; triggers in a mixed
+                // selection are silently skipped since they
+                // don't move under physics.
+                await applySceneEdit((data) =>
+                    setVelocityAxisOnSelection(data, edit.selection, edit.axis, edit.value),
                 );
             } else if (edit.kind === "setTriggerSize") {
                 await applySceneEdit((data) =>

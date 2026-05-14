@@ -389,6 +389,21 @@ export class Curve {
         this.shape = opts.shape;
 
         /**
+         * Starting velocity components along the canvas X
+         * and Y axes, in canvas units per second. The
+         * authored value persists in scene.json and is
+         * editable through the inspector's Starting State
+         * row; live runtime translation of the shape by
+         * (vx, vy) per simulation tick lands with the
+         * curve-bounce work in a later milestone. Same
+         * default of 0 as Sprite.vx and vy.
+         * @type {number}
+         */
+        this.vx = opts.vx ?? 0;
+        /** @type {number} */
+        this.vy = opts.vy ?? 0;
+
+        /**
          * Stroke thickness for the curve's geometric body, in
          * CSS pixels. The cursor's stroke uses cursorThickness
          * below; these are kept independent so a thin curve

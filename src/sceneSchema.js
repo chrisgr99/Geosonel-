@@ -139,6 +139,8 @@ export const CURVE_FIELDS = [
     { key: "mute", label: "Mute", type: "boolean", default: false },
     { key: "hide", label: "Hide", type: "boolean", default: false },
     { key: "shape", label: "Shape", type: "shape", default: null },
+    { key: "vx", label: "VX", type: "number", default: 0 },
+    { key: "vy", label: "VY", type: "number", default: 0 },
     { key: "curveThickness", label: "Curve Thickness", type: "number", default: 1 },
     { key: "stopAtCycle", label: "Stop at Cycle", type: "integer", default: -1 },
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },

@@ -25,9 +25,11 @@
  * (cursor-as-collider model).
  *
  * Band 1 — Identity. Three rows. Row 1: Object ID
- * (read-only, greyed for multi-select), Mute (editable
- * for any non-empty selection), Hide (curve-only,
- * greyed when the selection contains no curves). Row 2
+ * (read-only, greyed for multi-select), Hide Cursor
+ * (editable for any non-empty selection, stored in
+ * scene.json's `mute` field, suppresses cursor
+ * rendering and the firing that depends on it per the
+ * cursor-as-collider model). Row 2
  * is the cycle duration row, reading as "Cycles In [N]
  * beats" with the schema's beatsPerCycle field as the
  * editable number between the label and the units. The
@@ -47,21 +49,26 @@
  * versions exposed has been dropped; the schema field
  * stays in place for future re-surfacing.
  *
- * Band 2 — Geometry / visual. Position is universal (any
- * non-empty selection); Curve Size W/H and Curve
- * Thickness activate when curves are in the selection;
- * Cursor R/L extends to curves and sprites under the
- * cursor-as-collider model and greys when all selected
- * curves and sprites are muted; Cursor Thickness stays
- * curve-only since sprite cursor visualisation is
- * deferred; Sprite/Trigger Size activates when the
- * selection is exclusively that kind (the row's label
- * tracks which); Color activates when sprites or
- * triggers are present (curves carry no per-object
- * colour at this milestone). Position and Curve Size
- * W/H use absolute-set semantics — typing a value
- * commits that value as the new coordinate (or
- * dimension) for every applicable selected object — so
+ * Band 2 — Geometry / visual. Starting State carries the
+ * object's starting position (X, Y, universal for any
+ * non-empty selection) and starting velocity (vX, vY,
+ * active when the selection contains at least one sprite
+ * or curve, greyed for trigger-only selections since
+ * triggers don't move under physics); Curve Size W/H and
+ * Curve Thickness activate when curves are in the
+ * selection; Cursor R/L extends to curves and sprites
+ * under the cursor-as-collider model and greys when all
+ * selected curves and sprites are muted; Cursor
+ * Thickness stays curve-only since sprite cursor
+ * visualisation is deferred; Sprite/Trigger Size
+ * activates when the selection is exclusively that kind
+ * (the row's label tracks which); Color activates when
+ * sprites or triggers are present (curves carry no
+ * per-object colour at this milestone). Starting State's
+ * four numeric fields and Curve Size W/H use absolute-
+ * set semantics — typing a value commits that value as
+ * the new coordinate (or dimension or velocity
+ * component) for every applicable selected object — so
  * single-select, uniform multi-select, and varies
  * multi-select all flow through the same primitive.
  *
@@ -129,13 +136,11 @@
  * scrolling doesn't focus the field.
  *
  * Greying rules.
- *   - Universal fields (Position, Mute) are active for any
- *     non-empty selection.
+ *   - Universal fields (Starting State X/Y, Hide Cursor)
+ *     are active for any non-empty selection.
  *   - Object ID is active only for single-object
  *     selections; greyed for multi-select since the id
  *     is per-object unique.
- *   - Hide applies only to curves; greyed when the
- *     selection contains no curves.
  *   - Sprite/Trigger Size is active only when the selection
  *     is exclusively sprites or exclusively triggers; the
  *     row's label tracks which.
@@ -191,13 +196,13 @@ const W = {
 
     // Inline labels next to the row's leftmost field group,
     // sized to the shortest text that fits at 10pt.
-    mute: 36,          // "Mute"
-    hide: 36,          // "Hide"
+    hideCursor: 90,    // "Hide Cursor" — wide enough to fit the two-word label on one line at 10pt
     curveThick: 60,    // "Curve\nThickness" multiline
     cursorThick: 60,   // "Cursor\nThickness" multiline
 
     // Numeric fields.
-    posXY: 60,         // Position X, Y
+    posXY: 60,         // Position X, Y (legacy; superseded by startState)
+    startState: 60,    // Starting State X, Y, vX, vY — four fields share the row at curve-size width (60) to match the visual weight of the surrounding rows
     sizeWH: 60,        // Curve Size W, H
     cursorRL: 50,      // Cursor R, L
     thickness: 60,     // Curve/Cursor Thickness
@@ -391,12 +396,19 @@ export class Inspector {
 
     /**
      * Band 1 — Identity. Three rows. Row 1: Object ID
-     * is read-only and greyed for multi-select; Mute is
-     * editable for any non-empty selection and defaults
-     * to off (false = not muted); Hide is curve-only and
-     * greyed when the selection contains no curves. The
-     * user-typed Name field that earlier versions of the
-     * inspector exposed has been dropped under the
+     * is read-only and greyed for multi-select; Hide Cursor
+     * is editable for any non-empty selection and defaults
+     * to off (false = cursor visible and firing active).
+     * The Hide Cursor field is stored in scene.json's
+     * existing `mute` field — the rename is UI-only and
+     * existing scores need no migration. The separate
+     * `hide` schema field (which controls whether a
+     * curve's geometry renders, independent of the cursor)
+     * has been dropped from the inspector but stays in the
+     * schema so a hand-edited scene.json can still toggle
+     * it; the JSON tab is the only surface for that field
+     * now. The user-typed Name field that earlier versions
+     * of the inspector exposed has been dropped under the
      * cursor-as-collider reshape; the schema field stays
      * in place for future re-surfacing, but only the
      * system-assigned id is shown.
@@ -439,7 +451,7 @@ export class Inspector {
 
         const objs = selectedObjects(this._scene, this._selection);
         const idEditable = ctx.isSingle;
-        const hideActive = ctx.hasCurves;
+        const hideCursorActive = ctx.total > 0;
         const cycleDurationActive = ctx.hasSprites || ctx.hasCurves;
 
         // ID comes from the single selected object on
@@ -454,15 +466,17 @@ export class Inspector {
             idValue = typeof obj.id === "string" ? obj.id : "";
         }
 
-        // Mute aggregates across every selected object (any
-        // kind). Hide aggregates across selected curves only,
-        // since hide is curve-only. Both return true / false /
+        // Hide Cursor aggregates across every selected
+        // object (any kind). The schema field is `mute` and
+        // the edit kind stays setMute; only the inspector
+        // label has been renamed to reflect what the boolean
+        // controls under the cursor-as-collider model
+        // (suppressing the cursor, which in turn suppresses
+        // firing). The aggregate returns true / false /
         // "varies" so a tri-state checkbox can render the
-        // mixed case as a visually distinct "divergent" state.
-        const muteState = aggregateBoolean(objs.all, "mute");
-        const hideState = ctx.hasCurves
-            ? aggregateBoolean(objs.curves, "hide")
-            : false;
+        // mixed case as a visually distinct "divergent"
+        // state.
+        const hideCursorState = aggregateBoolean(objs.all, "mute");
 
         // beatsPerCycle aggregates across the whole selection
         // since the schema field is universal. The row greys
@@ -481,19 +495,13 @@ export class Inspector {
             disabled: !idEditable,
             width: W.idField,
         }));
-        r1.appendChild(mkLabel("Mute", { width: W.mute }));
+        r1.appendChild(mkLabel("Hide Cursor", { width: W.hideCursor, disabled: !hideCursorActive }));
         r1.appendChild(mkCheckbox({
-            checked: muteState === true,
-            varies: muteState === "varies",
-            onClick: () => this._onBooleanCheckboxClick("setMute", muteState),
-        }));
-        r1.appendChild(mkLabel("Hide", { width: W.hide, disabled: !hideActive }));
-        r1.appendChild(mkCheckbox({
-            checked: hideState === true,
-            varies: hideState === "varies",
-            disabled: !hideActive,
-            onClick: hideActive
-                ? () => this._onBooleanCheckboxClick("setHide", hideState)
+            checked: hideCursorState === true,
+            varies: hideCursorState === "varies",
+            disabled: !hideCursorActive,
+            onClick: hideCursorActive
+                ? () => this._onBooleanCheckboxClick("setMute", hideCursorState)
                 : undefined,
         }));
         band.appendChild(r1);
@@ -1031,25 +1039,30 @@ export class Inspector {
     }
 
     /**
-     * Band 2 — Geometry and visual. Position is universal
-     * (any non-empty selection); curve dimensions, cursor
+     * Band 2 — Geometry and visual. Starting State's X and Y
+     * fields are universal (any non-empty selection) and
+     * write to the object's starting position; vX and vY
+     * apply to sprites and curves and grey for trigger-only
+     * selections since triggers don't move under physics
+     * and carry no vx/vy fields. Curve dimensions, cursor
      * extents, and the two thicknesses activate when curves
      * are in the selection; sprite/trigger size activates
      * when the selection is exclusively that kind; colour
      * activates when sprites or triggers are present (curves
      * carry no per-object colour at this milestone).
      *
-     * Position and Curve Size W/H use absolute-set semantics:
-     * the user types a value and every applicable selected
-     * object's coordinate becomes that value. This works for
-     * single-select (typing 5 in a field showing 3 sets X=5),
-     * uniform multi-select (typing 0 sets every selected
-     * object's X to 0), and varies multi-select (typing 0 in
-     * a blank "varies" field snaps every selected object to
-     * X=0 regardless of starting value). The other Band 2
-     * fields (sizes, cursor extents, thicknesses, colour)
-     * also commit their typed value as the new value for
-     * every applicable selected object.
+     * Starting State's four fields and Curve Size W/H use
+     * absolute-set semantics: the user types a value and
+     * every applicable selected object's coordinate becomes
+     * that value. This works for single-select (typing 5 in
+     * a field showing 3 sets X=5), uniform multi-select
+     * (typing 0 sets every selected object's X to 0), and
+     * varies multi-select (typing 0 in a blank "varies"
+     * field snaps every selected object to X=0 regardless of
+     * starting value). The other Band 2 fields (sizes,
+     * cursor extents, thicknesses, colour) also commit their
+     * typed value as the new value for every applicable
+     * selected object.
      *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
@@ -1062,31 +1075,59 @@ export class Inspector {
         const sizeLabel = sizeRowLabel(ctx);
         const colorActive = ctx.hasSprites || ctx.hasTriggers;
         const positionActive = ctx.total > 0;
+        // Velocity applies to sprites and curves; triggers
+        // don't move under physics and carry no vx/vy
+        // fields. The vX and vY fields in the Starting State
+        // row grey only when the selection has no sprite and
+        // no curve (trigger-only or empty selections).
+        // setVelocityAxisOnSelection silently skips any
+        // trigger indexes in mixed selections, matching the
+        // Color row's mixed-selection shape.
+        const velocityActive = ctx.hasSprites || ctx.hasCurves;
 
         const objs = selectedObjects(this._scene, this._selection);
 
-        // Position. Reads from sprite/trigger x,y and from
-        // curve bbox centroid; aggregates across kinds. Edits
-        // emit setPositionAxis (absolute) so that single-
+        // Starting State row. X and Y read from sprite/trigger
+        // x,y and from curve bbox centroid; vX and vY read
+        // from sprite vx/vy and curve vx/vy uniformly. X and
+        // Y edits emit setPositionAxis (absolute) so single-
         // select, uniform multi-select, and varies multi-
         // select all flow through the same primitive: type a
         // value, every selected object's X (or Y) becomes
-        // that value. For curves the per-shape semantics fall
-        // out automatically — setPositionAxisOnSelection
+        // that value. For curves the per-shape semantics
+        // fall out automatically — setPositionAxisOnSelection
         // computes a per-curve translation delta from the
-        // current centroid to the target.
+        // current centroid to the target. vX and vY edits
+        // emit setVelocityAxis with axis "x" or "y" and
+        // route through setVelocityAxisOnSelection, which
+        // applies the value to every sprite and curve in
+        // the selection.
+        //
+        // "Starting State" reads literally: the schema's x,
+        // y, vx, vy fields are the initial conditions the
+        // simulation resets to on each playback run. The
+        // live runtime values during playback are not
+        // surfaced here. Curve velocity is currently stored
+        // but not yet acted on by the simulation; the per-
+        // tick translation by (vx, vy) lands with the
+        // curve-bounce work.
         const positionXAgg = aggregatePosition(objs, "x");
         const positionYAgg = aggregatePosition(objs, "y");
-        const positionXEditable = positionActive;
-        const positionYEditable = positionActive;
+        const velocityXAgg = aggregateVelocity(objs, "x");
+        const velocityYAgg = aggregateVelocity(objs, "y");
 
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Position", { width: W.leftLabel, disabled: !positionActive }));
+        r1.appendChild(mkLabel("State\nat Start", {
+            width: W.leftLabel,
+            disabled: !positionActive,
+            multiline: true,
+        }));
+        r1.appendChild(mkInlineLetter("X", { disabled: !positionActive }));
         r1.appendChild(this._buildEditableField({
             value: positionXAgg === "varies" ? "" : positionXAgg,
             numeric: true,
-            width: W.posXY,
-            editable: positionXEditable,
+            width: W.startState,
+            editable: positionActive,
             validator: (c) => validateNumber(c, {}),
             onCommit: (newValue) => {
                 const value = Number(newValue);
@@ -1095,11 +1136,12 @@ export class Inspector {
                 }
             },
         }));
+        r1.appendChild(mkInlineLetter("Y", { disabled: !positionActive }));
         r1.appendChild(this._buildEditableField({
             value: positionYAgg === "varies" ? "" : positionYAgg,
             numeric: true,
-            width: W.posXY,
-            editable: positionYEditable,
+            width: W.startState,
+            editable: positionActive,
             validator: (c) => validateNumber(c, {}),
             onCommit: (newValue) => {
                 const value = Number(newValue);
@@ -1108,7 +1150,42 @@ export class Inspector {
                 }
             },
         }));
-        r1.appendChild(mkUnits("(X, Y)", { disabled: !positionActive }));
+        // Wider left-margin on the vX letter visually
+        // separates the velocity pair from the position
+        // pair within the same row. Picked by eye to read
+        // as a deliberate gap without pushing the row past
+        // the widest line in the inspector (the Band 3
+        // callback-slot rows).
+        const vXLetter = mkInlineLetter("vX", { disabled: !velocityActive });
+        vXLetter.style.marginLeft = "14px";
+        r1.appendChild(vXLetter);
+        r1.appendChild(this._buildEditableField({
+            value: velocityXAgg === "varies" ? "" : velocityXAgg,
+            numeric: true,
+            width: W.startState,
+            editable: velocityActive,
+            validator: (c) => validateNumber(c, {}),
+            onCommit: (newValue) => {
+                const value = Number(newValue);
+                if (Number.isFinite(value)) {
+                    this._emitEdit({ kind: "setVelocityAxis", axis: "x", value });
+                }
+            },
+        }));
+        r1.appendChild(mkInlineLetter("vY", { disabled: !velocityActive }));
+        r1.appendChild(this._buildEditableField({
+            value: velocityYAgg === "varies" ? "" : velocityYAgg,
+            numeric: true,
+            width: W.startState,
+            editable: velocityActive,
+            validator: (c) => validateNumber(c, {}),
+            onCommit: (newValue) => {
+                const value = Number(newValue);
+                if (Number.isFinite(value)) {
+                    this._emitEdit({ kind: "setVelocityAxis", axis: "y", value });
+                }
+            },
+        }));
         band.appendChild(r1);
 
         // Curve Size W/H + Curve Thickness. Curves only.
@@ -1782,6 +1859,45 @@ function aggregatePosition(objs, axis) {
         if (centroid === null) continue;
         const v = axis === "x" ? centroid.x : centroid.y;
         if (Number.isFinite(v)) values.push(v);
+    }
+    if (values.length === 0) return "";
+    const first = values[0];
+    for (let i = 1; i < values.length; i++) {
+        if (values[i] !== first) return "varies";
+    }
+    return String(first);
+}
+
+/**
+ * Aggregate a starting velocity component (vx or vy) across
+ * every selected sprite and curve. Triggers in the selection
+ * are ignored — triggers don't move under physics and carry
+ * no vx/vy fields. Returns the common value as a stringified
+ * number, the literal "varies" when sources disagree, or
+ * empty string for a selection with no sprite or curve.
+ * Mirrors aggregatePosition's shape; the axis parameter
+ * follows the position-axis convention ("x" or "y") and
+ * maps internally to the vx/vy field names.
+ *
+ * Used by the Band 2 Starting State row's vX and vY read
+ * binding. Edits commit through setVelocityAxis (absolute),
+ * so the fields stay editable across single-select, uniform
+ * multi-select, and varies multi-select.
+ *
+ * @param {{ sprites: any[], triggers: any[], curves: any[] }} objs
+ * @param {"x" | "y"} axis
+ * @returns {string | "varies"}
+ */
+function aggregateVelocity(objs, axis) {
+    /** @type {number[]} */
+    const values = [];
+    for (const s of objs.sprites) {
+        const v = axis === "x" ? s.vx : s.vy;
+        if (typeof v === "number" && Number.isFinite(v)) values.push(v);
+    }
+    for (const c of objs.curves) {
+        const v = axis === "x" ? c.vx : c.vy;
+        if (typeof v === "number" && Number.isFinite(v)) values.push(v);
     }
     if (values.length === 0) return "";
     const first = values[0];
