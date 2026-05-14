@@ -845,6 +845,23 @@ async function main() {
         }
     });
 
+    // Play Selected toggle. When on, only currently-
+    // selected canvas objects fire their patterns; when
+    // off (default), every unmuted object fires. The id
+    // set the firing engine gates on is updated by
+    // dispatchSelectedObjectIds below on every selection
+    // change and after every runScene, so flipping the
+    // toggle on takes effect against the current selection
+    // immediately without an extra setup call here. The
+    // engine's setPlaySelectedMode internally matches the
+    // existing mute-gate path: non-permitted sources drop
+    // their pending events and skip population while the
+    // mode is on, and the bootstrap path re-fills them
+    // when the mode flips off.
+    toolbar.onPlaySelectedToggle((active) => {
+        firingEngine.setPlaySelectedMode(active);
+    });
+
     /**
      * Resolve a canvas selection — arrays of indices into
      * the current scene's sprites, triggers, and curves —
@@ -884,6 +901,13 @@ async function main() {
             }
         }
         editor.setSelectedObjectIds(ids);
+        // Push the same id set into the firing engine's
+        // play-selected gate so the Play Selected toolbar
+        // toggle (when on) tracks the live selection. Has
+        // no audible effect while the toggle is off; the
+        // engine still updates the set so flipping the
+        // toggle on lands with the current selection.
+        firingEngine.setPlaySelectedIds(ids);
     };
 
     /**

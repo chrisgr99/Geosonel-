@@ -1644,6 +1644,27 @@ body.inspector-hidden #canvas-pane {
     flex: 1 1 auto;
 }
 
+/* Vertical bar between adjacent button groups on the
+ * left side of the toolbar. Used to separate the object-
+ * creation tool cluster from the Play Selected toggle so
+ * the eye reads the two as distinct groups. Rendered as a
+ * thin mid-grey line about 24 pixels tall (60% of the
+ * toolbar's 40-pixel height) so it sits visually centred
+ * within the toolbar and reads as a separator rather than
+ * a content line. Horizontal margins give the adjacent
+ * buttons room to breathe so the bar doesn't crowd them.
+ * Flex-shrink: 0 keeps the bar intact when the toolbar
+ * gets tight on horizontal space — the groups stay
+ * visibly separated rather than collapsing into one row
+ * of buttons. */
+.toolbar-group-separator {
+    flex: 0 0 2px;
+    height: 24px;
+    background-color: #888888;
+    border-radius: 1px;
+    margin: 0 10px;
+}
+
 /* Right-side cluster: image-import action button followed
  * by the Canvas: W H controls. The 16-pixel gap separates
  * the button from the canvas-size group so the two read as
@@ -1694,6 +1715,60 @@ body.inspector-hidden #canvas-pane {
     border-color: #00ff33;
     color: #d8f5d8;
     box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+}
+
+/* Toggle button: square footprint matching the tool and
+ * action buttons but with an on / off state distinct from
+ * both. Idle state mirrors the action button (dark fill,
+ * mid-grey border) so the button reads as part of the same
+ * visual system; the active state shifts to a warm amber
+ * border with a subtle glow so the user can see the toggle
+ * is on at a glance. Amber rather than green deliberately:
+ * the tool buttons already use green for their armed and
+ * locked states, and using a different accent for the
+ * toggle separates "this changes what a canvas click does"
+ * (green) from "this changes what plays" (amber). The
+ * active hover and focus states bump the amber brighter
+ * for click-landing feedback while staying inside the
+ * warm-attention range. */
+.toolbar-toggle-button {
+    width: 32px;
+    height: 32px;
+    background-color: #2a2a2a;
+    border: 1px solid #888888;
+    border-radius: 3px;
+    color: #c0c0c0;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.toolbar-toggle-button:hover {
+    background-color: #3a3a3a;
+    border-color: #c8c8c8;
+    color: #f0f0f0;
+}
+
+.toolbar-toggle-button:focus {
+    outline: none;
+    border-color: #c8c8c8;
+}
+
+.toolbar-toggle-button-active {
+    background-color: #3a2e1a;
+    border-color: #d4a05a;
+    border-width: 2px;
+    color: #f0e0c0;
+    box-shadow: 0 0 6px rgba(212, 160, 90, 0.45);
+}
+
+.toolbar-toggle-button-active:hover {
+    background-color: #463722;
+    border-color: #e8b870;
+    box-shadow: 0 0 8px rgba(232, 184, 112, 0.6);
 }
 
 /* Canvas size controls. Layout: "Canvas:" label, W field, H

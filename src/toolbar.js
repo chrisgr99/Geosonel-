@@ -126,6 +126,24 @@ const IMAGE_IMPORT_ICON_SVG =
     `<path d="M4 18 L9 12 L13 15 L17 10 L20 14 L20 19 L4 19 Z" stroke="#7db8d6" stroke-width="1.5" fill="none" stroke-linejoin="round"/>` +
     `</svg>`;
 
+// Play Selected icon. A small filled coral disc on the left
+// (the "sound source") with three concentric arcs to its
+// right in warm olive (the "radiating waves"), evoking the
+// classic broadcasting / speaker-emitting-sound iconography
+// from GXSTR's toolbar. The dot and arcs use explicit
+// colours rather than currentColor so the icon retains its
+// identifying palette regardless of button state (idle,
+// hover, active); the surrounding button frame is what
+// changes with state. Sized to match the other toolbar
+// icons at viewBox 24x24 / rendered 28x28.
+const PLAY_SELECTED_ICON_SVG =
+    `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
+    `<circle cx="6" cy="12" r="2.5" fill="#d66a55"/>` +
+    `<path d="M 10 8.5 A 3.5 3.5 0 0 1 10 15.5" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
+    `<path d="M 13 6 A 6 6 0 0 1 13 18" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
+    `<path d="M 16 3.5 A 8.5 8.5 0 0 1 16 20.5" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
+    `</svg>`;
+
 const CANVAS_DIMENSION_MIN = 1;
 const CANVAS_DIMENSION_MAX = 200;
 const CANVAS_DIMENSION_DEFAULT_W = 32;
@@ -167,6 +185,23 @@ export class Toolbar {
         /** @type {Array<(edit: any) => void>} */
         this._sceneEditListeners = [];
 
+        // Play Selected toggle state. Independent of the
+        // tool-button armed/locked state machine: this is a
+        // boolean on/off that gates pattern firing in the
+        // engine to currently-selected canvas objects only.
+        // _playSelectedListeners receives the new active
+        // flag on every toggle; main.js subscribes and pushes
+        // the value into firingEngine.setPlaySelectedMode.
+        // _playSelectedButton is the rendered button element,
+        // captured at render time so setPlaySelectedActive
+        // can update its visual state without a full re-
+        // render of the toolbar.
+        this._playSelectedActive = false;
+        /** @type {Array<(active: boolean) => void>} */
+        this._playSelectedListeners = [];
+        /** @type {HTMLButtonElement | null} */
+        this._playSelectedButton = null;
+
         this._render();
     }
 
@@ -206,6 +241,23 @@ export class Toolbar {
         this._sceneEditListeners.push(cb);
     }
 
+    /**
+     * Subscribe to Play Selected toggle changes. The
+     * callback receives the new active flag (true when the
+     * toggle just turned on, false when it just turned off).
+     * main.js wires this to firingEngine.setPlaySelectedMode
+     * so the engine's firing gate reflects the toolbar
+     * state. The current active flag is also pushed in the
+     * canvas selection-change handler via
+     * firingEngine.setPlaySelectedIds, so flipping the
+     * toggle on always takes effect with the current
+     * selection without an extra setup call.
+     * @param {(active: boolean) => void} cb
+     */
+    onPlaySelectedToggle(cb) {
+        this._playSelectedListeners.push(cb);
+    }
+
     /** @returns {{tool: string | null, locked: boolean}} */
     getState() {
         return { tool: this._activeTool, locked: this._locked };
@@ -226,6 +278,38 @@ export class Toolbar {
         for (const cb of this._listeners) {
             try { cb(tool, locked); } catch (err) {
                 console.error("GXW: toolbar listener threw.", err);
+            }
+        }
+    }
+
+    /**
+     * Programmatically set the Play Selected toggle's active
+     * flag. Updates the button's visual state (active class
+     * on / off) and emits to subscribers iff the flag
+     * actually changed. Used internally by the button's
+     * click handler; external callers can also use it to
+     * force the toggle into a particular state (e.g. on
+     * scene reload where the previous toggle state should
+     * persist).
+     * @param {boolean} active
+     */
+    setPlaySelectedActive(active) {
+        const next = active === true;
+        if (this._playSelectedActive === next) return;
+        this._playSelectedActive = next;
+        if (this._playSelectedButton !== null) {
+            this._playSelectedButton.classList.toggle(
+                "toolbar-toggle-button-active",
+                next,
+            );
+            this._playSelectedButton.setAttribute(
+                "aria-pressed",
+                next ? "true" : "false",
+            );
+        }
+        for (const cb of this._playSelectedListeners) {
+            try { cb(next); } catch (err) {
+                console.error("GXW: play-selected listener threw.", err);
             }
         }
     }
@@ -274,11 +358,31 @@ export class Toolbar {
         this._buttons.clear();
         this._canvasWField = null;
         this._canvasHField = null;
+        this._playSelectedButton = null;
 
         // Left cluster: object-creation tools.
         for (const def of TOOL_DEFS) {
             this.container.appendChild(this._buildToolButton(def));
         }
+
+        // Group separator. A fixed-width empty span between
+        // the object-creation tools and the Play Selected
+        // toggle so the two read as distinct groups without
+        // a heavy visible divider. Sized to leave a clear
+        // gap that the eye registers as "these are separate
+        // controls" without taking up so much room that the
+        // toolbar feels sparse on narrow windows.
+        const groupSep = document.createElement("div");
+        groupSep.className = "toolbar-group-separator";
+        this.container.appendChild(groupSep);
+
+        // Play Selected toggle. Sits with the playback-
+        // related controls on the left rather than with the
+        // canvas-creation tools, so the user reads it as a
+        // "what plays" control rather than a "what gets
+        // added to the canvas" control. Visual state and
+        // click behaviour are owned by _buildPlaySelectedButton.
+        this.container.appendChild(this._buildPlaySelectedButton());
 
         // Spacer pushes the right cluster to the right edge of
         // the toolbar. Implemented as a flex-grow filler in
@@ -351,6 +455,39 @@ export class Toolbar {
         });
 
         this._buttons.set(def.name, btn);
+        return btn;
+    }
+
+    /**
+     * Build the Play Selected toggle button. A standalone
+     * button placed between the object-creation tools and
+     * the flex spacer, separated from the tools by a
+     * .toolbar-group-separator so the eye reads them as
+     * distinct groups. Toggle behaviour (boolean on / off)
+     * rather than the tool buttons' armed-or-locked state
+     * machine: a single click flips the active flag, which
+     * the click handler relays through setPlaySelectedActive
+     * so visual state and subscribers stay in sync.
+     * aria-pressed reflects the boolean state for screen
+     * readers and Voice Control.
+     * @returns {HTMLButtonElement}
+     */
+    _buildPlaySelectedButton() {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "toolbar-toggle-button";
+        btn.setAttribute("aria-label", "Play Selected");
+        btn.setAttribute("aria-pressed", "false");
+        btn.title = "Play Selected. When on, only currently-selected objects fire patterns. Click to toggle.";
+        btn.innerHTML = PLAY_SELECTED_ICON_SVG;
+        btn.addEventListener("click", () => {
+            this.setPlaySelectedActive(!this._playSelectedActive);
+        });
+        this._playSelectedButton = btn;
+        if (this._playSelectedActive) {
+            btn.classList.add("toolbar-toggle-button-active");
+            btn.setAttribute("aria-pressed", "true");
+        }
         return btn;
     }
 

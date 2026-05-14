@@ -250,6 +250,32 @@ export class PatternFiringEngine {
         this._sources = new Map();
 
         /**
+         * Play Selected mode flag. When false (default), the
+         * firing engine fires every unmuted source's pattern
+         * normally; when true, only sources whose id is in
+         * _playSelectedIds fire. The complementary set
+         * (unmuted but not in the selection) get their
+         * pending events dropped and skip population each
+         * tick, parallel to the mute gate. Toggled by main.js
+         * in response to the Play Selected toolbar button.
+         * @type {boolean}
+         */
+        this._playSelectedMode = false;
+
+        /**
+         * Source ids permitted to fire while Play Selected
+         * mode is on. Updated by main.js on every canvas
+         * selection change so the gate tracks the active
+         * selection in real time. Ignored when
+         * _playSelectedMode is false. The set is intentionally
+         * an id set rather than the raw canvas-selection-
+         * index shape so the firing engine doesn't have to
+         * resolve indices against the scene each tick.
+         * @type {Set<string>}
+         */
+        this._playSelectedIds = new Set();
+
+        /**
          * Late-refresh window in seconds. Public property so
          * callers can adjust without recompiling the engine.
          * See DEFAULT_LATE_REFRESH_WINDOW_SECONDS at module
@@ -281,6 +307,49 @@ export class PatternFiringEngine {
                 this._midiSender.panic();
             }
         });
+    }
+
+    /**
+     * Toggle the Play Selected mode gate. When true, only
+     * sources whose id is in the play-selected set fire
+     * patterns; when false (default), every unmuted source
+     * fires normally. Wired to the Play Selected toolbar
+     * button via main.js's toolbar.onPlaySelectedToggle
+     * subscriber.
+     *
+     * Flipping off doesn't need any extra work here: the
+     * tick loop's bootstrap path repopulates the previously-
+     * gated sources naturally from their current cycle state
+     * once the gate no longer fires. Flipping on also needs
+     * no extra work: the tick loop's gate path clears
+     * pending events and populatedCycles for any source
+     * not in the selection set, which matches the existing
+     * mute-on behaviour exactly. Any already-playing notes
+     * on now-gated sources finish out their natural duration
+     * through MIDISender's noteOff scheduler rather than
+     * being interrupted with a panic; that mirrors mute
+     * mid-play behaviour and keeps musical transitions
+     * smooth.
+     *
+     * @param {boolean} active
+     */
+    setPlaySelectedMode(active) {
+        this._playSelectedMode = active === true;
+    }
+
+    /**
+     * Update the set of source ids permitted to fire while
+     * Play Selected mode is on. Called by main.js on every
+     * canvas selection change with the object ids resolved
+     * from the new selection. Has no audible effect while
+     * Play Selected mode is off; the set is still kept up
+     * to date so flipping the mode on takes effect with the
+     * current selection without an extra setup call.
+     *
+     * @param {Set<string>} ids
+     */
+    setPlaySelectedIds(ids) {
+        this._playSelectedIds = ids instanceof Set ? ids : new Set();
     }
 
     /**
@@ -500,6 +569,21 @@ export class PatternFiringEngine {
             // simulation is currently in, so unmute lands
             // cleanly on the next cycle boundary.
             if (source.mute === true) {
+                state.pendingEvents = [];
+                state.populatedCycles.clear();
+                continue;
+            }
+
+            // Play Selected gate. When the mode is active,
+            // only sources whose id is in _playSelectedIds
+            // fire. Non-selected sources behave like muted
+            // ones for the duration of the mode: pending
+            // events drop, populatedCycles clears, and the
+            // bootstrap path skips. Flipping the mode off
+            // (via setPlaySelectedMode(false)) or selecting
+            // a previously-gated source re-bootstraps it on
+            // the next tick from its current cycle state.
+            if (this._playSelectedMode && !this._playSelectedIds.has(state.id)) {
                 state.pendingEvents = [];
                 state.populatedCycles.clear();
                 continue;
