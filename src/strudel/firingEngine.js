@@ -753,15 +753,20 @@ export class PatternFiringEngine {
      * sources Map; signals consulting the snapshot for a
      * missing source should fall back to a safe default.
      *
-     * Phase 3 captures only the fields that Phase 4's
-     * planned signals already know they need: cursor t for
-     * curves; position, velocity, and cycle bookkeeping for
-     * sprites. Image-reading signals (imageLightness,
-     * imageColor) will need an image-pixel lookup function
-     * added when Phase 4 reaches that signal; deferred
-     * because the snapshot consumer for it does not exist
-     * yet and adding the field speculatively would commit
-     * to a lookup-function shape we have not designed.
+     * Phase 3 captured only the fields the substrate needed
+     * for testability without any signals defined; Phase 4
+     * extended this to compute each source's canvas-space
+     * firing position (sprite position direct from runtime,
+     * curve cursor position derived from t plus geometry via
+     * canvas.getCurveCursorCanvasPosition) and sample the
+     * image's precomputed OKLCh buffer at that position via
+     * canvas.sampleImageOKLCh. The imageOKLCh field is the
+     * substrate that pxLt and its OKLCh siblings read at
+     * Pass 2 refresh time. The sampling is per-source and
+     * per-tick rather than per-event, so multiple events
+     * from the same source within one tick see the same
+     * OKLCh value, which is the consistent-frozen-view
+     * property the snapshot abstraction is meant to give.
      *
      * @param {number} audioNow
      * @returns {import("./firingContext.js").FiringSnapshot}

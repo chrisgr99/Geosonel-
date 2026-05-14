@@ -2070,7 +2070,7 @@ export class Canvas {
      * position is outside the canvas region or no image is
      * loaded. Used by the firing engine's snapshot capture
      * for dynamic image-colour signals (Phase 4) such as
-     * imageLightness.
+     * pxLt.
      *
      * Mirrors _sampleImageAt's coordinate mapping (canvas
      * coords to image-buffer coords via the scene's

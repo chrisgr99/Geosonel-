@@ -49,8 +49,8 @@
  * @property {{L: number, C: number, a: number, b: number} | null} imageOKLCh
  *           OKLCh values at the firing position, or null when no image is
  *           loaded or the position is outside the canvas region. Read by
- *           image-colour dynamic signals (imageLightness and its OKLCh
- *           siblings) at Pass 2 refresh time.
+ *           image-colour dynamic signals (pxLt and its OKLCh siblings) at
+ *           Pass 2 refresh time.
  *
  * @typedef {Object} FiringSnapshot
  * @property {number} audioNow                          AudioContext.currentTime

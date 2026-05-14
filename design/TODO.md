@@ -60,19 +60,21 @@ from the new-signal behaviour.
 
 Phase 4 — first dynamic signals. Image-colour signals first
 because sprite kinematic signals have no varying state to
-read until image-driven physics lands. imageLightness as
-the first end-to-end signal exercising the full pixel-
-lookup and OKLCh-conversion pipeline; the rest of the
-OKLCh set (imageChroma, imageLum, imageRedness,
-imageGreenness, imageYellowness, imageBlueness) following
-in close succession since they share the conversion.
-Sprite kinematic signals (spriteX, spriteY, spriteV) as a
-separate later step. Phase 4 overlaps with what Tier 4
+read until image-driven physics lands. pxLt (OKLCh
+perceptual lightness) as the first end-to-end signal
+exercising the full pixel-lookup and OKLCh-conversion
+pipeline, landed; the rest of the standard set follows in
+close succession because each is a trivial projection of
+the precomputed OKLab (a, b) values: pxChr (perceptual
+saturation), the four opponent-axis primaries pxR, pxG,
+pxY, pxB, and the four hue intermediates pxOr, pxPu, pxCy,
+pxLi. Sprite kinematic signals (spriteX, spriteY, spriteV)
+as a separate later step. Phase 4 overlaps with what Tier 4
 originally captured; that overlap is intentional now that
 the plumbing dynamic signals consume lives in Tier 2. See
-section 27 for the OKLCh rationale and the deferred items
-(distance-derivatives, EMA smoothing, composer-defined
-defineSignal).
+section 27 for the OKLCh rationale, the px-prefix naming
+convention, and the deferred items (distance-derivatives,
+EMA smoothing, composer-defined defineSignal).
 
 The natural stop-and-back-out point is between Phase 2 and
 Phase 3. If Phase 1 and 2 land but dynamic-signal
@@ -248,14 +250,18 @@ tier adds the signals themselves.
   pointer to learn which source's state to read.
 - Image-colour signals derived from the OKLCh
   perceptually-uniform colour space and the source's
-  canvas position: imageLightness (perceptual brightness),
-  imageChroma (perceptual saturation), imageRedness and
-  imageGreenness (opposite ends of the red-green opponent
-  axis, each the negation of the other), imageYellowness
-  and imageBlueness (the same shape on the yellow-blue
-  axis), and imageLum (a separate grayscale Rec. 709 luma
-  convenience field). See section 27 for why OKLCh and
-  why opponent axes rather than angular hue.
+  canvas position. The two scalars: pxLt (perceptual
+  brightness) and pxChr (perceptual saturation). The
+  four opponent-axis primaries with single-letter
+  shorts: pxR (redness), pxG (greenness), pxY
+  (yellowness), pxB (blueness). The four hue
+  intermediates with two-letter shorts, projecting onto
+  the 45-degree-rotated directions between adjacent
+  primaries: pxOr (orange), pxPu (purple), pxCy (cyan),
+  pxLi (lime). See section 27 for why OKLCh, why
+  opponent axes rather than angular hue, and why the
+  intermediates are in the standard set rather than
+  left to composer combination.
 - Sprite kinematic signals: spriteX, spriteY, spriteVx,
   spriteVy, spriteV (scalar speed).
 - currentScale and the tonal-context signals (defer until
@@ -265,8 +271,8 @@ tier adds the signals themselves.
   Snapshot, exposed to dynamic signals via
   firingContext.js). Phase 4 signals read from it via the
   firing-context pointer.
-- Distance-derivatives of image signals (dlightness_ds,
-  dredness_ds, and so on) computed against arc length
+- Distance-derivatives of image signals (dpxLt_ds,
+  dpxR_ds, and so on) computed against arc length
   traversed, and EMA smoothing of values: deferred to a
   follow-up phase once the raw signals are working. Both
   layer on top of the basic plumbing rather than altering
@@ -275,7 +281,7 @@ tier adds the signals themselves.
   expressed as plain JavaScript formulas over the
   standard signal vocabulary: deferred to a follow-up
   phase. Once it lands, composers can write things like
-  defineSignal('warmth', ({redness, yellowness}) => ...)
+  defineSignal('warmth', ({pxR, pxY}) => ...)
   in their behaviors.js.
 
 ## Score-level harmony and tonal context
@@ -386,10 +392,9 @@ arises.
   the integration is largely a matter of pulling those in
   and wiring them into GXW's editor; the customisation
   layer adds GXW-specific tokens on top — the dynamic
-  signal names once they land in Phase 4 (imageLightness,
-  imageChroma, imageLum, imageRedness, imageGreenness,
-  imageYellowness, imageBlueness, spriteX, spriteY,
-  spriteV), the labelled-block syntax ($id: ...), and
+  signal names (pxLt, pxChr, pxR, pxG, pxY, pxB, pxOr,
+  pxPu, pxCy, pxLi, spriteX, spriteY, spriteV), the
+  labelled-block syntax ($id: ...), and
   the callback function name templates with object-id
   completion drawn from the current scene's objects
   (hasHit_SPR1, beenHit_TRG3, onTick_CRV1, etc.). Worth

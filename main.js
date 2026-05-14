@@ -350,10 +350,9 @@ async function main() {
             // Install dynamic image-colour signals (Phase 4)
             // as window globals before refreshing markers
             // or recompiling patterns, so any pattern that
-            // references imageLightness or its OKLCh
-            // siblings parses cleanly against the freshly-
-            // installed globals rather than failing with a
-            // ReferenceError.
+            // references pxLt or its OKLCh siblings parses
+            // cleanly against the freshly-installed globals
+            // rather than failing with a ReferenceError.
             installImageSignals();
             canvas.refreshMarkers();
             firingEngine.recompileMissingPatterns();
