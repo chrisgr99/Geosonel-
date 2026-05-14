@@ -98,6 +98,7 @@ import {
     setNameOnSelection,
     translateSelection,
     scaleCurveAxis,
+    scaleSelectionAroundAnchor,
     setPositionAxisOnSelection,
     setSizeAxisOnSelection,
     setSpriteDisplayDiameterOnSelection,
@@ -1297,6 +1298,26 @@ async function main() {
             // undoable.
             await applyCanvasEdit((data) =>
                 translateSelection(data, edit.selection, edit.dx, edit.dy),
+            );
+        } else if (edit.kind === "scaleSelection") {
+            // Canvas resize-handle gesture commit. Routed
+            // through applyCanvasEdit so the resize lands
+            // on the undo stack the same way translate
+            // does. The mutator handles sprite/trigger
+            // position transforms (keeping their size
+            // fields untouched) and curve geometry
+            // scaling in one pass; see sceneEditor's
+            // scaleSelectionAroundAnchor for the per-kind
+            // semantics.
+            await applyCanvasEdit((data) =>
+                scaleSelectionAroundAnchor(
+                    data,
+                    edit.selection,
+                    edit.ax,
+                    edit.ay,
+                    edit.sx,
+                    edit.sy,
+                ),
             );
         } else if (edit.kind === "selectionChanged") {
             // Forward selection changes to the property

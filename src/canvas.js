@@ -145,6 +145,45 @@ const MARQUEE_DRAG_STROKE = "rgba(220, 220, 220, 0.5)";
 // this, mousedown+mouseup is treated as a click.
 const DRAG_THRESHOLD_PX = 4;
 
+// Hover-brighten parameters. When the mouse pointer rests on
+// a canvas object (sprite, trigger, or curve) for longer than
+// HOVER_DEBOUNCE_MS, the object's outline brightens (its
+// stroke colour lerps toward white by HOVER_LIGHTEN_RATIO and
+// its line width gains HOVER_LINE_WIDTH_BONUS pixels) to
+// signal the object is hoverable. The debounce makes
+// pass-through moves quiet: rapidly flicking the pointer
+// across the canvas does not cause every object in its path
+// to flash brighter — only deliberate hovering does. The
+// debounce restarts on every change of hit target, so moving
+// from one object to another briefly shows neither as
+// brightened until the pointer settles on the second.
+const HOVER_DEBOUNCE_MS = 150;
+const HOVER_LIGHTEN_RATIO = 0.4;
+const HOVER_LINE_WIDTH_BONUS = 1.5;
+
+// Resize-handle parameters. Eight small yellow squares
+// drawn on the selection's bounding box — four corners
+// (tl, tr, bl, br) plus four edge midpoints (t, b, l, r)
+// — let the user resize the selection by dragging. The
+// handle hovered by the pointer grows slightly larger to
+// signal it is drag-actionable; the cursor also shifts to
+// the appropriate resize variant (nwse-resize, nesw-
+// resize, ns-resize, ew-resize) so the gesture intent is
+// unambiguous before the mousedown.
+//
+// HANDLE_HIT_PADDING_PX widens the hit rectangle slightly
+// past the rendered handle so the gesture stays
+// forgiving even at the idle (smaller) size — the user
+// doesn't have to pixel-aim to grab a handle. The
+// rendered colour matches SELECTION_MARKER_COLOUR so the
+// handles read as siblings of the dotted selection
+// marquee.
+const HANDLE_SIZE_PX = 8;
+const HANDLE_HOVER_SIZE_PX = 12;
+const HANDLE_HIT_PADDING_PX = 2;
+const HANDLE_FILL_COLOUR = "#ffd24a";
+const HANDLE_STROKE_COLOUR = "#1a1a1a";
+
 export class Canvas {
     /**
      * @param {HTMLElement} container  The element the canvas mounts into.
@@ -356,6 +395,60 @@ export class Canvas {
         };
 
         /**
+         * Currently brightened hover target, or null. Tracks
+         * the object id rather than its array index so scene
+         * edits that reshuffle indices (delete, duplicate)
+         * don't leave a stale reference pointing at the
+         * wrong object. Set after the debounce timer fires;
+         * cleared on pointer move off, on gesture start, on
+         * tool arm, on scene reload, and on pointer leave.
+         * @type {{kind: "sprite"|"trigger"|"curve", id: string} | null}
+         */
+        this._hover = null;
+
+        /**
+         * Candidate hover target that the debounce timer is
+         * counting down for, or null. Same shape as _hover.
+         * When the pointer rests on an object the candidate
+         * is set immediately and the timer is started; when
+         * the timer fires the candidate is promoted to
+         * _hover and the redraw runs. The candidate stays
+         * separate from _hover so a pass-through move (the
+         * pointer enters and leaves an object within the
+         * debounce window) never causes a visible brighten.
+         * @type {{kind: "sprite"|"trigger"|"curve", id: string} | null}
+         */
+        this._hoverPending = null;
+
+        /**
+         * setTimeout handle for the active debounce, or null
+         * when no debounce is pending. Cleared and reset on
+         * every change of hit target so the debounce restarts
+         * when the pointer moves between objects. Cleared
+         * also when hover state is cleared for any other
+         * reason (gesture start, tool arm, scene reload,
+         * pointer leave) so a debounce that started just
+         * before the clear doesn't promote a stale candidate.
+         * @type {ReturnType<typeof setTimeout> | null}
+         */
+        this._hoverDebounceTimer = null;
+
+        /**
+         * Identifier of the resize handle currently under
+         * the pointer, or null when no handle is hovered.
+         * One of "tl", "t", "tr", "r", "br", "b", "bl", "l".
+         * Updated from _onCanvasHoverMove before the object
+         * hover-test runs so a hovered handle wins over a
+         * hovered object beneath it. Drives the rendered
+         * handle size (the hovered handle grows by
+         * HANDLE_HOVER_SIZE_PX) and the OS cursor (resize
+         * variant per handle position). Cleared by
+         * _clearHover along with the object-hover state.
+         * @type {string | null}
+         */
+        this._hoverHandle = null;
+
+        /**
          * Active mouse gesture, or null when nothing is in
          * progress. Distinguishing kinds: "pending" (mousedown
          * happened, waiting to see if it's a click or a drag),
@@ -398,6 +491,16 @@ export class Canvas {
         });
         this.canvasEl.addEventListener("mousedown", (e) => this._onMouseDown(e));
         this.canvasEl.addEventListener("dblclick", (e) => this._onDoubleClick(e));
+
+        // Hover tracking. mousemove on the canvas element
+        // (separate from the window-level mousemove that
+        // _onMouseDown attaches for drag tracking) runs the
+        // hit-test on every move and updates the debounced
+        // hover state; mouseleave clears the hover
+        // immediately so a pointer that exits the canvas
+        // doesn't leave a brightened object stuck on.
+        this.canvasEl.addEventListener("mousemove", (e) => this._onCanvasHoverMove(e));
+        this.canvasEl.addEventListener("mouseleave", () => this._clearHover());
 
         this._onResize();
     }
@@ -442,6 +545,13 @@ export class Canvas {
             };
         }
         this._gesture = null;
+        // Clear hover state on scene reload. The next
+        // mousemove will re-establish it against the new
+        // scene; without this, a hover-debounce promotion
+        // that completes after the scene change would paint
+        // an id that may no longer correspond to a hoverable
+        // object.
+        this._clearHover();
         this._refreshCurveMarkerPositions();
         this.scheduleDraw();
     }
@@ -644,6 +754,14 @@ export class Canvas {
             this._gesture = null;
             this.scheduleDraw();
         }
+        // Clear any hover-brighten state when a tool arms:
+        // the crosshair-cursor mode is for placing new
+        // objects, not for hovering over existing ones, and
+        // a brightened object underneath the crosshair would
+        // be confusing visual noise.
+        if (toolName !== null) {
+            this._clearHover();
+        }
     }
 
     /**
@@ -844,6 +962,7 @@ export class Canvas {
         this._drawGrid();
         this._drawScene();
         this._drawSelectionMarkers();
+        this._drawResizeHandles();
         this._drawMarqueeRect();
         this._drawCreateEllipseGesture();
 
@@ -868,8 +987,13 @@ export class Canvas {
 
     _strokeCurveShape(curve) {
         const ctx = this.ctx;
-        ctx.strokeStyle = CURVE_COLOUR;
-        ctx.lineWidth = curve.curveThickness;
+        const hovered = this._isHovered("curve", curve);
+        ctx.strokeStyle = hovered
+            ? lightenColor(CURVE_COLOUR, HOVER_LIGHTEN_RATIO)
+            : CURVE_COLOUR;
+        ctx.lineWidth = hovered
+            ? curve.curveThickness + HOVER_LINE_WIDTH_BONUS
+            : curve.curveThickness;
         ctx.beginPath();
         const s = curve.shape;
         if (s.type === "line") {
@@ -1027,7 +1151,6 @@ export class Canvas {
     _drawTriggers() {
         if (this._scene === null) return;
         const ctx = this.ctx;
-        ctx.lineWidth = 1.5;
         // Trigger size in canvas units, multiplied by the
         // score's per-score triggerScale. The scale travels
         // with the score so the visual layout is consistent
@@ -1049,7 +1172,18 @@ export class Canvas {
             ctx.closePath();
             ctx.fillStyle = this._sampleImageAt(t.x, t.y);
             ctx.fill();
-            ctx.strokeStyle = t.color;
+            // Hover-brighten: bump the stroke colour toward
+            // white and add a bit of line width. The fill
+            // (image-sampled colour) is left alone so the
+            // object's identifying image-pixel colour stays
+            // readable underneath.
+            const hovered = this._isHovered("trigger", t);
+            ctx.strokeStyle = hovered
+                ? lightenColor(t.color, HOVER_LIGHTEN_RATIO)
+                : t.color;
+            ctx.lineWidth = hovered
+                ? 1.5 + HOVER_LINE_WIDTH_BONUS
+                : 1.5;
             ctx.stroke();
         }
     }
@@ -1057,7 +1191,6 @@ export class Canvas {
     _drawSprites() {
         if (this._scene === null) return;
         const ctx = this.ctx;
-        ctx.lineWidth = 1.5;
         // Sprite display radius in canvas units, multiplied by
         // the score's per-score spriteScale. The scale is part
         // of the music — it determines how sprites bounce off
@@ -1084,7 +1217,18 @@ export class Canvas {
             ctx.arc(cx, cy, r, 0, Math.PI * 2);
             ctx.fillStyle = this._sampleImageAt(pos.x, pos.y);
             ctx.fill();
-            ctx.strokeStyle = s.color;
+            // Hover-brighten: stroke uses a lightened colour
+            // and a wider line width when this sprite is the
+            // current hover target. Fill stays unchanged so
+            // the image-pixel colour identifying the sprite
+            // reads through the brightened ring.
+            const hovered = this._isHovered("sprite", s);
+            ctx.strokeStyle = hovered
+                ? lightenColor(s.color, HOVER_LIGHTEN_RATIO)
+                : s.color;
+            ctx.lineWidth = hovered
+                ? 1.5 + HOVER_LINE_WIDTH_BONUS
+                : 1.5;
             ctx.stroke();
         }
     }
@@ -1218,6 +1362,46 @@ export class Canvas {
             Math.round(px2 - px1),
             Math.round(py2 - py1)
         );
+        ctx.restore();
+    }
+
+    /**
+     * Render the eight resize handles around the current
+     * selection's bounding box. Drawn after
+     * _drawSelectionMarkers so the handles sit on top of
+     * the yellow dotted selection rectangles. The handle
+     * currently under the pointer (this._hoverHandle)
+     * renders at HANDLE_HOVER_SIZE_PX instead of
+     * HANDLE_SIZE_PX so the pointer's gesture-actionable
+     * target reads clearly. No-op when the selection is
+     * empty (no bbox) or a marquee gesture is in progress
+     * (we don't draw handles on top of the rubber-band
+     * rectangle).
+     */
+    _drawResizeHandles() {
+        if (this._gesture !== null && this._gesture.kind === "marquee") return;
+        const bbox = this._getSelectionBbox();
+        if (bbox === null) return;
+        const ctx = this.ctx;
+        const anchors = this._handleAnchors(bbox);
+        ctx.save();
+        ctx.fillStyle = HANDLE_FILL_COLOUR;
+        ctx.strokeStyle = HANDLE_STROKE_COLOUR;
+        ctx.lineWidth = 1;
+        for (const id of Object.keys(anchors)) {
+            const a = anchors[id];
+            const size = id === this._hoverHandle
+                ? HANDLE_HOVER_SIZE_PX
+                : HANDLE_SIZE_PX;
+            const half = size / 2;
+            // Round to half-pixel grid so the 1px stroke
+            // stays crisp at 1:1 dpr; at fractional dprs the
+            // canvas transform handles the rest.
+            const x = Math.round(a.px - half) + 0.5;
+            const y = Math.round(a.py - half) + 0.5;
+            ctx.fillRect(x, y, size, size);
+            ctx.strokeRect(x, y, size, size);
+        }
         ctx.restore();
     }
 
@@ -1484,9 +1668,405 @@ export class Canvas {
         });
     }
 
+    // --- Resize handles ---
+
+    /**
+     * Compute the axis-aligned bounding box of the current
+     * selection in canvas units, or null if the selection
+     * is empty or no shapes resolve. Sprite and trigger
+     * bboxes are the rectangles enclosing the rendered
+     * disc / diamond at the current spriteScale /
+     * triggerScale; curve bboxes come from
+     * curveBoundingBox. Used by both the handle renderer
+     * and the resize-gesture initialiser so the on-screen
+     * handles and the gesture's anchor share one source of
+     * truth.
+     * @returns {{x1: number, y1: number, x2: number, y2: number} | null}
+     */
+    _getSelectionBbox() {
+        if (this._scene === null) return null;
+        const sel = this._selection;
+        const total = sel.sprites.size + sel.triggers.size + sel.curves.size;
+        if (total === 0) return null;
+        // No handles for a selection that contains no
+        // curves and exactly one sprite or trigger.
+        // Sprites and triggers don't resize (size field is
+        // unchanged by the gesture) and a single one has
+        // nothing to reposition relative to — the anchor
+        // and the object's centre would collapse to the
+        // same point and dragging the corner would just
+        // move the object by an arbitrary scaled offset.
+        // Handles earn their place only when the selection
+        // either contains resizable geometry (a curve) or
+        // has multiple members whose relative positions
+        // can shift inside a resized bbox.
+        if (sel.curves.size === 0 && total === 1) return null;
+        let minX = Infinity, minY = Infinity;
+        let maxX = -Infinity, maxY = -Infinity;
+        const spriteScale = this._scene.spriteScale;
+        const triggerScale = this._scene.triggerScale;
+        for (const i of sel.sprites) {
+            if (i >= this._scene.sprites.length) continue;
+            const s = this._scene.sprites[i];
+            const pos = this._spritePosition(s);
+            const r = (s.displayDiameter / 2) * spriteScale;
+            if (pos.x - r < minX) minX = pos.x - r;
+            if (pos.y - r < minY) minY = pos.y - r;
+            if (pos.x + r > maxX) maxX = pos.x + r;
+            if (pos.y + r > maxY) maxY = pos.y + r;
+        }
+        for (const i of sel.triggers) {
+            if (i >= this._scene.triggers.length) continue;
+            const t = this._scene.triggers[i];
+            const r = t.size * triggerScale;
+            if (t.x - r < minX) minX = t.x - r;
+            if (t.y - r < minY) minY = t.y - r;
+            if (t.x + r > maxX) maxX = t.x + r;
+            if (t.y + r > maxY) maxY = t.y + r;
+        }
+        for (const i of sel.curves) {
+            if (i >= this._scene.curves.length) continue;
+            const bbox = curveBoundingBox(this._scene.curves[i].shape);
+            if (bbox === null) continue;
+            if (bbox.x1 < minX) minX = bbox.x1;
+            if (bbox.y1 < minY) minY = bbox.y1;
+            if (bbox.x2 > maxX) maxX = bbox.x2;
+            if (bbox.y2 > maxY) maxY = bbox.y2;
+        }
+        if (!Number.isFinite(minX)) return null;
+        return { x1: minX, y1: minY, x2: maxX, y2: maxY };
+    }
+
+    /**
+     * Compute the pixel positions of the eight handle
+     * anchor points around the given canvas-space bounding
+     * box. Returns an object keyed by handle id with each
+     * value {px, py} in pixel space. Canvas Y is up and
+     * pixel Y is down, so "top" in handle ids (tl, t, tr)
+     * corresponds to bbox.y2 (the max canvas Y, which maps
+     * to the smallest pixel Y).
+     * @param {{x1: number, y1: number, x2: number, y2: number}} bbox
+     * @returns {Record<string, {px: number, py: number}>}
+     */
+    _handleAnchors(bbox) {
+        const left = this.toPixelX(bbox.x1);
+        const right = this.toPixelX(bbox.x2);
+        const top = this.toPixelY(bbox.y2);
+        const bottom = this.toPixelY(bbox.y1);
+        const midX = (left + right) / 2;
+        const midY = (top + bottom) / 2;
+        return {
+            tl: { px: left,  py: top    },
+            t:  { px: midX,  py: top    },
+            tr: { px: right, py: top    },
+            r:  { px: right, py: midY   },
+            br: { px: right, py: bottom },
+            b:  { px: midX,  py: bottom },
+            bl: { px: left,  py: bottom },
+            l:  { px: left,  py: midY   },
+        };
+    }
+
+    /**
+     * Compute the anchor point in canvas units for a resize
+     * gesture started on the given handle, against the
+     * given selection bbox. The anchor is the point that
+     * stays fixed during the resize: for a corner handle
+     * it's the opposite corner; for an edge handle it's
+     * the opposite edge's midpoint. Returned in canvas
+     * coordinates so scaleSelectionAroundAnchor can use it
+     * directly.
+     * @param {string} handleId
+     * @param {{x1: number, y1: number, x2: number, y2: number}} bbox
+     * @returns {{ax: number, ay: number}}
+     */
+    _handleAnchor(handleId, bbox) {
+        const midX = (bbox.x1 + bbox.x2) / 2;
+        const midY = (bbox.y1 + bbox.y2) / 2;
+        switch (handleId) {
+            // Corner handles: anchor at the opposite corner.
+            // bbox.y2 is the top (max canvas Y, since Y is
+            // up), bbox.y1 is the bottom.
+            case "tl": return { ax: bbox.x2, ay: bbox.y1 };
+            case "tr": return { ax: bbox.x1, ay: bbox.y1 };
+            case "bl": return { ax: bbox.x2, ay: bbox.y2 };
+            case "br": return { ax: bbox.x1, ay: bbox.y2 };
+            // Edge handles: anchor at the opposite edge
+            // midpoint. The orthogonal axis is unchanged
+            // (it just sits at the bbox midpoint there).
+            case "t":  return { ax: midX,    ay: bbox.y1 };
+            case "b":  return { ax: midX,    ay: bbox.y2 };
+            case "l":  return { ax: bbox.x2, ay: midY   };
+            case "r":  return { ax: bbox.x1, ay: midY   };
+            default:   return { ax: midX,    ay: midY   };
+        }
+    }
+
+    /**
+     * Hit-test the pointer position against the resize
+     * handles drawn on the current selection's bounding
+     * box. Returns the handle id under the pointer, or
+     * null. Hit area is a square centred on each handle's
+     * anchor, sized to HANDLE_HOVER_SIZE_PX plus a small
+     * pad so the test stays forgiving even at the idle
+     * (smaller) handle size. Cheap: eight anchor lookups
+     * plus eight axis-aligned bounds checks per call,
+     * fine to run on every mousemove.
+     * @param {number} px
+     * @param {number} py
+     * @returns {string | null}
+     */
+    _hitTestHandle(px, py) {
+        const bbox = this._getSelectionBbox();
+        if (bbox === null) return null;
+        const anchors = this._handleAnchors(bbox);
+        const halfHit = HANDLE_HOVER_SIZE_PX / 2 + HANDLE_HIT_PADDING_PX;
+        for (const id of Object.keys(anchors)) {
+            const a = anchors[id];
+            if (Math.abs(px - a.px) <= halfHit && Math.abs(py - a.py) <= halfHit) {
+                return id;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Translate a handle id into the corresponding CSS
+     * cursor name. Corner handles use the diagonal-arrow
+     * cursors (nwse-resize for the tl/br diagonal,
+     * nesw-resize for tr/bl); edge handles use the
+     * single-axis variants (ns-resize for t/b, ew-resize
+     * for l/r). Defaults to "default" for unknown ids so a
+     * caller mistake doesn't strand the cursor in an odd
+     * state.
+     * @param {string} handleId
+     * @returns {string}
+     */
+    _cursorForHandle(handleId) {
+        switch (handleId) {
+            case "tl": case "br": return "nwse-resize";
+            case "tr": case "bl": return "nesw-resize";
+            case "t":  case "b":  return "ns-resize";
+            case "l":  case "r":  return "ew-resize";
+            default: return "default";
+        }
+    }
+
+    // --- Hover tracking ---
+
+    /**
+     * Test whether a scene object is currently the
+     * brightened hover target. Called from the per-kind
+     * draw methods to decide whether to bump the stroke
+     * colour and line width for the object's outline.
+     * id-based rather than index-based so a scene edit
+     * that reshuffles indices doesn't paint the wrong
+     * object as hovered between the edit and the next
+     * mousemove that would refresh the hover state.
+     * @param {"sprite"|"trigger"|"curve"} kind
+     * @param {any} obj
+     * @returns {boolean}
+     */
+    _isHovered(kind, obj) {
+        if (this._hover === null) return false;
+        if (this._hover.kind !== kind) return false;
+        if (obj === null || typeof obj !== "object") return false;
+        return obj.id === this._hover.id;
+    }
+
+    /**
+     * Clear any current and pending hover state, cancelling
+     * the debounce timer if one is running. Called when the
+     * pointer leaves the canvas, when a gesture starts (so a
+     * drag doesn't carry a brightened object), when a tool
+     * is armed (hovering for selection makes no sense while
+     * a click would place a new object), and when the scene
+     * reloads (object ids may have changed). The redraw is
+     * scheduled unconditionally when there was anything to
+     * clear so the brightened outline visibly drops on the
+     * next frame.
+     */
+    _clearHover() {
+        const hadHover = this._hover !== null;
+        const hadHandle = this._hoverHandle !== null;
+        this._hover = null;
+        this._hoverPending = null;
+        this._hoverHandle = null;
+        if (this._hoverDebounceTimer !== null) {
+            clearTimeout(this._hoverDebounceTimer);
+            this._hoverDebounceTimer = null;
+        }
+        // Restore the OS cursor to its base state when
+        // clearing a handle hover. Skip when a tool is
+        // armed: setActiveTool owns the cursor in that mode
+        // (crosshair) and our "default" here would stomp it.
+        if (hadHandle && this._activeTool === null) {
+            this.canvasEl.style.cursor = "default";
+        }
+        if (hadHover || hadHandle) this.scheduleDraw();
+    }
+
+    /**
+     * Handle a mousemove event on the canvas element for
+     * the hover-brighten feature. Runs the hit-test at the
+     * current pointer position and updates the debounced
+     * hover state, with three branches:
+     *
+     *   - Pointer is over no object: clear any current
+     *     bright target immediately (no debounce on exit)
+     *     and cancel any pending debounce.
+     *   - Pointer is over the same object that is already
+     *     the bright target or pending candidate: no-op.
+     *   - Pointer is over a different object: clear the
+     *     current bright target immediately, set the new
+     *     object as the pending candidate, and (re)start
+     *     the debounce timer. When the timer fires it
+     *     promotes the pending candidate to the actual
+     *     hover target and triggers a redraw.
+     *
+     * Gated on the canvas being in selection mode: while a
+     * tool is armed (crosshair cursor, click places an
+     * object) hover-brighten would compete with the
+     * placement gesture, and while a drag/marquee gesture
+     * is in flight the brightened outline would confuse the
+     * drag preview. Both gates fall through to clearing any
+     * existing hover so the brightened state can't persist
+     * across a mode change.
+     *
+     * @param {MouseEvent} e
+     */
+    _onCanvasHoverMove(e) {
+        if (this._activeTool !== null || this._gesture !== null) {
+            this._clearHover();
+            return;
+        }
+        if (this._scene === null) return;
+
+        const pos = this._eventToCanvas(e);
+
+        // Handle hit-test first: handles sit on top of
+        // everything and take precedence over the object
+        // underneath. When a handle is under the pointer,
+        // the handle grows (via _hoverHandle reflected in
+        // _drawResizeHandles) and the OS cursor shifts to
+        // the appropriate resize variant, while any object
+        // hover-brighten state is cleared so the user reads
+        // "this handle is grabbable" rather than "this
+        // object is hoverable + this handle is grabbable".
+        const handleId = this._hitTestHandle(pos.px, pos.py);
+        if (handleId !== null) {
+            // Clear any object-hover state, since a hovered
+            // handle wins. _clearHover() also resets the
+            // cursor and the _hoverHandle, so we re-set
+            // both after.
+            if (this._hover !== null || this._hoverPending !== null || this._hoverDebounceTimer !== null) {
+                this._hover = null;
+                this._hoverPending = null;
+                if (this._hoverDebounceTimer !== null) {
+                    clearTimeout(this._hoverDebounceTimer);
+                    this._hoverDebounceTimer = null;
+                }
+            }
+            if (this._hoverHandle !== handleId) {
+                this._hoverHandle = handleId;
+                this.canvasEl.style.cursor = this._cursorForHandle(handleId);
+                this.scheduleDraw();
+            }
+            return;
+        }
+
+        // No handle under pointer. If a handle was hovered
+        // a moment ago, drop the handle-hover state and
+        // restore the default cursor before falling through
+        // to the object hover-brighten path.
+        if (this._hoverHandle !== null) {
+            this._hoverHandle = null;
+            this.canvasEl.style.cursor = "default";
+            this.scheduleDraw();
+        }
+
+        const hit = this._hitTestObject(pos.x, pos.y);
+
+        if (hit === null) {
+            // Pointer over empty canvas. No debounce on the
+            // exit transition: any current bright target
+            // drops immediately, matching the "only stay
+            // bright while pointer is actually on the
+            // object" expectation.
+            this._clearHover();
+            return;
+        }
+
+        // Resolve the hit's index to its id so the hover
+        // tracking is stable across scene edits.
+        let obj;
+        if (hit.kind === "sprite") obj = this._scene.sprites[hit.index];
+        else if (hit.kind === "trigger") obj = this._scene.triggers[hit.index];
+        else obj = this._scene.curves[hit.index];
+        if (obj === undefined || typeof obj.id !== "string") return;
+        const hitId = obj.id;
+
+        // Same object as current brightened target: nothing
+        // to do. The brightened render is already correct.
+        if (this._hover !== null &&
+            this._hover.kind === hit.kind &&
+            this._hover.id === hitId) {
+            return;
+        }
+
+        // Same object as the pending candidate: let the
+        // existing debounce timer continue counting down.
+        // Resetting the timer here would keep deliberate
+        // hovering on one spot from ever firing if the
+        // pointer wobbled within the object's hit area.
+        if (this._hoverPending !== null &&
+            this._hoverPending.kind === hit.kind &&
+            this._hoverPending.id === hitId) {
+            return;
+        }
+
+        // Different object than what we were tracking.
+        // Drop the current bright target immediately (no
+        // "old object stays bright while new one debounces"
+        // — the user asked for nothing to be brightened
+        // while the pointer is moving), then start a new
+        // debounce for the new candidate.
+        const hadHover = this._hover !== null;
+        this._hover = null;
+        this._hoverPending = { kind: hit.kind, id: hitId };
+        if (this._hoverDebounceTimer !== null) {
+            clearTimeout(this._hoverDebounceTimer);
+        }
+        this._hoverDebounceTimer = setTimeout(() => {
+            this._hoverDebounceTimer = null;
+            // Guard against the canvas state having moved
+            // on between the timer being set and it firing:
+            // a gesture may have started, a tool may have
+            // been armed, the scene may have been reloaded.
+            // _hoverPending being non-null indicates the
+            // intent to brighten is still current; null
+            // means something cleared it (one of the
+            // gates above, or a mouseleave) and we should
+            // not promote.
+            if (this._hoverPending === null) return;
+            this._hover = this._hoverPending;
+            this._hoverPending = null;
+            this.scheduleDraw();
+        }, HOVER_DEBOUNCE_MS);
+        if (hadHover) this.scheduleDraw();
+    }
+
     /** @param {MouseEvent} e */
     _onMouseDown(e) {
         if (e.button !== 0) return;
+        // Drop any hover-brighten state. A mousedown either
+        // begins a drag/marquee (in which case the bright
+        // state would conflict with the drag preview) or
+        // commits a click that selects an object (in which
+        // case the selection marker around the object
+        // becomes the primary visual signal). Either way,
+        // brightening on top of those other states is noise.
+        this._clearHover();
         const pos = this._eventToCanvas(e);
 
         // Tool-armed mode: clicks place a new object instead of
@@ -1539,6 +2119,79 @@ export class Canvas {
                 this._toolbar.afterPlacement();
             }
             return;
+        }
+
+        // Handle hit-test: if the mousedown lands on a
+        // resize handle, start a resize gesture rather
+        // than the normal selection / drag path. Handles
+        // sit on top of everything in the selection mode,
+        // so this check takes precedence over object hit-
+        // testing below. The gesture captures the starting
+        // bbox, the anchor (opposite handle in canvas
+        // units), and per-object initial state for live
+        // preview, then attaches window-level move/up
+        // listeners just like the drag gesture does.
+        const handleId = this._hitTestHandle(pos.px, pos.py);
+        if (handleId !== null) {
+            const startBbox = this._getSelectionBbox();
+            if (startBbox !== null) {
+                e.preventDefault();
+                const anchor = this._handleAnchor(handleId, startBbox);
+                /** @type {{sprites: number[], triggers: number[], curves: number[]}} */
+                const resizeSelection = {
+                    sprites: Array.from(this._selection.sprites),
+                    triggers: Array.from(this._selection.triggers),
+                    curves: Array.from(this._selection.curves),
+                };
+                /** @type {Map<number, {x: number, y: number}>} */
+                const initialSpritePositions = new Map();
+                /** @type {Map<number, {x: number, y: number}>} */
+                const initialTriggerPositions = new Map();
+                /** @type {Map<number, any>} */
+                const initialCurveShapes = new Map();
+                if (this._scene !== null) {
+                    for (const idx of resizeSelection.sprites) {
+                        if (idx < this._scene.sprites.length) {
+                            const s = this._scene.sprites[idx];
+                            initialSpritePositions.set(idx, { x: s.x, y: s.y });
+                        }
+                    }
+                    for (const idx of resizeSelection.triggers) {
+                        if (idx < this._scene.triggers.length) {
+                            const t = this._scene.triggers[idx];
+                            initialTriggerPositions.set(idx, { x: t.x, y: t.y });
+                        }
+                    }
+                    for (const idx of resizeSelection.curves) {
+                        if (idx < this._scene.curves.length) {
+                            const c = this._scene.curves[idx];
+                            initialCurveShapes.set(idx, snapshotShapeForResize(c.shape));
+                        }
+                    }
+                }
+                this._gesture = {
+                    kind: "resize",
+                    handleId,
+                    startBbox,
+                    anchor,
+                    resizeSelection,
+                    initialSpritePositions,
+                    initialTriggerPositions,
+                    initialCurveShapes,
+                    shiftKey: e.shiftKey,
+                    lastSx: 1,
+                    lastSy: 1,
+                };
+                const onMove = (/** @type {MouseEvent} */ moveE) => this._onMouseMove(moveE);
+                const onUp = (/** @type {MouseEvent} */ upE) => {
+                    window.removeEventListener("mousemove", onMove);
+                    window.removeEventListener("mouseup", onUp);
+                    this._onMouseUp(upE);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+                return;
+            }
         }
 
         const hit = this._hitTestObject(pos.x, pos.y);
@@ -1717,6 +2370,94 @@ export class Canvas {
             this.scheduleDraw();
             return;
         }
+
+        if (g.kind === "resize") {
+            // Compute the new bbox from the gesture's anchor
+            // (the opposite corner/edge in canvas units) and
+            // the current pointer position. For corner
+            // handles both axes scale; for edge handles only
+            // the orthogonal-to-edge axis scales. Shift held
+            // on a corner drag locks aspect ratio by taking
+            // the larger absolute factor and applying it to
+            // both axes (with each axis keeping its own
+            // sign so a drag past the anchor still flips
+            // cleanly).
+            const startBbox = g.startBbox;
+            const oldW = startBbox.x2 - startBbox.x1;
+            const oldH = startBbox.y2 - startBbox.y1;
+            const id = g.handleId;
+            const isCornerHandle = (id === "tl" || id === "tr" || id === "bl" || id === "br");
+            const affectsX = isCornerHandle || id === "l" || id === "r";
+            const affectsY = isCornerHandle || id === "t" || id === "b";
+            let sx = 1;
+            let sy = 1;
+            if (affectsX && oldW !== 0) {
+                // The dragged x position becomes the new
+                // far-x of the bbox in that axis; sx scales
+                // around the anchor (which sits at the
+                // opposite-x side of the original bbox).
+                sx = (pos.x - g.anchor.ax) / ((id === "tl" || id === "bl" || id === "l") ? (startBbox.x1 - g.anchor.ax) : (startBbox.x2 - g.anchor.ax));
+            }
+            if (affectsY && oldH !== 0) {
+                sy = (pos.y - g.anchor.ay) / ((id === "bl" || id === "br" || id === "b") ? (startBbox.y1 - g.anchor.ay) : (startBbox.y2 - g.anchor.ay));
+            }
+            // Shift constraint on corner drags: keep aspect
+            // ratio by using the larger absolute factor for
+            // both axes, with each axis keeping its sign.
+            const shiftHeld = e.shiftKey || g.shiftKey;
+            if (shiftHeld && isCornerHandle) {
+                const m = Math.max(Math.abs(sx), Math.abs(sy));
+                sx = m * (sx < 0 ? -1 : 1);
+                sy = m * (sy < 0 ? -1 : 1);
+            }
+            // Guard against NaN / Infinity from a zero-width
+            // or zero-height starting bbox.
+            if (!Number.isFinite(sx)) sx = 1;
+            if (!Number.isFinite(sy)) sy = 1;
+            g.lastSx = sx;
+            g.lastSy = sy;
+            // Live preview: mutate runtime objects in place
+            // by applying the scale around the anchor to
+            // each captured initial position / shape, then
+            // schedule a redraw. The authoritative edit
+            // fires on mouseup; the runScene that follows
+            // it reloads from the freshly-written JSON
+            // anyway, so the live mutation is throw-away
+            // visual feedback.
+            if (this._scene !== null) {
+                for (const [idx, init] of g.initialSpritePositions) {
+                    if (idx < this._scene.sprites.length) {
+                        const s = this._scene.sprites[idx];
+                        s.x = g.anchor.ax + (init.x - g.anchor.ax) * sx;
+                        s.y = g.anchor.ay + (init.y - g.anchor.ay) * sy;
+                        if (this._simulation !== null) {
+                            this._simulation.snapSpriteRuntimeToAuthored(s);
+                        }
+                    }
+                }
+                for (const [idx, init] of g.initialTriggerPositions) {
+                    if (idx < this._scene.triggers.length) {
+                        const t = this._scene.triggers[idx];
+                        t.x = g.anchor.ax + (init.x - g.anchor.ax) * sx;
+                        t.y = g.anchor.ay + (init.y - g.anchor.ay) * sy;
+                    }
+                }
+                for (const [idx, initShape] of g.initialCurveShapes) {
+                    if (idx < this._scene.curves.length) {
+                        applyShapeCoordsScale(
+                            this._scene.curves[idx].shape,
+                            initShape,
+                            g.anchor.ax,
+                            g.anchor.ay,
+                            sx,
+                            sy,
+                        );
+                    }
+                }
+            }
+            this.scheduleDraw();
+            return;
+        }
     }
 
     /** @param {MouseEvent} e */
@@ -1838,6 +2579,29 @@ export class Canvas {
             }
             this.scheduleDraw();
             this._emitSelectionChanged();
+            return;
+        }
+        if (g.kind === "resize") {
+            if (this._editCallback !== null) {
+                // Commit the resize as a scaleSelection
+                // edit. ax/ay/sx/sy were tracked through the
+                // live-preview path in _onMouseMove so the
+                // committed transform exactly matches the
+                // last on-screen state. main.js routes the
+                // edit through sceneEditor.scaleSelection-
+                // AroundAnchor and the consequent runScene
+                // reloads from the freshly-written JSON,
+                // replacing the live-mutated runtime state
+                // with the authoritative geometry.
+                this._editCallback({
+                    kind: "scaleSelection",
+                    selection: g.resizeSelection,
+                    ax: g.anchor.ax,
+                    ay: g.anchor.ay,
+                    sx: g.lastSx,
+                    sy: g.lastSy,
+                });
+            }
             return;
         }
         if (g.kind === "createEllipse") {
@@ -2637,6 +3401,162 @@ function applyShapeCoordsTranslation(shape, initialCoords, dx, dy) {
             }
         }
     }
+}
+
+/**
+ * Snapshot a curve shape's full geometry at the start of a
+ * resize gesture. Resize needs more than translation's
+ * snapshot: ellipse w and h scale during resize (translation
+ * left them alone), so they must be captured too. The
+ * resize live-preview applies the captured snapshot through
+ * applyShapeCoordsScale on every mouse move.
+ *
+ * Per shape type:
+ *   - line: { x1, y1, x2, y2 }
+ *   - ellipse: { cx, cy, w, h }
+ *   - piste: { points: [[x, y], ...] }    (deep copy)
+ *   - other: null
+ *
+ * @param {any} shape
+ * @returns {any}
+ */
+function snapshotShapeForResize(shape) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return null;
+    if (shape.type === "line") {
+        return {
+            type: "line",
+            x1: typeof shape.x1 === "number" ? shape.x1 : 0,
+            y1: typeof shape.y1 === "number" ? shape.y1 : 0,
+            x2: typeof shape.x2 === "number" ? shape.x2 : 0,
+            y2: typeof shape.y2 === "number" ? shape.y2 : 0,
+        };
+    }
+    if (shape.type === "ellipse") {
+        return {
+            type: "ellipse",
+            cx: typeof shape.cx === "number" ? shape.cx : 0,
+            cy: typeof shape.cy === "number" ? shape.cy : 0,
+            w: typeof shape.w === "number" ? shape.w : 0,
+            h: typeof shape.h === "number" ? shape.h : 0,
+        };
+    }
+    if (shape.type === "piste") {
+        if (!Array.isArray(shape.points)) return null;
+        return {
+            type: "piste",
+            points: shape.points.map((p) =>
+                Array.isArray(p) && p.length >= 2
+                    ? [
+                        typeof p[0] === "number" ? p[0] : 0,
+                        typeof p[1] === "number" ? p[1] : 0,
+                    ]
+                    : [0, 0]
+            ),
+        };
+    }
+    return null;
+}
+
+/**
+ * Apply an around-anchor scale to a runtime curve shape
+ * using the captured resize-start snapshot. Mirrors
+ * sceneEditor.scaleShapeAroundAnchor's per-type behaviour
+ * but without the roundCoord step — this is visual
+ * feedback only; the authoritative mutation goes through
+ * the scaleSelection edit on mouseup. Negative scale
+ * factors are allowed (the curve mirrors across the
+ * anchor) for line/piste; ellipse w/h take Math.abs since
+ * those fields are scalar magnitudes.
+ *
+ * Silently skipped if the snapshot is null or the shape's
+ * type changed since gesture start.
+ *
+ * @param {any} shape
+ * @param {any} initialCoords
+ * @param {number} ax
+ * @param {number} ay
+ * @param {number} sx
+ * @param {number} sy
+ */
+function applyShapeCoordsScale(shape, initialCoords, ax, ay, sx, sy) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return;
+    if (initialCoords === null) return;
+    if (initialCoords.type !== shape.type) return;
+    if (shape.type === "line") {
+        shape.x1 = ax + (initialCoords.x1 - ax) * sx;
+        shape.y1 = ay + (initialCoords.y1 - ay) * sy;
+        shape.x2 = ax + (initialCoords.x2 - ax) * sx;
+        shape.y2 = ay + (initialCoords.y2 - ay) * sy;
+    } else if (shape.type === "ellipse") {
+        shape.cx = ax + (initialCoords.cx - ax) * sx;
+        shape.cy = ay + (initialCoords.cy - ay) * sy;
+        shape.w = initialCoords.w * Math.abs(sx);
+        shape.h = initialCoords.h * Math.abs(sy);
+    } else if (shape.type === "piste") {
+        if (!Array.isArray(shape.points)) return;
+        const pts = initialCoords.points;
+        const n = Math.min(shape.points.length, pts.length);
+        for (let i = 0; i < n; i++) {
+            const p = shape.points[i];
+            if (Array.isArray(p) && p.length >= 2) {
+                p[0] = ax + (pts[i][0] - ax) * sx;
+                p[1] = ay + (pts[i][1] - ay) * sy;
+            }
+        }
+    }
+}
+
+/**
+ * Lighten a CSS hex colour by lerping each channel toward
+ * 255 by the given ratio. Used by the hover-brighten
+ * render path to push a stroke colour toward white when
+ * the corresponding object is the current hover target.
+ *
+ * Accepts `#RGB` and `#RRGGBB` forms. Anything else
+ * (rgb()-string, named colour, malformed hex) is returned
+ * unchanged so a caller that hands the helper an
+ * unexpected colour shape gets a graceful no-brighten
+ * fallback rather than a thrown error or an invalid CSS
+ * colour. The ratio is clamped to [0, 1].
+ *
+ * @param {string} hex
+ * @param {number} ratio  In [0, 1]; 0 returns the original, 1 returns white.
+ * @returns {string}
+ */
+function lightenColor(hex, ratio) {
+    if (typeof hex !== "string") return hex;
+    if (hex.length === 0 || hex.charAt(0) !== "#") return hex;
+    let r, g, b;
+    if (hex.length === 4) {
+        // #RGB shorthand: expand each nibble.
+        r = parseInt(hex.charAt(1) + hex.charAt(1), 16);
+        g = parseInt(hex.charAt(2) + hex.charAt(2), 16);
+        b = parseInt(hex.charAt(3) + hex.charAt(3), 16);
+    } else if (hex.length === 7) {
+        r = parseInt(hex.slice(1, 3), 16);
+        g = parseInt(hex.slice(3, 5), 16);
+        b = parseInt(hex.slice(5, 7), 16);
+    } else {
+        return hex;
+    }
+    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return hex;
+    const t = ratio < 0 ? 0 : (ratio > 1 ? 1 : ratio);
+    const rl = Math.round(r + (255 - r) * t);
+    const gl = Math.round(g + (255 - g) * t);
+    const bl = Math.round(b + (255 - b) * t);
+    return "#" + toHexByte(rl) + toHexByte(gl) + toHexByte(bl);
+}
+
+/**
+ * Format a number in [0, 255] as a two-character hex byte.
+ * Helper for lightenColor; pads single-digit values with a
+ * leading zero so the output stays a fixed-width hex pair.
+ * @param {number} n
+ * @returns {string}
+ */
+function toHexByte(n) {
+    const s = n.toString(16);
+    return s.length < 2 ? "0" + s : s;
 }
 
 /**

@@ -1031,6 +1031,80 @@ export function scaleCurveAxis(data, selection, axis, factor) {
 }
 
 /**
+ * Scale every selected object around an external anchor
+ * point by independent x and y factors. Used by the
+ * canvas's resize-handle gesture: dragging a handle on the
+ * selection bounding box derives the anchor (the opposite
+ * corner or edge midpoint) and the factors (the ratio of
+ * new to old bbox dimensions in each axis) and applies
+ * them through this primitive.
+ *
+ * Per-kind semantics:
+ *
+ *   - Sprite / trigger: position transforms around the
+ *     anchor (new_x = ax + (old_x - ax) * sx, same for y),
+ *     but the size field (displayDiameter / size) is NOT
+ *     changed. Sprites and triggers reposition
+ *     proportionally inside the resized bounding box; they
+ *     don't grow or shrink with it. This keeps a small
+ *     beat-source consistent in audible footprint even
+ *     when the user resizes a group it belongs to.
+ *   - Curve: geometry transforms around the anchor via
+ *     scaleShapeAroundAnchor. Both vertex positions and
+ *     ellipse extents (w, h) change, so a curve in the
+ *     selection visibly resizes along with the bounding
+ *     box.
+ *
+ * Indexes that fall outside their array are silently
+ * skipped. Mutates `data` in place. No-op on infinite or
+ * NaN factors, or factors of exactly zero (which would
+ * collapse the geometry to a point and lose all shape
+ * information).
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {number} ax  Anchor X in canvas units.
+ * @param {number} ay  Anchor Y in canvas units.
+ * @param {number} sx  X-axis scale factor.
+ * @param {number} sy  Y-axis scale factor.
+ */
+export function scaleSelectionAroundAnchor(data, selection, ax, ay, sx, sy) {
+    if (!Number.isFinite(ax) || !Number.isFinite(ay)) return;
+    if (!Number.isFinite(sx) || !Number.isFinite(sy)) return;
+    if (sx === 0 || sy === 0) return;
+    if (selection.sprites !== undefined && Array.isArray(data?.sprites)) {
+        for (const idx of selection.sprites) {
+            if (idx < 0 || idx >= data.sprites.length) continue;
+            const s = data.sprites[idx];
+            if (s === null || typeof s !== "object" || Array.isArray(s)) continue;
+            const x = typeof s.x === "number" ? s.x : 0;
+            const y = typeof s.y === "number" ? s.y : 0;
+            s.x = roundCoord(ax + (x - ax) * sx);
+            s.y = roundCoord(ay + (y - ay) * sy);
+        }
+    }
+    if (selection.triggers !== undefined && Array.isArray(data?.triggers)) {
+        for (const idx of selection.triggers) {
+            if (idx < 0 || idx >= data.triggers.length) continue;
+            const t = data.triggers[idx];
+            if (t === null || typeof t !== "object" || Array.isArray(t)) continue;
+            const x = typeof t.x === "number" ? t.x : 0;
+            const y = typeof t.y === "number" ? t.y : 0;
+            t.x = roundCoord(ax + (x - ax) * sx);
+            t.y = roundCoord(ay + (y - ay) * sy);
+        }
+    }
+    if (selection.curves !== undefined && Array.isArray(data?.curves)) {
+        for (const idx of selection.curves) {
+            if (idx < 0 || idx >= data.curves.length) continue;
+            const c = data.curves[idx];
+            if (c === null || typeof c !== "object" || Array.isArray(c)) continue;
+            scaleShapeAroundAnchor(c.shape, ax, ay, sx, sy);
+        }
+    }
+}
+
+/**
  * Set displayDiameter on every selected sprite. Triggers and
  * curves in the selection are ignored. Mutates `data` in
  * place.
@@ -1706,6 +1780,69 @@ function scaleShape(shape, axis, factor) {
             if (Array.isArray(p) && typeof p[ai] === "number") {
                 p[ai] = roundCoord(mid + (p[ai] - mid) * factor);
             }
+        }
+    }
+}
+
+/**
+ * Scale a curve shape around an external anchor point by
+ * independent x and y factors. Used by
+ * scaleSelectionAroundAnchor (resize-handle gesture). Per
+ * shape type:
+ *   - line: each endpoint's coordinates transform as
+ *     new = anchor + (old - anchor) * scale, with sx and sy
+ *     applied independently.
+ *   - ellipse: cx/cy transform around the anchor (the
+ *     ellipse translates as a whole); w/h scale by
+ *     Math.abs(sx) and Math.abs(sy). Absolute value because
+ *     w and h are scalar magnitudes — a negative scale
+ *     factor would otherwise produce a negative dimension,
+ *     which the renderer treats as malformed. The visual
+ *     outcome of a negative factor (mirror) is achieved by
+ *     the cx/cy transform alone, since the ellipse is
+ *     centrally symmetric and looks identical mirrored.
+ *   - piste: each point in the points array transforms
+ *     around the anchor with independent sx and sy.
+ * Other shape types are silently skipped. Mutates the
+ * shape in place. Defensive against missing or non-numeric
+ * coordinate fields so a partially-formed shape from
+ * hand-edited JSON doesn't crash the edit pipeline.
+ *
+ * @param {any} shape
+ * @param {number} ax
+ * @param {number} ay
+ * @param {number} sx
+ * @param {number} sy
+ */
+function scaleShapeAroundAnchor(shape, ax, ay, sx, sy) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return;
+    if (shape.type === "line") {
+        const x1 = typeof shape.x1 === "number" ? shape.x1 : 0;
+        const y1 = typeof shape.y1 === "number" ? shape.y1 : 0;
+        const x2 = typeof shape.x2 === "number" ? shape.x2 : 0;
+        const y2 = typeof shape.y2 === "number" ? shape.y2 : 0;
+        shape.x1 = roundCoord(ax + (x1 - ax) * sx);
+        shape.y1 = roundCoord(ay + (y1 - ay) * sy);
+        shape.x2 = roundCoord(ax + (x2 - ax) * sx);
+        shape.y2 = roundCoord(ay + (y2 - ay) * sy);
+    } else if (shape.type === "ellipse") {
+        const cx = typeof shape.cx === "number" ? shape.cx : 0;
+        const cy = typeof shape.cy === "number" ? shape.cy : 0;
+        const w = typeof shape.w === "number" ? shape.w : 0;
+        const h = typeof shape.h === "number" ? shape.h : 0;
+        shape.cx = roundCoord(ax + (cx - ax) * sx);
+        shape.cy = roundCoord(ay + (cy - ay) * sy);
+        shape.w = roundCoord(w * Math.abs(sx));
+        shape.h = roundCoord(h * Math.abs(sy));
+    } else if (shape.type === "piste") {
+        if (!Array.isArray(shape.points)) return;
+        for (let i = 0; i < shape.points.length; i++) {
+            const p = shape.points[i];
+            if (!Array.isArray(p) || p.length < 2) continue;
+            const x = typeof p[0] === "number" ? p[0] : 0;
+            const y = typeof p[1] === "number" ? p[1] : 0;
+            p[0] = roundCoord(ax + (x - ax) * sx);
+            p[1] = roundCoord(ay + (y - ay) * sy);
         }
     }
 }
