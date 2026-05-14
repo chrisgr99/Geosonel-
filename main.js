@@ -250,6 +250,12 @@ async function main() {
     /** @type {(objectId: string, expressionBody: string) => Promise<void>} */
     let handlePromotePattern = async () => {};
 
+    /** @type {(objectId: string) => Promise<void>} */
+    let handleClearPattern = async () => {};
+
+    /** @type {(objectId: string, blockingLine: number) => void} */
+    let handleClearPatternBlocked = () => {};
+
     /**
      * Current Scene object, refreshed after each
      * successful runScene. Used by dispatchSelectedObjectIds
@@ -277,6 +283,12 @@ async function main() {
         onRunScene: () => { runScene(); },
         onPromotePattern: (objectId, expressionBody) => {
             void handlePromotePattern(objectId, expressionBody);
+        },
+        onClearPattern: (objectId) => {
+            void handleClearPattern(objectId);
+        },
+        onClearPatternBlocked: (objectId, blockingLine) => {
+            handleClearPatternBlocked(objectId, blockingLine);
         },
     });
 
@@ -1629,6 +1641,112 @@ async function main() {
 
         await applySceneEdit((data) =>
             setCyclePatternOnSelection(data, selection, expressionBody),
+        );
+    };
+
+    // --- Cmd-Enter clear-pattern handlers ---
+    //
+    // Emitted by editor.js's _tryPromoteLabelledBlock when
+    // the cursor sits inside a commented-out labelled
+    // block of the form `// $id: ...`. The user's gesture
+    // "comment out a labelled block and Cmd-Enter" is the
+    // textual mirror of the inspector's Mute checkbox plus
+    // a true clear: scene.json's cyclePattern for the
+    // matching object is set to the empty string. Three
+    // pieces of design work this hooks into.
+    //
+    // scene.json stays the source of truth. The Code
+    // editor is a working surface whose Cmd-Enter actions
+    // explicitly commit intent to scene.json; this keeps
+    // scene.json AI-editable independently of behaviors.js.
+    //
+    // Edge case for same-id duplicates. A user may have
+    // multiple labelled blocks for the same id in
+    // behaviors.js as pattern variants. Clearing on a
+    // commented one would silently drop the pattern even
+    // if a live one elsewhere still defines it. The editor
+    // detects this and emits onClearPatternBlocked instead
+    // of onClearPattern in that case, carrying the blocking
+    // block's 1-based line number so the user can see
+    // exactly which other block is preserving the pattern.
+    //
+    // Firing engine handoff. setCyclePatternOnSelection
+    // with the empty string triggers the firing engine's
+    // patternDirty path on the next runScene: current-
+    // cycle events finish playing, future-cycle events are
+    // dropped, and subsequent cycles produce no events
+    // because the empty pattern compiles to null and the
+    // tick loop skips null-compiled sources. The source
+    // falls silent at the next cycle boundary with no
+    // audible gap, matching the same Version B clean-
+    // takeover behaviour pattern edits use.
+
+    handleClearPattern = async (objectId) => {
+        const sceneFile = session.bundle.getFile("scene.json");
+        if (sceneFile === null) {
+            messages.write("No scene.json in this score.", "error");
+            return;
+        }
+        const parsed = parseScene(sceneFile.content);
+        if (!parsed.ok) {
+            messages.write(
+                `Cannot clear pattern while scene.json has a parse error: ${parsed.error}`,
+                "error",
+            );
+            return;
+        }
+        // Locate the object by id across the three arrays;
+        // same lookup shape handlePromotePattern uses so
+        // a not-found case surfaces the same way for both
+        // gestures.
+        /** @type {"sprites" | "triggers" | "curves" | null} */
+        let foundKind = null;
+        let foundIndex = -1;
+        for (const kind of /** @type {const} */ (["sprites", "triggers", "curves"])) {
+            const arr = parsed.data[kind];
+            if (!Array.isArray(arr)) continue;
+            for (let i = 0; i < arr.length; i++) {
+                const entry = arr[i];
+                if (entry !== null &&
+                    typeof entry === "object" &&
+                    !Array.isArray(entry) &&
+                    entry.id === objectId) {
+                    foundKind = kind;
+                    foundIndex = i;
+                    break;
+                }
+            }
+            if (foundKind !== null) break;
+        }
+        if (foundKind === null) {
+            messages.write(
+                `Pattern clear: no object with id ${objectId} in scene.json.`,
+                "error",
+            );
+            return;
+        }
+        /** @type {{sprites: number[], triggers: number[], curves: number[]}} */
+        const selection = { sprites: [], triggers: [], curves: [] };
+        selection[foundKind].push(foundIndex);
+
+        await applySceneEdit((data) =>
+            setCyclePatternOnSelection(data, selection, ""),
+        );
+        messages.write("Pattern cleared for $" + objectId + ".");
+    };
+
+    handleClearPatternBlocked = (objectId, blockingLine) => {
+        // The clearing intent didn't reach scene.json
+        // because another live labelled block is still
+        // defining the same id. Report the situation and
+        // point the user at the still-active version's
+        // line number; they decide whether to comment THAT
+        // block out as well (which makes a subsequent
+        // Cmd-Enter on any of the commented blocks for
+        // this id clear the pattern) or just leave the
+        // live one as the active definition.
+        messages.write(
+            "Pattern $" + objectId + " not cleared: an active block at line " + blockingLine + " is still defining it.",
         );
     };
 

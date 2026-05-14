@@ -239,6 +239,8 @@ function findReferencePosition(source, candidate) {
  * @property {() => void} [onSaved]
  * @property {() => void} [onRunScene]
  * @property {(objectId: string, expressionBody: string) => void} [onPromotePattern]
+ * @property {(objectId: string) => void} [onClearPattern]
+ * @property {(objectId: string, blockingLine: number) => void} [onClearPatternBlocked]
  */
 
 export class TabbedEditor {
@@ -258,6 +260,8 @@ export class TabbedEditor {
         this.onSaved = callbacks.onSaved ?? (() => {});
         this.onRunScene = callbacks.onRunScene ?? (() => {});
         this.onPromotePattern = callbacks.onPromotePattern ?? (() => {});
+        this.onClearPattern = callbacks.onClearPattern ?? (() => {});
+        this.onClearPatternBlocked = callbacks.onClearPatternBlocked ?? (() => {});
 
         /** @type {string | null} */
         this.activeName = null;
@@ -769,30 +773,56 @@ export class TabbedEditor {
 
     /**
      * Detect whether the cursor in the active tab is inside
-     * a top-level labelled pattern block, and if so emit
-     * the onPromotePattern callback with the block's
-     * objectId and expression body text. The labelled-
-     * statement form is $objectId: expression — a JavaScript
-     * LabeledStatement whose label name starts with a dollar
-     * character and whose body is an ExpressionStatement.
-     * The objectId passed to the callback is the label name
-     * minus its leading dollar; the expression body is
-     * sliced from the source text so the user's original
-     * whitespace and formatting carry through.
+     * a top-level labelled pattern block (live or commented
+     * out) and emit one of three callbacks accordingly. Two
+     * paths run through here:
+     *
+     *   Promote path. Cursor sits inside a live
+     *   LabeledStatement whose label name starts with $ and
+     *   whose body is an ExpressionStatement. Emit
+     *   onPromotePattern with the objectId (label minus the
+     *   leading $) and the expression body text sliced from
+     *   the source so the user's original whitespace and
+     *   formatting carry through.
+     *
+     *   Clear path. Cursor sits inside a comment whose text
+     *   matches the labelled-block shape — leading non-
+     *   whitespace content of the form $id:. The user has
+     *   commented out a labelled block as a textual
+     *   "silence this source" gesture; the Cmd-Enter commits
+     *   that intent to scene.json by clearing the matching
+     *   object's cyclePattern. Edge case: if some OTHER live
+     *   labelled block elsewhere in the file still defines
+     *   the same id, clearing would silently drop the live
+     *   block's pattern. To prevent that, scan the live
+     *   blocks for the same id; if one exists, emit
+     *   onClearPatternBlocked with the blocking block's 1-
+     *   based line number so the messages area can point
+     *   the user at the still-active version. Otherwise
+     *   emit onClearPattern with the objectId. The regex
+     *   anchors at start-of-content so a comment like
+     *   `// Note that $CRV4: is a labelled block` doesn't
+     *   false-match (the leading non-whitespace is "Note",
+     *   not "$").
+     *
+     * Acorn's onComment option surfaces both line and block
+     * comments with the same callback shape, so commenting
+     * a labelled block with `// $id: ...` or
+     * `/* $id: ... *\/` both work.
      *
      * Active only on behaviors.js / behaviours.js. The
      * labelled-statement convention is part of the behaviour
      * file's authoring surface per section 28; other tabs
      * (the virtual inspector, scene.json, any additional
-     * text files) never trigger pattern promotion.
+     * text files) never trigger any of the callbacks here.
      *
-     * Returns true iff a labelled block was found and the
-     * callback was emitted. The Mod-Enter handler uses the
-     * return value to decide whether to consume the keypress
-     * (true) or fall through to onRunScene (false). A
-     * whole-file Acorn parse failure falls through to
-     * onRunScene as well, because that path will surface the
-     * syntax error via its existing load-fail mechanism.
+     * Returns true iff one of the three callbacks fired.
+     * The Mod-Enter handler uses the return value to decide
+     * whether to consume the keypress (true) or fall
+     * through to onRunScene (false). A whole-file Acorn
+     * parse failure falls through to onRunScene, since
+     * that path's load-fail mechanism is the right place
+     * to surface the syntax-error diagnostic.
      *
      * @returns {boolean}
      */
@@ -802,6 +832,14 @@ export class TabbedEditor {
             this.activeName !== "behaviours.js") return false;
         const source = this.view.state.doc.toString();
         const cursorPos = this.view.state.selection.main.head;
+
+        // Collect comments alongside the AST so the clear
+        // path below can probe whether the cursor sits
+        // inside any. Acorn's onComment is the cheap way
+        // to do this; no separate scan over the source is
+        // needed.
+        /** @type {Array<{value: string, start: number, end: number}>} */
+        const comments = [];
         let ast;
         try {
             ast = acorn.parse(source, {
@@ -809,6 +847,9 @@ export class TabbedEditor {
                 sourceType: "script",
                 allowReturnOutsideFunction: true,
                 locations: false,
+                onComment: (_block, text, start, end) => {
+                    comments.push({ value: text, start, end });
+                },
             });
         } catch (err) {
             // Whole-file syntax error: fall through to the
@@ -817,28 +858,74 @@ export class TabbedEditor {
             return false;
         }
         if (ast === null || !Array.isArray(ast.body)) return false;
+
+        // Collect every live (uncommented) top-level
+        // labelled block. Used by both paths: the promote
+        // path needs the AST node to slice the expression
+        // body; the clear path needs the objectId set to
+        // detect a still-defining-this-id block elsewhere
+        // in the file, plus the line number for the
+        // messages-area note when one is found.
+        /** @type {Array<{objectId: string, node: any, lineNum: number}>} */
+        const liveBlocks = [];
         for (const node of ast.body) {
             if (node.type !== "LabeledStatement") continue;
-            // Acorn's start/end are character offsets into
-            // the source string. Inclusive on both ends so a
-            // cursor immediately after the block's closing
-            // punctuation still counts as inside.
-            if (cursorPos < node.start || cursorPos > node.end) continue;
             const label = node.label;
             if (label === null ||
                 label.type !== "Identifier" ||
                 typeof label.name !== "string") continue;
             if (!label.name.startsWith("$")) continue;
-            const body = node.body;
-            if (body === null ||
-                body.type !== "ExpressionStatement") continue;
+            const objectId = label.name.slice(1);
+            liveBlocks.push({
+                objectId,
+                node,
+                lineNum: this.view.state.doc.lineAt(node.start).number,
+            });
+        }
+
+        // Promote path. Cursor inside any live labelled
+        // block whose body is an ExpressionStatement: emit
+        // onPromotePattern with the expression body text.
+        // Acorn's start/end are character offsets into the
+        // source string; the check is inclusive on both
+        // ends so a cursor immediately after the block's
+        // closing punctuation still counts as inside.
+        for (const lb of liveBlocks) {
+            if (cursorPos < lb.node.start || cursorPos > lb.node.end) continue;
+            const body = lb.node.body;
+            if (body === null || body.type !== "ExpressionStatement") continue;
             const expr = body.expression;
             if (expr === null) continue;
-            const objectId = label.name.slice(1);
             const expressionText = source.slice(expr.start, expr.end);
-            this.onPromotePattern(objectId, expressionText);
+            this.onPromotePattern(lb.objectId, expressionText);
             return true;
         }
+
+        // Clear path. Cursor inside a comment whose text
+        // begins with $id: shape. The regex requires the
+        // identifier to start with a letter or underscore
+        // and contain only letters, digits, and
+        // underscores after that, which is GXW's id
+        // convention (SPR1, TRG1, CRV1) plus the
+        // generality of any JS-identifier-shaped id a
+        // hand-written scene.json might carry. Exotic
+        // identifiers with dollar signs in the middle
+        // wouldn't round-trip cleanly anyway since they
+        // are vanishingly rare in user-authored scores.
+        for (const c of comments) {
+            if (cursorPos < c.start || cursorPos > c.end) continue;
+            const m = /^\s*\$([a-zA-Z_][a-zA-Z0-9_]*)\s*:/.exec(c.value);
+            if (m === null) continue;
+            const objectId = m[1];
+            const blocking = liveBlocks.find((lb) => lb.objectId === objectId);
+            if (blocking !== undefined) {
+                this.onClearPatternBlocked(objectId, blocking.lineNum);
+            } else {
+                this.onClearPattern(objectId);
+            }
+            return true;
+        }
+
         return false;
     }
 
