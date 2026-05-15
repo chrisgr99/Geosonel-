@@ -1,7 +1,15 @@
 ## Section 1 — Vision
 
-GXW is a web app for composing music that emerges from 2D scenes. A scene is a substrate of curves and triggers placed at considered positions. Curves have intrinsic rhythmic structure and play their own beat points on internal cycles; curves with extended cursors also sweep through the scene, triggering any triggers they encounter — this is the GeoMaestro projector idea preserved as a property of every curve. Sprites are autonomous agents that wander the scene, reading its image-as-scalar-field and firing musical events based on their environment. All agents share one transport and one musical framework.
+GeoStrudel is a web app for composing music from 2D scenes. The project's working name is GXW, used throughout this documentation and codebase.
 
-The composer works by editing a JavaScript sketch file describing the scene, its objects, and their behaviour. GXW watches the sketch and re-executes it whenever it changes. A canvas shows the scene and its animation. Sound is produced by the browser's Web Audio API, and optionally routed to external synthesisers via Web MIDI where supported.
+GeoStrudel is the modern web-based successor to GeoSonix[^1], a pattern-based experimental music system by the same author, available in the years of about 2007 through 2012. GeoSonix was built on the Qt framework, based on IanniX, and inspired by GeoMaestro. GeoStrudel carries forward the core concepts of GeoSonix and incorporates new ideas learned from the original system and others made possible by the web platform; the integration of Strudel's pattern language is the most significant of these.
 
-Sketches are typically constructed and modified through conversation with Claude, which edits the sketch directly. The conversational authoring experience is a first-class concern of GXW rather than an external workflow.
+A scene contains three kinds of object: curves (paths with optional sweeping cursors), triggers (fixed collision points), and sprites (bodies moving under physics over the image beneath them). Both curves and sprites with non-zero cursor extents become colliders against other objects. Each source has its own pattern and its own cycle length in master beats, so sources can run at independent tempos while sharing one master clock.
+
+Pattern content is written in Strudel's mini-notation, which expresses rhythmic patterns with subdivisions and modifiers. The phrasing that captures the integration is GXW owns the WHEN, Strudel owns the WHAT: GXW's simulation determines when each source fires, Strudel's vocabulary determines what plays. Patterns can also read live scene state through dynamic signals such as perceptual brightness, colour, or sprite velocity.
+
+The composer works in a tabbed editor beside the canvas. The Properties tab inspects scene objects; the Code tab holds JavaScript callbacks and labelled pattern blocks. Cmd-Enter on a labelled block promotes it to the active pattern for its object and re-runs the scene.
+
+Sound is produced through Strudel's superdough audio engine or through Web MIDI to external synthesisers. MIDI is the current default; both paths coexist.
+
+[^1]: An example GeoSonix composition: https://www.youtube.com/watch?v=fhNaQF8PEV4. Links to IanniX, GeoMaestro, and additional examples to be added before public release.
