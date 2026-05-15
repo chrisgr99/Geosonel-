@@ -2,12 +2,14 @@
  * Simulation module.
  *
  * Advances scene state forward in time. Owns the per-source
- * runtime state (cursor t for curves, position and velocity
- * for sprites, cycle phase and counter for all three kinds)
- * so authored data on Curve, Trigger, and Sprite instances
- * stays clean. Currently scoped to cursor advancement, sprite
- * physics, and per-source cycle phase tracking; pattern
- * firing and beat events are deferred to later milestones.
+ * runtime state (cursor t for curves, position offset and
+ * velocity for curves, position and velocity for sprites,
+ * cycle phase and counter for all three kinds) so authored
+ * data on Curve, Trigger, and Sprite instances stays clean.
+ * Currently scoped to cursor advancement, sprite physics,
+ * curve physics, and per-source cycle phase tracking;
+ * pattern firing and beat events are deferred to later
+ * milestones.
  *
  * Architecture:
  *   - Fixed-step simulation at SIM_DT seconds per step
@@ -79,6 +81,71 @@
  * BPM — motion is in canvas units per real-time second
  * regardless of musical tempo.
  *
+ * Curve physics. Each step every curve's runtime position
+ * offset (dx, dy) advances by vx*dt and vy*dt; the Canvas
+ * applies the offset at draw time so the curve's authored
+ * geometry on disk stays clean. Walls at x = ±canvasW/2 and
+ * y = ±canvasH/2 bounce curves whose authored bbox was
+ * fully inside the canvas at step start — the same inside-
+ * only rule sprites use. The bbox-vs-edge test and the
+ * curve-geometry-vs-edge test produce identical results for
+ * line, ellipse, and piste shapes against axis-aligned
+ * canvas edges, since each axis-aligned bbox edge sits at
+ * the curve's extreme x or y coordinate. Future curved
+ * shape types (beziers, splines) where control points stick
+ * out past the actual curve will need a per-shape geometric
+ * test, but the bbox branch keeps working for the existing
+ * types. The authored bbox is cached on the curve's runtime
+ * state and refreshed by setScene reconciliation when the
+ * authored shape signature changes, so the physics step
+ * pays only a single read per tick rather than recomputing
+ * the bbox from the shape sub-object. On cycle wrap the
+ * runtime offset returns to zero and live velocity resets
+ * to authored, paralleling the sprite per-cycle home snap.
+ *
+ * Drag and resize gesture handoff. Drag gestures take
+ * different paths depending on whether the dragged
+ * object is at its home position. For a curve, "home"
+ * means the runtime offset is zero (no physics motion
+ * since the last rewind or cycle wrap); for a sprite,
+ * it means the runtime x, y still equals the authored
+ * x, y.
+ *
+ * Drag at home: the drag mutates the authored shape
+ * (curve) or authored x, y (sprite) directly, and the
+ * mouseup commit emits a translateSelection edit.
+ * State-at-Start in the inspector updates and a
+ * subsequent rewind returns the object to this new
+ * home. The drag is a permanent move.
+ *
+ * Drag away from home: the drag mutates only the
+ * runtime state via setCurveRuntimeOffset (curve) or
+ * setSpriteRuntimePositionOnly (sprite). No mouseup
+ * commit fires. The authored shape, the recorded auth
+ * fields, and the inspector's State-at-Start row all
+ * stay untouched, so the next rewind returns the
+ * object to its unchanged home. The drag is a session-
+ * only nudge that the rewind undoes. To permanently
+ * move a moving object the user rewinds it first, then
+ * drags from the now-at-home position.
+ *
+ * Resize (curves, any offset state): a curve resize
+ * gesture calls bakeCurveOffsetIntoAuthored at gesture
+ * start to fold the offset into the authored shape
+ * (shape coordinates translate by (dx, dy); the
+ * recorded shape signature and bbox cache refresh; dx
+ * and dy zero) without changing the visible position.
+ * The resize then mutates the now-at-home shape and
+ * emits a scaleSelection edit on mouseup. The fold
+ * prevents a setScene reconciliation from zeroing the
+ * offset and visibly snapping the curve backwards.
+ * State-at-Start updates after a resize regardless of
+ * the starting offset, mirroring the drag-at-home
+ * permanent-move semantics.
+ *
+ * Live velocity stays untouched across all gesture
+ * paths so the object's motion continues uninterrupted.
+ *
  * Pre-section-27 cycleSpeeds. The per-curve cycleSpeeds
  * field (whitespace-separated multipliers cycling through
  * themselves for forward/reverse/freeze cursor motion) was
@@ -110,6 +177,16 @@ const SIM_DT = 1 / 240;
 const LOG_CYCLE_WRAPS = false;
 
 /**
+ * Debug flag for curve-bounce logging. When true, every
+ * canvas-wall bounce on a moving curve emits a console.log
+ * line carrying the curve id, the axis that bounced, and
+ * the post-bounce velocity. Mirrors LOG_CYCLE_WRAPS in
+ * shape and default; flip the flag at the top of this
+ * module to verify curve physics during development.
+ */
+const LOG_CURVE_BOUNCES = false;
+
+/**
  * Compute the wall-clock cycle duration in seconds for a
  * source with the given beatsPerCycle, under the master
  * BPM. Returns 0 (a sentinel for "no valid cycle") when
@@ -129,12 +206,30 @@ function cycleDurationSeconds(bpm, beatsPerCycle) {
 
 /**
  * Per-curve runtime state. Holds the cursor's position
- * along the curve plus the cycle-tracking bookkeeping.
+ * along the curve, the cycle-tracking bookkeeping, and the
+ * per-tick physics state (position offset from the
+ * authored geometry and live velocity, plus authored
+ * snapshots for snap-home and edit-detection). The cached
+ * bbox of the authored shape is held here so the physics
+ * step doesn't recompute it on every tick.
+ *
+ * The position model parallels sprites with a small twist:
+ * sprites carry a single (x, y) point that's both authored
+ * and live, while curves carry a whole shape sub-object
+ * authored once and a (dx, dy) offset that the simulation
+ * advances. The Canvas applies the offset at draw time, so
+ * the authored shape on disk stays clean and curve geometry
+ * edits land cleanly through the same translateShape path
+ * sprites use for x/y edits.
+ *
  * Lives in the Simulation's id-keyed map; never serialised,
  * never seen by the inspector.
  */
 class CurveRuntimeState {
-    constructor() {
+    /**
+     * @param {any} curve
+     */
+    constructor(curve) {
         /**
          * Cursor position along the curve, in [0, 1). t = 0
          * is the curve's home position (first endpoint for
@@ -177,6 +272,49 @@ class CurveRuntimeState {
          * @type {boolean}
          */
         this.halted = false;
+        // Live position offset from the authored geometry,
+        // in canvas units. Advances each step by vx*dt and
+        // vy*dt. Resets to zero on rewind and on cycle wrap.
+        // The Canvas reads these at draw time and translates
+        // the curve's drawing context by (dx, -dy) before
+        // rendering geometry, cursor, and markers.
+        /** @type {number} */
+        this.dx = 0;
+        /** @type {number} */
+        this.dy = 0;
+        // Live velocity, advanced through wall bounces.
+        // Initialises from authored vx/vy on construction
+        // and on cycle wrap so the per-cycle trajectory
+        // loops in lockstep with the cycle, parallelling
+        // sprite behaviour.
+        /** @type {number} */
+        this.vx = numberOrZero(curve.vx);
+        /** @type {number} */
+        this.vy = numberOrZero(curve.vy);
+        // Authored snapshots. setScene's reconciliation
+        // compares the current Curve's authored vx and vy
+        // against these and snaps the matching runtime
+        // field when they differ, so a velocity edit while
+        // playback runs lands on the moving curve. The same
+        // values are the snap-home target for cycle wrap.
+        /** @type {number} */
+        this._authVx = this.vx;
+        /** @type {number} */
+        this._authVy = this.vy;
+        // Cached signature and bbox of the authored shape.
+        // shapeSignature is a stable JSON-ish string used to
+        // detect authored-geometry edits in setScene
+        // reconciliation; on a mismatch the runtime offset
+        // snaps to zero (the curve restarts from its new
+        // authored position) and the cached bbox refreshes.
+        // _shapeBbox holds the authored axis-aligned bbox
+        // for the physics step; null when the shape is
+        // degenerate or not implemented, in which case the
+        // curve drifts freely without bouncing.
+        /** @type {string} */
+        this._authShapeSig = shapeSignature(curve.shape);
+        /** @type {{x1: number, y1: number, x2: number, y2: number} | null} */
+        this._shapeBbox = shapeBbox(curve.shape);
     }
 }
 
@@ -310,14 +448,43 @@ export class Simulation {
             this._spriteState.clear();
             return;
         }
-        // Curves: reconcile by id. Existing state preserved.
+        // Curves: reconcile by id. Existing state preserved
+        // unless an authored shape or velocity field changed
+        // since last seen, in which case the runtime offset
+        // snaps to zero (the curve restarts from its new
+        // authored position) and/or vx/vy snap to the new
+        // authored values. Mirrors the per-axis snap-on-edit
+        // path used for sprites; the difference is the
+        // authored-shape comparison goes through a stable
+        // signature string rather than per-field equality,
+        // because curve geometry is a nested sub-object
+        // whose shape varies by type.
         /** @type {Set<string>} */
         const seenCurveIds = new Set();
         for (const c of scene.curves) {
             if (typeof c.id !== "string") continue;
             seenCurveIds.add(c.id);
-            if (!this._curveState.has(c.id)) {
-                this._curveState.set(c.id, new CurveRuntimeState());
+            const existing = this._curveState.get(c.id);
+            if (existing === undefined) {
+                this._curveState.set(c.id, new CurveRuntimeState(c));
+                continue;
+            }
+            const newSig = shapeSignature(c.shape);
+            if (newSig !== existing._authShapeSig) {
+                existing.dx = 0;
+                existing.dy = 0;
+                existing._authShapeSig = newSig;
+                existing._shapeBbox = shapeBbox(c.shape);
+            }
+            const authVx = numberOrZero(c.vx);
+            const authVy = numberOrZero(c.vy);
+            if (authVx !== existing._authVx) {
+                existing.vx = authVx;
+                existing._authVx = authVx;
+            }
+            if (authVy !== existing._authVy) {
+                existing.vy = authVy;
+                existing._authVy = authVy;
             }
         }
         for (const id of [...this._curveState.keys()]) {
@@ -434,6 +601,10 @@ export class Simulation {
             state.cycleProgress = 0;
             state.cycleCount = 0;
             state.halted = false;
+            state.dx = 0;
+            state.dy = 0;
+            state.vx = state._authVx;
+            state.vy = state._authVy;
         }
         for (const state of this._triggerState.values()) {
             state.cycleProgress = 0;
@@ -532,6 +703,13 @@ export class Simulation {
         while (newT >= 1) newT -= 1;
         state.t = newT;
         state.cycleProgress += tDelta;
+        // Physics. Translates the curve's runtime offset by
+        // (vx*dt, vy*dt) and reflects velocity on contact
+        // with canvas edges under the same inside-only rule
+        // _stepSprites uses. A curve with vx=vy=0 falls
+        // through immediately; the cost is one branch per
+        // static curve per step.
+        this._stepCurvePhysics(curve, state, dt);
         const stopAt = (typeof curve.stopAtCycle === "number") ? curve.stopAtCycle : -1;
         // Detect cycle completion. Multiple completions in
         // one step are possible at very short cycle
@@ -545,12 +723,112 @@ export class Simulation {
             // the cursor visibly returns to the start of
             // the curve at every cycle boundary.
             state.t = 0;
+            // Snap the physics state home: runtime offset
+            // returns to zero and velocity resets to
+            // authored. The curve's trajectory loops in
+            // lockstep with its cycle, paralleling sprite
+            // behaviour.
+            state.dx = 0;
+            state.dy = 0;
+            state.vx = state._authVx;
+            state.vy = state._authVy;
             logCycleWrap("curve", curve, state.cycleCount);
             if (stopAt >= 0 && state.cycleCount >= stopAt) {
                 state.halted = true;
                 return;
             }
         }
+    }
+
+    /**
+     * Advance one curve's physics by dt seconds.
+     *
+     * The curve's runtime offset (state.dx, state.dy)
+     * advances by velocity times dt, with reflection on
+     * contact with the four canvas edges under the inside-
+     * only rule. The shifted authored bbox is the collider:
+     * if the bbox was fully inside the canvas at step start
+     * and the post-integration bbox would cross a wall, the
+     * offset is corrected so the bbox edge sits exactly at
+     * the canvas edge and the corresponding velocity
+     * component reflects. A bbox that started outside the
+     * canvas (or wholly past it) drifts freely.
+     *
+     * The bbox test and the curve-geometry test produce
+     * identical results for the current shape types (line,
+     * ellipse, piste) against axis-aligned canvas edges —
+     * each axis-aligned bbox edge sits at the curve's
+     * extreme x or y coordinate, so the wall reaches the
+     * bbox edge and the curve's farthest point
+     * simultaneously. Future curved shape types (beziers,
+     * splines) where control points can stick out past the
+     * actual curve will need a per-shape geometric test;
+     * the architecture for that is a small per-shape
+     * dispatch on top of the bbox approach, but the bbox
+     * branch keeps working for the existing types.
+     *
+     * Static curves (vx = vy = 0) fall through immediately:
+     * the offset doesn't change, no wall test runs.
+     *
+     * @param {any} curve
+     * @param {CurveRuntimeState} state
+     * @param {number} dt  Elapsed seconds in this step.
+     */
+    _stepCurvePhysics(curve, state, dt) {
+        if (state.vx === 0 && state.vy === 0) return;
+        if (this._scene === null) return;
+        const bbox = state._shapeBbox;
+        if (bbox === null) {
+            // Degenerate or unsupported shape — still drift
+            // by velocity so the inspector edit isn't a
+            // silent no-op, but skip the wall test.
+            state.dx += state.vx * dt;
+            state.dy += state.vy * dt;
+            return;
+        }
+        const halfW = numberOrZero(this._scene.canvasW) / 2;
+        const halfH = numberOrZero(this._scene.canvasH) / 2;
+        const oldDx = state.dx;
+        const oldDy = state.dy;
+        let newDx = oldDx + state.vx * dt;
+        let newDy = oldDy + state.vy * dt;
+        if (halfW > 0 && halfH > 0) {
+            const oldLeft = bbox.x1 + oldDx;
+            const oldRight = bbox.x2 + oldDx;
+            const oldTop = bbox.y1 + oldDy;
+            const oldBottom = bbox.y2 + oldDy;
+            const wasInside =
+                oldLeft >= -halfW &&
+                oldRight <= halfW &&
+                oldTop >= -halfH &&
+                oldBottom <= halfH;
+            if (wasInside) {
+                const newLeft = bbox.x1 + newDx;
+                const newRight = bbox.x2 + newDx;
+                const newTop = bbox.y1 + newDy;
+                const newBottom = bbox.y2 + newDy;
+                if (newRight > halfW) {
+                    newDx = halfW - bbox.x2;
+                    state.vx = -state.vx;
+                    logCurveBounce(curve, "x", state);
+                } else if (newLeft < -halfW) {
+                    newDx = -halfW - bbox.x1;
+                    state.vx = -state.vx;
+                    logCurveBounce(curve, "x", state);
+                }
+                if (newBottom > halfH) {
+                    newDy = halfH - bbox.y2;
+                    state.vy = -state.vy;
+                    logCurveBounce(curve, "y", state);
+                } else if (newTop < -halfH) {
+                    newDy = -halfH - bbox.y1;
+                    state.vy = -state.vy;
+                    logCurveBounce(curve, "y", state);
+                }
+            }
+        }
+        state.dx = newDx;
+        state.dy = newDy;
     }
 
     /**
@@ -592,6 +870,126 @@ export class Simulation {
         const state = this._curveState.get(curveId);
         if (state === undefined) return 0;
         return state.t;
+    }
+
+    /**
+     * Look up a curve's runtime position offset relative to
+     * its authored geometry. Returns { dx, dy } in canvas
+     * units, or null when no state exists for this id
+     * (briefly possible during a scene reload before
+     * setScene runs). Used by the Canvas at draw time to
+     * translate the curve's drawing context, and by hit
+     * testing to compensate for the live position during
+     * playback.
+     *
+     * The returned object is a fresh literal, so mutating
+     * it does not affect simulation state.
+     *
+     * @param {string} curveId
+     * @returns {{dx: number, dy: number} | null}
+     */
+    getCurveRuntimeOffset(curveId) {
+        const state = this._curveState.get(curveId);
+        if (state === undefined) return null;
+        return { dx: state.dx, dy: state.dy };
+    }
+
+    /**
+     * Fold a curve's runtime (dx, dy) offset into its
+     * authored shape: translate the authored shape
+     * coordinates by the current offset, refresh the
+     * recorded shape signature and bbox cache, and zero
+     * the runtime offset. The visible position is
+     * unchanged (authored + offset before equals
+     * authored + 0 after), but the offset is no longer
+     * carried as a runtime concept.
+     *
+     * Called by the Canvas at the start of a curve
+     * resize gesture. Without this fold, the gesture's
+     * mouseup commit would emit a scaleSelection edit
+     * whose follow-up setScene reconciliation would
+     * detect the authored shape changed and zero the
+     * offset, producing a visible backwards jump as the
+     * curve snapped to its (scale-applied) authored
+     * position. Folding here aligns authored and visible
+     * positions so reconciliation finds no offset to
+     * clear; the resize handles' anchor (already in
+     * visible canvas space from _getSelectionBbox) stays
+     * aligned with the authored shape after the fold.
+     *
+     * Drag gestures take a different path: a drag on a
+     * curve with non-zero offset uses
+     * setCurveRuntimeOffset to mutate the runtime offset
+     * alone, leaving the authored shape and the
+     * inspector's State-at-Start row untouched. The bake
+     * is reserved for resize because "resize the runtime
+     * offset" has no coherent meaning the way
+     * "translate the runtime offset" does for a drag.
+     *
+     * The curve's shape sub-object is mutated in place
+     * via translateShapeCoords; this method does not
+     * return a new object. Callers that snapshot the
+     * shape (e.g. snapshotShapeForResize in canvas.js)
+     * must do so after this call, not before.
+     *
+     * Live velocity (vx, vy) is intentionally left alone.
+     * A resize is a geometric edit; the curve's velocity
+     * continues uninterrupted across the gesture so
+     * playback doesn't visually "hitch" when the user
+     * grabs and releases. Mirrors the velocity-preserved
+     * semantics of snapSpriteRuntimeToAuthored.
+     *
+     * No-op when the simulation has no runtime state for
+     * this curve id (briefly possible during a scene
+     * reload), when the offset is already zero, or when
+     * the shape sub-object is missing.
+     *
+     * @param {any} curve  The curve object; shape mutated in place.
+     */
+    bakeCurveOffsetIntoAuthored(curve) {
+        if (curve === null || typeof curve !== "object") return;
+        if (typeof curve.id !== "string") return;
+        const state = this._curveState.get(curve.id);
+        if (state === undefined) return;
+        if (state.dx === 0 && state.dy === 0) return;
+        if (curve.shape === null || typeof curve.shape !== "object") return;
+        translateShapeCoords(curve.shape, state.dx, state.dy);
+        state._authShapeSig = shapeSignature(curve.shape);
+        state._shapeBbox = shapeBbox(curve.shape);
+        state.dx = 0;
+        state.dy = 0;
+    }
+
+    /**
+     * Directly set a curve's runtime offset (dx, dy)
+     * without touching the authored shape, the recorded
+     * shape signature / bbox cache, or velocity. Used by
+     * the Canvas's drag pipeline when the user drags a
+     * curve that is currently away from its home position
+     * (non-zero offset at drag start): the drag becomes a
+     * session-only nudge that visibly moves the curve to
+     * the dropped position while leaving the authored
+     * shape — and the inspector's State-at-Start row —
+     * untouched. The next rewind resets the offset to
+     * zero and returns the curve to its unchanged home.
+     *
+     * No-op when no runtime state exists for this id
+     * (briefly possible during a scene reload). The
+     * caller is expected to pass finite numbers; non-
+     * finite values are not screened here because the
+     * drag pipeline that calls this method derives the
+     * offset from cursor positions and an initial-offset
+     * snapshot, both of which are finite by construction.
+     *
+     * @param {string} curveId
+     * @param {number} dx
+     * @param {number} dy
+     */
+    setCurveRuntimeOffset(curveId, dx, dy) {
+        const state = this._curveState.get(curveId);
+        if (state === undefined) return;
+        state.dx = dx;
+        state.dy = dy;
     }
 
     /**
@@ -700,6 +1098,34 @@ export class Simulation {
         state.y = authY;
         state._authX = authX;
         state._authY = authY;
+    }
+
+    /**
+     * Directly set a sprite's runtime position (x, y)
+     * without touching the authored x, y, the recorded
+     * _authX / _authY, or velocity. Counterpart to
+     * snapSpriteRuntimeToAuthored for the drag pipeline's
+     * away-from-home branch: when the user drags a sprite
+     * that is currently away from its authored position
+     * (state.x / y differs from sprite.x / y because the
+     * sprite has been moving under physics), the drag
+     * adjusts the runtime position only. The authored
+     * x, y stay where they were and the next rewind
+     * returns the sprite to its inspector-shown home.
+     *
+     * No-op when no runtime state exists for this id.
+     * The caller is expected to pass finite numbers; see
+     * setCurveRuntimeOffset for the same rationale.
+     *
+     * @param {string} spriteId
+     * @param {number} x
+     * @param {number} y
+     */
+    setSpriteRuntimePositionOnly(spriteId, x, y) {
+        const state = this._spriteState.get(spriteId);
+        if (state === undefined) return;
+        state.x = x;
+        state.y = y;
     }
 
     /**
@@ -827,6 +1253,156 @@ export class Simulation {
  */
 function numberOrZero(v) {
     return (typeof v === "number" && Number.isFinite(v)) ? v : 0;
+}
+
+/**
+ * Stable string signature of a curve shape sub-object,
+ * used by setScene's reconciliation path to detect
+ * authored-geometry edits. JSON.stringify is exact and
+ * order-sensitive, which matches the scene-format
+ * conventions (key order is preserved through the
+ * parse-mutate-stringify round trip), so two shapes that
+ * stringify to the same text are geometrically identical
+ * for our purposes. Returns the empty string for non-
+ * object input (defensive against hand-edited JSON).
+ *
+ * @param {any} shape
+ * @returns {string}
+ */
+function shapeSignature(shape) {
+    if (shape === null || typeof shape !== "object") return "";
+    try {
+        return JSON.stringify(shape);
+    } catch {
+        return "";
+    }
+}
+
+/**
+ * Compute the axis-aligned bounding box of a curve shape,
+ * or null if the shape is degenerate or not implemented.
+ * Used by _stepCurvePhysics to test curve geometry against
+ * canvas edges; cached on the curve's runtime state and
+ * refreshed by setScene reconciliation whenever the
+ * authored shape signature changes.
+ *
+ * Mirrors the equivalent helper in sceneEditor.js (and the
+ * inspector module's computeShapeBbox); kept as a separate
+ * copy here so the simulation doesn't import sceneEditor.
+ * The three copies are intentionally small and stable; any
+ * future drift between them would be a bug worth catching.
+ *
+ * @param {any} shape
+ * @returns {{x1: number, y1: number, x2: number, y2: number} | null}
+ */
+function shapeBbox(shape) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return null;
+    if (shape.type === "line") {
+        const x1 = typeof shape.x1 === "number" ? shape.x1 : 0;
+        const y1 = typeof shape.y1 === "number" ? shape.y1 : 0;
+        const x2 = typeof shape.x2 === "number" ? shape.x2 : 0;
+        const y2 = typeof shape.y2 === "number" ? shape.y2 : 0;
+        return {
+            x1: Math.min(x1, x2),
+            y1: Math.min(y1, y2),
+            x2: Math.max(x1, x2),
+            y2: Math.max(y1, y2),
+        };
+    }
+    if (shape.type === "ellipse") {
+        const cx = typeof shape.cx === "number" ? shape.cx : 0;
+        const cy = typeof shape.cy === "number" ? shape.cy : 0;
+        const w = typeof shape.w === "number" ? shape.w : 0;
+        const h = typeof shape.h === "number" ? shape.h : 0;
+        return {
+            x1: cx - w / 2,
+            y1: cy - h / 2,
+            x2: cx + w / 2,
+            y2: cy + h / 2,
+        };
+    }
+    if (shape.type === "piste") {
+        const pts = shape.points;
+        if (!Array.isArray(pts) || pts.length === 0) return null;
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+        for (const p of pts) {
+            if (!Array.isArray(p) || p.length < 2) continue;
+            const px = typeof p[0] === "number" ? p[0] : 0;
+            const py = typeof p[1] === "number" ? p[1] : 0;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+        }
+        if (!Number.isFinite(minX)) return null;
+        return { x1: minX, y1: minY, x2: maxX, y2: maxY };
+    }
+    return null;
+}
+
+/**
+ * Translate a curve's shape coordinates in place by
+ * (dx, dy) canvas units. Per shape type:
+ *   - line: x1, y1, x2, y2 shift by (dx, dy)
+ *   - ellipse: cx, cy shift by (dx, dy); w, h unchanged
+ *   - piste: every point shifts by (dx, dy)
+ * Unknown or degenerate shape types are silent no-ops, so
+ * a curve in a not-yet-implemented shape category stays
+ * inert under the bake rather than producing partial
+ * coordinate mutation.
+ *
+ * Mirrors sceneEditor.translateShape's per-type behaviour
+ * but without the roundCoord pass. The drag/resize commit
+ * that follows will write rounded values to scene.json
+ * via translateSelection / scaleSelection; this in-place
+ * mutation is the runtime-side fold from
+ * bakeCurveOffsetIntoAuthored, where exact preservation
+ * of the visible position matters more than canonical
+ * rounding.
+ *
+ * @param {any} shape  Mutated in place.
+ * @param {number} dx
+ * @param {number} dy
+ */
+function translateShapeCoords(shape, dx, dy) {
+    if (shape === null || typeof shape !== "object" || Array.isArray(shape)) return;
+    if (shape.type === "line") {
+        if (typeof shape.x1 === "number") shape.x1 += dx;
+        if (typeof shape.y1 === "number") shape.y1 += dy;
+        if (typeof shape.x2 === "number") shape.x2 += dx;
+        if (typeof shape.y2 === "number") shape.y2 += dy;
+    } else if (shape.type === "ellipse") {
+        if (typeof shape.cx === "number") shape.cx += dx;
+        if (typeof shape.cy === "number") shape.cy += dy;
+    } else if (shape.type === "piste") {
+        if (!Array.isArray(shape.points)) return;
+        for (const p of shape.points) {
+            if (Array.isArray(p) && p.length >= 2) {
+                if (typeof p[0] === "number") p[0] += dx;
+                if (typeof p[1] === "number") p[1] += dy;
+            }
+        }
+    }
+}
+
+/**
+ * Emit a console.log line for a curve bounce. Only logs
+ * when LOG_CURVE_BOUNCES is true; off by default so the
+ * console stays clean during normal use. Useful for
+ * verifying curve physics correctness without rendering
+ * changes: flip the flag, give a curve a non-zero velocity
+ * in the inspector, hit play, and watch for bounce events
+ * in the console.
+ *
+ * @param {any} curve
+ * @param {"x" | "y"} axis  Which wall the bounce reflected.
+ * @param {CurveRuntimeState} state  Post-bounce state.
+ */
+function logCurveBounce(curve, axis, state) {
+    if (!LOG_CURVE_BOUNCES) return;
+    const id = (curve !== null && typeof curve === "object" && typeof curve.id === "string") ? curve.id : "?";
+    console.log(`[curve-bounce] ${id} ${axis}-wall vx=${state.vx.toFixed(3)} vy=${state.vy.toFixed(3)} dx=${state.dx.toFixed(3)} dy=${state.dy.toFixed(3)}`);
 }
 
 /**

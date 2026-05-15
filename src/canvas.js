@@ -22,6 +22,45 @@
  * continuously; while paused, the cursor stays put. See
  * simulation.js for the cursor advancement model.
  *
+ * When a curve carries non-zero velocity, the Simulation
+ * reports a runtime (dx, dy) offset that this module
+ * composes on top of the authored geometry by translating
+ * the drawing context before painting that curve
+ * (geometry, markers, and cursor all shift together). The
+ * authored shape on disk stays untouched; the visible
+ * curve drifts and bounces with the simulation's physics.
+ * The offset is in canvas units, so the pixel-space
+ * translation is (dx * pixelsPerUnit, -dy * pixelsPerUnit)
+ * to honour the canvas-Y-up / pixel-Y-down flip.
+ * Hit-testing for click, hover, and marquee-select reads
+ * curve geometry through the runtime offset so a curve
+ * that has drifted from its authored position is still
+ * grabbable where the user sees it; selection markers and
+ * resize handles likewise sit at the visible bounding box.
+ * Drag gestures split based on whether the dragged
+ * object is at its home position. A curve at home (zero
+ * runtime offset) or a sprite at home (runtime x, y
+ * equals authored x, y) is moved by mutating the
+ * authored shape / x, y and emitting a
+ * translateSelection edit on mouseup, a permanent move
+ * that updates State-at-Start in the inspector. An
+ * object away from home is moved by adjusting only its
+ * runtime state via setCurveRuntimeOffset (curves) or
+ * setSpriteRuntimePositionOnly (sprites); no scene edit
+ * fires, the inspector's State-at-Start row stays
+ * untouched, and the next rewind returns the object to
+ * its unchanged home. To permanently move a moving
+ * object the user rewinds it first, then drags from the
+ * now-at-home position.
+ *
+ * Resize gestures on curves always fold the runtime
+ * offset into the authored shape at gesture start (see
+ * bakeCurveOffsetIntoAuthored in simulation.js) and then
+ * edit the now-at-home shape, regardless of the offset
+ * state. The fold keeps the visible position unchanged
+ * across the gesture so the resize handles' anchor and
+ * the resulting scale align with what the user sees.
+ *
  * Coordinate model (see DESIGN.md sections 20 and 21):
  *   - Origin (0, 0) is at the centre of the visible canvas area.
  *   - Positive X is right, positive Y is up. Y flips when we
@@ -978,10 +1017,38 @@ export class Canvas {
 
     _drawCurves() {
         if (this._scene === null) return;
+        const ctx = this.ctx;
         for (const curve of this._scene.curves) {
+            // Compose the curve's runtime (dx, dy) offset
+            // from the Simulation on top of the authored
+            // geometry by translating the drawing context
+            // before painting. The offset is in canvas
+            // units; pixel-space translation is
+            // (dx * pixelsPerUnit, -dy * pixelsPerUnit)
+            // because canvas Y is up and pixel Y is down.
+            // The geometry, markers, and cursor all read
+            // their positions through toPixelX/toPixelY,
+            // so a single context translate shifts them in
+            // lockstep. Curves with no offset (no velocity,
+            // or simulation not yet wired) draw at their
+            // authored position with no extra context state.
+            const offset = this._simulation === null
+                ? null
+                : this._simulation.getCurveRuntimeOffset(curve.id);
+            const hasOffset = offset !== null && (offset.dx !== 0 || offset.dy !== 0);
+            if (hasOffset) {
+                ctx.save();
+                ctx.translate(
+                    offset.dx * this.pixelsPerUnit,
+                    -offset.dy * this.pixelsPerUnit,
+                );
+            }
             this._strokeCurveShape(curve);
             this._drawCurveMarkers(curve);
             this._drawCurveCursor(curve);
+            if (hasOffset) {
+                ctx.restore();
+            }
         }
     }
 
@@ -1254,6 +1321,25 @@ export class Canvas {
         return { x: sprite.x, y: sprite.y };
     }
 
+    /**
+     * Return the curve's runtime (dx, dy) offset from the
+     * simulation, or (0, 0) when the simulation isn't wired
+     * yet or has no runtime state for this curve id. Used
+     * by curve rendering, hit-testing, marquee selection,
+     * and the selection bbox so every code path that reads
+     * curve geometry treats the visible position
+     * (authored + offset) uniformly, without each call
+     * site having to repeat the simulation null-check or
+     * the runtime-state existence check.
+     * @param {string} curveId
+     * @returns {{dx: number, dy: number}}
+     */
+    _curveOffset(curveId) {
+        if (this._simulation === null) return { dx: 0, dy: 0 };
+        const o = this._simulation.getCurveRuntimeOffset(curveId);
+        return o === null ? { dx: 0, dy: 0 } : o;
+    }
+
     // --- Selection rendering ---
 
     _drawSelectionMarkers() {
@@ -1305,8 +1391,13 @@ export class Canvas {
         }
 
         // Curves — yellow dotted rectangle around the curve's
-        // bounding box, sized just large enough to enclose the
-        // full geometry. Matches GeoSonix's convention of
+        // visible bounding box, sized just large enough to
+        // enclose the full geometry at its current runtime
+        // position. The bbox comes from curveBoundingBox on
+        // the authored shape and the runtime (dx, dy) offset
+        // is added on top, so a curve that has drifted from
+        // its authored position carries its selection marker
+        // along visually. Matches GeoSonix's convention of
         // rectangular selection markers for curves; a marquee
         // that hugs the geometry would be more informative
         // about shape but is harder to recognise as a selection
@@ -1315,15 +1406,17 @@ export class Canvas {
         ctx.lineWidth = 1;
         for (const i of sel.curves) {
             if (i >= this._scene.curves.length) continue;
-            const bbox = curveBoundingBox(this._scene.curves[i].shape);
+            const c = this._scene.curves[i];
+            const bbox = curveBoundingBox(c.shape);
             if (bbox === null) continue;
-            const px1 = this.toPixelX(bbox.x1);
-            const px2 = this.toPixelX(bbox.x2);
+            const offset = this._curveOffset(c.id);
+            const px1 = this.toPixelX(bbox.x1 + offset.dx);
+            const px2 = this.toPixelX(bbox.x2 + offset.dx);
             // Canvas Y is up; pixel Y is down. The rectangle's
             // top in pixel space corresponds to bbox.y2 (max y
             // in canvas units).
-            const py1 = this.toPixelY(bbox.y2);
-            const py2 = this.toPixelY(bbox.y1);
+            const py1 = this.toPixelY(bbox.y2 + offset.dy);
+            const py2 = this.toPixelY(bbox.y1 + offset.dy);
             const padding = 4;
             ctx.strokeRect(
                 Math.round(px1 - padding) + 0.5,
@@ -1579,12 +1672,19 @@ export class Canvas {
         const SAMPLES = 64;
         for (let i = this._scene.curves.length - 1; i >= 0; i--) {
             const curve = this._scene.curves[i];
+            // Sample the authored shape and shift each
+            // sample by the curve's runtime (dx, dy) offset
+            // so the click hits the curve where the user
+            // sees it. Curves with no offset (no velocity,
+            // or simulation not yet wired) get (0, 0) from
+            // _curveOffset and behave exactly as before.
+            const offset = this._curveOffset(curve.id);
             for (let s = 0; s <= SAMPLES; s++) {
                 const t = s / SAMPLES;
                 const sample = sampleCurve(curve.shape, t);
                 if (sample === null) continue;
-                const dxPx = (canvasX - sample.x) * ppu;
-                const dyPx = (canvasY - sample.y) * ppu;
+                const dxPx = (canvasX - (sample.x + offset.dx)) * ppu;
+                const dyPx = (canvasY - (sample.y + offset.dy)) * ppu;
                 if (Math.hypot(dxPx, dyPx) <= HIT_THRESHOLD_PX) return i;
             }
         }
@@ -1726,12 +1826,18 @@ export class Canvas {
         }
         for (const i of sel.curves) {
             if (i >= this._scene.curves.length) continue;
-            const bbox = curveBoundingBox(this._scene.curves[i].shape);
+            const c = this._scene.curves[i];
+            const bbox = curveBoundingBox(c.shape);
             if (bbox === null) continue;
-            if (bbox.x1 < minX) minX = bbox.x1;
-            if (bbox.y1 < minY) minY = bbox.y1;
-            if (bbox.x2 > maxX) maxX = bbox.x2;
-            if (bbox.y2 > maxY) maxY = bbox.y2;
+            // Shift the authored bbox by the curve's runtime
+            // (dx, dy) offset so the selection bbox — and
+            // the resize handles that hang off it — sit at
+            // the visible position.
+            const offset = this._curveOffset(c.id);
+            if (bbox.x1 + offset.dx < minX) minX = bbox.x1 + offset.dx;
+            if (bbox.y1 + offset.dy < minY) minY = bbox.y1 + offset.dy;
+            if (bbox.x2 + offset.dx > maxX) maxX = bbox.x2 + offset.dx;
+            if (bbox.y2 + offset.dy > maxY) maxY = bbox.y2 + offset.dy;
         }
         if (!Number.isFinite(minX)) return null;
         return { x1: minX, y1: minY, x2: maxX, y2: maxY };
@@ -2165,6 +2271,23 @@ export class Canvas {
                     for (const idx of resizeSelection.curves) {
                         if (idx < this._scene.curves.length) {
                             const c = this._scene.curves[idx];
+                            // Fold any runtime offset into
+                            // the authored shape before
+                            // snapshotting. _getSelectionBbox
+                            // above returned the visible
+                            // bbox so the anchor sits in
+                            // visible canvas space; after
+                            // the fold the authored shape
+                            // equals the visible shape, the
+                            // anchor still aligns, and the
+                            // mouseup commit's scaleSelection
+                            // doesn't trigger an offset-reset
+                            // jump. See
+                            // bakeCurveOffsetIntoAuthored in
+                            // simulation.js.
+                            if (this._simulation !== null) {
+                                this._simulation.bakeCurveOffsetIntoAuthored(c);
+                            }
                             initialCurveShapes.set(idx, snapshotShapeForResize(c.shape));
                         }
                     }
@@ -2263,14 +2386,52 @@ export class Canvas {
                 /** @type {Map<number, {x: number, y: number}>} */
                 const initialSpritePositions = new Map();
                 /** @type {Map<number, {x: number, y: number}>} */
+                const initialSpriteRuntimePositions = new Map();
+                /** @type {Map<number, {x: number, y: number}>} */
                 const initialTriggerPositions = new Map();
                 /** @type {Map<number, any>} */
                 const initialCurveShapes = new Map();
+                /** @type {Map<number, {dx: number, dy: number}>} */
+                const initialCurveOffsets = new Map();
                 if (this._scene !== null) {
                     for (const idx of dragSelection.sprites) {
                         if (idx < this._scene.sprites.length) {
                             const s = this._scene.sprites[idx];
-                            initialSpritePositions.set(idx, { x: s.x, y: s.y });
+                            // Sprite at home (runtime x, y
+                            // equals authored x, y, meaning
+                            // no physics has displaced the
+                            // sprite since rewind / load)
+                            // takes the authored-edit path:
+                            // mutate sprite.x/y during drag,
+                            // emit translateSelection on
+                            // mouseup, permanently move.
+                            // Sprite away from home (sim
+                            // has run, state.x/y diverged
+                            // from sprite.x/y) takes the
+                            // runtime-edit path: mutate
+                            // only the runtime position;
+                            // the authored stays put so
+                            // rewind returns the sprite to
+                            // its unchanged home. Float
+                            // equality is exact here
+                            // because state.x is
+                            // initialised from sprite.x and
+                            // stays equal until physics
+                            // steps or a previous drag
+                            // explicitly diverged them.
+                            const runtime = this._simulation === null
+                                ? null
+                                : this._simulation.getSpriteRuntime(s.id);
+                            const atHome = runtime === null
+                                || (runtime.x === s.x && runtime.y === s.y);
+                            if (atHome) {
+                                initialSpritePositions.set(idx, { x: s.x, y: s.y });
+                            } else {
+                                initialSpriteRuntimePositions.set(idx, {
+                                    x: runtime.x,
+                                    y: runtime.y,
+                                });
+                            }
                         }
                     }
                     for (const idx of dragSelection.triggers) {
@@ -2282,7 +2443,34 @@ export class Canvas {
                     for (const idx of dragSelection.curves) {
                         if (idx < this._scene.curves.length) {
                             const c = this._scene.curves[idx];
-                            initialCurveShapes.set(idx, snapshotShapeCoords(c.shape));
+                            // Curve at home (zero runtime
+                            // offset) takes the shape-edit
+                            // path: mutate curve.shape
+                            // during drag, emit
+                            // translateSelection on mouseup,
+                            // permanently move. Curve away
+                            // from home (non-zero offset
+                            // because physics has displaced
+                            // it) takes the offset-edit
+                            // path: mutate only the runtime
+                            // offset via
+                            // setCurveRuntimeOffset; the
+                            // authored shape stays put so
+                            // rewind returns the curve to
+                            // its unchanged home.
+                            const offset = this._simulation === null
+                                ? null
+                                : this._simulation.getCurveRuntimeOffset(c.id);
+                            const atHome = offset === null
+                                || (offset.dx === 0 && offset.dy === 0);
+                            if (atHome) {
+                                initialCurveShapes.set(idx, snapshotShapeCoords(c.shape));
+                            } else {
+                                initialCurveOffsets.set(idx, {
+                                    dx: offset.dx,
+                                    dy: offset.dy,
+                                });
+                            }
                         }
                     }
                 }
@@ -2292,8 +2480,10 @@ export class Canvas {
                     startY: g.startY,
                     dragSelection,
                     initialSpritePositions,
+                    initialSpriteRuntimePositions,
                     initialTriggerPositions,
                     initialCurveShapes,
+                    initialCurveOffsets,
                 };
             } else {
                 this._gesture = {
@@ -2313,6 +2503,10 @@ export class Canvas {
             const dx = pos.x - g.startX;
             const dy = pos.y - g.startY;
             if (this._scene !== null) {
+                // Sprites in the authored-edit branch:
+                // mutate sprite.x/y and sync the
+                // simulation runtime so visual feedback
+                // tracks the cursor.
                 for (const [idx, init] of g.initialSpritePositions) {
                     if (idx < this._scene.sprites.length) {
                         this._scene.sprites[idx].x = init.x + dx;
@@ -2332,12 +2526,32 @@ export class Canvas {
                         }
                     }
                 }
+                // Sprites in the runtime-edit branch:
+                // mutate only the simulation's runtime
+                // position so visual feedback tracks the
+                // cursor while sprite.x/y (and therefore
+                // the inspector's State-at-Start) stay
+                // untouched. The next rewind returns the
+                // sprite to its unchanged authored home.
+                for (const [idx, init] of g.initialSpriteRuntimePositions) {
+                    if (idx < this._scene.sprites.length && this._simulation !== null) {
+                        this._simulation.setSpriteRuntimePositionOnly(
+                            this._scene.sprites[idx].id,
+                            init.x + dx,
+                            init.y + dy,
+                        );
+                    }
+                }
                 for (const [idx, init] of g.initialTriggerPositions) {
                     if (idx < this._scene.triggers.length) {
                         this._scene.triggers[idx].x = init.x + dx;
                         this._scene.triggers[idx].y = init.y + dy;
                     }
                 }
+                // Curves in the shape-edit branch: mutate
+                // the authored shape directly. The
+                // mouseup commit will translate the same
+                // delta into a translateSelection edit.
                 for (const [idx, initShape] of g.initialCurveShapes) {
                     if (idx < this._scene.curves.length) {
                         applyShapeCoordsTranslation(
@@ -2345,6 +2559,22 @@ export class Canvas {
                             initShape,
                             dx,
                             dy,
+                        );
+                    }
+                }
+                // Curves in the offset-edit branch: mutate
+                // only the runtime offset so visual
+                // feedback tracks the cursor while the
+                // authored shape (and therefore the
+                // inspector's State-at-Start) stays
+                // untouched. The next rewind returns the
+                // curve to its unchanged authored home.
+                for (const [idx, init] of g.initialCurveOffsets) {
+                    if (idx < this._scene.curves.length && this._simulation !== null) {
+                        this._simulation.setCurveRuntimeOffset(
+                            this._scene.curves[idx].id,
+                            init.dx + dx,
+                            init.dy + dy,
                         );
                     }
                 }
@@ -2504,12 +2734,36 @@ export class Canvas {
                 const pos = this._eventToCanvas(e);
                 const dx = pos.x - g.startX;
                 const dy = pos.y - g.startY;
-                this._editCallback({
-                    kind: "translateSelection",
-                    selection: g.dragSelection,
-                    dx,
-                    dy,
-                });
+                // Build the persisted-edit selection from
+                // only those objects whose drag took the
+                // authored-edit path (the per-object
+                // initial-state maps for sprites,
+                // triggers, and curves at home). Objects
+                // in the runtime-edit branch (sprites and
+                // curves that started the drag away from
+                // their home position) had their session-
+                // only mutation applied during the move
+                // and need no scene edit on commit;
+                // including them in translateSelection
+                // would write their displacement into
+                // scene.json and defeat the intent of
+                // leaving State-at-Start untouched.
+                const persistedSelection = {
+                    sprites: Array.from(g.initialSpritePositions.keys()),
+                    triggers: Array.from(g.initialTriggerPositions.keys()),
+                    curves: Array.from(g.initialCurveShapes.keys()),
+                };
+                const hasPersisted = persistedSelection.sprites.length > 0
+                    || persistedSelection.triggers.length > 0
+                    || persistedSelection.curves.length > 0;
+                if (hasPersisted) {
+                    this._editCallback({
+                        kind: "translateSelection",
+                        selection: persistedSelection,
+                        dx,
+                        dy,
+                    });
+                }
             }
             return;
         }
@@ -2548,16 +2802,22 @@ export class Canvas {
                 // curve grabs it. More forgiving than
                 // requiring the whole curve to be enclosed,
                 // which would make selection of long curves
-                // awkward.
+                // awkward. Each sample is shifted by the
+                // curve's runtime (dx, dy) offset so a
+                // marquee drawn around a drifted curve
+                // catches it at the visible position.
                 const SAMPLES = 32;
                 for (let i = 0; i < this._scene.curves.length; i++) {
                     const curve = this._scene.curves[i];
+                    const offset = this._curveOffset(curve.id);
                     let touched = false;
                     for (let s = 0; s <= SAMPLES; s++) {
                         const t = s / SAMPLES;
                         const sample = sampleCurve(curve.shape, t);
                         if (sample === null) continue;
-                        if (sample.x >= x1 && sample.x <= x2 && sample.y >= y1 && sample.y <= y2) {
+                        const sx = sample.x + offset.dx;
+                        const sy = sample.y + offset.dy;
+                        if (sx >= x1 && sx <= x2 && sy >= y1 && sy <= y2) {
                             touched = true;
                             break;
                         }
@@ -2894,7 +3154,12 @@ export class Canvas {
      * only the parametric cursor t. Canvas-space xy for a
      * curve is derived from t plus the curve's shape via the
      * sampleCurve helper that is module-private to this
-     * file.
+     * file, with the curve's runtime (dx, dy) offset added
+     * on top so a curve drifting under non-zero velocity
+     * reports its cursor at the visible position rather
+     * than the authored one. This keeps the firing engine's
+     * image-colour sampling aligned to where the user sees
+     * the cursor on screen.
      *
      * @param {string} curveId
      * @returns {{x: number, y: number} | null}
@@ -2913,7 +3178,9 @@ export class Canvas {
         const t = this._simulation.getCurveCursorT(curveId);
         const sample = sampleCurve(foundCurve.shape, t);
         if (sample === null) return null;
-        return { x: sample.x, y: sample.y };
+        const offset = this._simulation.getCurveRuntimeOffset(curveId);
+        if (offset === null) return { x: sample.x, y: sample.y };
+        return { x: sample.x + offset.dx, y: sample.y + offset.dy };
     }
 
     /**
