@@ -1,1 +1,5 @@
 .commit-msg.tmp
+commit-msg.txt
+commit-*.txt
+recent-commits.txt
+IN_FLIGHT.md
