@@ -20,9 +20,8 @@ to iterate on visually.
 - Language: JavaScript (ES2022+) with JSDoc type annotations.
 - Build: no build step; plain ES modules served directly.
 - Editor: CodeMirror 6.
-- Local dev: Python's http.server or similar lightweight static
-  server. Manual browser refresh initially; live reload can be
-  added later if useful.
+- Local dev: VS Code Live Server extension or similar lightweight
+  static server with live reload.
 - Source location: /Users/chrisgr/ProgrammingProjects/GXW, a new
   folder sibling to the preserved Python prototype at GX2.
 - Naming: GXW (W for Web). No reference to GeoMaestro in the name.

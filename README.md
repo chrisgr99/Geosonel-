@@ -25,15 +25,10 @@ reference. Active development has moved to this web version.
 No build step. Source files are plain HTML, CSS, and JavaScript
 modules.
 
-Local development uses any static file server. The simplest choice
-is Python's built-in http.server:
-
-```
-cd /Users/chrisgr/ProgrammingProjects/GXW
-python3 -m http.server 8000
-```
-
-Then open http://localhost:8000 in a modern browser.
+Local development uses any static file server, currently VS Code's
+Live Server extension. Open the project folder in VS Code and click
+'Go Live' in the status bar, which launches the app in the default
+browser and auto-reloads on file changes.
 
 ## Stack
 
