@@ -16,8 +16,8 @@ design/sections/section-01-vision.md gives the project vision in three short par
 
 For deeper reading as needed:
 
-- design/sections/section-NN-*.md holds the per-section design files. Sections 27 and 28 (Strudel pattern language; pattern authoring and cursor model) are the most current and authoritative.
-- design/TODO.md tracks pending work organised by tier and is the authoritative list of what is yet to do.
+- design/sections/section-NN-*.md holds the per-section design files. Sections 27 and 28 were superseded by the v2.5 fold-back and now exist as forwarding stubs pointing at the destinations of their content.
+- design/TODO.md tracks pending work organised by component and is the authoritative list of what is yet to do.
 - The git log is the authoritative history of what has shipped.
 - src/ holds the current implementation, useful when reasoning about what the code actually does today.
 

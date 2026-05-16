@@ -352,7 +352,6 @@ Items that span multiple components and don't sit neatly under any one.
 
 ### Pending
 
-- Design-doc modernization pass: section-by-section pass through DESIGN.md sections 1 to 26 bringing them in line with sections 27 and 28. In progress as of this revision.
 - Mute and solo carryover from GXSTR: per-source mute as persisted, Solo Selected as runtime-only.
 - Strudel version sync: GXW pins to a specific @strudel/web version; track strudel releases that affect the promoted modifier vocabulary.
-- Per-source flourish duration default shape: scene-level, per-kind, or per-source. Settle once Tier 5 use surfaces the right shape.
+- Per-source flourish duration default shape: scene-level, per-kind, or per-source. Settle once one-shot pattern use surfaces the right shape.
