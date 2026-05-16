@@ -4,7 +4,7 @@ GXW produces sound internally via the Web Audio API. The default synthesis engin
 
 A GXW preferences panel lets the user choose among superdough's voice categories and adjust output levels. Behaviours request voices through the parameter shape superdough uses internally (`{s: "bd"}`, `{s: "sawtooth", note: 60}`, and so on); GXW's musical-event format is a thin wrapper over that parameter object.
 
-The choice to adopt superdough is independent of the Strudel pattern-engine commitments documented in Section 27. superdough is its own npm package with no Strudel dependencies, so GXW installs and uses it on its own without pulling in any Strudel pattern code. Section 27 documents the packaging boundaries and the staged adoption plan.
+The choice to adopt superdough is independent of the Strudel pattern-engine architecture documented in Section 12 (Pattern Engine). superdough is its own npm package with no Strudel dependencies, so GXW installs and uses it on its own without pulling in any Strudel pattern code.
 
 For composers who want to drive external synthesisers or DAWs, GXW supports Web MIDI output on browsers that implement it (Chrome, Edge, and Firefox recent versions). Safari lacks Web MIDI support at time of writing; on Safari, superdough is the only output option. The sketch specifies an output preference in setup():
 
