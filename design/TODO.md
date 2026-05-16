@@ -36,7 +36,6 @@ Geometric paths with cyclePattern, optional cursor, and behaviour slots.
 
 ### Pending
 
-- Marker rendering for curves: visible glyphs at cyclePattern event positions along the curve geometry.
 - Bezier shape support in the implementation if it becomes a priority (deferred from the deprecated GeoMaestro shape catalogue).
 
 ## Triggers
@@ -61,16 +60,14 @@ Autonomous agents with physics-driven motion, optional cursor, and behaviour slo
 
 - Schema fields: x, y, vx, vy, maxSpeed, displayDiameter, color, mute, cursorR, cursorL.
 - Cursor extents (cursorL, cursorR) in the schema and inspector surface.
+- Initial velocity inspector field in Band 2: vX and vY in the Starting State row.
 - Canvas-wall collision under the inside-only rule (section 22).
 - Deterministic simulation: from (initial state, elapsed beats) the event sequence is bit-identical on every replay.
 
 ### Pending
 
-- Sprite cursor visualisation on the canvas; schema and inspector fields are in place, rendering is deferred.
-- Initial velocity inspector field for Band 2; vx and vy currently have no editing surface.
-- Default-direction convention for a stationary sprite (spec'd as horizontal); cursor behaviour at the apex of a parabolic trajectory.
+- Sprite cursor visualisation on the canvas, including the default-direction convention for a stationary sprite (spec'd as horizontal) and the cursor behaviour at the apex of a parabolic trajectory. Schema and inspector fields are in place; canvas rendering is deferred.
 - Cycle-end position-reset semantics for beatsPerCycle > 0, giving a deterministic looping wander when the sprite is image-driven.
-- Image-driven acceleration in onTick as the typical sprite physics pattern.
 
 ## Cursor-as-collider model
 
@@ -83,12 +80,10 @@ Cursors initiate collisions; collisions test the cursor line segment against the
 
 ### Pending
 
-- Cursor visibility gating tied to extent fields and mute; no render when extents are zero or the source is muted.
-- Greying of cursor extent fields in the inspector when mute is checked.
 - Cursor-vs-trigger collision detection (cursor line segment vs trigger point).
 - Cursor-vs-curve collision detection (cursor line segment vs curves' cyclePattern markers).
-- Cursor-vs-sprite collision detection. Sprite-vs-sprite collision is explicitly deferred.
-- ctx population for marker-collision-driven beenHit; Hap payload from the firing pattern flows into ctx, precise mechanism settles when collision firing is wired up.
+- Cursor-vs-sprite collision detection.
+- Context availability for procedural code in collisions and onTick: ctx population for marker-collision-driven beenHit (Hap payload from the firing pattern flows into ctx) plus image-driven acceleration in onTick (the typical sprite physics pattern reading image colour from ctx). Precise ctx fields settle when collision firing and onTick context are wired up.
 - Continuous collision detection (CCD) within each physics step so a fast-moving cursor cannot skip past a small target between frames.
 - beenHit-then-hasHit firing order for inter-source collisions.
 
@@ -114,7 +109,7 @@ The Strudel-driven evaluation primitive that converts cyclePattern strings into 
 
 ### Pending
 
-- Explicit cycle-counter reset inspector control for the rare deliberate-restart case.
+- Explicit reset gesture for a source's per-source cycle counter, surfaced as a small inspector control. Covers the rare case where a composer wants to restart cross-cycle modifier progress (alternation, .every, .iter) deliberately rather than letting the counter continue across pattern edits as it does by default.
 - One-shot firing path for trigger and sprite collisions: one-shot invocation with cycle counter zero and a user-chosen flourish duration.
 - Flourish duration field on relevant sources; default one beat at master BPM, override available per-source.
 - Inspector surface for the flourish-duration field.
@@ -196,8 +191,6 @@ The form-based property panel: Bands 1 (Identity), 2 (Geometry / visual), and 3 
 
 - validateFunctionName for the three callback function-name fields; currently accept any text.
 - Greying of canHit and hasHitFunction rows for triggers (covered under Triggers: Pending).
-- Greying of cursor extent fields when mute is checked (covered under Cursor-as-collider model: Pending).
-- Initial velocity inspector field for Band 2 (covered under Sprites: Pending).
 - Sprite cursor visualisation (covered under Sprites: Pending).
 - Musical-subdivision duration input parsing in the cycle-duration row (covered under Transport and tempo: Pending).
 
@@ -229,13 +222,13 @@ Visual presentation of curves, sprites, triggers, cursors, and markers on the li
 ### Shipped
 
 - Object rendering for curves (line, ellipse, piste geometries), sprites (disc), triggers (disc with color and size).
+- Marker rendering for curves: diamond glyphs at each event position derived from the curve's cyclePattern, with the parsed Pattern queried for one cycle's events and each event's fractional begin position mapped onto the curve's geometry.
 - Selection highlighting and selection markers.
 - Curve cursor rendering: cursor extents as perpendicular line segment.
 - Image background rendering at the underlying 1000x1000 resolution.
 
 ### Pending
 
-- Marker rendering for curves: visible glyphs at active cyclePattern event positions.
 - Sprite cursor visualisation (covered under Sprites: Pending).
 - Pre-firing glyphs for deterministic patterns: visible markers showing where events will fire within an upcoming cycle.
 - After-the-fact breadcrumbs for patterns whose positions do not render well as static markers (stochastic, dynamic-signal-driven).
