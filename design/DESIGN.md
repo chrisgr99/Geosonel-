@@ -18,7 +18,7 @@ GXW is a web app for composing music that emerges from 2D scenes. A scene is a s
 - [Section 6 — Sprites](sections/section-06-sprites.md)
 - [Section 7 — Transport and Tempo](sections/section-07-transport-and-tempo.md)
 - [Section 8 — Collision Model](sections/section-08-collision-model.md)
-- [Section 9 — Function Slots and Context Objects](sections/section-09-function-slots.md)
+- [Section 9 — Behaviour Slots and behaviors.js](sections/section-09-function-slots.md)
 - [Section 10 — Pattern Language](sections/section-10-pattern-language.md)
 - [Section 11 — Harmony Framework](sections/section-11-harmony.md)
 - [Section 12 — Pattern Engine](sections/section-12-pattern-engine.md)
