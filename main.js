@@ -160,6 +160,27 @@ async function main() {
     // --- Persistent storage request (best-effort, early) ---
     requestPersistentStorage().catch(() => {});
 
+    // --- Persisted Focus Canvas state ---
+    //
+    // Apply the user's last Focus Canvas state to <body>
+    // before any further UI runs. Setting the class
+    // synchronously here means the editor pane and message
+    // area never briefly paint visible on a reload where
+    // the user had Focus Canvas active. The CSS rule for
+    // body.focus-canvas overrides the editor pane's and
+    // message area's flex-basis to zero, so the first
+    // paint already shows the canvas filling the body. The
+    // same toggle is wired to the sidebar button, the View
+    // menu's Focus Canvas item, and Cmd-Shift-F.
+    try {
+        if (localStorage.getItem("gxw.layout.focusCanvas") === "true") {
+            document.body.classList.add("focus-canvas");
+        }
+    } catch (e) {
+        // localStorage may be unavailable (private-mode,
+        // quota error). Fall back to default-visible.
+    }
+
     // --- Initial bundle ---
     //
     // Emergency bypass: when the URL contains the query
@@ -431,12 +452,30 @@ async function main() {
     // for installDivider; the divider then sets the pane's
     // style.flex either to a persisted user size or to the
     // floor, overriding the CSS default. To gain canvas room
-    // entirely, use View → Hide Inspector (Cmd-\\), which
-    // hides the editor pane and the body divider together.
+    // entirely, use the sidebar button in the top row, View
+    // → Focus Canvas, or Cmd-Shift-F, which collapse the
+    // editor pane, the body divider, the message divider,
+    // and the message area together.
     const editorPaneEl = document.getElementById("editor-pane");
-    const inspectorFloor = (editorPaneEl instanceof HTMLElement)
-        ? editorPaneEl.offsetWidth
-        : undefined;
+    // Read the inspector's natural content width with
+    // Focus Canvas temporarily off. When the user has
+    // Focus Canvas active across reloads the body already
+    // carries focus-canvas by this point, which forces the
+    // editor pane's flex-basis to zero and makes
+    // offsetWidth read 0 — the wrong value for the floor
+    // (the divider would let the user drag the inspector
+    // away to nothing the next time they exited Focus
+    // Canvas). The class is removed, offsetWidth is read
+    // synchronously, and the class is re-applied in the
+    // same JS tick, so the browser never paints between
+    // the toggles.
+    let inspectorFloor;
+    if (editorPaneEl instanceof HTMLElement) {
+        const wasActive = document.body.classList.contains("focus-canvas");
+        if (wasActive) document.body.classList.remove("focus-canvas");
+        inspectorFloor = editorPaneEl.offsetWidth;
+        if (wasActive) document.body.classList.add("focus-canvas");
+    }
     installDivider({
         dividerId: "body-divider",
         firstPaneId: "editor-pane",
@@ -1911,26 +1950,54 @@ async function main() {
 
     // --- Menus ---
     //
-    // The View menu owns two visibility toggles that share
-    // the same end-result shape (canvas fills the body) but
-    // are conceptually distinct. Focus Canvas hides the
-    // editor pane plus the message area for distraction-free
-    // playback; Hide Inspector hides only the editor pane,
-    // leaving the message area visible, and is the route
-    // users take when they want canvas room without giving
-    // up the messages console. The two toggles are
-    // independent classes so either can be on without the
-    // other.
-    const toggleHideInspector = () => {
-        document.body.classList.toggle("inspector-hidden");
+    // Focus Canvas collapses the editor pane, the body
+    // divider, the message divider, and the message area
+    // together so the canvas fills as much of the window
+    // as possible — useful for image-driven composition
+    // where every pixel of canvas helps. Three entry
+    // points share one closure: the sidebar button at the
+    // top of the menu bar, the View menu's Focus Canvas
+    // item, and Cmd-Shift-F. The closure persists the new
+    // state to localStorage so the choice survives reloads,
+    // updates the button's visual to reflect whether Focus
+    // Canvas is currently active, and schedules a canvas
+    // redraw because the canvas pane's container is
+    // resizing.
+    const sidebarToggleBtn = document.getElementById("sidebar-toggle-btn");
+    const updateSidebarButtonState = () => {
+        if (!(sidebarToggleBtn instanceof HTMLElement)) return;
+        const active = document.body.classList.contains("focus-canvas");
+        sidebarToggleBtn.classList.toggle("sidebar-collapsed", active);
+        const label = active ? "Exit Focus Canvas" : "Focus Canvas";
+        sidebarToggleBtn.setAttribute("aria-label", label);
+        sidebarToggleBtn.setAttribute("title", `${label} (⇧⌘F)`);
     };
+    updateSidebarButtonState();
+
+    const toggleFocusCanvas = () => {
+        document.body.classList.toggle("focus-canvas");
+        const active = document.body.classList.contains("focus-canvas");
+        try {
+            localStorage.setItem(
+                "gxw.layout.focusCanvas",
+                active ? "true" : "false",
+            );
+        } catch (e) {
+            // Persistence failures don't block the in-memory
+            // toggle; the user just won't get the choice
+            // back on next reload.
+        }
+        updateSidebarButtonState();
+        canvas.scheduleDraw();
+    };
+
+    if (sidebarToggleBtn instanceof HTMLElement) {
+        sidebarToggleBtn.addEventListener("click", toggleFocusCanvas);
+    }
 
     installViewMenu({
         canvas,
-        toggleFocusCanvas: () => {
-            document.body.classList.toggle("focus-canvas");
-        },
-        toggleHideInspector,
+        toggleFocusCanvas,
     });
     installFileMenu({ session, messages, imageImporter, diskMirror });
     installEditMenu({ performUndo, performRedo, performDuplicate });

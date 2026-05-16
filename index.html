@@ -31,6 +31,20 @@
     <div id="app">
         <!-- Combined top row: menu on the left, transport centred, wordmark on the right. -->
         <header id="top-row">
+            <!-- Focus Canvas toggle: collapses the editor pane,
+                 body divider, message divider, and message area
+                 so the canvas fills the body. Always visible in
+                 the top row so it remains accessible whether
+                 Focus Canvas is active or not. The same toggle
+                 is bound to Cmd-Shift-F and the View → Focus
+                 Canvas menu item. State is persisted in
+                 localStorage so the choice survives reloads. -->
+            <button id="sidebar-toggle-btn" class="sidebar-toggle-btn" aria-label="Focus Canvas" title="Focus Canvas (⇧⌘F)">
+                <svg class="sidebar-toggle-icon" viewBox="0 0 20 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <rect x="1" y="2" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                    <rect class="sidebar-toggle-fill" x="1" y="2" width="6" height="12" rx="1.5" fill="currentColor"/>
+                </svg>
+            </button>
             <nav id="menubar" role="menubar" aria-label="Main menu">
                 <div class="menu-item" role="menuitem" tabindex="0">GXW</div>
                 <div class="menu-item" role="menuitem" tabindex="0">File</div>

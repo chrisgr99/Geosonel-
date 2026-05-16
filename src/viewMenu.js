@@ -51,11 +51,6 @@ export function installViewMenu(ctx) {
         },
         { separator: true },
         {
-            label: "Hide Inspector",
-            shortcut: "\u2318\\",
-            action: () => ctx.toggleHideInspector(),
-        },
-        {
             label: "Focus Canvas",
             shortcut: "\u21e7\u2318F",
             action: () => ctx.toggleFocusCanvas(),
@@ -76,15 +71,6 @@ export function installViewMenu(ctx) {
         if (e.shiftKey && e.key.toLowerCase() === "f") {
             e.preventDefault();
             ctx.toggleFocusCanvas();
-            return;
-        }
-
-        // Cmd-\\: Hide/Show Inspector toggle. Familiar from
-        // VS Code's sidebar toggle. Skipped when shift is
-        // held so it doesn't collide with future shortcuts.
-        if (!e.shiftKey && e.key === "\\") {
-            e.preventDefault();
-            ctx.toggleHideInspector();
             return;
         }
 

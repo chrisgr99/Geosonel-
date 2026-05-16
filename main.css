@@ -193,6 +193,60 @@ html, body {
     outline: none;
 }
 
+/* Focus Canvas toggle button.
+ *
+ * Sits as the leftmost element in the top row, before the
+ * menubar. Toggles Focus Canvas mode via the same closure
+ * the View menu's Focus Canvas item and Cmd-Shift-F use,
+ * so all three entry points share one piece of state.
+ * The icon is a small rectangle with a filled left segment
+ * representing the editor pane; the fill fades out when
+ * Focus Canvas is active so the button shows the mode's
+ * current state at a glance. Always visible — when Focus
+ * Canvas is on, this button is the most obvious place to
+ * turn it off.
+ */
+.sidebar-toggle-btn {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: #c8c8c8;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+}
+
+.sidebar-toggle-btn:hover {
+    background-color: #555555;
+    color: #ffffff;
+}
+
+.sidebar-toggle-btn:focus {
+    outline: none;
+    border-color: #c8c8c8;
+    color: #ffffff;
+}
+
+.sidebar-toggle-icon {
+    width: 20px;
+    height: 16px;
+}
+
+.sidebar-toggle-fill {
+    transition: opacity 150ms ease-out;
+    opacity: 0.85;
+}
+
+.sidebar-toggle-btn.sidebar-collapsed .sidebar-toggle-fill {
+    opacity: 0;
+}
+
 #transport-controls {
     display: flex;
     align-items: center;
@@ -1181,36 +1235,54 @@ html, body {
     margin: 4px 0;
 }
 
-/* --- Focus Canvas mode --- */
+/* Transition the editor pane and the body divider's flex so
+ * the Focus Canvas toggle (button, View menu, or
+ * Cmd-Shift-F) animates rather than jumping. The canvas
+ * pane has the same transition so its expansion animates
+ * in lockstep with the editor pane's collapse. The
+ * message area and its divider get the same treatment
+ * because Focus Canvas collapses them too so the canvas
+ * fills the body all the way to the window bottom. The
+ * transition applies in both directions; exiting Focus
+ * Canvas animates back to the persisted user width. */
+#editor-pane,
+#body-divider.divider-draggable,
+#canvas-pane,
+#message-area,
+#message-divider.divider-draggable {
+    transition: flex 220ms ease-out;
+}
 
-/* When body.focus-canvas is active, the editor pane and the
- * vertical body-divider are hidden so the canvas pane occupies
- * the entire body width. Top row and its horizontal divider
- * remain visible so the user stays oriented and can toggle
- * focus off via the View menu or keyboard. The editor pane's
- * CodeMirror state is preserved by display:none rather than
- * torn down. */
-body.focus-canvas #editor-pane,
+/* Focus Canvas mode. Collapses the editor pane, the body
+ * divider, the message divider, and the message area
+ * together so the canvas fills the body and reaches both
+ * the top divider and the window bottom — useful when the
+ * user wants every pixel for canvas-driven composition.
+ * Reached from three entry points: the sidebar button in
+ * the top row, View → Focus Canvas, and Cmd-Shift-F. The
+ * !important on flex overrides the inline flex-basis the
+ * body divider sets on the editor pane; overflow: hidden
+ * suppresses each region's contents from peeking out
+ * during the transition. */
+body.focus-canvas #editor-pane {
+    flex: 0 0 0 !important;
+    min-width: 0;
+    overflow: hidden;
+}
+
 body.focus-canvas #body-divider {
-    display: none;
+    flex: 0 0 0 !important;
+    overflow: hidden;
+}
+
+body.focus-canvas #message-area,
+body.focus-canvas #message-divider {
+    flex: 0 0 0 !important;
+    min-height: 0;
+    overflow: hidden;
 }
 
 body.focus-canvas #canvas-pane {
-    flex: 1 1 100% !important;
-}
-
-/* Hide Inspector toggle. Hides the editor pane and the body
- * divider, but unlike Focus Canvas it does not hide the
- * canvas pane's message area — the messages console is
- * useful even when the inspector is out of the way. The two
- * classes are independent so either can be active without
- * the other; both share the canvas-fills-body outcome. */
-body.inspector-hidden #editor-pane,
-body.inspector-hidden #body-divider {
-    display: none;
-}
-
-body.inspector-hidden #canvas-pane {
     flex: 1 1 100% !important;
 }
 
