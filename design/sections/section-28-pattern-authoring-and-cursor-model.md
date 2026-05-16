@@ -1,4 +1,4 @@
-# Section 28 — Pattern Authoring and the Cursor Model
+# Section 28 — Pattern Authoring and the Cursor Model (superseded — forwarding stub)
 
 Superseded. This section's content has been folded into the current sections during the v2.5 fold-back pass. The section file remains as a forwarding stub; future revisions may remove it entirely once external references (HANDOFF.md, in-source comments, the diary) have been updated.
 

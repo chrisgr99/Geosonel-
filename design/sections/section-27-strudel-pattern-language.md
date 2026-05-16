@@ -1,4 +1,4 @@
-# Section 27 — Strudel as Pattern Language
+# Section 27 — Strudel as Pattern Language (superseded — forwarding stub)
 
 Superseded. This section's content has been folded into the current sections during the v2.5 fold-back pass. The section file remains as a forwarding stub; future revisions may remove it entirely once external references (HANDOFF.md, in-source comments, the diary) have been updated.
 
