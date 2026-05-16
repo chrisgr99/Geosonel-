@@ -1,476 +1,358 @@
 # GXW TODO
 
-Forward-looking work items for GXW. Organised by tier so
-the natural reading order is the working order; items
-within each tier sit in rough dependency order. References
-to "section 27" and "section 28" mean
-design/sections/section-27-strudel-pattern-language.md and
-design/sections/section-28-pattern-authoring-and-cursor-model.md
-respectively.
+## How this file is organized
 
-What's done already (Tier 1 foundations, Stage A of Tier 3,
-the inspector bands 1-3, bidirectional navigation, the Code
-tab rename, the cleanup of pre-section-27 dead code, the
-integer-id naming refactor) lives in git log and in the
-state file's "Where we are" prose; not repeated here.
+Items are grouped by component or feature area. Each component has a Shipped subsection (what is in the implementation today) and a Pending subsection (what is designed but not yet implemented). Items move from Pending to Shipped as they land. The design doc captures the design itself; this file is the implementation-status companion.
 
-## Currently in flight
+For the previous tier-based view of work, see git log and earlier revisions of this file.
 
-Nothing.
+## Score structure
 
-## Tier 2: pattern evaluation primitive
+Scene data model: three object kinds (curves, triggers, sprites), score-level fields, and the optional background image.
 
-Section 27 has the architecture and the resolved design
-questions (the four "Resolved" items in its
-Pre-implementation design tasks subsection). The audio
-firing path decision is also resolved: full strudel-driven
-path, implemented in phases. See section 27's "Audio
-firing path: full strudel, phased rollout" subsection for
-the reasoning.
+### Shipped
 
-MIDI output integration is landed. Phase 3 is the next
-concrete action. The order:
+- Three object arrays in scene.json: curves, triggers, sprites.
+- Per-object string id with kind prefix (CRV*, TRG*, SPR*).
+- mute boolean per object, suppressing cursor rendering and the firing that depends on it.
+- hide boolean per curve for geometry rendering, surfaced only in the JSON tab.
+- Score-level fields in SCENE_FIELDS: bpm, tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo, imageName, output, triggerScale, spriteScale.
+- Optional background image resampled to 1000x1000 as a scalar field.
 
-Phase 1 — first sound. Landed.
+### Pending
 
-Phase 2 — edit-time polish. Landed. Cycle-boundary takeover,
-position-zero downbeat reliability via one-cycle-ahead
-scheduling, editor undo/redo across Cmd-Enter promote.
+- Schema cleanup of unused trigger fields: remove the payload field (type object, default null) and the note field (type integer, default null) next time the schema is updated.
 
-MIDI output integration. Landed. Routes GXW pattern firing
-through Web MIDI as the default output, replacing strudel's
-built-in samples for real-time external synth playback.
-See section 27's One-cycle-ahead scheduling and dynamic-
-signal late-refresh subsection for how it interacts with
-the Phase 3 dynamic-signal substrate. The "MIDI output
-integration" subsection below remains for follow-up items.
+## Curves
 
-Phase 3 — dynamic-signal substrate (plumbing only, no new
-signals). Firing-context pointer in try-finally, two-pass
-evaluation reconciled with the Phase 2 one-cycle-ahead
-scheduling via late-refresh dispatch (events are populated
-at cycle start for timing accuracy, but value fields
-refresh just before each event's audioTime so dynamic
-signals read simulation state at audible-near-play time),
-per-tick state snapshot. See section 27's One-cycle-ahead
-scheduling and dynamic-signal late-refresh subsection for
-the detailed design. Nothing observable changes at Phase
-3; the infrastructure regression surface is decoupled
-from the new-signal behaviour.
+Geometric paths with cyclePattern, optional cursor, and behaviour slots.
 
-Phase 4 — first dynamic signals. Image-colour signals first
-because sprite kinematic signals have no varying state to
-read until image-driven physics lands. pxLt (OKLCh
-perceptual lightness) as the first end-to-end signal
-exercising the full pixel-lookup and OKLCh-conversion
-pipeline, landed; the rest of the standard set follows in
-close succession because each is a trivial projection of
-the precomputed OKLab (a, b) values: pxChr (perceptual
-saturation), the four opponent-axis primaries pxR, pxG,
-pxY, pxB, and the four hue intermediates pxOr, pxPu, pxCy,
-pxLi. Sprite kinematic signals (spriteX, spriteY, spriteV)
-as a separate later step. Phase 4 overlaps with what Tier 4
-originally captured; that overlap is intentional now that
-the plumbing dynamic signals consume lives in Tier 2. See
-section 27 for the OKLCh rationale, the px-prefix naming
-convention, and the deferred items (distance-derivatives,
-EMA smoothing, composer-defined defineSignal).
+### Shipped
 
-The natural stop-and-back-out point is between Phase 2 and
-Phase 3. If Phase 1 and 2 land but dynamic-signal
-integration turns out intractable, the system is left in a
-working hybrid state — full deterministic and static-signal
-patterns work, dynamic signals don't — while the issue is
-worked out.
+- Shape types: line, ellipse, piste.
+- Cursor extents (cursorL, cursorR) defining a perpendicular line segment that sweeps along the curve.
+- stopAtCycle integer field that halts the cursor after the specified number of cycles.
+- Per-object curveThickness and cursorThickness fields for visual styling.
 
-Concrete deliverables across the phases:
+### Pending
 
-- The pattern primitive function itself: takes a parsed
-  Pattern, a cycle range, a wall-clock window, and a firing
-  source identifier; produces scheduled superdough events.
-- Pattern parse caching at edit-commit time; re-parse on
-  user edit.
-- Firing-context pointer mechanics: module-level pointer
-  set inside a try-finally block so any exception during
-  query doesn't strand the pointer.
-- Two-pass evaluation: Pass 1 establishes event times from
-  the pattern's structure at cycle start; Pass 2 re-queries
-  a tiny window at near-play time to refresh value fields.
-  Pass 1 wins on structure; Pass 2 only updates values.
-- Audio commit window machinery. Per-tick rolling forward
-  window (default 100ms) commits events whose audio play
-  time falls within the window to superdough's absolute
-  scheduling. Anything beyond the window stays on the
-  per-source pending list until a later tick reaches it.
-  Window size exposed as a configurable value for
-  per-environment tuning.
-- Cancellation of pre-scheduled events when a pattern
-  changes mid-cycle. Resolved by Phase 2's shipped
-  behaviour to no-cancellation: pattern edits preserve
-  pending events so the old pattern's current cycle plays
-  through cleanly to the next cycle wrap; superdough
-  cancellation primitives stay unused for this Tier 2
-  pattern-edit case. (Tier 5 one-shot work may still need
-  cancellation machinery for trigger-deletion edge cases.)
-- Per-source cycle counter management. Confirmed by
-  Phase 2 to continue-on-edit: cycle counter preserved
-  across pattern recompile, alternation continues across
-  edits at the next cycle index. An explicit reset
-  inspector control covers the rare deliberate-restart
-  case (TODO).
-- Mute and solo gating in the primitive. The pattern
-  evaluation layer respects mute and solo by skipping
-  queryArc entirely when a source is silenced.
-- Continuous firing path: cycle-wrap-triggered invocation
-  on curves whose cursor loops, free sprites with cycle
-  bindings, and so on. Sequential cycle counters advance
-  cross-cycle modifiers naturally.
-- Static signals working end-to-end (sine, saw, square,
-  tri, perlin work because they're pure functions of cycle
-  position; nothing dynamic-signal-specific needs to be in
-  place for these).
-- Concurrent firings: confirm per-source cycle counter
-  management behaves cleanly when multiple sources fire
-  patterns at the same simulation tick.
+- Marker rendering for curves: visible glyphs at cyclePattern event positions along the curve geometry.
+- Bezier shape support in the implementation if it becomes a priority (deferred from the deprecated GeoMaestro shape catalogue).
 
-## MIDI output integration follow-ups
+## Triggers
 
-The initial MIDI output integration is landed (see section
-27 for the architecture and the state file for what
-shipped). Remaining follow-up work:
+Static positions with cyclePattern firing on collision and three behaviour slots.
 
-First-cut scope, landed:
+### Shipped
 
-- Web MIDI initialisation in MIDISender class.
-- Audio-to-MIDI time conversion.
-- send(value, audioTime, duration) producing noteOn /
-  noteOff with note from value.note, velocity from
-  value.gain (default 64), channel from value.midichan
-  (default 1), duration multiplied by value.clip.
-- Firing engine routes through midiSender.send instead
-  of runtime.play; the superdough path is dormant but the
-  module remains in place.
-- IAC bus preference with first-output fallback.
-- Transport bar MIDI indicator with port name and per-
-  send flash.
+- Position (x, y), size (visual disc radius), color, and mute fields with inspector surface.
 
-Follow-ups, separate sessions:
+### Pending
 
-- Port selection UI. Dropdown in the inspector top bar
-  or a small menu in the Run menu, populated from
-  MIDIAccess.outputs. Persisted per-bundle so a score's
-  MIDI routing is part of its scene state.
-- Per-source output routing. Each curve or sprite
-  selects audio (superdough), MIDI, or both. Without
-  this, all sources go to the global default output.
-- Per-pattern routing via the strudel .midi() modifier.
-  Patterns with .midi() force MIDI regardless of
-  per-source default.
-- Polyphony tracking. When the same note number on the
-  same channel retriggers before its first noteOff fires,
-  decide whether to insert an explicit noteOff first
-  (cleaner) or rely on the receiving synth's voice
-  handling (simpler but synth-dependent).
-- Audio output preservation. Once MIDI is default, the
-  superdough path may still be useful for monitoring or
-  for sources that explicitly want audio. Keep both
-  paths alive.
+- Inspector greying of canHit and hasHitFunction rows for triggers; hasHit does not apply since triggers have no cursor.
+- Trigger one-shot cyclePattern firing helper, callable from beenHit. The design intent is that the cyclePattern plays for one cycle when the trigger is hit; the user opts in by calling the helper from their beenHit code.
+- Trigger schema cleanup of payload and note fields (covered under Score structure: Pending).
 
-## Tier 3 deferred polish
+## Sprites
 
-Stage A (the pattern-authoring surface) is complete.
-Remaining Tier 3 polish items, none blocking Tier 2:
+Autonomous agents with physics-driven motion, optional cursor, and behaviour slots.
 
-- Cmd-Plus and Cmd-Minus globally hijacked by canvas
-  zoom. The canvas's own keyboard handler for zoom-in /
-  zoom-out intercepts these keystrokes regardless of
-  where focus is, which means Chrome's page-zoom shortcut
-  never reaches the browser; only the Chrome View menu's
-  zoom command works. The handler is presumably attached
-  at window level rather than scoped to the canvas DOM
-  node. Fix is to make the handler focus-aware so the
-  browser handles Cmd-Plus when focus is outside the
-  canvas (in the editor, the inspector, the message bar,
-  the menu bar). Worth a small pass; cosmetic but it gets
-  in the way for users who rely on Chrome page-zoom.
-- Canvas objects look noticeably fainter than in earlier
-  sessions at a normal canvas zoom level. Cause unknown
-  as of 2026-05-12; possibly a CSS or DPR side-effect
-  from a recent commit, possibly orthogonal. Worth
-  investigating when next touching canvas rendering.
+### Shipped
 
-- Toolbar buildout: extend the canvas toolbar with the
-  ability to create triggers and curves (currently sprites
-  only), plus the rest of the GeoSonix-style tool palette
-  for score authoring.
-- Initial velocity inspector field for Band 2 (sprite vx
-  and vy have no editing surface yet).
-- Sprite cursorL and cursorR schema, plus matching
-  inspector fields. Currently sprites have no per-object
-  cursor-extent fields; cursor-as-collider treats sprites
-  with a single point. Edge cases to settle as part of this
-  work: stationary sprites' default direction (spec'd as
-  horizontal), and the cursor's behaviour during a brief
-  pause at the apex of a parabolic trajectory (presumably
-  stays in last direction).
-- Marker rendering for curves: visible glyphs at active
-  beat points.
-- Cursor visibility gating tied to extent fields and mute.
-  A cursor with zero extent or a muted source shouldn't
-  render.
-- Greying of cursor extent fields when mute is checked
-  (companion to the gating above; visual cue that the
-  fields have no effect while muted).
-- validateFunctionName for the callback-slot function-name
-  fields. Currently the fields accept any text; a soft
-  warning for invalid JS identifiers would catch typos
-  before they reach behaviors.js.
-- Live parse validation for labelled pattern blocks in the
-  Code tab. Cmd-Enter promote already parses and reports;
-  the labelled-block-aware linter would surface parse
-  errors as squiggles as the user types.
-- Edit-time pattern preview: a "play this pattern once"
-  affordance on labelled blocks. One-shot invocation of the
-  Tier 2 primitive with a small flourish window. Inherits
-  the user-gesture-for-AudioContext requirement, so a first
-  preview also serves as the engine-load gesture.
-- Mini-notation autocomplete in pattern editing surfaces:
-  sample names from loaded banks, modifier names, signal
-  names.
+- Schema fields: x, y, vx, vy, maxSpeed, displayDiameter, color, mute, cursorR, cursorL.
+- Cursor extents (cursorL, cursorR) in the schema and inspector surface.
+- Canvas-wall collision under the inside-only rule (section 22).
+- Deterministic simulation: from (initial state, elapsed beats) the event sequence is bit-identical on every replay.
 
-## Tier 4: dynamic signals
+### Pending
 
-Section 27's SignalRegistry plus firing-context plumbing
-plus the first signals. The firing-context plumbing
-overlaps with Tier 2 — implementing it there is fine; this
-tier adds the signals themselves.
+- Sprite cursor visualisation on the canvas; schema and inspector fields are in place, rendering is deferred.
+- Initial velocity inspector field for Band 2; vx and vy currently have no editing surface.
+- Default-direction convention for a stationary sprite (spec'd as horizontal); cursor behaviour at the apex of a parabolic trajectory.
+- Cycle-end position-reset semantics for beatsPerCycle > 0, giving a deterministic looping wander when the sprite is image-driven.
+- Image-driven acceleration in onTick as the typical sprite physics pattern.
 
-- SignalRegistry: shared registry mapping signal name to
-  query function. Signals consult the firing-context
-  pointer to learn which source's state to read.
-- Image-colour signals derived from the OKLCh
-  perceptually-uniform colour space and the source's
-  canvas position. The two scalars: pxLt (perceptual
-  brightness) and pxChr (perceptual saturation). The
-  four opponent-axis primaries with single-letter
-  shorts: pxR (redness), pxG (greenness), pxY
-  (yellowness), pxB (blueness). The four hue
-  intermediates with two-letter shorts, projecting onto
-  the 45-degree-rotated directions between adjacent
-  primaries: pxOr (orange), pxPu (purple), pxCy (cyan),
-  pxLi (lime). See section 27 for why OKLCh, why
-  opponent axes rather than angular hue, and why the
-  intermediates are in the standard set rather than
-  left to composer combination.
-- Sprite kinematic signals: spriteX, spriteY, spriteVx,
-  spriteVy, spriteV (scalar speed).
-- currentScale and the tonal-context signals (defer until
-  a tonal integration decision lands; see ongoing items).
-- Per-tick state snapshot mechanism: landed in Tier 2
-  Phase 3 (snapshot captured in firingEngine._capture-
-  Snapshot, exposed to dynamic signals via
-  firingContext.js). Phase 4 signals read from it via the
-  firing-context pointer.
-- Distance-derivatives of image signals (dpxLt_ds,
-  dpxR_ds, and so on) computed against arc length
-  traversed, and EMA smoothing of values: deferred to a
-  follow-up phase once the raw signals are working. Both
-  layer on top of the basic plumbing rather than altering
-  it.
-- defineSignal helper for composer-defined signals
-  expressed as plain JavaScript formulas over the
-  standard signal vocabulary: deferred to a follow-up
-  phase. Once it lands, composers can write things like
-  defineSignal('warmth', ({pxR, pxY}) => ...)
-  in their behaviors.js.
+## Cursor-as-collider model
 
-## Score-level harmony and tonal context
+Cursors initiate collisions; collisions test the cursor line segment against the target's centerpoint. Self-firing within a source's own cyclePattern is not a collision.
 
-Scene-level harmony definition that objects inherit, taking
-the GeoSonix harmony model and extending it with strudel's
-@strudel/tonal module. Substantial enough to deserve its
-own section between Tier 4 and Tier 5: it carries scene-
-level schema, inspector fields, and pattern-modifier
-integration together.
+### Shipped
 
-- Scene-level harmony schema fields in scene.json (scale,
-  key, possibly chord progression).
-- Object-level inheritance mechanism: per-object override
-  available, default inherits from scene.
-- Inspector fields for the scene-level harmony in the
-  Properties tab; per-object override surface where
-  relevant.
-- @strudel/tonal modifier integration in patterns so a
-  pattern can reference the inherited harmonic context.
-- currentScale and related signals exposing the active
-  scale to dynamic-signal-driven patterns (overlaps with
-  Tier 4 signal work; can be implemented there if
-  convenient).
-- Voicing, transpose, and chord-progression support per
-  the @strudel/tonal vocabulary plus the GeoSonix model.
+- Cursor extents on curves (cursorL, cursorR) and on sprites (in schema).
+- Line-vs-centerpoint collision geometry.
 
-## Tier 5: one-shot firing
+### Pending
 
-Trigger collisions and sprite-hit events through the same
-primitive, plus the surrounding collision detection
-machinery.
+- Cursor visibility gating tied to extent fields and mute; no render when extents are zero or the source is muted.
+- Greying of cursor extent fields in the inspector when mute is checked.
+- Cursor-vs-trigger collision detection (cursor line segment vs trigger point).
+- Cursor-vs-curve collision detection (cursor line segment vs curves' cyclePattern markers).
+- Cursor-vs-sprite collision detection. Sprite-vs-sprite collision is explicitly deferred.
+- ctx population for marker-collision-driven beenHit; Hap payload from the firing pattern flows into ctx, precise mechanism settles when collision firing is wired up.
+- Continuous collision detection (CCD) within each physics step so a fast-moving cursor cannot skip past a small target between frames.
+- beenHit-then-hasHit firing order for inter-source collisions.
 
-- Cursor-vs-trigger collision detection (cursor line
-  segment vs trigger point).
-- Cursor-vs-curve and cursor-vs-sprite collision detection.
-  Sprite-vs-sprite collision explicitly deferred.
-- Trigger-collision firing path: one-shot invocation of
-  the primitive with cycle counter zero and a user-chosen
-  flourish duration.
-- Sprite-hit-event firing path.
-- Flourish duration field on relevant sources (default one
-  beat at master BPM, override available per-source).
+## Pattern firing primitive
+
+The Strudel-driven evaluation primitive that converts cyclePattern strings into scheduled events.
+
+### Shipped
+
+- Pattern primitive function: takes a parsed Pattern, a cycle range, a wall-clock window, and a firing source identifier; produces scheduled events.
+- Parse caching at edit-commit time with re-parse on user edit.
+- Firing-context pointer mechanics: module-level pointer set inside a try-finally block.
+- Two-pass evaluation: Pass 1 establishes event times at cycle start, Pass 2 refreshes value fields near play time (one-cycle-ahead scheduling with late-refresh dispatch).
+- Audio commit window machinery: per-tick rolling forward window, default 100ms, configurable for environment tuning.
+- Cycle-boundary takeover and position-zero downbeat reliability.
+- No-cancellation on mid-cycle pattern edits: pending events from the old pattern play through cleanly to the next cycle wrap.
+- Per-source cycle counter continues across pattern recompile; alternation continues across edits at the next cycle index.
+- Mute and solo gating in the primitive; silenced sources skip queryArc entirely.
+- Continuous firing path for cursor-bearing sources.
+- Static signals end-to-end: sine, saw, square, tri, perlin work as pure functions of cycle position.
+- Concurrent firings across multiple sources at the same simulation tick.
+- Editor undo and redo across Cmd-Enter promote.
+
+### Pending
+
+- Explicit cycle-counter reset inspector control for the rare deliberate-restart case.
+- One-shot firing path for trigger and sprite collisions: one-shot invocation with cycle counter zero and a user-chosen flourish duration.
+- Flourish duration field on relevant sources; default one beat at master BPM, override available per-source.
 - Inspector surface for the flourish-duration field.
-- ctx population for marker-collision-driven beenHit. Hap
-  payload from the firing pattern flows into ctx; precise
-  mechanism settles here.
-- Soft warning in the editor for context-inappropriate
-  modifiers: cross-cycle modifiers (.slow, .late, .early,
-  alternation across firings) used on one-shot sources.
-  Yellow squiggle matching the soft-error pattern; doesn't
-  hard-reject.
+- Soft warning in the editor for context-inappropriate modifiers: cross-cycle modifiers used on one-shot sources surface as a yellow squiggle but do not hard-reject.
 
-## Tier 6: visualisation and polish
+## Dynamic signals
 
-Mostly absorbed into earlier tiers via marker rendering;
-Tier 6 is what's left.
+Image-colour and sprite kinematic signals consumed by patterns; firing-context plumbing.
 
-- Pre-firing glyphs for deterministic patterns: visible
-  markers showing where events will fire within an
-  upcoming cycle.
-- After-the-fact breadcrumbs for patterns whose positions
-  don't render well as static markers (stochastic,
-  dynamic-signal-driven).
-- Cursor-trail effects (optional polish).
-- Resolution of section 27's deferred design questions as
-  they surface in practice: most provisional decisions
-  (pre-scheduled cancellation, cycle-counter-on-edit) were
-  revisited and resolved firmly during Tier 2 Phase 2.
-  Any remaining ones get revisited here as Tier 5 and
-  Tier 6 work surfaces them.
+### Shipped
 
-## Ongoing or future considerations
+- SignalRegistry plumbing: firing-context pointer infrastructure, per-tick state snapshot.
+- pxLt (OKLCh perceptual lightness) as the first end-to-end signal.
+- Per-tick state snapshot mechanism; snapshot captured in firingEngine, exposed to dynamic signals via firingContext.js.
 
-Items that don't sit in a single tier but are worth
-tracking:
+### Pending
 
-- Pass through DESIGN.md sections 1-26 identifying parts
-  that fit naturally under the section 27/28 framing and
-  parts that need revision. Deferred indefinitely as a big
-  pass; instead, picked up section by section when adjacent
-  work surfaces a stale piece worth fixing.
-- Per-source flourish duration default shape: scene-level,
-  per-kind, or per-source. Real use during Tier 5 will tell
-  us which feels right.
-- Mute and solo carryover from GXSTR: GXSTR has Solo
-  Selected as runtime-only and per-source mute as persisted.
-  Both should carry to GXW.
-- Strudel version sync. Ongoing maintenance concern;
-  GXW pins to a specific @strudel/web version (matching
-  GXSTR's). Track strudel releases that affect the
-  promoted modifier vocabulary.
-- Original GXW project's TODO.md: doesn't exist on disk;
-  this file replaces it.
+- Remaining image-colour signals: pxChr (perceptual saturation), the four opponent-axis primaries (pxR, pxG, pxY, pxB), and the four hue intermediates (pxOr, pxPu, pxCy, pxLi). Each is a trivial projection of the precomputed OKLab values.
+- Sprite kinematic signals: spriteX, spriteY, spriteVx, spriteVy, spriteV.
+- currentScale and tonal-context signals; defer until tonal integration lands (see Harmony).
+- Distance-derivatives of image signals (dpxLt_ds, dpxR_ds, and so on) computed against arc length traversed.
+- EMA smoothing of dynamic signal values.
+- defineSignal helper for composer-defined signals expressed as JavaScript formulas over the standard vocabulary.
 
-## Authoring helpers and utility libraries
+## Transport and tempo
 
-Utility code that supports score authoring in
-behaviors.js. Not tier-aligned; pick up whenever appetite
-arises.
+Master BPM, beat counter, per-source cycle periods, play/stop/rewind, and determinism.
 
-- Strudel code completion and popup keyword help in the
-  Code tab editor. Autocomplete for sound, note, gain,
-  legato, and the rest of the strudel vocabulary; popup
-  help when the cursor lands on a keyword (signature,
-  short description, example). Strudel exposes its
-  CodeMirror completion sources as reusable packages, so
-  the integration is largely a matter of pulling those in
-  and wiring them into GXW's editor; the customisation
-  layer adds GXW-specific tokens on top — the dynamic
-  signal names (pxLt, pxChr, pxR, pxG, pxY, pxB, pxOr,
-  pxPu, pxCy, pxLi, spriteX, spriteY, spriteV), the
-  labelled-block syntax ($id: ...), and
-  the callback function name templates with object-id
-  completion drawn from the current scene's objects
-  (hasHit_SPR1, beenHit_TRG3, onTick_CRV1, etc.). Worth
-  pulling forward to the start of Tier 2 phase work —
-  having strudel's vocabulary autocomplete materially
-  reduces friction when sketching test patterns to hear,
-  and the GXW-specific extensions can grow alongside the
-  rest of Tier 2 as new signals and conventions land.
-- MIDI note helpers for Web MIDI output for callback-
-  driven authoring. The MIDI output integration described
-  in the Tier 2 section above routes pattern firing
-  through Web MIDI as the default output; this entry is
-  the complementary piece for behaviors.js callbacks that
-  want to construct MIDI events procedurally. Functions
-  like noteOn(channel, note, velocity), noteOff(channel,
-  note), controlChange(channel, controller, value),
-  pitchBend(channel, value). Callable from hasHit,
-  beenHit, onTick handlers. Useful when a one-off event
-  tied to canvas state doesn't fit into a pattern.
-  Lower priority than the pattern-driven MIDI work; lands
-  when there's a real use case from authoring scores.
-- JavaScript helper library for the declarative features
-  GeoSonix offered, ported and adapted for GXW. Specific
-  targets for porting determined by which GeoSonix
-  utilities prove useful in practice during GXW score
-  authoring.
+### Shipped
 
-## Toward project completion (later stages, general)
+- Master BPM in scene.json's bpm field; one tempo per score.
+- Per-source beatsPerCycle (default 4) giving cycle length in master beats.
+- Wall-clock cycle period derived as beatsPerCycle / master BPM × 60 seconds; tempo changes rescale automatically.
+- Play, stop, and rewind transport controls in the transport bar.
+- Rewind resets dynamic state (sprite positions, cursor positions, behaviour-internal counters) to authored starting state.
+- AudioContext.currentTime as the transport clock, providing sub-millisecond timing accuracy.
+- BPM field editable at runtime from the transport bar.
+- Determinism property: (initial scene state, elapsed beats) determines the event sequence; replay is bit-identical.
 
-These describe what "finished" looks like for GXW. Items
-here are intentionally general; they sharpen as earlier
-tiers land.
+### Pending
 
-- Package GXW as a desktop application via Electron (or
-  Tauri if bundle size becomes a concern). Reclaims the
-  browser chrome's vertical space, which matters more for
-  an accessibility-zoom user than the average — Chrome's
-  URL bar plus tab strip plus bookmarks bar costs roughly
-  100-150 vertical pixels of canvas real estate at typical
-  zoom levels. Also eliminates accidental browser-shortcut
-  firing (Cmd-W closing a tab, Cmd-T opening one, Cmd-L
-  jumping to the URL bar) and stray URL-bar dictation
-  capture, gives native macOS file dialogs and persistent
-  window state, removes the network dependency on esm.sh
-  by bundling imports locally so the app runs fully
-  offline, and lets right-click context menus carry useful
-  GXW operations rather than the browser's defaults.
-  Conversion is mechanical for an app structured like
-  GXW: small Electron main-process entry point opens a
-  BrowserWindow on index.html, local-bundling of CDN
-  imports, Electron Builder configuration for distribution.
-  A session or two of focused work once the browser-mode
-  core is doing useful musical work.
-- Performance pass: profiling and optimisation for scenes
-  with many sources, large cycle counts, dense patterns.
-- Accessibility pass: keyboard navigation through the
-  inspector and the canvas, screen-reader audit, contrast
-  review. The author's own accessibility needs (zoom,
-  Speak Selection, dictation) drive a lot of this in
-  practice but a deliberate pass at the end is worth doing.
-- Cross-browser check: Chrome is the primary target; verify
-  Firefox and Safari behaviour at least for the core flows
-  (load score, run scene, edit pattern, hear audio).
-- Example scores: a curated set of small scores
-  demonstrating common idioms — a single cycling curve,
-  a trigger-collision rhythm, a dynamic-signal-driven
-  melody. Doubles as documentation and as a smoke-test
-  suite.
-- README and user guide: how to install (or open the URL),
-  how to author a score, how the cursor-as-collider model
-  works, how patterns and slots fit together.
-- Score-sharing mechanism: export to disk (already exists
-  via the disk mirror), import a shared score, possibly a
-  URL-shareable format.
-- License audit: confirm @strudel/web licence compatibility
-  and surface attribution where needed.
-- Final design pass through DESIGN.md once everything is
-  implemented, with the implemented-versus-designed gap
-  reconciled.
+- Musical-subdivision duration extension to the inspector: allow durations to be specified not just as integer beats but as subdivisions of beats, for example "16 eighth notes" or "9 triplet quarter notes".
+
+## Harmony
+
+Score-level harmony with per-object override, eventually integrated with @strudel/tonal.
+
+### Shipped
+
+- Schema fields in SCENE_FIELDS for tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo. Inspector surface deferred.
+- HARMONY_OVERRIDE_FIELDS per object: the same keys with null default meaning "inherit from the score".
+
+### Pending
+
+- Inspector fields for scene-level harmony in the Properties tab.
+- Per-object harmony override surface where relevant.
+- @strudel/tonal modifier integration in patterns so a pattern can reference the inherited harmonic context.
+- currentScale and related dynamic signals exposing the active scale to dynamic-signal-driven patterns.
+- Voicing, transpose, and chord-progression support per the @strudel/tonal vocabulary plus the GeoSonix model.
+
+## Inspector
+
+The form-based property panel: Bands 1 (Identity), 2 (Geometry / visual), and 3 (Callback slots).
+
+### Shipped
+
+- Band 1: Object ID (read-only, single-select), Hide Cursor (stored in mute), cycle-duration row ("Cycles In [N] beats" with beatsPerCycle field), pattern row with Create / Go-to button.
+- Band 2: Starting State (X, Y, vX, vY), Curve Size (W, H), Curve Thickness, Cursor R/L, Cursor Thickness, Sprite/Trigger Size, Color.
+- Band 3: three callback rows (hasHit, beenHit, onTick) each with Can-X checkbox, function-name field, and Create / Go-to button.
+- Edit lifecycle with hard / soft / ok validation: hard errors squiggle red and refuse to commit on Enter, blur silently reverts; soft warnings squiggle yellow and commit; ok values commit cleanly.
+- Numeric scroll-wheel adjustment on numeric fields with 0.3 increments and validator clamping.
+- Greying rules for selection-dependent fields: multi-select restrictions and kind-specific fields.
+- Tri-state checkbox for boolean fields with mixed values in multi-select ("varies").
+- Selection summary and single-select title in the title bar.
+- Default function name proposal: slotName_objectId, e.g. onTick_sp_a3f7.
+- Create / Go-to button routing: createFunctionStub for missing functions, goToFunction for existing ones; createPatternBlock and goToObjectInCode for the pattern row.
+
+### Pending
+
+- validateFunctionName for the three callback function-name fields; currently accept any text.
+- Greying of canHit and hasHitFunction rows for triggers (covered under Triggers: Pending).
+- Greying of cursor extent fields when mute is checked (covered under Cursor-as-collider model: Pending).
+- Initial velocity inspector field for Band 2 (covered under Sprites: Pending).
+- Sprite cursor visualisation (covered under Sprites: Pending).
+- Musical-subdivision duration input parsing in the cycle-duration row (covered under Transport and tempo: Pending).
+
+## Code tab and behaviors.js
+
+The score's authoring surface for callbacks and labelled cyclePattern blocks.
+
+### Shipped
+
+- behaviors.js file structure: mix of procedural function declarations (for hasHit, beenHit, onTick), labelled pattern statements of the form $objectId: expression, and any helper functions or variables the user needs.
+- CodeMirror-based editor with JavaScript syntax highlighting, error squiggles, undo, explicit-save.
+- Edits trigger a scene reload through the same pipeline that reloads on scene.json edits.
+- Stage A3 of the pattern-authoring pivot: pattern row at the bottom of Band 1 with Create / Go-to button that scaffolds or navigates to labelled blocks.
+
+### Pending
+
+- Stage A4: Cmd-Enter routing that promotes a labelled block's expression body to the named object's cyclePattern field in scene.json.
+- Live parse validation for labelled pattern blocks in the Code tab; parse errors as squiggles as the user types.
+- Edit-time pattern preview: a "play this pattern once" affordance on labelled blocks, using a one-shot invocation of the firing primitive.
+- Strudel code completion and popup keyword help in the Code tab editor: autocomplete for sound, note, gain, legato, and the rest of the strudel vocabulary; popup help on cursor over a keyword.
+- Mini-notation autocomplete in pattern editing surfaces: sample names from loaded banks, modifier names, signal names.
+- MIDI note helpers for callback-driven authoring: noteOn, noteOff, controlChange, pitchBend callable from hasHit, beenHit, onTick handlers.
+- JavaScript helper library for declarative features ported from GeoSonix; specific targets determined by use in practice.
+
+## Canvas rendering
+
+Visual presentation of curves, sprites, triggers, cursors, and markers on the live canvas.
+
+### Shipped
+
+- Object rendering for curves (line, ellipse, piste geometries), sprites (disc), triggers (disc with color and size).
+- Selection highlighting and selection markers.
+- Curve cursor rendering: cursor extents as perpendicular line segment.
+- Image background rendering at the underlying 1000x1000 resolution.
+
+### Pending
+
+- Marker rendering for curves: visible glyphs at active cyclePattern event positions.
+- Sprite cursor visualisation (covered under Sprites: Pending).
+- Pre-firing glyphs for deterministic patterns: visible markers showing where events will fire within an upcoming cycle.
+- After-the-fact breadcrumbs for patterns whose positions do not render well as static markers (stochastic, dynamic-signal-driven).
+- Cursor-trail effects, optional polish.
+- Fix for Cmd-Plus and Cmd-Minus canvas-zoom hijack: scope the canvas keyboard handler so the browser's page-zoom shortcut works when focus is outside the canvas.
+- Investigate the faintness of canvas objects at normal canvas zoom (cause unknown; possibly CSS or DPR side-effect).
+
+## Audio output
+
+Audio playback path via superdough for in-browser sound.
+
+### Shipped
+
+- Superdough integration for the initial first-sound milestone.
+
+### Pending
+
+- Audio output preservation as a parallel path alongside MIDI: superdough remains useful for monitoring or for sources that explicitly want audio when MIDI is the default output.
+- Per-source output routing: each curve, sprite, or trigger selects audio, MIDI, or both (covered under MIDI output: Pending).
+
+## MIDI output
+
+Web MIDI output as the default playback target for real-time external synths.
+
+### Shipped
+
+- Web MIDI initialisation in the MIDISender class.
+- Audio-to-MIDI time conversion.
+- send(value, audioTime, duration) producing noteOn / noteOff with note from value.note, velocity from value.gain (default 64), channel from value.midichan (default 1), duration multiplied by value.clip.
+- Firing engine routes through midiSender.send instead of runtime.play; superdough path is dormant but the module remains in place.
+- IAC bus preference with first-output fallback.
+- Transport bar MIDI indicator with port name and per-send flash.
+
+### Pending
+
+- Port selection UI: dropdown in the inspector top bar or a small menu in the Run menu, populated from MIDIAccess.outputs. Persisted per-bundle so a score's MIDI routing is part of its scene state.
+- Per-source output routing: each curve or sprite selects audio (superdough), MIDI, or both.
+- Per-pattern routing via the strudel .midi() modifier; patterns with .midi() force MIDI regardless of per-source default.
+- Polyphony tracking when the same note number on the same channel retriggers before its first noteOff fires.
+
+## Score bundle
+
+Persistence: scene.json + behaviors.js + image, with load, save, autoreload, and version-management mechanisms.
+
+### Shipped
+
+- Disk-mirror infrastructure for reading and writing score bundles.
+- scene.json and behaviors.js editable through tabbed CodeMirror editors with explicit-save semantics.
+
+### Pending
+
+- Score-sharing mechanism: export to disk (exists), import a shared score, possibly a URL-shareable format.
+
+## Authoring workflow
+
+End-to-end flow for authoring a score: object creation, property editing, callback writing, pattern composition.
+
+### Shipped
+
+- Object creation via the canvas toolbar; sprites currently.
+- Inspector-driven property editing for all object kinds.
+- behaviors.js authoring with the labelled-block plus procedural-function structure.
+
+### Pending
+
+- Toolbar buildout: extend the canvas toolbar with the ability to create triggers and curves (currently sprites only), plus the rest of the GeoSonix-style tool palette.
+
+## AI handoff
+
+Mechanisms for AI assistants (Claude and similar) to read, edit, and reason about scores.
+
+### Shipped
+
+- Design doc (DESIGN.md and section files) plus the live HANDOFF.md and CLAUDE.md system bootstrap.
+- behaviors.js as a regular text file readable and editable through the standard file tools.
+
+### Pending
+
+- Revisit when the AI-handoff section of the design doc is modernized; no specific items captured at present.
+
+## Accessibility
+
+The author's setup uses zoom, Speak Selection, and dictation. Deliberate accessibility passes for keyboard, screen-reader, and contrast are deferred until the core experience is stable.
+
+### Shipped
+
+- Inspector layout designed for the author's zoom-based workflow.
+- Dark mode throughout.
+- High-contrast field styling: bright white labels, green frames, muted greys for disabled fields.
+
+### Pending
+
+- Keyboard navigation through the inspector and the canvas.
+- Screen-reader audit.
+- Contrast review.
+
+## Project completion
+
+What "finished" looks like for GXW. Items intentionally general; they sharpen as earlier work lands.
+
+### Pending
+
+- Package GXW as a desktop application via Electron (or Tauri if bundle size matters). Reclaims browser chrome's vertical space, eliminates accidental browser-shortcut firing, gives native macOS file dialogs and persistent window state, removes the esm.sh network dependency by local-bundling imports, and lets right-click context menus carry GXW operations.
+- Performance pass: profiling and optimisation for scenes with many sources, large cycle counts, and dense patterns.
+- Cross-browser check: Chrome is the primary target; verify Firefox and Safari for the core flows.
+- Example scores: a curated set of small scores demonstrating common idioms such as a single cycling curve, a trigger-collision rhythm, and a dynamic-signal-driven melody. Doubles as documentation and as a smoke-test suite.
+- README and user guide: install, author a score, cursor-as-collider model, patterns and slots.
+- License audit: confirm @strudel/web licence compatibility and surface attribution where needed.
+- Final design pass through DESIGN.md once everything is implemented, with the implemented-versus-designed gap reconciled.
+
+## Other ongoing items
+
+Items that span multiple components and don't sit neatly under any one.
+
+### Pending
+
+- Design-doc modernization pass: section-by-section pass through DESIGN.md sections 1 to 26 bringing them in line with sections 27 and 28. In progress as of this revision.
+- Mute and solo carryover from GXSTR: per-source mute as persisted, Solo Selected as runtime-only.
+- Strudel version sync: GXW pins to a specific @strudel/web version; track strudel releases that affect the promoted modifier vocabulary.
+- Per-source flourish duration default shape: scene-level, per-kind, or per-source. Settle once Tier 5 use surfaces the right shape.

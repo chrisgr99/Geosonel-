@@ -1,22 +1,7 @@
 ## Section 11 — Harmony Framework
 
-GXW inherits GeoSonix's two-level harmony model. The score has global harmonic parameters and each object can inherit these from the score or override them individually.
+Harmony is a future capability of GXW. It is not yet detailed in this design pass and largely unimplemented in the current code, though the schema fields for score-level harmonic context and per-object override exist (SCENE_FIELDS and HARMONY_OVERRIDE_FIELDS).
 
-Score-level parameters, set in setup():
-- tonic(name): the piece's tonic center (e.g. "C").
-- scale(name): the piece's scale (e.g. "Major", "D minor", "Dorian").
-- root(name): root note for the active chord, often identical to tonic but separable.
-- chord(name): the piece's current chord ("Major", "m7", etc.).
-- range(semitones): the number of semitones spanned by the output range.
-- rangeLow(midi): the lowest MIDI note in the output range.
-- mapNotesTo("Score" | "Scale" | "Chord" | "None"): the final mapping target.
+The intent is that GXW will offer score-level harmonic parameters (tonic, scale, root, chord, range, rangeLow, and a Map-Notes-To target) that each object inherits unless overridden. GeoSonix had this capability through a two-level inherit-or-override model with helpers like scaleMap and chordMap that mapped abstract values into concrete pitches. GXW will reach for the same shape, but the combination of @strudel/tonal (Strudel's tonal-theory module) and the new pattern-based authoring model substantially changes how the framework should be designed.
 
-Object-level overrides. Each object has the same parameters, defaulting to "inherit from score". Inheritance is the common case; per-object overrides let one curve play in D dorian while the rest of the piece stays in C major without rewriting the score. The override model is uniform across curves, triggers, and sprites — any object can override any parameter.
-
-Map-notes-to target. Controls the final pitch mapping:
-- "Score" — use the current effective scale and chord from the object's point of view (considering overrides).
-- "Scale" — map notes to the active scale only, ignoring chord.
-- "Chord" — map notes to chord tones only (typically one to four notes per octave).
-- "None" — no mapping; notes are emitted as-is from the function.
-
-Helper functions in message-function bodies consult these parameters. `scaleMap(value, { scale: ctx.scale, root: ctx.root })` maps a 0-1 input value into a note within the currently effective scale. `chordMap(index, { chord: ctx.chord })` returns the indexed chord tone. These helpers read from the context (which carries the current effective harmony for the firing object) rather than from score-level globals, so per-object overrides are automatically respected. The harmony-framework vocabulary, including the named scales and chords accepted by these fields, will broaden substantially when Tonal becomes the underlying theory engine; see Section 27.
+The detailed design is deferred until @strudel/tonal integration is taken up. For the current implementation state (schema fields shipped, everything else pending), see TODO.md under Harmony. For the pattern-language context in which a harmony framework would be consumed, see section 27.

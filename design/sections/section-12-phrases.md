@@ -1,12 +1,5 @@
 ## Section 12 — Phrases and the Compositor
 
-Curves, triggers, and sprites all emit Phrases — time-indexed event streams in beats.
+This section is retained as a placeholder. The Phrases-and-Compositor model originally described here is deprecated; an arrangement layer of some kind might be considered in a future revision, but no current design exists and nothing is known about the details now.
 
-A Phrase has:
-- A sequence of events, each with time offset in beats and musical parameters, plus optional metadata.
-- An overall duration in beats.
-- An optional name.
-
-The Compositor accepts phrases from any source (rendered curve output, recorded trigger output, accumulated sprite output, imported MIDI files) and arranges them on a beat-indexed timeline via a box-graph model inherited from GeoMaestro. Echo boxes, iterative boxes, synth boxes, mix boxes, effect boxes.
-
-The Compositor is deferred. Initial releases produce phrases but arrange them trivially.
+The section title remains in the table of contents.
