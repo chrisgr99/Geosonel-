@@ -1474,6 +1474,48 @@ body.focus-canvas #canvas-pane {
     overflow-y: auto;
 }
 
+/* --- Prompt dialog (in-app replacement for window.prompt) ---
+ *
+ * Used by dialog.js's promptDialog() — the styled in-app
+ * replacement for window.prompt(), which fails silently in
+ * Electron under sandboxed/context-isolated webPreferences.
+ * Styling matches the inspector's editable-field pattern
+ * (lighter-grey fill, bright green editability border) so
+ * the input reads as part of the same visual language.
+ */
+
+.modal-description {
+    color: #c8c8c8;
+    font-size: 12pt;
+    margin-bottom: 10px;
+    line-height: 1.35;
+}
+
+.modal-error {
+    color: #d4a05a;
+    font-size: 11pt;
+    margin-bottom: 10px;
+    line-height: 1.35;
+}
+
+.modal-input {
+    background-color: #6b6b6b;
+    border: 2px solid #46b03e;
+    border-radius: 3px;
+    padding: 0 12px;
+    color: #ffffff;
+    height: 36px;
+    font-size: 14pt;
+    font-family: inherit;
+    box-sizing: border-box;
+    margin-bottom: 12px;
+}
+
+.modal-input:focus {
+    outline: none;
+    border-color: #5fc858;
+}
+
 /* --- About dialog --- */
 
 .about-body {

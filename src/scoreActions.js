@@ -30,6 +30,7 @@ import {
     loadAllScoreRecords,
     setCurrentScoreName,
 } from "./storage.js";
+import { promptDialog } from "./dialog.js";
 
 /** @typedef {import("./messages.js").MessageArea} MessageArea */
 
@@ -329,11 +330,11 @@ export async function actionRestoreFromBackup(ctx) {
         const record = jsonToRecord(scoreJson);
         let finalName = record.name;
         if (existing.has(finalName)) {
-            const choice = window.prompt(
-                `A score named "${finalName}" already exists.\n\n` +
-                `Type a new name to rename, leave the field as-is to overwrite, or click Cancel to skip.`,
-                finalName
-            );
+            const choice = await promptDialog({
+                title: `A score named "${finalName}" already exists.`,
+                description: "Type a new name to rename, leave the field as-is to overwrite, or cancel to skip.",
+                defaultValue: finalName,
+            });
             if (choice === null) {
                 skipped++;
                 continue;
@@ -521,17 +522,25 @@ async function promptForUniqueName(message, defaultValue, messages, allowCurrent
     const existing = new Set(
         (await listAvailableScores()).map((s) => s.name)
     );
+    let value = defaultValue;
+    let errorMessage = "";
     while (true) {
-        const raw = window.prompt(message, defaultValue);
+        const raw = await promptDialog({
+            title: message,
+            defaultValue: value,
+            errorMessage,
+        });
         if (raw === null) return null;
         const name = raw.trim();
         if (name === "") {
-            window.alert("Name cannot be empty.");
+            value = raw;
+            errorMessage = "Name cannot be empty.";
             continue;
         }
         if (name === allowCurrent) return name;
         if (existing.has(name)) {
-            window.alert(`A score named "${name}" already exists.`);
+            value = name;
+            errorMessage = `A score named "${name}" already exists.`;
             continue;
         }
         return name;
@@ -547,18 +556,22 @@ async function resolveImportedName(proposedName) {
         (await listAvailableScores()).map((s) => s.name)
     );
     if (!existing.has(proposedName)) return proposedName;
+    let value = proposedName;
+    let errorMessage = "";
     while (true) {
-        const raw = window.prompt(
-            `A score named "${proposedName}" already exists. Enter a new name, ` +
-            `leave unchanged to overwrite, or cancel.`,
-            proposedName
-        );
+        const raw = await promptDialog({
+            title: `A score named "${proposedName}" already exists.`,
+            description: "Enter a new name, leave unchanged to overwrite, or cancel.",
+            defaultValue: value,
+            errorMessage,
+        });
         if (raw === null) return null;
         const name = raw.trim();
         if (name === "") return null;
         if (name === proposedName) return name;  // overwrite
         if (!existing.has(name)) return name;
-        window.alert(`That name also exists. Please choose another.`);
+        value = name;
+        errorMessage = "That name also exists. Please choose another.";
     }
 }
 
