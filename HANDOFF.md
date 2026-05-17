@@ -23,13 +23,15 @@ For deeper reading as needed:
 
 ## Current state
 
-Active work changes too frequently to be captured here. To learn what is currently in flight, give Chris the terminal command below to dump a summary of recent commits to a file, then read that file.
+The single most important file for picking up where work left off is /Users/chrisgr/ProgrammingProjects/GXW/IN_FLIGHT.md. Read it first. It captures the current task, decisions made in the previous session, files touched, the immediate next step, and any open questions. This is gitignored, lives in the repo, and is the mechanism by which a context-compressed or resumed session avoids losing in-progress work.
+
+For broader context on recently shipped work, give Chris the terminal command below to refresh a summary of recent commits to a file, then read it. The file can be stale relative to actual HEAD if a previous session forgot to regenerate it, so refresh it at session start before trusting its contents.
 
 ```
 cd /Users/chrisgr/ProgrammingProjects/GXW && git log -10 --date=short --pretty=format:'%h %ad %s' > /Users/chrisgr/Documents/gxw-recent-commits.txt
 ```
 
-After reading /Users/chrisgr/Documents/gxw-recent-commits.txt, consult design/TODO.md for pending work. Then ask Chris what he would like to focus on next.
+After IN_FLIGHT.md and the recent-commits file, consult design/TODO.md for pending work. Then ask Chris what he would like to focus on next.
 
 ## GXW conventions
 
