@@ -39,3 +39,4 @@ GXW is a web app for composing music that emerges from 2D scenes. A scene is a s
 - [Section 26 — Accessibility](sections/section-26-accessibility.md)
 - [Section 27 — Strudel as Pattern Language (superseded — forwarding stub)](sections/section-27-strudel-pattern-language.md)
 - [Section 28 — Pattern Authoring and the Cursor Model (superseded — forwarding stub)](sections/section-28-pattern-authoring-and-cursor-model.md)
+- [Section 29 — Electron Migration](sections/section-29-electron-migration.md)
