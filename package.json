@@ -1,0 +1,12 @@
+{
+  "name": "gxw",
+  "version": "0.1.0",
+  "description": "GXW - music composition app, native Mac build via Electron.",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^42.1.0"
+  }
+}
