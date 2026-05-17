@@ -6,12 +6,43 @@
  * item so clicking opens and closes it, clicking an item
  * triggers its action, clicking outside closes, and Escape
  * closes.
+ *
+ * Entries can carry optional `checked` and `disabled` getter
+ * functions for live state. When either is present, each
+ * open of the dropdown re-evaluates the getters and updates
+ * the row's classes accordingly: `.checked` items render a
+ * green checkmark in a left-hand column that the dropdown
+ * reserves for the whole menu (so labels stay aligned
+ * regardless of whether the current state is checked or
+ * unchecked), and `.disabled` items render in muted text and
+ * skip their action when clicked. View → Auto Zoom is the
+ * first user of both; the File menu's plain action-only
+ * entries are unaffected because they pass neither getter.
  */
 
 // @ts-check
 
 /**
- * @typedef {{ label: string, shortcut?: string, action: () => void } | { separator: true }} DropdownEntry
+ * @typedef {Object} DropdownActionEntry
+ * @property {string} label
+ * @property {string} [shortcut]
+ * @property {() => void} action
+ * @property {() => boolean} [checked]  Optional live getter; when present, the
+ *   menu paints a green checkmark next to the label whenever the getter returns
+ *   true at open time. Reserves a checkmark column across the whole dropdown
+ *   so other items don't shift between checked/unchecked refreshes.
+ * @property {() => boolean} [disabled] Optional live getter; when present and
+ *   returning true at open time, the row renders muted and the click action
+ *   is suppressed. Useful for items whose effect would be meaningless under
+ *   the current state (e.g. Zoom In while Auto Zoom is on).
+ */
+
+/**
+ * @typedef {{ separator: true }} DropdownSeparatorEntry
+ */
+
+/**
+ * @typedef {DropdownActionEntry | DropdownSeparatorEntry} DropdownEntry
  */
 
 /**
@@ -32,12 +63,41 @@ export function findMenuItem(label) {
 
 /**
  * Build a dropdown element from a list of entries.
+ *
+ * Returned element exposes a `refresh()` method that walks
+ * every row carrying a `checked` or `disabled` getter and
+ * toggles the matching CSS classes from the current getter
+ * value. wireDropdown calls refresh just before opening so
+ * the state shown reflects the moment the user clicks the
+ * trigger, not the moment buildDropdown ran.
+ *
  * @param {DropdownEntry[]} entries
- * @returns {HTMLElement}
+ * @returns {HTMLElement & { refresh: () => void }}
  */
 export function buildDropdown(entries) {
-    const el = document.createElement("div");
+    const el = /** @type {HTMLElement & { refresh: () => void }} */ (
+        document.createElement("div")
+    );
     el.className = "menu-dropdown";
+
+    // If any entry exposes a `checked` getter, the dropdown
+    // gets a marker class that the stylesheet uses to
+    // reserve a fixed-width column for the checkmark glyph
+    // on every row. Without the reservation, items would
+    // shift right when their `checked` state flips on,
+    // because the glyph would push the label horizontally.
+    // With the reservation, the column always exists and
+    // only the glyph's colour changes (transparent vs
+    // green) between checked and unchecked.
+    const hasCheckable = entries.some(
+        (entry) => !("separator" in entry) && typeof entry.checked === "function",
+    );
+    if (hasCheckable) {
+        el.classList.add("menu-dropdown-checkable");
+    }
+
+    /** @type {Array<{row: HTMLElement, entry: DropdownActionEntry}>} */
+    const stateRows = [];
 
     for (const entry of entries) {
         if ("separator" in entry) {
@@ -64,12 +124,39 @@ export function buildDropdown(entries) {
         }
 
         row.addEventListener("click", () => {
+            // Re-evaluate disabled at click time so a state
+            // that flipped between the dropdown opening and
+            // the click is respected (a corner case in
+            // practice, but a cheap guard). When disabled,
+            // the click is consumed without firing the
+            // action and without closing the dropdown, so
+            // the user sees the muted row stay put and can
+            // pick another item.
+            if (typeof entry.disabled === "function" && entry.disabled()) {
+                return;
+            }
             entry.action();
             el.classList.remove("open");
         });
 
+        if (typeof entry.checked === "function" ||
+            typeof entry.disabled === "function") {
+            stateRows.push({ row, entry });
+        }
+
         el.appendChild(row);
     }
+
+    el.refresh = () => {
+        for (const { row, entry } of stateRows) {
+            if (typeof entry.checked === "function") {
+                row.classList.toggle("checked", entry.checked());
+            }
+            if (typeof entry.disabled === "function") {
+                row.classList.toggle("disabled", entry.disabled());
+            }
+        }
+    };
 
     return el;
 }
@@ -77,14 +164,25 @@ export function buildDropdown(entries) {
 /**
  * Wire a dropdown element to its menu-bar trigger: click to
  * toggle, click-outside to close, Escape to close, and
- * position-on-open.
- * @param {HTMLElement} trigger  The menu-bar item element.
- * @param {HTMLElement} dropdown The dropdown element created by
+ * position-on-open. Calls dropdown.refresh() right before
+ * positioning so any live checked/disabled state is current
+ * at the moment the menu becomes visible.
+ * @param {HTMLElement & { refresh?: () => void }} trigger  The menu-bar item element.
+ * @param {HTMLElement & { refresh?: () => void }} dropdown The dropdown element created by
  *   buildDropdown().
  */
 export function wireDropdown(trigger, dropdown) {
     const close = () => dropdown.classList.remove("open");
     const open = () => {
+        // Refresh any live checked/disabled states so the
+        // dropdown shows current values rather than whatever
+        // they were at buildDropdown time. The hook is
+        // defensive (typeof check) because nothing in the
+        // type signature forces refresh to exist, even
+        // though buildDropdown always attaches it.
+        if (typeof dropdown.refresh === "function") {
+            dropdown.refresh();
+        }
         // Close any other open dropdowns so only one is visible
         // at a time.
         document.querySelectorAll(".menu-dropdown.open").forEach((el) => {

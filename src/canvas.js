@@ -94,6 +94,19 @@ const MAX_ZOOM = 20;
 const MENU_ZOOM_FACTOR = 1.2;    // one menu click / keyboard step
 const WHEEL_ZOOM_FACTOR = 1.08;  // per wheel notch
 
+// Margin, in CSS pixels, between the canvas fence and the
+// pane edge when Auto Zoom is active. The canvas border is
+// drawn as a stroke centred on the fence's logical edge,
+// CANVAS_BORDER_WIDTH_PX pixels wide, so the outer edge of
+// the border sits 1.5 px outside the logical edge. With a
+// 4 px margin between logical edge and pane edge, the
+// visible gap between the drawn border and the pane edge is
+// about 2.5 px — enough that the fence reads as a distinct
+// rectangle rather than blending into the pane boundary,
+// which is the whole point of running Auto Zoom one step
+// shy of an exact pixel-perfect fit.
+const AUTO_ZOOM_MARGIN_PX = 4;
+
 // Colour palette for the grid. Sits quietly on the near-
 // black background so the grid reads as reference rather
 // than as content, but each tone is calibrated to be
@@ -245,6 +258,24 @@ export class Canvas {
 
         this.zoom = 1;
         this.dpr = window.devicePixelRatio || 1;
+
+        /**
+         * When true, the canvas continuously fits its zoom
+         * to make the playable region (canvasW × canvasH,
+         * centred on the origin) maximally fill the pane
+         * with a small AUTO_ZOOM_MARGIN_PX gap between the
+         * fence and the pane edge. Manual zoom controls
+         * (zoomIn, zoomOut, resetZoom, wheel) become no-ops
+         * while this is true, so the View menu greys them
+         * out. The fit is re-applied whenever the pane
+         * resizes (via _onResize) or the scene's canvasW /
+         * canvasH change (via setScene). Set externally
+         * through setAutoZoom; main.js persists the choice
+         * to localStorage and restores it on the next page
+         * load.
+         * @type {boolean}
+         */
+        this._autoZoom = false;
 
         // Derived during _recomputeTransform(). Set to sane
         // defaults so code that runs before the first resize
@@ -547,15 +578,53 @@ export class Canvas {
     // --- Public API ---
 
     zoomIn() {
+        // Manual zoom is gated off while Auto Zoom holds
+        // the canvas at a fitted size; the View menu greys
+        // the corresponding entry out for the same reason.
+        if (this._autoZoom) return;
         this._setZoom(this.zoom * MENU_ZOOM_FACTOR);
     }
 
     zoomOut() {
+        if (this._autoZoom) return;
         this._setZoom(this.zoom / MENU_ZOOM_FACTOR);
     }
 
     resetZoom() {
+        if (this._autoZoom) return;
         this._setZoom(1);
+    }
+
+    /**
+     * Read the Auto Zoom flag. Used by viewMenu.js to drive
+     * the checked state of the Auto Zoom menu item and the
+     * disabled state of the Zoom In / Zoom Out / Reset Zoom
+     * items.
+     * @returns {boolean}
+     */
+    getAutoZoom() {
+        return this._autoZoom;
+    }
+
+    /**
+     * Enable or disable Auto Zoom. When transitioning from
+     * off to on, the current pane size and canvas dimensions
+     * are read and the zoom is set so the fence fills the
+     * pane with AUTO_ZOOM_MARGIN_PX of slack on each side.
+     * When transitioning from on to off, the current zoom
+     * value is left as-is — the user keeps the zoomed-to-fit
+     * view they were already looking at, and the manual
+     * controls become responsive again from there. Calls
+     * with the value already in effect are no-ops.
+     * @param {boolean} on
+     */
+    setAutoZoom(on) {
+        const next = Boolean(on);
+        if (this._autoZoom === next) return;
+        this._autoZoom = next;
+        if (next) {
+            this._applyAutoZoom();
+        }
     }
 
     /**
@@ -592,6 +661,16 @@ export class Canvas {
         // object.
         this._clearHover();
         this._refreshCurveMarkerPositions();
+        // Re-fit when Auto Zoom is active: the new scene
+        // may have different canvasW / canvasH from the
+        // previous one, in which case the fitted zoom needs
+        // to track before the next draw paints the fence at
+        // the wrong size. Cheap when canvas dimensions are
+        // unchanged because _setZoom early-returns on no-
+        // change.
+        if (this._autoZoom) {
+            this._applyAutoZoom();
+        }
         this.scheduleDraw();
     }
 
@@ -908,7 +987,12 @@ export class Canvas {
     }
 
     _onWheel(/** @type {WheelEvent} */ e) {
+        // preventDefault unconditionally so a Cmd-wheel
+        // never page-zooms the browser, regardless of
+        // whether Auto Zoom is consuming the event or the
+        // manual zoom is about to act on it.
         e.preventDefault();
+        if (this._autoZoom) return;
         // Trackpad pinches and mouse wheels both arrive as wheel
         // events. A negative deltaY means zoom in (scroll up).
         const factor = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR;
@@ -931,6 +1015,17 @@ export class Canvas {
         this.canvasEl.height = Math.round(this.cssHeight * this.dpr);
 
         this._recomputeTransform();
+        // Re-fit when Auto Zoom is active: a divider drag,
+        // a window resize, or a Focus Canvas toggle has
+        // just changed the pane size, and the fitted zoom
+        // needs to track. _applyAutoZoom calls _setZoom
+        // which itself calls _recomputeTransform and
+        // scheduleDraw, so the redraw at the bottom of this
+        // method is harmless (coalesced by
+        // scheduleDraw's drawScheduled flag).
+        if (this._autoZoom) {
+            this._applyAutoZoom();
+        }
         this.scheduleDraw();
     }
 
@@ -948,6 +1043,59 @@ export class Canvas {
         this.pixelsPerUnit = 1 / unitsPerPixel;
         this.halfWidthUnits = (this.cssWidth / 2) / this.pixelsPerUnit;
         this.halfHeightUnits = (this.cssHeight / 2) / this.pixelsPerUnit;
+    }
+
+    /**
+     * Compute and apply the zoom value that fits the canvas
+     * (the scene's canvasW × canvasH playable region) inside
+     * the current pane size, with AUTO_ZOOM_MARGIN_PX of
+     * slack on each side. Called whenever Auto Zoom has just
+     * been enabled, the pane has just resized, or the
+     * scene's canvasW / canvasH have just changed.
+     *
+     * Derivation: at any zoom the canvas's pixels-per-unit
+     * is zoom * basePpu, where basePpu is the value at
+     * zoom 1 that makes the legacy ±16 / ±12 region fit the
+     * pane (i.e. 1 / max(2 * DEFAULT_HALF_WIDTH / cssWidth,
+     * 2 * DEFAULT_HALF_HEIGHT / cssHeight)). To fit a region
+     * of size canvasW × canvasH with margin m on each side,
+     * the binding axis sets
+     *   ppuTarget = min((cssWidth - 2m) / canvasW,
+     *                   (cssHeight - 2m) / canvasH)
+     * and the auto-zoom value is ppuTarget / basePpu.
+     * _setZoom clamps to MIN_ZOOM / MAX_ZOOM so extreme
+     * canvas-to-pane ratios still produce a valid zoom.
+     *
+     * Skips silently when the pane has collapsed to zero or
+     * the scene's canvas dimensions are non-positive, so a
+     * transient state during a Focus Canvas toggle or an
+     * incomplete scene edit doesn't crash on a divide-by-
+     * zero or write nonsense into this.zoom.
+     */
+    _applyAutoZoom() {
+        if (this.cssWidth <= 0 || this.cssHeight <= 0) return;
+        const canvasW = this._getCanvasW();
+        const canvasH = this._getCanvasH();
+        if (canvasW <= 0 || canvasH <= 0) return;
+        const m = AUTO_ZOOM_MARGIN_PX;
+        const availW = this.cssWidth - 2 * m;
+        const availH = this.cssHeight - 2 * m;
+        if (availW <= 0 || availH <= 0) return;
+        const ppuTarget = Math.min(availW / canvasW, availH / canvasH);
+        const baseUnitsPerPixel = Math.max(
+            (2 * DEFAULT_HALF_WIDTH) / this.cssWidth,
+            (2 * DEFAULT_HALF_HEIGHT) / this.cssHeight,
+        );
+        const basePpu = 1 / baseUnitsPerPixel;
+        if (!Number.isFinite(basePpu) || basePpu <= 0) return;
+        const autoZoomValue = ppuTarget / basePpu;
+        if (!Number.isFinite(autoZoomValue) || autoZoomValue <= 0) return;
+        // _setZoom handles clamping to MIN_ZOOM / MAX_ZOOM,
+        // recomputing the transform, and scheduling a draw.
+        // _setZoom bypasses the _autoZoom gate (which only
+        // guards the user-facing zoom methods), so calling
+        // it from here while _autoZoom is true is correct.
+        this._setZoom(autoZoomValue);
     }
 
     _draw() {

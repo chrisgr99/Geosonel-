@@ -458,14 +458,14 @@ html, body {
 }
 
 #message-area {
-    flex: 0 0 140px;
+    flex: 0 0 56px;
     background-color: #262626;
     color: #c8c0b0;
     font-family: "SF Mono", "Menlo", "Courier New", monospace;
     font-size: 12pt;
     overflow: auto;
     padding: 8px 12px;
-    min-height: 40px;
+    min-height: 56px;
 }
 
 .message-placeholder {
@@ -1233,6 +1233,54 @@ html, body {
     height: 1px;
     background-color: #555555;
     margin: 4px 0;
+}
+
+/* Checkmark column reservation. When buildDropdown sees a
+ * checkable entry it adds .menu-dropdown-checkable to the
+ * dropdown; every item label inside that dropdown then
+ * carries an invisible checkmark glyph as a ::before
+ * pseudo-element. The transparent glyph claims the space
+ * the visible checkmark will need so labels stay
+ * column-aligned regardless of which row is currently
+ * checked. When the row is checked, the glyph's color
+ * shifts to the inspector's accent green and the
+ * checkmark appears in the reserved space. The colour
+ * accent matches inspector checkboxes (.insp-checkbox.checked,
+ * .cm-pattern-active-tag), so any "this is on" affordance
+ * in GXW reads in the same green. */
+.menu-dropdown-checkable .menu-dropdown-label::before {
+    content: "\2713";
+    color: transparent;
+    margin-right: 8px;
+    font-size: 14pt;
+    line-height: 1;
+    display: inline-block;
+    width: 0.8em;
+}
+
+.menu-dropdown-checkable .menu-dropdown-item.checked .menu-dropdown-label::before {
+    color: #5fc858;
+}
+
+/* Disabled item: muted text, no hover affordance, no
+ * pointer cursor. The click handler in menuUtil.js skips
+ * the action when the entry's disabled getter returns
+ * true, so the row reads as inert visually and is inert
+ * functionally. The shortcut hint dims along with the
+ * main label so the row reads as a single greyed unit
+ * rather than as a label-with-bright-shortcut. */
+.menu-dropdown-item.disabled {
+    color: #707070;
+    cursor: default;
+}
+
+.menu-dropdown-item.disabled:hover,
+.menu-dropdown-item.disabled:focus {
+    background-color: transparent;
+}
+
+.menu-dropdown-item.disabled .menu-dropdown-shortcut {
+    color: #606060;
 }
 
 /* Transition the editor pane and the body divider's flex so

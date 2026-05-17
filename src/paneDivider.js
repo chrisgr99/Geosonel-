@@ -44,6 +44,19 @@ const DEFAULT_MIN_PANE_PX = 100;
  *                                    across sessions. When provided, the saved
  *                                    size is applied at install time (clamped
  *                                    to the floor) and updated on every drag.
+ * @property {boolean} [invertControl] When true, the firstPane is treated as
+ *                                    sitting AFTER the divider in flow order
+ *                                    rather than before, so the controlled
+ *                                    pane's size is computed from the END of
+ *                                    the container instead of from the start.
+ *                                    Used by the message-divider, where the
+ *                                    message-area below the divider is the
+ *                                    pane whose size we want to control and
+ *                                    persist (with the canvas-area above
+ *                                    absorbing the residual via flex: 1 1
+ *                                    auto). Default false; body-divider uses
+ *                                    the default since its editor-pane sits
+ *                                    before the divider.
  */
 
 /**
@@ -59,6 +72,7 @@ export function installDivider(options) {
         onDrag,
         minPanePx,
         persistKey,
+        invertControl,
     } = options;
 
     const divider = document.getElementById(dividerId);
@@ -127,13 +141,27 @@ export function installDivider(options) {
         let total;
         let dividerSize;
         if (isVertical) {
-            newSize = e.clientX - rect.left;
             total = rect.width;
             dividerSize = divider.offsetWidth;
+            // invertControl: controlled pane sits to the RIGHT
+            // of the divider, so its width = container-right
+            // minus pointer-X. Without invertControl, controlled
+            // pane sits to the left and width = pointer-X minus
+            // container-left.
+            newSize = invertControl
+                ? total - (e.clientX - rect.left)
+                : e.clientX - rect.left;
         } else {
-            newSize = e.clientY - rect.top;
             total = rect.height;
             dividerSize = divider.offsetHeight;
+            // invertControl: controlled pane sits BELOW the
+            // divider, so its height = container-bottom minus
+            // pointer-Y. Without invertControl, controlled pane
+            // sits above and height = pointer-Y minus container-
+            // top.
+            newSize = invertControl
+                ? total - (e.clientY - rect.top)
+                : e.clientY - rect.top;
         }
 
         const max = total - DEFAULT_MIN_PANE_PX - dividerSize;

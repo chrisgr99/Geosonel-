@@ -487,9 +487,13 @@ async function main() {
     });
     installDivider({
         dividerId: "message-divider",
-        firstPaneId: "canvas-area",
+        firstPaneId: "message-area",
         containerId: "canvas-pane",
         orientation: "horizontal",
+        invertControl: true,
+        minPanePx: 56,
+        persistKey: "gxw.layout.messageAreaHeight",
+        onDrag: () => canvas.scheduleDraw(),
     });
 
     // --- Image importer ---
@@ -1995,9 +1999,51 @@ async function main() {
         sidebarToggleBtn.addEventListener("click", toggleFocusCanvas);
     }
 
+    // Auto Zoom toggle. When active, the View menu's Zoom
+    // In/Out/Reset items grey out and the canvas
+    // continuously fits the playable region (canvasW ×
+    // canvasH centred on the origin) inside the pane with
+    // AUTO_ZOOM_MARGIN_PX of slack on each side. The state
+    // persists across page reloads via localStorage,
+    // matching the Focus Canvas pattern. Persistence
+    // failures are non-fatal: the toggle still works in
+    // memory; the user just won't get the choice back on
+    // the next reload. There is no keyboard shortcut for
+    // Auto Zoom by design — it's a mode switch the user
+    // sets occasionally rather than a per-action gesture.
+    const toggleAutoZoom = () => {
+        const newState = !canvas.getAutoZoom();
+        canvas.setAutoZoom(newState);
+        try {
+            localStorage.setItem(
+                "gxw.layout.autoZoom",
+                newState ? "true" : "false",
+            );
+        } catch (e) {
+            // Persistence failed; the in-memory toggle
+            // still took effect.
+        }
+    };
+
+    // Restore the user's last Auto Zoom state. Done after
+    // the canvas is constructed and the initial _onResize
+    // has set cssWidth / cssHeight, but before the first
+    // runScene below populates a scene — setScene will
+    // re-run the fit against the loaded scene's canvasW /
+    // canvasH, so the canvas paints already at the fitted
+    // zoom rather than briefly at zoom 1 and then snapping.
+    try {
+        if (localStorage.getItem("gxw.layout.autoZoom") === "true") {
+            canvas.setAutoZoom(true);
+        }
+    } catch (e) {
+        // localStorage unavailable; default to Auto Zoom off.
+    }
+
     installViewMenu({
         canvas,
         toggleFocusCanvas,
+        toggleAutoZoom,
     });
     installFileMenu({ session, messages, imageImporter, diskMirror });
     installEditMenu({ performUndo, performRedo, performDuplicate });
