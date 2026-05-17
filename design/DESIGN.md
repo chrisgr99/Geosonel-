@@ -4,9 +4,9 @@ Version 2.5 — May 2026
 
 Status: Living document — sections split into individual files in `sections/`.
 
-Naming: GXW (working title).
+Naming: The user-facing name is GeoSonel — evoking the rhythm of Strudel without using the word, and continuing the Geo- prefix from the GeoMaestro and GeoSonix predecessors. GXW is the internal code name used in the codebase, repository, and dev workflow, and does not appear in any user-visible context.
 
-GXW is a web app for composing music that emerges from 2D scenes. A scene is a substrate of curves, triggers, and sprites placed at considered positions on a canvas. The user authors a Strudel pattern for each object that participates in the music; the object's events fire as its own cursor sweeps through the canvas, or when another object's cursor crosses it. Curves carry their cursors along their drawn geometry; sprites carry theirs perpendicular to motion; triggers stay still as point colliders that respond when a cursor lands on them. Per-object JavaScript callbacks (hasHit, beenHit, onTick) cover hit detection and per-tick behaviour. Scene state — image colour, sprite position, sprite motion — feeds into patterns through dynamic signals so the music tracks what happens on the canvas.
+GeoSonel is a web app for composing music that emerges from 2D scenes. A scene is a substrate of curves, triggers, and sprites placed at considered positions on a canvas. The user authors a Strudel pattern for each object that participates in the music; the object's events fire as its own cursor sweeps through the canvas, or when another object's cursor crosses it. Curves carry their cursors along their drawn geometry; sprites carry theirs perpendicular to motion; triggers stay still as point colliders that respond when a cursor lands on them. Per-object JavaScript callbacks (hasHit, beenHit, onTick) cover hit detection and per-tick behaviour. Scene state — image colour, sprite position, sprite motion — feeds into patterns through dynamic signals so the music tracks what happens on the canvas.
 
 ## Table of Contents
 
