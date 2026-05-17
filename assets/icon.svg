@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+GXW app icon.
+A bold green "G" on a near-black background, with a thin green border tracing
+the edge of the icon to distinguish it from the GeoSonix predecessor's icon.
+The background uses the macOS Big Sur squircle corner radius (~22.37% of size).
+The G is drawn as vector paths rather than text, so rsvg-convert does not have
+to resolve any fonts at build time.
+Source for the iconset built by scripts/build-icon.sh.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Background squircle -->
+  <rect x="0" y="0" width="1024" height="1024" rx="229" ry="229" fill="#0a0a0a"/>
+
+  <!-- Thin green border, inset from the edge -->
+  <rect x="12" y="12" width="1000" height="1000" rx="220" ry="220"
+        fill="none" stroke="#34D834" stroke-width="4"/>
+
+  <!-- Letter G drawn with stroked paths: a nearly-full circle opening on the
+       right, plus a horizontal bar coming inward from the gap. -->
+  <g fill="none" stroke="#34D834" stroke-width="90"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 765,394 A 280,280 0 1 0 765,630"/>
+    <path d="M 765,512 L 590,512"/>
+  </g>
+</svg>
