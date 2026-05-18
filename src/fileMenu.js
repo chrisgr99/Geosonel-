@@ -13,6 +13,8 @@ import {
     actionNewScore,
     actionOpenScore,
     actionDuplicateScore,
+    actionSaveAs,
+    actionRevert,
     actionRenameScore,
     actionDeleteScore,
     actionExportScore,
@@ -52,6 +54,16 @@ export function installFileMenu(ctx) {
             label: "Save",
             shortcut: "⌘S",
             action: () => { void ctx.editor.save(); },
+        },
+        {
+            label: "Save As\u2026",
+            shortcut: "⇧⌘S",
+            action: () => actionSaveAs(actionCtx),
+        },
+        {
+            label: "Revert to Saved",
+            disabled: () => !ctx.session.bundle.dirty,
+            action: () => actionRevert(actionCtx),
         },
         { separator: true },
         {

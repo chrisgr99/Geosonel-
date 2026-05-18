@@ -81,6 +81,20 @@ export class Bundle {
          * @type {Set<(dirty: boolean) => void>}
          */
         this._dirtyListeners = new Set();
+
+        /**
+         * Per-text-file content snapshots at last save (or
+         * initial load). Drives isFileDirty(): compares the
+         * current in-memory content of a text file against the
+         * snapshot to decide whether that specific file carries
+         * unsaved edits. Populated by fromRecord() and save()
+         * so it always reflects the bundle's last-disk state.
+         * The editor's per-tab dot indicators consume this; the
+         * canonical bundle-wide dirty flag remains the existing
+         * `dirty` boolean.
+         * @type {Map<string, string>}
+         */
+        this._lastSavedFiles = new Map();
     }
 
     // --- Dirty state ---
@@ -129,6 +143,43 @@ export class Bundle {
                 console.error("GXW: bundle dirty listener threw.", err);
             }
         }
+    }
+
+    /**
+     * Refresh the per-text-file last-saved snapshot from the
+     * current in-memory text-file content. Called whenever
+     * the bundle's disk state becomes the in-memory state,
+     * which is after fromRecord and after save. Binary files
+     * are not snapshotted; per-tab dirty detection only cares
+     * about the text tabs (Properties JSON and Code).
+     */
+    _captureSavedSnapshot() {
+        this._lastSavedFiles.clear();
+        for (const f of this.files) {
+            if (f.kind === "text") {
+                this._lastSavedFiles.set(f.name, f.content);
+            }
+        }
+    }
+
+    /**
+     * Per-file dirty state for a text file: true when its
+     * in-memory content differs from the last-saved snapshot.
+     * Returns false when the file is unknown to the bundle.
+     * A text file present in the bundle but absent from the
+     * snapshot (added since the last save) is reported dirty.
+     * The editor's per-tab dot indicators read this; the
+     * bundle-wide `dirty` flag remains the canonical signal
+     * for everything else.
+     * @param {string} name
+     * @returns {boolean}
+     */
+    isFileDirty(name) {
+        const file = this.getFile(name);
+        if (file === null) return false;
+        const saved = this._lastSavedFiles.get(name);
+        if (saved === undefined) return true;
+        return file.content !== saved;
     }
 
     // --- Text file operations ---
@@ -292,6 +343,7 @@ export class Bundle {
             }
         }
         bundle.imageName = record.imageName;
+        bundle._captureSavedSnapshot();
         bundle.markClean();
         return bundle;
     }
@@ -309,6 +361,7 @@ export class Bundle {
      */
     async save() {
         await saveScoreRecord(this.toRecord());
+        this._captureSavedSnapshot();
         this.markClean();
     }
 }

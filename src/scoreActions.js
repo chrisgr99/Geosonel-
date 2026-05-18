@@ -30,7 +30,7 @@ import {
     loadAllScoreRecords,
     setCurrentScoreName,
 } from "./storage.js";
-import { promptDialog, confirmDiscardDialog } from "./dialog.js";
+import { promptDialog, confirmDialog, confirmDiscardDialog } from "./dialog.js";
 
 /** @typedef {import("./messages.js").MessageArea} MessageArea */
 /** @typedef {import("./editor.js").TabbedEditor} TabbedEditor */
@@ -151,6 +151,134 @@ export async function actionDuplicateScore(ctx) {
     );
     if (newName === null) return;
     await duplicateScoreAs(ctx, ctx.session.bundle.toRecord(), newName);
+}
+
+/**
+ * Save As: prompt for a new name, write the current in-
+ * memory bundle's state under that name, and switch the
+ * editing target to the new bundle. The original score on
+ * disk stays in its last-saved state (the dirty in-memory
+ * edits land in the new bundle, not the old one). Distinct
+ * from Duplicate Score, which forks from the on-disk state
+ * rather than from memory.
+ *
+ * On collision the action follows the Mac-standard warn-
+ * and-confirm-overwrite pattern: a Replace / Cancel confirm
+ * dialog asks whether to overwrite the existing score.
+ * Replace writes through and overwrites; Cancel returns to
+ * the prompt with the value still in place so the user can
+ * adjust it. Typing the current score's name back into the
+ * prompt is treated as a save-in-place (matches the native
+ * macOS Save panel behaviour) and falls through to
+ * ctx.editor.save() rather than going through the new-
+ * bundle code path.
+ *
+ * Stage 3 will swap this prompt-plus-confirm sequence for a
+ * single native Save panel call (via Electron's
+ * dialog.showSaveDialog) that handles overwrite confirmation
+ * at the OS level; the user-visible behaviour stays the same
+ * across the transition.
+ *
+ * @param {ScoreActionsContext} ctx
+ */
+export async function actionSaveAs(ctx) {
+    const oldName = ctx.session.bundle.name;
+    const existing = new Set(
+        (await listAvailableScores()).map((s) => s.name)
+    );
+
+    let value = `${oldName} copy`;
+    let errorMessage = "";
+    /** @type {string | null} */
+    let finalName = null;
+    while (finalName === null) {
+        const raw = await promptDialog({
+            title: `Save "${oldName}" as:`,
+            defaultValue: value,
+            okLabel: "Save",
+            errorMessage,
+        });
+        if (raw === null) return;
+        const name = raw.trim();
+        if (name === "") {
+            value = raw;
+            errorMessage = "Name cannot be empty.";
+            continue;
+        }
+        if (name === oldName) {
+            // Save-in-place: matches native macOS Save
+            // panel behaviour when the user types the
+            // current filename. Goes through the standard
+            // editor.save() path so the onSaved toast and
+            // dirty-state transition fire normally.
+            await ctx.editor.save();
+            return;
+        }
+        if (existing.has(name)) {
+            const replace = await confirmDialog({
+                title: `A score named "${name}" already exists. Replace it?`,
+                confirmLabel: "Replace",
+            });
+            if (!replace) {
+                value = name;
+                errorMessage = "";
+                continue;
+            }
+        }
+        finalName = name;
+    }
+
+    // Write the in-memory bundle's state under the new name
+    // via saveScoreRecord (Bundle.save would persist under
+    // the bundle's current name, not the new one). Then
+    // load the freshly-written record back as a clean
+    // bundle and switch the editor over.
+    const record = ctx.session.bundle.toRecord();
+    record.name = finalName;
+    record.updatedAt = Date.now();
+    await saveScoreRecord(record);
+
+    const bundle = await loadScoreByName(finalName);
+    if (bundle === null) {
+        ctx.messages.write(`Failed to save as "${finalName}".`, "error");
+        return;
+    }
+    await setCurrentScoreName(finalName);
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Saved as "${finalName}".`);
+}
+
+/**
+ * Revert to Saved: reload the active score from disk,
+ * discarding any in-memory dirty edits. Two-button Mac-
+ * standard confirmation following the Pages/TextEdit
+ * pattern: title "Revert to the last saved version of
+ * <name>?", description "Any unsaved changes will be
+ * lost.", buttons Cancel and Revert with Revert as the
+ * primary Return-bound action. The File menu item is greyed
+ * out when the bundle is clean (the dirty-state getter
+ * feeds the dropdown's disabled state at open time), so
+ * this action is only invoked when there's actually
+ * unsaved work to discard.
+ *
+ * @param {ScoreActionsContext} ctx
+ */
+export async function actionRevert(ctx) {
+    if (!ctx.session.bundle.dirty) return;
+    const name = ctx.session.bundle.name;
+    const ok = await confirmDialog({
+        title: `Revert to the last saved version of \u201c${name}\u201d?`,
+        description: "Any unsaved changes will be lost.",
+        confirmLabel: "Revert",
+    });
+    if (!ok) return;
+    const bundle = await loadScoreByName(name);
+    if (bundle === null) {
+        ctx.messages.write(`Could not reload "${name}" from disk.`, "error");
+        return;
+    }
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Reverted "${name}" to last saved version.`);
 }
 
 /**

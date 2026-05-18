@@ -79,6 +79,7 @@ import { SceneLoader } from "./src/sceneLoader.js";
 import { DiskMirror } from "./src/diskMirror.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
+import { actionSaveAs } from "./src/scoreActions.js";
 import {
     parsePatternToPositions,
     formatParseResultForConsole,
@@ -242,14 +243,40 @@ async function main() {
         }
     }
 
+    // --- Electron detection ---
+    //
+    // The Electron build exposes window.gxwStorage (set in
+    // electron-preload.js); the web build does not. The
+    // detection feeds the saved-indicator labelling and the
+    // title-bar wiring below: in the web build, the indicator
+    // reads "Saved to browser storage" instead of plain
+    // "Saved" and the window title carries a "(Browser)"
+    // suffix so the IndexedDB durability tradeoff comes up on
+    // every save and on every glance at the title bar. In the
+    // Electron build, the dirty signal additionally appears
+    // as the standard macOS dot in the close-button circle
+    // via setDocumentEdited.
+    const isElectron =
+        typeof (/** @type {any} */ (window).gxwStorage) === "object" &&
+        (/** @type {any} */ (window).gxwStorage) !== null;
+
     // --- Saved indicator (top row) ---
     //
     // The textual Saved / Unsaved / just-saved badge in the
     // top-right corner of the menu bar. The persistent dirty
     // signal also drives the window title and, on Electron,
     // setDocumentEdited (the standard macOS dot in the close-
-    // button circle). updateTitleBar handles those.
+    // button circle). updateTitleBar handles those. In the
+    // web build the "Saved" label is replaced with "Saved to
+    // browser storage" so the storage layer is named on every
+    // save; CSS gives the wider label a matching min-width
+    // via the saved-indicator-web-mode class so the indicator
+    // doesn't jitter on text changes.
     const savedIndicatorEl = document.getElementById("saved-indicator");
+    if (!isElectron && savedIndicatorEl instanceof HTMLElement) {
+        savedIndicatorEl.classList.add("saved-indicator-web-mode");
+    }
+    const savedLabel = isElectron ? "Saved" : "Saved to browser storage";
     const setSavedIndicator = (/** @type {"saved" | "unsaved" | "just-saved"} */ state) => {
         if (!(savedIndicatorEl instanceof HTMLElement)) return;
         savedIndicatorEl.classList.remove("unsaved", "just-saved");
@@ -257,7 +284,7 @@ async function main() {
             savedIndicatorEl.textContent = "Unsaved";
             savedIndicatorEl.classList.add("unsaved");
         } else {
-            savedIndicatorEl.textContent = "Saved";
+            savedIndicatorEl.textContent = savedLabel;
             if (state === "just-saved") {
                 savedIndicatorEl.classList.add("just-saved");
             }
@@ -265,19 +292,15 @@ async function main() {
     };
     setSavedIndicator("saved");
 
-    // --- Electron detection and title-bar wiring ---
+    // --- Title-bar wiring ---
     //
-    // The Electron build exposes window.gxwStorage (set in
-    // electron-preload.js); the web build does not. Title-bar
-    // surfaces differ between the two: Electron uses macOS's
-    // setDocumentEdited so the dirty signal appears as the
-    // dot in the close-button circle, while the web version
-    // adds a leading bullet to document.title because there
-    // is no close-button dot in a browser tab.
-    const isElectron =
-        typeof (/** @type {any} */ (window).gxwStorage) === "object" &&
-        (/** @type {any} */ (window).gxwStorage) !== null;
-
+    // The window title carries the score name and a
+    // "(Browser)" suffix in the web build so users always
+    // see at a glance which storage layer holds their work.
+    // The dirty signal is surfaced by setDocumentEdited under
+    // Electron (the close-button dot) and by a leading bullet
+    // on the title text on web (there is no close-button dot
+    // in a browser tab).
     const updateTitleBar = (/** @type {boolean} */ dirty) => {
         // Resolves session.bundle.name at call time, so the title
         // tracks the current score after any switchToBundle or
@@ -285,7 +308,9 @@ async function main() {
         // the session const further down is initialised — never
         // synchronously during the early body of main().
         const name = session.bundle.name;
-        const baseTitle = `${name} \u2014 GeoSonel`;
+        const baseTitle = isElectron
+            ? `${name} \u2014 GeoSonel`
+            : `${name} \u2014 GeoSonel (Browser)`;
         if (isElectron) {
             document.title = baseTitle;
             const gxwWindow = /** @type {any} */ (window).gxwWindow;
@@ -301,7 +326,9 @@ async function main() {
     // yet at this point in main(), so updateTitleBar (which
     // resolves session.bundle.name) can't run. The bundle is
     // freshly loaded from disk/IDB so dirty is false here.
-    document.title = `${bundle.name} \u2014 GeoSonel`;
+    document.title = isElectron
+        ? `${bundle.name} \u2014 GeoSonel`
+        : `${bundle.name} \u2014 GeoSonel (Browser)`;
 
     // --- Editor ---
     const tabBarEl = document.querySelector(".tab-bar");
@@ -2113,12 +2140,16 @@ async function main() {
     installRunMenu({ runScene });
     installAppMenu({ diskMirror, messages });
 
-    // --- Save shortcut (Cmd-S) ---
+    // --- Save and Save As shortcuts (Cmd-S, Cmd-Shift-S) ---
     window.addEventListener("keydown", (e) => {
         const meta = e.metaKey || e.ctrlKey;
-        if (meta && e.key.toLowerCase() === "s" && !e.shiftKey) {
+        if (meta && e.key.toLowerCase() === "s") {
             e.preventDefault();
-            editor.save();
+            if (e.shiftKey) {
+                void actionSaveAs({ session, messages, editor });
+            } else {
+                editor.save();
+            }
         }
     });
 
@@ -2204,6 +2235,27 @@ async function main() {
         );
     } else {
         await runScene();
+    }
+
+    // --- First-run web-storage explainer ---
+    //
+    // Web only: explains the IndexedDB durability tradeoff
+    // and points the user at File > Export Score and the
+    // desktop app for work that matters. Gated on a
+    // localStorage key so it only appears once per browser.
+    // Fires fire-and-forget after runScene so the canvas has
+    // a chance to paint before the dialog overlays it; the
+    // openDialog backdrop is transparent enough that the
+    // running scene stays visible behind the modal.
+    if (!isElectron) {
+        try {
+            if (localStorage.getItem("gxw.firstRun.dismissed") === null) {
+                showFirstRunDialog();
+            }
+        } catch (e) {
+            // localStorage unavailable (private-mode, quota).
+            // Skip the dialog; the user just won't see it.
+        }
     }
 }
 
@@ -2448,6 +2500,66 @@ function showReconnectDialog(diskMirror, messages) {
     body.appendChild(buttons);
 
     return { close: () => handle.close() };
+}
+
+/**
+ * Show the first-run web-storage explainer. Web build only;
+ * the desktop build has no need for this. Gated by a
+ * localStorage key set on close, so the user never sees the
+ * explainer twice in the same browser regardless of how
+ * they dismiss it (Dismiss button, backdrop click, or
+ * Escape).
+ *
+ * The text surfaces the IndexedDB durability tradeoff in
+ * plain terms and points the user at File > Export Score
+ * and the desktop app for work that matters. Single Dismiss
+ * button styled as the primary action; the dialog closes
+ * the moment it's clicked. Uses the existing openDialog
+ * modal-overlay infrastructure so it shares the same visual
+ * language as the rest of GeoSonel's modals.
+ */
+function showFirstRunDialog() {
+    const handle = openDialog({
+        title: "Welcome to GeoSonel on the web",
+        width: "520px",
+        onClose: () => {
+            try {
+                localStorage.setItem("gxw.firstRun.dismissed", "true");
+            } catch (e) {
+                // localStorage unavailable (private-mode,
+                // quota). The dialog will appear again on
+                // next load, which is graceful degradation
+                // rather than a failure path.
+            }
+        },
+    });
+    const body = handle.body;
+
+    const intro = document.createElement("div");
+    intro.className = "settings-description";
+    intro.style.marginBottom = "12px";
+    intro.textContent =
+        "GeoSonel runs in this browser tab and stores your " +
+        "scores in the browser's IndexedDB. That storage is " +
+        "private to this browser and origin, but it is not " +
+        "as durable as files on disk: clearing site data, " +
+        "switching browsers, or going incognito will hide " +
+        "or discard your scores. For work that matters, save " +
+        "copies via File > Export Score, or use the GeoSonel " +
+        "desktop app, which stores scores as files on disk " +
+        "like any other document.";
+    body.appendChild(intro);
+
+    const buttons = document.createElement("div");
+    buttons.className = "modal-buttons";
+
+    const dismissBtn = document.createElement("button");
+    dismissBtn.className = "modal-button modal-button-primary";
+    dismissBtn.textContent = "Dismiss";
+    dismissBtn.addEventListener("click", () => handle.close());
+    buttons.appendChild(dismissBtn);
+
+    body.appendChild(buttons);
 }
 
 /**

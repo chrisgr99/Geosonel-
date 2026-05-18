@@ -376,3 +376,103 @@ export function confirmDiscardDialog(options) {
         setTimeout(() => saveBtn.focus(), 0);
     });
 }
+
+/**
+ * @typedef {Object} ConfirmDialogOptions
+ * @property {string} title                Dialog title (the question being asked).
+ * @property {string} [description]        Optional descriptive text below the title.
+ * @property {string} [confirmLabel]       Primary button label. Defaults to "OK".
+ * @property {string} [cancelLabel]        Secondary button label. Defaults to "Cancel".
+ */
+
+/**
+ * Two-button Mac-standard confirmation dialog. Cancel on the
+ * left (secondary, Escape-bound, backdrop-click-bound),
+ * confirm on the right (primary, Return-bound). Resolves to
+ * true on confirm, false on cancel.
+ *
+ * Used by Save As's collision confirm (“A score named X
+ * already exists. Replace it?”) and Revert to Saved (“Revert
+ * to the last saved version of X?”). Return is bound to the
+ * destructive action because the user explicitly came to the
+ * dialog to do that action; the three-button
+ * confirmDiscardDialog pattern (Don’t Save in the middle) is
+ * reserved for the case where the destructive answer is one
+ * of three plausible choices, not the already-implied one.
+ *
+ * @param {ConfirmDialogOptions} options
+ * @returns {Promise<boolean>}
+ */
+export function confirmDialog(options) {
+    return new Promise((resolve) => {
+        let resolved = false;
+        /** @param {boolean} value */
+        const settle = (value) => {
+            if (resolved) return;
+            resolved = true;
+            handle.close();
+            resolve(value);
+        };
+
+        const handle = openDialog({
+            title: options.title,
+            onClose: () => {
+                // Backdrop click or Escape: treat as cancel.
+                if (!resolved) {
+                    resolved = true;
+                    resolve(false);
+                }
+            },
+        });
+
+        const { body } = handle;
+
+        if (options.description !== undefined) {
+            const desc = document.createElement("div");
+            desc.className = "modal-description";
+            desc.textContent = options.description;
+            body.appendChild(desc);
+        }
+
+        const buttons = document.createElement("div");
+        buttons.className = "modal-buttons";
+
+        // Cancel on the left, confirm on the right as the primary action.
+        // Standard macOS HIG ordering for a two-button dialog.
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "modal-button";
+        cancelBtn.textContent = options.cancelLabel ?? "Cancel";
+        cancelBtn.addEventListener("click", () => settle(false));
+        buttons.appendChild(cancelBtn);
+
+        const confirmBtn = document.createElement("button");
+        confirmBtn.className = "modal-button modal-button-primary";
+        confirmBtn.textContent = options.confirmLabel ?? "OK";
+        confirmBtn.addEventListener("click", () => settle(true));
+        buttons.appendChild(confirmBtn);
+
+        body.appendChild(buttons);
+
+        // Return triggers the primary action (confirm). Escape is
+        // already handled by openDialog's keydown listener via the
+        // onClose path, so a separate Escape binding here would
+        // double-fire.
+        const onBodyKeyDown = (/** @type {KeyboardEvent} */ e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                settle(true);
+            }
+        };
+        document.addEventListener("keydown", onBodyKeyDown);
+        const origClose = handle.close;
+        handle.close = () => {
+            document.removeEventListener("keydown", onBodyKeyDown);
+            origClose();
+        };
+
+        // Focus the confirm button so Return commits the primary action
+        // immediately. A microtask defers focus until the dialog is in
+        // the DOM.
+        setTimeout(() => confirmBtn.focus(), 0);
+    });
+}

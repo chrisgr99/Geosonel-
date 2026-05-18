@@ -324,6 +324,15 @@ export class TabbedEditor {
             this._unsubBundleDirty = null;
         }
         this._unsubBundleDirty = this.bundle.subscribeDirtyChange((dirty) => {
+            // Per-tab dirty dots refresh on every whole-
+            // bundle dirty transition: clean→dirty on the
+            // first edit lights the active file's dot,
+            // dirty→clean on save clears every dot at once.
+            // Per-file transitions while the bundle is
+            // already dirty are handled by _onDocChanged
+            // (CodeMirror typing) and refreshActiveTabFromBundle
+            // (inspector and canvas-driven edits).
+            this._renderTabs();
             this.onDirtyChange(dirty);
         });
     }
@@ -448,6 +457,15 @@ export class TabbedEditor {
             },
         });
         this._suppressDirty = false;
+        // The bundle was mutated by the caller before this
+        // method was invoked (typically applySceneEdit
+        // updating scene.json via an inspector or canvas
+        // gesture). Re-render the tab bar so per-tab dirty
+        // dots reflect the new bundle state; the whole-
+        // bundle dirty event only fires on transitions, so
+        // an already-dirty bundle receiving another edit
+        // wouldn't otherwise refresh the dots here.
+        this._renderTabs();
     }
 
     /**
@@ -1244,7 +1262,17 @@ export class TabbedEditor {
         // bundle.updateContent fires markDirty internally, which
         // propagates back to this editor's onDirtyChange via the
         // bundle subscription — no separate _setDirty call needed.
+        const wasFileDirty = this.bundle.isFileDirty(this.activeName);
         this.bundle.updateContent(this.activeName, content);
+        // Per-tab dot for the active file may have just
+        // transitioned (clean→dirty on the first keystroke
+        // after save, or dirty→clean if an undo restored
+        // the saved content). Re-render only on transition
+        // so steady-state typing doesn't rebuild the tab bar
+        // on every keystroke.
+        if (wasFileDirty !== this.bundle.isFileDirty(this.activeName)) {
+            this._renderTabs();
+        }
     }
 
     // --- Tab rendering ---
@@ -1311,6 +1339,12 @@ export class TabbedEditor {
         } else {
             el.setAttribute("aria-selected", "false");
         }
+        // The virtual Properties tab is backed by scene.json
+        // (the inspector edits scene.json), so its dirty
+        // indicator tracks scene.json's per-file dirty state.
+        if (this.bundle.isFileDirty("scene.json")) {
+            el.classList.add("tab-dirty");
+        }
         el.setAttribute("role", "tab");
         el.setAttribute("tabindex", "0");
         el.textContent = label;
@@ -1337,6 +1371,9 @@ export class TabbedEditor {
             el.setAttribute("aria-selected", "true");
         } else {
             el.setAttribute("aria-selected", "false");
+        }
+        if (this.bundle.isFileDirty(name)) {
+            el.classList.add("tab-dirty");
         }
         el.setAttribute("role", "tab");
         el.setAttribute("tabindex", "0");

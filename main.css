@@ -171,6 +171,18 @@ html, body {
     opacity: 1;
 }
 
+/* In the web build, the indicator label expands from "Saved"
+ * to "Saved to browser storage" so the storage layer is named
+ * on every save. The wider min-width prevents the indicator
+ * from jittering when the text alternates between "Unsaved"
+ * (shorter) and the longer saved label. Applied by main.js
+ * via a class toggle gated on the !isElectron check; the
+ * Electron build keeps the narrower default min-width because
+ * its label stays plain "Saved". */
+.saved-indicator.saved-indicator-web-mode {
+    min-width: 200px;
+}
+
 #wordmark-text {
     color: #00ff33;
     font-size: 30pt;
@@ -573,6 +585,29 @@ html, body {
     height: 3px;
     background-color: #777777;
     z-index: 1;
+}
+
+/* Per-tab dirty indicator. The Bundle's isFileDirty(name)
+ * lights this class on a tab whose file content differs
+ * from its last-saved snapshot; editor.js's _renderFileTab
+ * and _renderVirtualTab toggle the class on every refresh.
+ * Rendered as a saturated yellow dot prefixed to the tab
+ * label via a ::before pseudo-element so the tab text
+ * layout stays untouched. The yellow (#FFCC00) matches
+ * the Unsaved indicator's attention-warm hue but pushed
+ * brighter for high luminance against the dark tab
+ * background and the green inspector frames; sized at
+ * 12px diameter to read clearly against the 14pt tab
+ * text under accessibility zoom. */
+.tab.tab-dirty::before {
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: #FFCC00;
+    margin-right: 6px;
+    vertical-align: middle;
 }
 
 /* --- CodeMirror editor area & Inspector area --- */
