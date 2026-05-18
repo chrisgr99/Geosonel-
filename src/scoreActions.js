@@ -29,6 +29,7 @@ import {
     loadScoreRecord,
     loadAllScoreRecords,
     loadBackupRecord,
+    renameScoreRecord,
     setCurrentScoreName,
 } from "./storage.js";
 import { promptDialog, confirmDialog, confirmDiscardDialog } from "./dialog.js";
@@ -415,6 +416,17 @@ async function duplicateScoreAs(ctx, sourceRecord, newName) {
 
 /**
  * Rename Score: prompt for a new name for the current score.
+ *
+ * Under the Electron build the underlying folder is renamed
+ * in place, which carries the .backups subfolder to the new
+ * name; under the web build the score record is copied to
+ * the new name and the old is deleted (no backups exist on
+ * web). The in-memory bundle's edits, if any, are saved
+ * under the new name after the rename, so an unsaved-state
+ * rename produces a backup slot capturing the pre-rename
+ * on-disk state and the new save lands cleanly. A rename
+ * with no unsaved edits skips the save so no spurious
+ * backup slot is created.
  * @param {ScoreActionsContext} ctx
  */
 export async function actionRenameScore(ctx) {
@@ -427,13 +439,24 @@ export async function actionRenameScore(ctx) {
     );
     if (newName === null || newName === oldName) return;
 
-    // Save under the new name, then delete the old. Going
-    // through Bundle.save() keeps the dirty flag
-    // synchronised: in-memory edits (if any) land on disk
-    // under the new name and dirty clears cleanly.
+    try {
+        await renameScoreRecord(oldName, newName);
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.messages.write(
+            `Could not rename "${oldName}" to "${newName}": ${msg}`,
+            "error"
+        );
+        return;
+    }
+
     ctx.session.bundle.name = newName;
-    await ctx.session.bundle.save();
-    await deleteScoreByName(oldName);
+    if (ctx.session.bundle.dirty) {
+        // Persist any unsaved in-memory edits under the new
+        // name. The save's normal backup-rotation captures
+        // the just-renamed pre-edit state in slot 1.
+        await ctx.session.bundle.save();
+    }
     await setCurrentScoreName(newName);
     ctx.session.refreshScoreNameDisplay();
     // Keep the Open Recent submenu's entry pointing at the

@@ -300,6 +300,37 @@ async function deleteScoreRecord(name) {
   await fsp.rm(scoreFolder, { recursive: true, force: true });
 }
 
+// Rename a score on disk by renaming its folder in place. The
+// folder rename is one syscall and atomic on the same volume,
+// which means the .backups subfolder follows the score to its
+// new name with no extra plumbing — contrast the older path
+// of save-under-new-name plus delete-old-name, which lost the
+// .backups history.
+//
+// The renderer's promptForUniqueName already guarantees the
+// destination doesn't exist, so a collision here would mean
+// the caller bypassed that guard or two callers raced. Throw
+// rather than silently overwriting; the in-app message area
+// surfaces the error to the user.
+async function renameScoreRecord(oldName, newName) {
+  if (oldName === newName) return;
+  const scoresFolder = await ensureScoresFolder();
+  const oldFolder = path.join(scoresFolder, oldName);
+  const newFolder = path.join(scoresFolder, newName);
+  if (!await pathExists(oldFolder)) {
+    // Nothing to rename on disk — e.g. a brand-new bundle
+    // that hasn't been saved yet. The renderer's follow-up
+    // save under the new name will create the folder.
+    return;
+  }
+  if (await pathExists(newFolder)) {
+    throw new Error(
+      `Cannot rename "${oldName}" to "${newName}": a score with that name already exists.`
+    );
+  }
+  await fsp.rename(oldFolder, newFolder);
+}
+
 async function listScoreFolders() {
   const scoresFolder = await ensureScoresFolder();
   const entries = await fsp.readdir(scoresFolder, { withFileTypes: true });
@@ -455,6 +486,10 @@ function registerStorageHandlers() {
 
   ipcMain.handle('gxw:delete-score-record', async (_event, name) => {
     await deleteScoreRecord(name);
+  });
+
+  ipcMain.handle('gxw:rename-score-record', async (_event, oldName, newName) => {
+    await renameScoreRecord(oldName, newName);
   });
 
   ipcMain.handle('gxw:load-all-score-records', async () => {

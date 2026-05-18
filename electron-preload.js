@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('gxwStorage', {
   loadScoreRecord: (name) => ipcRenderer.invoke('gxw:load-score-record', name),
   saveScoreRecord: (record) => ipcRenderer.invoke('gxw:save-score-record', record),
   deleteScoreRecord: (name) => ipcRenderer.invoke('gxw:delete-score-record', name),
+  renameScoreRecord: (oldName, newName) =>
+    ipcRenderer.invoke('gxw:rename-score-record', oldName, newName),
   loadAllScoreRecords: () => ipcRenderer.invoke('gxw:load-all-score-records'),
   getSetting: (key) => ipcRenderer.invoke('gxw:get-setting', key),
   setSetting: (key, value) => ipcRenderer.invoke('gxw:set-setting', key, value),

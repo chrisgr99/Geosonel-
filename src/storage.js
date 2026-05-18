@@ -337,6 +337,41 @@ export async function deleteScoreRecord(name) {
 }
 
 /**
+ * Rename a stored score from oldName to newName. Under the
+ * disk backend with the renameScoreRecord IPC available,
+ * this is a single atomic folder rename so the score's
+ * .backups subfolder follows it to the new name. Otherwise
+ * (IDB build, or an older Electron build without the IPC),
+ * falls back to load-old plus save-as-new plus delete-old,
+ * which loses .backups on disk but has no equivalent loss
+ * on IDB (no backups to lose there).
+ *
+ * The direct disk path does not fire afterSave or
+ * afterDelete because no record was created or removed —
+ * only the folder name changed. The fallback path goes
+ * through the public saveScoreRecord and deleteScoreRecord
+ * so those events fire naturally for any subscriber that
+ * needs them.
+ *
+ * @param {string} oldName
+ * @param {string} newName
+ * @returns {Promise<void>}
+ */
+export async function renameScoreRecord(oldName, newName) {
+    if (oldName === newName) return;
+    if (isDisk && typeof diskBackend.renameScoreRecord === "function") {
+        await diskBackend.renameScoreRecord(oldName, newName);
+        return;
+    }
+    const record = await loadScoreRecord(oldName);
+    if (record === null) return;
+    record.name = newName;
+    record.updatedAt = Date.now();
+    await saveScoreRecord(record);
+    await deleteScoreRecord(oldName);
+}
+
+/**
  * List all score names currently stored, with their last-updated
  * timestamps. Sorted most-recently-updated first.
  * @returns {Promise<Array<{name: string, updatedAt: number}>>}
