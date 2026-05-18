@@ -31,6 +31,7 @@ import {
     setCurrentScoreName,
 } from "./storage.js";
 import { promptDialog, confirmDialog, confirmDiscardDialog } from "./dialog.js";
+import { forgetScore, renameInRecentScores } from "./recentFiles.js";
 
 /** @typedef {import("./messages.js").MessageArea} MessageArea */
 /** @typedef {import("./editor.js").TabbedEditor} TabbedEditor */
@@ -130,6 +131,34 @@ export async function actionOpenScore(ctx) {
         if (!(await confirmDiscardChanges(ctx))) return;
         await actionOpenAsDuplicate(ctx, result.name);
     }
+}
+
+/**
+ * Open a score by name directly, without going through the
+ * Open Score dialog. Used by the File menu's Open Recent
+ * submenu: a click on a recent entry loads that score and
+ * switches to it. Goes through the same dirty-state
+ * confirmation gate as actionOpenScore so unsaved edits
+ * aren't silently dropped. If the named score doesn't exist
+ * (typical after the user deleted it through some other
+ * path while it was still in the recent list), the entry is
+ * removed from the recent list and an error is surfaced.
+ *
+ * @param {ScoreActionsContext} ctx
+ * @param {string} name
+ */
+export async function actionOpenScoreByName(ctx, name) {
+    if (name === ctx.session.bundle.name) return;
+    if (!(await confirmDiscardChanges(ctx))) return;
+    const bundle = await loadScoreByName(name);
+    if (bundle === null) {
+        forgetScore(name);
+        ctx.messages.write(`Score "${name}" could not be found and was removed from Open Recent.`, "error");
+        return;
+    }
+    await setCurrentScoreName(name);
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Switched to score "${name}".`);
 }
 
 /**
@@ -351,6 +380,12 @@ export async function actionRenameScore(ctx) {
     await deleteScoreByName(oldName);
     await setCurrentScoreName(newName);
     ctx.session.refreshScoreNameDisplay();
+    // Keep the Open Recent submenu's entry pointing at the
+    // renamed score (without disturbing its position in the
+    // list) so the menu doesn't end up with a stale name
+    // entry for the deleted oldName plus no entry for the
+    // newName until something opens it next.
+    renameInRecentScores(oldName, newName);
     ctx.messages.write(`Renamed "${oldName}" to "${newName}".`);
 }
 
@@ -367,6 +402,10 @@ export async function actionDeleteScore(ctx) {
     if (!ok) return;
 
     await deleteScoreByName(name);
+    // Remove from the Open Recent submenu as well so the
+    // menu doesn't keep a pointer at a score the user just
+    // explicitly threw away.
+    forgetScore(name);
     ctx.messages.write(`Deleted score "${name}".`);
 
     // Switch to another score if any exist; otherwise create a

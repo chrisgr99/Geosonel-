@@ -1264,6 +1264,39 @@ html, body {
     font-size: 12pt;
 }
 
+/* Right-pointing chevron at the end of a submenu row, in the
+ * same slot the shortcut hint occupies. Visual cue that the
+ * row opens a child menu rather than firing an action.
+ * Matches the menu accent green when the row's submenu is
+ * currently open so the user sees which submenu their click
+ * just produced. */
+.menu-dropdown-submenu-chevron {
+    color: #a0a0a0;
+    font-size: 12pt;
+    line-height: 1;
+}
+
+.menu-dropdown-item.submenu-open .menu-dropdown-submenu-chevron {
+    color: #5fc858;
+}
+
+.menu-dropdown-item.submenu-open {
+    background-color: #555555;
+}
+
+/* Submenu dropdown. Same visual chrome as a top-level
+ * dropdown so the user reads the submenu as a sibling of
+ * the parent menu. Parented inside the parent dropdown (so
+ * outside-click handling treats submenu clicks as inside
+ * the dropdown subtree) but positioned `fixed` so its
+ * left/top coordinates are viewport-relative regardless of
+ * the parent's position context. Higher z-index than the
+ * parent so it always paints on top. */
+.menu-dropdown-submenu {
+    position: fixed;
+    z-index: 1100;
+}
+
 .menu-dropdown-separator {
     height: 1px;
     background-color: #555555;

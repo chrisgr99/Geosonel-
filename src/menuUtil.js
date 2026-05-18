@@ -38,11 +38,24 @@
  */
 
 /**
+ * @typedef {Object} DropdownSubmenuEntry
+ * @property {string} label
+ * @property {() => DropdownEntry[]} buildSubmenu  Called every time the submenu
+ *   is opened. Letting the caller rebuild the entry list on demand means
+ *   dynamic submenus like Open Recent reflect the current state at open time
+ *   without any subscribe-and-rebuild plumbing. Returning an empty array is
+ *   valid and renders a single muted "(no items)" row so the submenu is never
+ *   visibly empty.
+ * @property {() => boolean} [disabled] Optional live getter; when true, the
+ *   submenu row renders muted and clicking does not open the submenu.
+ */
+
+/**
  * @typedef {{ separator: true }} DropdownSeparatorEntry
  */
 
 /**
- * @typedef {DropdownActionEntry | DropdownSeparatorEntry} DropdownEntry
+ * @typedef {DropdownActionEntry | DropdownSubmenuEntry | DropdownSeparatorEntry} DropdownEntry
  */
 
 /**
@@ -96,7 +109,7 @@ export function buildDropdown(entries) {
         el.classList.add("menu-dropdown-checkable");
     }
 
-    /** @type {Array<{row: HTMLElement, entry: DropdownActionEntry}>} */
+    /** @type {Array<{row: HTMLElement, entry: DropdownActionEntry | DropdownSubmenuEntry}>} */
     const stateRows = [];
 
     for (const entry of entries) {
@@ -115,6 +128,139 @@ export function buildDropdown(entries) {
         label.className = "menu-dropdown-label";
         label.textContent = entry.label;
         row.appendChild(label);
+
+        if ("buildSubmenu" in entry) {
+            // Submenu row. Right-pointing chevron in place
+            // of the shortcut hint; click opens or closes a
+            // child dropdown positioned to the right of
+            // this row. The submenu's entries are rebuilt on
+            // every open via entry.buildSubmenu so dynamic
+            // contents (Open Recent, Revert to) always
+            // reflect current state.
+            row.classList.add("menu-dropdown-item-submenu");
+            const chevron = document.createElement("span");
+            chevron.className = "menu-dropdown-submenu-chevron";
+            chevron.textContent = "\u25B8";  // BLACK RIGHT-POINTING SMALL TRIANGLE
+            row.appendChild(chevron);
+
+            /** @type {(HTMLElement & { refresh?: () => void }) | null} */
+            let submenuEl = null;
+            const closeSubmenu = () => {
+                if (submenuEl !== null && submenuEl.parentNode !== null) {
+                    submenuEl.parentNode.removeChild(submenuEl);
+                }
+                submenuEl = null;
+                row.classList.remove("submenu-open");
+            };
+            const openSubmenu = () => {
+                if (submenuEl !== null) return;
+                if (typeof entry.disabled === "function" && entry.disabled()) return;
+                const subEntries = entry.buildSubmenu();
+                // Wrap each action entry's handler so that
+                // clicking a submenu item also tears down
+                // the submenu DOM (via closeSubmenu) and
+                // closes the parent dropdown. Without the
+                // wrap, buildDropdown's default behaviour
+                // removes only the submenu's own .open
+                // class, leaving the submenu still parented
+                // in the DOM with stale state and leaving
+                // the File menu visibly open. Separators
+                // and nested-submenu entries pass through
+                // unchanged.
+                /** @type {DropdownEntry[]} */
+                const wrapped = subEntries.map((e) => {
+                    if ("separator" in e) return e;
+                    if ("buildSubmenu" in e) return e;
+                    const userAction = e.action;
+                    return {
+                        ...e,
+                        action: () => {
+                            userAction();
+                            closeSubmenu();
+                            el.classList.remove("open");
+                        },
+                    };
+                });
+                /** @type {DropdownEntry[]} */
+                const effective = wrapped.length === 0
+                    ? [{
+                        label: "(no items)",
+                        action: () => {},
+                        disabled: () => true,
+                    }]
+                    : wrapped;
+                submenuEl = buildDropdown(effective);
+                submenuEl.classList.add("menu-dropdown-submenu");
+                // Append inside the parent dropdown so its
+                // own outside-click handler (in wireDropdown)
+                // sees clicks on submenu items as inside the
+                // dropdown subtree and doesn't close the
+                // parent when the user picks a submenu
+                // entry. The submenu is positioned `fixed`
+                // (see main.css's .menu-dropdown-submenu
+                // rule) so its left/top coordinates remain
+                // viewport-relative regardless of where in
+                // the DOM it's parented.
+                el.appendChild(submenuEl);
+                const rect = row.getBoundingClientRect();
+                submenuEl.style.left = `${rect.right}px`;
+                submenuEl.style.top = `${rect.top}px`;
+                submenuEl.classList.add("open");
+                if (typeof submenuEl.refresh === "function") submenuEl.refresh();
+                row.classList.add("submenu-open");
+            };
+
+            row.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (typeof entry.disabled === "function" && entry.disabled()) {
+                    return;
+                }
+                if (submenuEl !== null) {
+                    closeSubmenu();
+                } else {
+                    openSubmenu();
+                }
+            });
+
+            // When the parent dropdown closes, our submenu
+            // should close too. wireDropdown's outside-click
+            // and Escape handlers remove the .open class
+            // from the parent dropdown; observing that via
+            // MutationObserver is overkill, so instead we
+            // hook the same document-level outside-click
+            // pattern here: any click that lands outside
+            // both this submenu and its parent row closes
+            // the submenu. Escape closes globally.
+            document.addEventListener("click", (e) => {
+                if (submenuEl === null) return;
+                const target = /** @type {Node} */ (e.target);
+                if (submenuEl.contains(target)) return;
+                if (row.contains(target)) return;
+                closeSubmenu();
+            });
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape" && submenuEl !== null) closeSubmenu();
+            });
+
+            // When the parent dropdown loses its .open
+            // class (the user picked something elsewhere or
+            // hit Escape at the top level), close our
+            // submenu too. Observe via a class mutation
+            // watcher on the parent element.
+            const parentObserver = new MutationObserver(() => {
+                if (!el.classList.contains("open") && submenuEl !== null) {
+                    closeSubmenu();
+                }
+            });
+            parentObserver.observe(el, { attributes: true, attributeFilter: ["class"] });
+
+            if (typeof entry.disabled === "function") {
+                stateRows.push({ row, entry });
+            }
+
+            el.appendChild(row);
+            continue;
+        }
 
         if (entry.shortcut !== undefined) {
             const sc = document.createElement("span");
@@ -149,7 +295,7 @@ export function buildDropdown(entries) {
 
     el.refresh = () => {
         for (const { row, entry } of stateRows) {
-            if (typeof entry.checked === "function") {
+            if ("checked" in entry && typeof entry.checked === "function") {
                 row.classList.toggle("checked", entry.checked());
             }
             if (typeof entry.disabled === "function") {

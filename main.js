@@ -80,6 +80,7 @@ import { DiskMirror } from "./src/diskMirror.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
 import { actionSaveAs } from "./src/scoreActions.js";
+import { recordScoreOpen } from "./src/recentFiles.js";
 import {
     parsePatternToPositions,
     formatParseResultForConsole,
@@ -208,6 +209,15 @@ async function main() {
     const bundle = norunMode
         ? await createNewScore("Recovery")
         : await resolveInitialBundle();
+
+    // Record the initial score in the Open Recent submenu's
+    // backing list. Skipped in norunMode because the Recovery
+    // bundle is a transient throwaway — logging it in the
+    // recent list would push out a real entry and surface
+    // "Recovery" the next time the user opens the submenu.
+    if (!norunMode) {
+        recordScoreOpen(bundle.name);
+    }
 
     // --- Canvas, message area ---
     const canvasAreaEl = document.getElementById("canvas-area");
@@ -886,6 +896,17 @@ async function main() {
             }
             refreshScoreNameDisplay();
             setSavedIndicator("saved");
+
+            // Record this score in the Open Recent submenu's
+            // backing list. switchToBundle is the convergence
+            // point for every load path — Open, Open Recent,
+            // New, Duplicate, Save As, Import, Reload from
+            // Disk — so one recordScoreOpen call here covers
+            // every entry point. Re-recording the same score
+            // (e.g. on Reload from Disk or Revert to Saved)
+            // just refreshes its timestamp at the top of the
+            // list, which is the desired behaviour.
+            recordScoreOpen(newBundle.name);
 
             session.rewatch();
 
@@ -2135,7 +2156,7 @@ async function main() {
         toggleFocusCanvas,
         toggleAutoZoom,
     });
-    installFileMenu({ session, messages, imageImporter, diskMirror, editor });
+    installFileMenu({ session, messages, imageImporter, diskMirror, editor, isElectron });
     installEditMenu({ performUndo, performRedo, performDuplicate });
     installRunMenu({ runScene });
     installAppMenu({ diskMirror, messages });
