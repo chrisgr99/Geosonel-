@@ -26,7 +26,7 @@
 // in <userData>/settings.json, so the Scores folder can be moved or relinked
 // without losing app-level state.
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -635,6 +635,34 @@ function registerStorageHandlers() {
 
   ipcMain.handle('gxw:load-backup-record', async (_event, scorePath, slotNumber) => {
     return await loadBackupRecord(scorePath, slotNumber);
+  });
+
+  // --- Native dialogs (Stage 3 commit 3a) ---
+  //
+  // Wrap Electron's dialog.showSaveDialog so the renderer
+  // can present the macOS Save panel for Save As. The
+  // renderer passes title and defaultPath; we attach the
+  // .gxs file filter and return the user's choice as
+  // { canceled, filePath }. The dialog's overwrite
+  // confirmation runs at the OS level so the renderer
+  // doesn't need its own Replace? prompt.
+  ipcMain.handle('gxw:show-save-dialog', async (event, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const opts = options ?? {};
+    const dialogOpts = {
+      title: typeof opts.title === 'string' ? opts.title : 'Save Score',
+      filters: [{ name: 'GeoSonel Score', extensions: ['gxs'] }],
+    };
+    if (typeof opts.defaultPath === 'string') {
+      dialogOpts.defaultPath = opts.defaultPath;
+    }
+    const result = win !== null
+      ? await dialog.showSaveDialog(win, dialogOpts)
+      : await dialog.showSaveDialog(dialogOpts);
+    if (result.canceled || typeof result.filePath !== 'string') {
+      return { canceled: true, filePath: null };
+    }
+    return { canceled: false, filePath: result.filePath };
   });
 
   // Window-level IPC for the explicit-save model.

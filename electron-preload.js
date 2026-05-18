@@ -56,3 +56,15 @@ contextBridge.exposeInMainWorld('gxwWindow', {
   sendCloseDecision: (decision) =>
     ipcRenderer.send('gxw:close-decision', decision),
 });
+
+// Native dialog IPC (Stage 3 commit 3a).
+//
+// Wraps Electron's showSaveDialog so the renderer can present
+// the macOS Save panel for Save As. Returns { canceled,
+// filePath } where filePath is the absolute path the user
+// chose, or null when the dialog was cancelled. Later sub-
+// commits add showOpenDialog alongside.
+contextBridge.exposeInMainWorld('gxwDialog', {
+  showSaveDialog: (options) =>
+    ipcRenderer.invoke('gxw:show-save-dialog', options),
+});

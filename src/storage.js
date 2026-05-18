@@ -56,6 +56,7 @@ const SETTINGS_STORE = "settings";
 
 const CURRENT_SCORE_PATH_KEY = "currentScorePath";
 const LEGACY_CURRENT_SCORE_NAME_KEY = "currentScoreName";
+const LAST_USED_DIRECTORY_KEY = "lastUsedDirectory";
 
 const SCORE_FOLDER_EXTENSION = ".gxs";
 
@@ -584,6 +585,46 @@ export async function getCurrentScorePath() {
 /** @param {string} path */
 export async function setCurrentScorePath(path) {
     await setSetting(CURRENT_SCORE_PATH_KEY, path);
+}
+
+// --- Last-used directory ---
+//
+// Tracks the directory the user last picked in a Save panel
+// (or any future anywhere-save flow). The Save panel and
+// Open panel default to this directory when present, falling
+// back to the configured Scores folder when not. Persisted
+// across launches via the standard settings store.
+
+/**
+ * @returns {Promise<string | null>}
+ */
+export async function getLastUsedDirectory() {
+    const v = await getSetting(LAST_USED_DIRECTORY_KEY);
+    return typeof v === "string" && v !== "" ? v : null;
+}
+
+/**
+ * @param {string} dir
+ * @returns {Promise<void>}
+ */
+export async function setLastUsedDirectory(dir) {
+    if (typeof dir !== "string" || dir === "") return;
+    await setSetting(LAST_USED_DIRECTORY_KEY, dir);
+}
+
+/**
+ * Resolve the directory that a Save or Open dialog should
+ * default to. Returns lastUsedDirectory when set, otherwise
+ * the configured Scores folder. On the IDB backend this can
+ * return the empty string (no filesystem); callers should
+ * handle that case (it's not a Save-panel target there
+ * anyway).
+ * @returns {Promise<string>}
+ */
+export async function getDefaultSaveDirectory() {
+    const remembered = await getLastUsedDirectory();
+    if (remembered !== null) return remembered;
+    return await getScoresFolderPath();
 }
 
 // --- Migrations ---

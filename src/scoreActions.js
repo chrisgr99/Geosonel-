@@ -34,6 +34,9 @@ import {
     composeScorePathFromName,
     joinScorePath,
     dirname,
+    scoreNameFromPath,
+    getDefaultSaveDirectory,
+    setLastUsedDirectory,
 } from "./storage.js";
 import { promptDialog, confirmDialog, confirmDiscardDialog } from "./dialog.js";
 import { forgetScore, renameInRecentScores } from "./recentFiles.js";
@@ -54,6 +57,37 @@ import { forgetScore, renameInRecentScores } from "./recentFiles.js";
  * @property {MessageArea} messages
  * @property {TabbedEditor} editor
  */
+
+// --- Native Save panel detection ---
+//
+// The Electron build exposes window.gxwDialog (set in
+// electron-preload.js) carrying a showSaveDialog wrapper
+// around dialog.showSaveDialog. The web build doesn't, so
+// actionSaveAs falls back to its in-app prompt-plus-confirm
+// loop when the wrapper is absent. Checking the function's
+// presence at call time keeps the action portable across
+// both builds without splitting it into two implementations.
+
+/**
+ * @returns {boolean}
+ */
+function nativeSaveDialogAvailable() {
+    const gxwDialog = /** @type {any} */ (window).gxwDialog;
+    return (
+        gxwDialog !== undefined &&
+        gxwDialog !== null &&
+        typeof gxwDialog.showSaveDialog === "function"
+    );
+}
+
+/**
+ * @param {{title?: string, defaultPath?: string}} options
+ * @returns {Promise<{canceled: boolean, filePath: string | null}>}
+ */
+async function showNativeSaveDialog(options) {
+    const gxwDialog = /** @type {any} */ (window).gxwDialog;
+    return await gxwDialog.showSaveDialog(options);
+}
 
 // --- Unsaved-changes gate ---
 
@@ -194,34 +228,103 @@ export async function actionDuplicateScore(ctx) {
 }
 
 /**
- * Save As: prompt for a new name, write the current in-
- * memory bundle's state under that name, and switch the
- * editing target to the new bundle. The original score on
- * disk stays in its last-saved state (the dirty in-memory
- * edits land in the new bundle, not the old one). Distinct
- * from Duplicate Score, which forks from the on-disk state
- * rather than from memory.
+ * Save As: write the current in-memory bundle's state to a
+ * user-chosen destination, switching the editing target to
+ * the new bundle. The original score on disk stays in its
+ * last-saved state (the dirty in-memory edits land in the
+ * new bundle, not the old one). Distinct from Duplicate
+ * Score, which forks from the on-disk state rather than
+ * from memory.
  *
- * On collision the action follows the Mac-standard warn-
- * and-confirm-overwrite pattern: a Replace / Cancel confirm
- * dialog asks whether to overwrite the existing score.
- * Replace writes through and overwrites; Cancel returns to
- * the prompt with the value still in place so the user can
- * adjust it. Typing the current score's name back into the
- * prompt is treated as a save-in-place (matches the native
- * macOS Save panel behaviour) and falls through to
- * ctx.editor.save() rather than going through the new-
- * bundle code path.
+ * Electron build: routes through dialog.showSaveDialog so
+ * the user gets the standard macOS Save panel. The panel's
+ * default directory is settings.lastUsedDirectory (or the
+ * configured Scores folder when unset); the default
+ * filename is the current name with a " copy" suffix and
+ * the .gxs extension. The Save panel's own overwrite
+ * confirmation handles collision; the user can navigate
+ * anywhere on disk. After a successful save,
+ * lastUsedDirectory is updated to the chosen file's parent
+ * so the next Save As defaults to the same neighbourhood.
  *
- * Stage 3 will swap this prompt-plus-confirm sequence for a
- * single native Save panel call (via Electron's
- * dialog.showSaveDialog) that handles overwrite confirmation
- * at the OS level; the user-visible behaviour stays the same
- * across the transition.
+ * Save-as-into-self (the user picks a path identical to the
+ * current bundle's) collapses to a plain save-in-place via
+ * editor.save(), so the bundle's identity doesn't churn and
+ * no spurious switchToBundle fires. macOS's overwrite
+ * confirm has already done its job at that point.
+ *
+ * Web build: keeps the in-app prompt-plus-confirm-overwrite
+ * loop. The native Save panel isn't reachable from the
+ * sandboxed renderer; the prompt loop is the legacy
+ * fallback.
  *
  * @param {ScoreActionsContext} ctx
  */
 export async function actionSaveAs(ctx) {
+    if (nativeSaveDialogAvailable()) {
+        await actionSaveAsNative(ctx);
+    } else {
+        await actionSaveAsInApp(ctx);
+    }
+}
+
+/**
+ * Native Save panel path. Used on Electron.
+ * @param {ScoreActionsContext} ctx
+ */
+async function actionSaveAsNative(ctx) {
+    const oldName = ctx.session.bundle.name;
+    const oldPath = ctx.session.bundle.path;
+
+    const defaultDir = await getDefaultSaveDirectory();
+    const defaultPath = defaultDir !== ""
+        ? joinScorePath(defaultDir, `${oldName} copy`)
+        : undefined;
+
+    const result = await showNativeSaveDialog({
+        title: `Save \u201c${oldName}\u201d As\u2026`,
+        defaultPath,
+    });
+    if (result.canceled || result.filePath === null) return;
+
+    let chosenPath = result.filePath;
+    if (!chosenPath.endsWith(".gxs")) chosenPath = chosenPath + ".gxs";
+
+    if (chosenPath === oldPath) {
+        // The user picked the current bundle's path in the
+        // Save panel; macOS's overwrite confirm already ran
+        // and the gesture is effectively save-in-place. Route
+        // through editor.save() so the bundle's identity
+        // doesn't churn through a needless switchToBundle.
+        await ctx.editor.save();
+        return;
+    }
+
+    const finalName = scoreNameFromPath(chosenPath);
+    const record = ctx.session.bundle.toRecord();
+    record.name = finalName;
+    record.updatedAt = Date.now();
+    await saveScoreRecord(chosenPath, record);
+
+    const bundle = await loadScoreByPath(chosenPath);
+    if (bundle === null) {
+        ctx.messages.write(`Failed to save as "${finalName}".`, "error");
+        return;
+    }
+    await setCurrentScorePath(chosenPath);
+    await setLastUsedDirectory(dirname(chosenPath));
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Saved as "${finalName}".`);
+}
+
+/**
+ * In-app prompt-plus-confirm-overwrite path. Used on the
+ * web build where the native Save panel isn't available.
+ * Preserves the existing prompt loop verbatim from before
+ * Stage 3 commit 3a.
+ * @param {ScoreActionsContext} ctx
+ */
+async function actionSaveAsInApp(ctx) {
     const oldName = ctx.session.bundle.name;
     const existing = new Set(
         (await listAvailableScores()).map((s) => s.name)
