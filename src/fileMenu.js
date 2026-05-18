@@ -19,6 +19,7 @@
 import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
 import { confirmDiscardDialog } from "./dialog.js";
 import { getRecentScores, clearRecentScores } from "./recentFiles.js";
+import { listBackups } from "./storage.js";
 import {
     actionNewScore,
     actionOpenScore,
@@ -26,6 +27,7 @@ import {
     actionDuplicateScore,
     actionSaveAs,
     actionRevert,
+    actionRevertToBackup,
     actionRenameScore,
     actionDeleteScore,
     actionExportScore,
@@ -81,7 +83,22 @@ export function installFileMenu(ctx) {
             disabled: () => !ctx.session.bundle.dirty,
             action: () => actionRevert(actionCtx),
         },
-        { separator: true },
+    ];
+
+    // Revert to (numbered backups) is desktop-only — the web
+    // build doesn't write backups, so the submenu would be
+    // permanently empty. The submenu sits directly below
+    // Revert to Saved so the two revert affordances are
+    // visually grouped.
+    if (ctx.isElectron) {
+        entries.push({
+            label: "Revert to",
+            buildSubmenu: () => buildRevertToSubmenu(ctx, actionCtx),
+        });
+    }
+
+    entries.push({ separator: true });
+    entries.push(...[
         {
             label: "New\u2026",
             action: () => actionNewScore(actionCtx),
@@ -119,7 +136,7 @@ export function installFileMenu(ctx) {
             label: "Remove Image",
             action: () => ctx.imageImporter.removeCurrentImage(),
         },
-    ];
+    ]);
 
     // The data-portability cluster (Export, Import, Back Up
     // All Scores, Restore from Backup) is web-only. In
@@ -198,6 +215,99 @@ function buildRecentSubmenu(ctx, actionCtx) {
         action: () => { clearRecentScores(); },
     });
     return entries;
+}
+
+/**
+ * Build the Revert to submenu's entry list. Reads the
+ * numbered backup slots for the current score from disk via
+ * storage.listBackups and renders each as an entry whose
+ * label is a mtime-derived relative-date string ("5 minutes
+ * ago", "yesterday at 3:15 PM", etc.). Clicking an entry
+ * dispatches actionRevertToBackup with the slot number and
+ * the label, which prompts for confirmation and then
+ * commits the revert as a save (rotating the current state
+ * into a fresh slot 1). Desktop-only; the parent menu
+ * entry is gated on ctx.isElectron upstream.
+ *
+ * @param {FileMenuContext} ctx
+ * @param {import("./scoreActions.js").ScoreActionsContext} actionCtx
+ * @returns {Promise<DropdownEntry[]>}
+ */
+async function buildRevertToSubmenu(ctx, actionCtx) {
+    const name = ctx.session.bundle.name;
+    const slots = await listBackups(name);
+    /** @type {DropdownEntry[]} */
+    const entries = slots.map((slot) => {
+        const label = relativeDateLabel(slot.mtimeMs);
+        return {
+            label,
+            action: () => {
+                void actionRevertToBackup(actionCtx, slot.slotNumber, label);
+            },
+        };
+    });
+    return entries;
+}
+
+/**
+ * Format a wall-clock timestamp as a relative-date label
+ * suitable for menu rows. The rules trade precision for
+ * readability:
+ *
+ *   - Less than 60 seconds ago: "just now".
+ *   - Less than 60 minutes ago: "N minutes ago".
+ *   - Earlier today (since midnight): "today at HH:MM AM/PM".
+ *   - Yesterday (since the prior midnight): "yesterday at HH:MM AM/PM".
+ *   - Within the last week: "<weekday> at HH:MM AM/PM".
+ *   - Older: "<Month D> at HH:MM AM/PM" with the year added
+ *     when the timestamp isn't in the current calendar year.
+ *
+ * All times are rendered in the user's local timezone via
+ * Date's locale methods.
+ *
+ * @param {number} mtimeMs
+ * @returns {string}
+ */
+function relativeDateLabel(mtimeMs) {
+    const now = Date.now();
+    const deltaMs = now - mtimeMs;
+    if (deltaMs < 60_000) return "just now";
+    if (deltaMs < 60 * 60_000) {
+        const minutes = Math.floor(deltaMs / 60_000);
+        return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+    }
+
+    const then = new Date(mtimeMs);
+    const nowDate = new Date(now);
+
+    const timeStr = then.toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+    });
+
+    // Build a midnight-of-day comparison so day-boundary
+    // rollover is consistent regardless of how many hours
+    // have passed.
+    const midnight = (/** @type {Date} */ d) =>
+        new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const thenDay = midnight(then);
+    const nowDay = midnight(nowDate);
+    const dayDelta = Math.round((nowDay - thenDay) / 86_400_000);
+
+    if (dayDelta === 0) return `today at ${timeStr}`;
+    if (dayDelta === 1) return `yesterday at ${timeStr}`;
+    if (dayDelta > 1 && dayDelta < 7) {
+        const weekday = then.toLocaleDateString(undefined, { weekday: "long" });
+        return `${weekday} at ${timeStr}`;
+    }
+
+    /** @type {Intl.DateTimeFormatOptions} */
+    const monthDayOpts = { month: "short", day: "numeric" };
+    if (then.getFullYear() !== nowDate.getFullYear()) {
+        monthDayOpts.year = "numeric";
+    }
+    const monthDay = then.toLocaleDateString(undefined, monthDayOpts);
+    return `${monthDay} at ${timeStr}`;
 }
 
 /**

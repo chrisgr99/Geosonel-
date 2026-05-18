@@ -57,6 +57,7 @@ import {
     suppressNextSaveEmit,
     subscribeAfterSaveScore,
     subscribeAfterDeleteScore,
+    setBackupErrorReporter,
 } from "./src/storage.js";
 import { TabbedEditor } from "./src/editor.js";
 import { Transport } from "./src/transport.js";
@@ -229,6 +230,14 @@ async function main() {
     }
     const canvas = new Canvas(canvasAreaEl);
     const messages = new MessageArea(messageAreaEl);
+
+    // Surface backup-rotation failures (Stage 2.5 Phase 3
+    // commit 2) in the messages area. storage.js calls the
+    // installed reporter when saveScoreRecord's pre-write
+    // backup step fails; the rotation failure doesn't block
+    // the main save (the user's primary intent), but the
+    // user should know the backup wasn't taken.
+    setBackupErrorReporter((msg) => { messages.write(msg, "error"); });
 
     // Make the canvas area focusable so Spacebar (a transport
     // toggle outside text contexts) works after clicking the

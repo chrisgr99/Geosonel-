@@ -40,12 +40,15 @@
 /**
  * @typedef {Object} DropdownSubmenuEntry
  * @property {string} label
- * @property {() => DropdownEntry[]} buildSubmenu  Called every time the submenu
- *   is opened. Letting the caller rebuild the entry list on demand means
- *   dynamic submenus like Open Recent reflect the current state at open time
- *   without any subscribe-and-rebuild plumbing. Returning an empty array is
- *   valid and renders a single muted "(no items)" row so the submenu is never
- *   visibly empty.
+ * @property {() => DropdownEntry[] | Promise<DropdownEntry[]>} buildSubmenu
+ *   Called every time the submenu is opened. Letting the caller rebuild
+ *   the entry list on demand means dynamic submenus like Open Recent and
+ *   Revert to reflect the current state at open time without any
+ *   subscribe-and-rebuild plumbing. Synchronous return values are
+ *   wrapped in a resolved Promise so async callers (e.g. submenus that
+ *   need to fetch data over IPC) work transparently. Returning an empty
+ *   array is valid and renders a single muted "(no items)" row so the
+ *   submenu is never visibly empty.
  * @property {() => boolean} [disabled] Optional live getter; when true, the
  *   submenu row renders muted and clicking does not open the submenu.
  */
@@ -112,6 +115,18 @@ export function buildDropdown(entries) {
     /** @type {Array<{row: HTMLElement, entry: DropdownActionEntry | DropdownSubmenuEntry}>} */
     const stateRows = [];
 
+    // Submenu coordination state, shared across all rows in
+    // this dropdown. Submenu rows register their close-
+    // handle here when they're built; mouseenter on any
+    // row (including non-submenu rows) closes any open
+    // sibling submenu so only one is visible at a time. The
+    // delay-based close (250ms) gives the user time to
+    // diagonally cross a sibling row on the way to a
+    // submenu they intend to use without that submenu
+    // closing under them.
+    /** @type {Array<{row: HTMLElement, scheduleClose: () => void, isOpen: () => boolean}>} */
+    const submenuRows = [];
+
     for (const entry of entries) {
         if ("separator" in entry) {
             const sep = document.createElement("div");
@@ -145,17 +160,81 @@ export function buildDropdown(entries) {
 
             /** @type {(HTMLElement & { refresh?: () => void }) | null} */
             let submenuEl = null;
+            // Guard against multiple openSubmenu invocations
+            // overlapping when buildSubmenu is async. The flag
+            // is set the moment openSubmenu starts the
+            // buildSubmenu await and cleared when the submenu
+            // is either mounted or the open is aborted; until
+            // then, repeat clicks on the row are ignored.
+            let opening = false;
+            // Hover-based open/close timers. The open timer
+            // gives a small grace period so brushing the
+            // cursor past a submenu row doesn't open the
+            // submenu; the close timer gives the user time to
+            // diagonally cross from the parent row down to
+            // the submenu without it closing under them.
+            /** @type {ReturnType<typeof setTimeout> | null} */
+            let openTimer = null;
+            /** @type {ReturnType<typeof setTimeout> | null} */
+            let closeTimer = null;
+            const cancelOpen = () => {
+                if (openTimer !== null) {
+                    clearTimeout(openTimer);
+                    openTimer = null;
+                }
+            };
+            const cancelClose = () => {
+                if (closeTimer !== null) {
+                    clearTimeout(closeTimer);
+                    closeTimer = null;
+                }
+            };
             const closeSubmenu = () => {
+                cancelOpen();
+                cancelClose();
                 if (submenuEl !== null && submenuEl.parentNode !== null) {
                     submenuEl.parentNode.removeChild(submenuEl);
                 }
                 submenuEl = null;
                 row.classList.remove("submenu-open");
             };
-            const openSubmenu = () => {
+            const scheduleOpen = () => {
+                cancelOpen();
                 if (submenuEl !== null) return;
+                openTimer = setTimeout(() => {
+                    openTimer = null;
+                    void openSubmenu();
+                }, 150);
+            };
+            const scheduleClose = () => {
+                cancelClose();
+                if (submenuEl === null) return;
+                closeTimer = setTimeout(() => {
+                    closeTimer = null;
+                    closeSubmenu();
+                }, 250);
+            };
+            const openSubmenu = async () => {
+                if (submenuEl !== null) return;
+                if (opening) return;
                 if (typeof entry.disabled === "function" && entry.disabled()) return;
-                const subEntries = entry.buildSubmenu();
+                opening = true;
+                let subEntries;
+                try {
+                    subEntries = await Promise.resolve(entry.buildSubmenu());
+                } catch (err) {
+                    console.error("GXW: submenu buildSubmenu threw.", err);
+                    opening = false;
+                    return;
+                }
+                // If the parent dropdown closed while we were
+                // awaiting buildSubmenu (typical when the user
+                // clicked elsewhere during the IPC call), abort
+                // mounting the submenu.
+                if (!el.classList.contains("open")) {
+                    opening = false;
+                    return;
+                }
                 // Wrap each action entry's handler so that
                 // clicking a submenu item also tears down
                 // the submenu DOM (via closeSubmenu) and
@@ -208,6 +287,17 @@ export function buildDropdown(entries) {
                 submenuEl.classList.add("open");
                 if (typeof submenuEl.refresh === "function") submenuEl.refresh();
                 row.classList.add("submenu-open");
+                // Hovering into the submenu cancels any
+                // pending close from the parent row
+                // mouseleave; moving back out schedules a
+                // fresh close after the delay. This keeps
+                // the submenu open as long as the cursor is
+                // either on the parent row or anywhere
+                // inside the submenu, and closes shortly
+                // after both lose hover.
+                submenuEl.addEventListener("mouseenter", cancelClose);
+                submenuEl.addEventListener("mouseleave", scheduleClose);
+                opening = false;
             };
 
             row.addEventListener("click", (e) => {
@@ -215,11 +305,43 @@ export function buildDropdown(entries) {
                 if (typeof entry.disabled === "function" && entry.disabled()) {
                     return;
                 }
+                cancelOpen();
                 if (submenuEl !== null) {
                     closeSubmenu();
                 } else {
-                    openSubmenu();
+                    void openSubmenu();
                 }
+            });
+
+            // Hover-based open and close. Entering the
+            // parent row schedules an open after a short
+            // grace period; leaving it (or never reaching
+            // the submenu) schedules a close. Hover on a
+            // different sibling row also closes the submenu
+            // via the shared submenuRows array below. The
+            // delay-based open keeps the menu from flashing
+            // open when the user is just mousing past on
+            // their way to another item.
+            row.addEventListener("mouseenter", () => {
+                cancelClose();
+                if (submenuEl === null) {
+                    scheduleOpen();
+                }
+                // Close any sibling submenus that are
+                // currently open. The schedule-based close
+                // (rather than immediate) lets the user
+                // diagonally move from one parent row to
+                // another's submenu without the destination
+                // closing on them.
+                for (const other of submenuRows) {
+                    if (other.row !== row && other.isOpen()) {
+                        other.scheduleClose();
+                    }
+                }
+            });
+            row.addEventListener("mouseleave", () => {
+                cancelOpen();
+                scheduleClose();
             });
 
             // When the parent dropdown closes, our submenu
@@ -258,6 +380,16 @@ export function buildDropdown(entries) {
                 stateRows.push({ row, entry });
             }
 
+            // Register with the shared submenu coordination
+            // table so hovers on non-submenu rows and on
+            // other submenu rows can ask this submenu to
+            // close.
+            submenuRows.push({
+                row,
+                scheduleClose,
+                isOpen: () => submenuEl !== null,
+            });
+
             el.appendChild(row);
             continue;
         }
@@ -283,6 +415,19 @@ export function buildDropdown(entries) {
             }
             entry.action();
             el.classList.remove("open");
+        });
+
+        // Hovering over a non-submenu row closes any open
+        // sibling submenu (with the standard close delay).
+        // Without this the submenu would float open while
+        // the user is clearly moving toward an unrelated
+        // entry like Save or New, which looks broken.
+        row.addEventListener("mouseenter", () => {
+            for (const other of submenuRows) {
+                if (other.isOpen()) {
+                    other.scheduleClose();
+                }
+            }
         });
 
         if (typeof entry.checked === "function" ||

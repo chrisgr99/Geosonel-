@@ -171,13 +171,28 @@ function isTextMime(mimeType) {
 // Text file content is a string; binary content is an ArrayBuffer that
 // crosses IPC via Electron's structured-clone serialisation.
 
-async function readScoreRecord(name) {
-  const scoresFolder = await getScoresFolder();
-  const scoreFolder = path.join(scoresFolder, name);
+async function pathExists(p) {
+  try {
+    await fsp.access(p);
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
 
+// Read a score record from an arbitrary folder. Used by
+// readScoreRecord (for live scores) and loadBackupRecord (for
+// backup slot folders). The record's `name` field is set
+// from the second argument so backup records carry the
+// original score name rather than the slot folder's numeric
+// name. The mtime returned in updatedAt is the source
+// folder's own mtime, which for backup slots reflects the
+// time the rotation copied that slot's contents into place.
+async function readRecordFromFolder(folder, name) {
   let stat;
   try {
-    stat = await fsp.stat(scoreFolder);
+    stat = await fsp.stat(folder);
   } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw err;
@@ -188,7 +203,7 @@ async function readScoreRecord(name) {
   let imageName = null;
   try {
     const metaText = await fsp.readFile(
-      path.join(scoreFolder, SCORE_META_FILENAME),
+      path.join(folder, SCORE_META_FILENAME),
       'utf8'
     );
     const meta = JSON.parse(metaText);
@@ -201,15 +216,16 @@ async function readScoreRecord(name) {
     }
   }
 
-  // Read every file in the folder except the metadata sidecar.
-  const entries = await fsp.readdir(scoreFolder, { withFileTypes: true });
+  // Read every file in the folder except the metadata sidecar
+  // and the .backups subfolder.
+  const entries = await fsp.readdir(folder, { withFileTypes: true });
   const files = {};
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     if (entry.name === SCORE_META_FILENAME) continue;
     if (entry.name === '.DS_Store') continue;
 
-    const filePath = path.join(scoreFolder, entry.name);
+    const filePath = path.join(folder, entry.name);
     const buffer = await fsp.readFile(filePath);
     const mimeType = getMimeType(entry.name);
 
@@ -231,6 +247,11 @@ async function readScoreRecord(name) {
     imageName,
     updatedAt: stat.mtimeMs,
   };
+}
+
+async function readScoreRecord(name) {
+  const scoresFolder = await getScoresFolder();
+  return await readRecordFromFolder(path.join(scoresFolder, name), name);
 }
 
 async function writeScoreRecord(record) {
@@ -304,6 +325,119 @@ async function loadAllScoreRecords() {
   return records;
 }
 
+// --- Numbered backups ---
+//
+// Stage 2.5 Phase 3 commit 2. Every save of a score under the
+// Electron build copies the pre-save state into a numbered
+// slot inside <scoreFolder>/.backups/ before the new content
+// is written. Slot 1 is always the most recent backup; the
+// rotation shifts each existing slot down by one (1→2,
+// 2→3, ...) before the copy, and any slot that would
+// exceed maxCount after shifting is deleted instead. Slots
+// can have gaps if the user manually deleted one in Finder;
+// the rotation tolerates them rather than compacting,
+// matching the gap-tolerance design decision in IN_FLIGHT.
+//
+// The renderer's storage.js calls rotateBackupsBeforeSave
+// inside saveScoreRecord just before the write, passing the
+// user's numBackupsToKeep preference. A first save (score
+// folder doesn't yet exist) is a no-op because there's
+// nothing to back up.
+
+const BACKUPS_DIRNAME = '.backups';
+
+async function rotateBackupsBeforeSave(scoreName, maxCount) {
+  if (typeof maxCount !== 'number' || maxCount <= 0) return;
+
+  const scoresFolder = await getScoresFolder();
+  const scoreFolder = path.join(scoresFolder, scoreName);
+
+  // First save: nothing on disk yet, nothing to back up.
+  if (!await pathExists(scoreFolder)) return;
+
+  const backupsFolder = path.join(scoreFolder, BACKUPS_DIRNAME);
+  await fsp.mkdir(backupsFolder, { recursive: true });
+
+  // Read existing numbered slot folders. Anything that's not
+  // a directory or whose name doesn't parse to a positive
+  // integer is ignored (defence against stray files or
+  // manual user-added folders).
+  const entries = await fsp.readdir(backupsFolder, { withFileTypes: true });
+  const existingSlots = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const n = parseInt(e.name, 10);
+    if (!Number.isFinite(n) || String(n) !== e.name || n < 1) continue;
+    existingSlots.push(n);
+  }
+  // Walk from highest slot number down to lowest so renames
+  // don't collide.
+  existingSlots.sort((a, b) => b - a);
+  for (const n of existingSlots) {
+    const newN = n + 1;
+    const oldPath = path.join(backupsFolder, String(n));
+    if (newN > maxCount) {
+      // This slot would fall off the end after shifting; drop
+      // it instead of renaming.
+      await fsp.rm(oldPath, { recursive: true, force: true });
+    } else {
+      const newPath = path.join(backupsFolder, String(newN));
+      await fsp.rename(oldPath, newPath);
+    }
+  }
+
+  // Copy the score's current files (everything in scoreFolder
+  // except the .backups subfolder itself and .DS_Store) into
+  // a fresh slot 1.
+  const slot1 = path.join(backupsFolder, '1');
+  await fsp.mkdir(slot1, { recursive: true });
+  const scoreEntries = await fsp.readdir(scoreFolder, { withFileTypes: true });
+  for (const e of scoreEntries) {
+    if (!e.isFile()) continue;
+    if (e.name === '.DS_Store') continue;
+    await fsp.copyFile(
+      path.join(scoreFolder, e.name),
+      path.join(slot1, e.name)
+    );
+  }
+}
+
+async function listBackups(scoreName) {
+  const scoresFolder = await getScoresFolder();
+  const backupsFolder = path.join(scoresFolder, scoreName, BACKUPS_DIRNAME);
+
+  if (!await pathExists(backupsFolder)) return [];
+
+  const entries = await fsp.readdir(backupsFolder, { withFileTypes: true });
+  const slots = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const n = parseInt(e.name, 10);
+    if (!Number.isFinite(n) || String(n) !== e.name || n < 1) continue;
+    const stat = await fsp.stat(path.join(backupsFolder, e.name));
+    slots.push({ slotNumber: n, mtimeMs: stat.mtimeMs });
+  }
+  // Slot 1 is the most recent backup; sort ascending so the
+  // submenu naturally lists newest first.
+  slots.sort((a, b) => a.slotNumber - b.slotNumber);
+  return slots;
+}
+
+async function loadBackupRecord(scoreName, slotNumber) {
+  const scoresFolder = await getScoresFolder();
+  const slotFolder = path.join(
+    scoresFolder,
+    scoreName,
+    BACKUPS_DIRNAME,
+    String(slotNumber)
+  );
+  // Pass scoreName (not the slot number) so the record's
+  // `name` field round-trips as the live score name. When
+  // the renderer reverts to this backup it saves under the
+  // original score name, which is what the user expects.
+  return await readRecordFromFolder(slotFolder, scoreName);
+}
+
 // --- IPC handler registration ---
 
 function registerStorageHandlers() {
@@ -340,6 +474,20 @@ function registerStorageHandlers() {
 
   ipcMain.handle('gxw:get-scores-folder', async () => {
     return await getScoresFolder();
+  });
+
+  // --- Numbered backups (Stage 2.5 Phase 3 commit 2) ---
+
+  ipcMain.handle('gxw:rotate-backups-before-save', async (_event, scoreName, maxCount) => {
+    await rotateBackupsBeforeSave(scoreName, maxCount);
+  });
+
+  ipcMain.handle('gxw:list-backups', async (_event, scoreName) => {
+    return await listBackups(scoreName);
+  });
+
+  ipcMain.handle('gxw:load-backup-record', async (_event, scoreName, slotNumber) => {
+    return await loadBackupRecord(scoreName, slotNumber);
   });
 
   // Window-level IPC for the explicit-save model.

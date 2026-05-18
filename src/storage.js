@@ -33,6 +33,8 @@
 
 // @ts-check
 
+import { getPreference } from "./preferences.js";
+
 const DB_NAME = "gxw";
 const DB_VERSION = 2;
 const SCORES_STORE = "scores";
@@ -278,10 +280,35 @@ const impl = isDisk
 /**
  * Save a score record under its name. Overwrites if a record with that
  * name already exists.
+ *
+ * On the disk backend, the pre-save state of this score (if any) is
+ * rotated into a numbered backup slot before the new content is
+ * written, with the maximum slot count drawn from the
+ * numBackupsToKeep preference. Backup rotation is best-effort: if it
+ * fails (disk full, permissions, missing IPC method on older Electron
+ * builds), the main save still proceeds and the failure is surfaced
+ * through the backup error reporter when one has been installed.
  * @param {ScoreRecord} record
  * @returns {Promise<void>}
  */
 export async function saveScoreRecord(record) {
+    if (isDisk &&
+        typeof diskBackend.rotateBackupsBeforeSave === "function") {
+        try {
+            const maxCount = /** @type {number} */ (
+                getPreference("numBackupsToKeep")
+            );
+            await diskBackend.rotateBackupsBeforeSave(record.name, maxCount);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn("GXW: backup rotation failed.", err);
+            if (backupErrorReporter !== null) {
+                backupErrorReporter(
+                    `Could not back up "${record.name}": ${msg}`
+                );
+            }
+        }
+    }
     await impl.save(record);
     if (suppressedNames.has(record.name)) {
         suppressedNames.delete(record.name);
@@ -353,6 +380,66 @@ export async function getCurrentScoreName() {
 /** @param {string} name */
 export async function setCurrentScoreName(name) {
     await setSetting(CURRENT_SCORE_KEY, name);
+}
+
+// --- Numbered backups (disk backend only) ---
+
+/**
+ * @typedef {Object} BackupSlot
+ * @property {number} slotNumber  1-based slot index. Slot 1 is the most
+ *   recent backup; higher numbers are older.
+ * @property {number} mtimeMs     Wall-clock ms timestamp at which this
+ *   slot's contents were captured. Used by the File menu's Revert to
+ *   submenu to render relative-date labels ("5 minutes ago", etc.).
+ */
+
+/**
+ * List the numbered backup slots for a score, sorted with slot 1
+ * (most recent) first. Returns an empty array on the web build,
+ * where backups aren't a feature.
+ * @param {string} scoreName
+ * @returns {Promise<BackupSlot[]>}
+ */
+export async function listBackups(scoreName) {
+    if (!isDisk) return [];
+    if (typeof diskBackend.listBackups !== "function") return [];
+    return await diskBackend.listBackups(scoreName);
+}
+
+/**
+ * Load a specific numbered backup slot's content as a ScoreRecord.
+ * The returned record's name field is the original score name (not
+ * the slot number), so the caller can pass it through the normal
+ * saveScoreRecord path to commit a revert. Returns null on the web
+ * build or when the slot doesn't exist.
+ * @param {string} scoreName
+ * @param {number} slotNumber
+ * @returns {Promise<ScoreRecord | null>}
+ */
+export async function loadBackupRecord(scoreName, slotNumber) {
+    if (!isDisk) return null;
+    if (typeof diskBackend.loadBackupRecord !== "function") return null;
+    return await diskBackend.loadBackupRecord(scoreName, slotNumber);
+}
+
+// --- Backup error reporter ---
+//
+// Renderer-side install point for surfacing backup-rotation
+// failures in the messages area. main.js wires this to
+// messages.write on startup so the user sees a notice when a
+// save's backup step failed. Defaults to null so reports are
+// dropped silently before main.js has wired the reporter.
+
+/** @type {((message: string) => void) | null} */
+let backupErrorReporter = null;
+
+/**
+ * Install a function to receive backup-rotation error messages.
+ * Pass null to clear.
+ * @param {((message: string) => void) | null} fn
+ */
+export function setBackupErrorReporter(fn) {
+    backupErrorReporter = fn;
 }
 
 // --- Save / delete event hooks ---

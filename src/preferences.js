@@ -42,6 +42,12 @@ const KEY_PREFIX = "gxw.prefs.";
  * @property {number} [max]
  * @property {number} [step]
  * @property {string} [category]  Settings dialog category. Defaults to "Display".
+ * @property {boolean} [electronOnly]  When true, the preference is hidden from
+ *   the Settings dialog under the web build. The schema entry still exists
+ *   (callers using getPreference will get the default value), but the user
+ *   never sees a control for it. Used by Backups: Number of Backups to Keep,
+ *   which only has meaning under the desktop build where numbered backup
+ *   folders are written to disk.
  */
 
 /**
@@ -115,6 +121,19 @@ export const PREFERENCES = [
         max: 1.0,
         step: 0.05,
         category: "Accessibility",
+    },
+    {
+        key: "numBackupsToKeep",
+        label: "Number of Backups to Keep",
+        description:
+            "Each time you save a score, the previous state is copied into a numbered slot inside the score's folder on disk. When this many slots are full, the oldest gets discarded on the next save. Raise this if you save frequently and want longer backup history; lower it if you have many large scores and want to reclaim disk space. Backups can be reverted to from the File menu's Revert to submenu.",
+        type: "number",
+        default: 50,
+        min: 1,
+        max: 200,
+        step: 1,
+        category: "Backups",
+        electronOnly: true,
     },
 ];
 

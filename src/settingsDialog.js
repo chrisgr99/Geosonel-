@@ -115,9 +115,20 @@ export function openSettingsDialog(ctx) {
  * @returns {CategoryEntry[]}
  */
 function buildCategories(ctx) {
+    // electronOnly preferences are filtered out on the web
+    // build so the user never sees a control whose backing
+    // feature doesn't exist in their environment (currently
+    // just Backups: Number of Backups to Keep, which only
+    // has meaning when the desktop build is writing files to
+    // disk via Electron IPC).
+    const isElectron =
+        typeof (/** @type {any} */ (window).gxwStorage) === "object" &&
+        (/** @type {any} */ (window).gxwStorage) !== null;
+
     /** @type {Map<string, import("./preferences.js").PreferenceDef[]>} */
     const byName = new Map();
     for (const def of PREFERENCES) {
+        if (def.electronOnly === true && !isElectron) continue;
         const cat = def.category ?? "Display";
         let bucket = byName.get(cat);
         if (bucket === undefined) {

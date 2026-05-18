@@ -28,6 +28,7 @@ import {
     saveScoreRecord,
     loadScoreRecord,
     loadAllScoreRecords,
+    loadBackupRecord,
     setCurrentScoreName,
 } from "./storage.js";
 import { promptDialog, confirmDialog, confirmDiscardDialog } from "./dialog.js";
@@ -308,6 +309,61 @@ export async function actionRevert(ctx) {
     }
     await ctx.session.switchToBundle(bundle);
     ctx.messages.write(`Reverted "${name}" to last saved version.`);
+}
+
+/**
+ * Revert to a specific numbered backup slot. Desktop-only;
+ * web callers should never invoke this (the File menu's
+ * Revert to submenu is gated on the Electron build).
+ *
+ * The revert behaves as a save: the current pre-revert state
+ * is rotated into a new slot 1 by the normal save path, and
+ * the chosen backup's content becomes the new score on disk.
+ * Net effect across many reverts is that no state is ever
+ * lost — each revert preserves the previous in-memory state
+ * as a fresh backup. The user-visible confirm wording is
+ * the same shape as actionRevert ("Revert to <when>?") so
+ * the two reverts read consistently.
+ *
+ * @param {ScoreActionsContext} ctx
+ * @param {number} slotNumber
+ * @param {string} label   Human-readable label (e.g. "5 minutes ago")
+ *   used in the confirm-dialog title so the user sees which
+ *   backup they're about to commit to.
+ */
+export async function actionRevertToBackup(ctx, slotNumber, label) {
+    const name = ctx.session.bundle.name;
+    const ok = await confirmDialog({
+        title: `Revert \u201c${name}\u201d to ${label}?`,
+        description:
+            "Any unsaved changes will be lost, and the score\u2019s current state on disk will be moved into the most recent backup slot.",
+        confirmLabel: "Revert",
+    });
+    if (!ok) return;
+    const record = await loadBackupRecord(name, slotNumber);
+    if (record === null) {
+        ctx.messages.write(
+            `Could not load backup slot ${slotNumber} for "${name}".`,
+            "error"
+        );
+        return;
+    }
+    // saveScoreRecord triggers the normal backup-rotation
+    // path before writing, so the current on-disk state goes
+    // into slot 1 and existing slots shift up by one before
+    // the backup's content is written. The record's name is
+    // already the original score name (loadBackupRecord sets
+    // it that way), but defensively make sure here too.
+    record.name = name;
+    record.updatedAt = Date.now();
+    await saveScoreRecord(record);
+    const bundle = await loadScoreByName(name);
+    if (bundle === null) {
+        ctx.messages.write(`Could not reload "${name}" after revert.`, "error");
+        return;
+    }
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Reverted "${name}" to ${label}.`);
 }
 
 /**

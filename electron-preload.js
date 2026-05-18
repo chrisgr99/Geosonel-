@@ -19,6 +19,13 @@ contextBridge.exposeInMainWorld('gxwStorage', {
   getSetting: (key) => ipcRenderer.invoke('gxw:get-setting', key),
   setSetting: (key, value) => ipcRenderer.invoke('gxw:set-setting', key, value),
   getScoresFolder: () => ipcRenderer.invoke('gxw:get-scores-folder'),
+  // Numbered backups (Stage 2.5 Phase 3 commit 2).
+  rotateBackupsBeforeSave: (scoreName, maxCount) =>
+    ipcRenderer.invoke('gxw:rotate-backups-before-save', scoreName, maxCount),
+  listBackups: (scoreName) =>
+    ipcRenderer.invoke('gxw:list-backups', scoreName),
+  loadBackupRecord: (scoreName, slotNumber) =>
+    ipcRenderer.invoke('gxw:load-backup-record', scoreName, slotNumber),
 });
 
 // Window-level IPC for the explicit-save model (Stage 2.5 Phase 1).
