@@ -57,14 +57,17 @@ contextBridge.exposeInMainWorld('gxwWindow', {
     ipcRenderer.send('gxw:close-decision', decision),
 });
 
-// Native dialog IPC (Stage 3 commit 3a).
+// Native dialog IPC (Stage 3 commit 3a, extended in 3b).
 //
-// Wraps Electron's showSaveDialog so the renderer can present
-// the macOS Save panel for Save As. Returns { canceled,
+// showSaveDialog presents the macOS Save panel for Save As.
+// showOpenDialog presents the macOS Open panel for Open
+// Score, running in openDirectory mode so the user navigates
+// to and picks a .gxs folder. Both return { canceled,
 // filePath } where filePath is the absolute path the user
-// chose, or null when the dialog was cancelled. Later sub-
-// commits add showOpenDialog alongside.
+// chose, or null when the dialog was cancelled.
 contextBridge.exposeInMainWorld('gxwDialog', {
   showSaveDialog: (options) =>
     ipcRenderer.invoke('gxw:show-save-dialog', options),
+  showOpenDialog: (options) =>
+    ipcRenderer.invoke('gxw:show-open-dialog', options),
 });

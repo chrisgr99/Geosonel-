@@ -58,15 +58,16 @@ import { forgetScore, renameInRecentScores } from "./recentFiles.js";
  * @property {TabbedEditor} editor
  */
 
-// --- Native Save panel detection ---
+// --- Native dialog detection ---
 //
 // The Electron build exposes window.gxwDialog (set in
-// electron-preload.js) carrying a showSaveDialog wrapper
-// around dialog.showSaveDialog. The web build doesn't, so
-// actionSaveAs falls back to its in-app prompt-plus-confirm
-// loop when the wrapper is absent. Checking the function's
-// presence at call time keeps the action portable across
-// both builds without splitting it into two implementations.
+// electron-preload.js) carrying wrappers around
+// dialog.showSaveDialog and dialog.showOpenDialog. The web
+// build doesn't, so actionSaveAs and actionOpenScore fall
+// back to their in-app modals when the wrappers are absent.
+// Checking each function's presence at call time keeps the
+// actions portable across both builds without splitting
+// them into separate exports.
 
 /**
  * @returns {boolean}
@@ -87,6 +88,27 @@ function nativeSaveDialogAvailable() {
 async function showNativeSaveDialog(options) {
     const gxwDialog = /** @type {any} */ (window).gxwDialog;
     return await gxwDialog.showSaveDialog(options);
+}
+
+/**
+ * @returns {boolean}
+ */
+function nativeOpenDialogAvailable() {
+    const gxwDialog = /** @type {any} */ (window).gxwDialog;
+    return (
+        gxwDialog !== undefined &&
+        gxwDialog !== null &&
+        typeof gxwDialog.showOpenDialog === "function"
+    );
+}
+
+/**
+ * @param {{title?: string, defaultPath?: string}} options
+ * @returns {Promise<{canceled: boolean, filePath: string | null}>}
+ */
+async function showNativeOpenDialog(options) {
+    const gxwDialog = /** @type {any} */ (window).gxwDialog;
+    return await gxwDialog.showOpenDialog(options);
 }
 
 // --- Unsaved-changes gate ---
@@ -146,15 +168,90 @@ export async function actionNewScore(ctx) {
 }
 
 /**
- * Open Score: show a dialog listing stored scores. The user
- * picks one and commits with either Open (switch to it in
- * place) or Open as Duplicate (clone it and switch to the
- * clone, leaving the original untouched). Open as Duplicate
- * covers the "use any score as a template" workflow without
- * a separate templates concept.
+ * Open Score: present a dialog letting the user pick a
+ * score to switch to.
+ *
+ * Electron build: routes through dialog.showOpenDialog so
+ * the user gets the standard macOS Open panel. Without UTI
+ * declarations (stage 6) the panel runs in openDirectory
+ * mode so .gxs folders read as folders the user navigates
+ * to and picks. The default location is
+ * settings.lastUsedDirectory when set, falling back to the
+ * configured Scores folder. After a successful open,
+ * lastUsedDirectory updates to the chosen score's parent
+ * directory so the next Open or Save defaults to the same
+ * neighbourhood. The chosen path's .gxs suffix is verified
+ * before loading; non-.gxs picks surface as an error in
+ * the message area.
+ *
+ * The Open-as-Duplicate workflow (forking from an arbitrary
+ * score on disk) isn't surfaced through the native panel —
+ * macOS's Open dialog has nowhere to put a second action
+ * button. Users who want to fork an opened score can run
+ * Duplicate Score after opening normally; a future
+ * Templates feature will cover the load-from-arbitrary-
+ * location-as-new-score case more directly.
+ *
+ * Web build: keeps the in-app modal with its Open and Open
+ * as Duplicate buttons. The native Open panel isn't
+ * reachable from the sandboxed renderer; the modal is the
+ * legacy fallback and still supports both forms.
+ *
  * @param {ScoreActionsContext} ctx
  */
 export async function actionOpenScore(ctx) {
+    if (nativeOpenDialogAvailable()) {
+        await actionOpenScoreNative(ctx);
+    } else {
+        await actionOpenScoreInApp(ctx);
+    }
+}
+
+/**
+ * Native Open panel path. Used on Electron.
+ * @param {ScoreActionsContext} ctx
+ */
+async function actionOpenScoreNative(ctx) {
+    const defaultDir = await getDefaultSaveDirectory();
+    const result = await showNativeOpenDialog({
+        title: "Open Score",
+        defaultPath: defaultDir !== "" ? defaultDir : undefined,
+    });
+    if (result.canceled || result.filePath === null) return;
+
+    const chosenPath = result.filePath;
+    if (!chosenPath.endsWith(".gxs")) {
+        ctx.messages.write(
+            `That folder isn\u2019t a GeoSonel score (missing .gxs suffix): "${chosenPath}".`,
+            "error",
+        );
+        return;
+    }
+    if (chosenPath === ctx.session.bundle.path) return;
+    if (!(await confirmDiscardChanges(ctx))) return;
+
+    const bundle = await loadScoreByPath(chosenPath);
+    if (bundle === null) {
+        ctx.messages.write(
+            `Could not open score at "${chosenPath}".`,
+            "error",
+        );
+        return;
+    }
+    await setCurrentScorePath(chosenPath);
+    await setLastUsedDirectory(dirname(chosenPath));
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Switched to score "${bundle.name}".`);
+}
+
+/**
+ * In-app score-list modal path. Used on the web build where
+ * the native Open panel isn't available. Preserves the
+ * existing two-button (Open / Open as Duplicate) flow
+ * verbatim from before Stage 3 commit 3b.
+ * @param {ScoreActionsContext} ctx
+ */
+async function actionOpenScoreInApp(ctx) {
     const result = await openScoreDialog();
     if (result === null) return;
     if (result.action === "open") {

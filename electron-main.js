@@ -665,6 +665,44 @@ function registerStorageHandlers() {
     return { canceled: false, filePath: result.filePath };
   });
 
+  // Wrap Electron's dialog.showOpenDialog so the renderer
+  // can present the macOS Open panel for Open Score. The
+  // dialog runs in openDirectory mode with
+  // treatPackageAsDirectory set so .gxs folders read as
+  // navigable, selectable folders rather than as packages.
+  // Without that property macOS greys out .gxs folders when
+  // any file filter is in play — the filter makes the OS
+  // treat the extension as a registered document type and a
+  // matching folder becomes a non-selectable bundle.
+  // Filters are documented as openFile-only and aren't
+  // included here for the same reason. The renderer
+  // validates the chosen path's .gxs suffix before loading.
+  // Returns the single picked path unwrapped from
+  // showOpenDialog's filePaths array, in the same
+  // { canceled, filePath } shape the Save handler uses.
+  ipcMain.handle('gxw:show-open-dialog', async (event, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const opts = options ?? {};
+    const dialogOpts = {
+      title: typeof opts.title === 'string' ? opts.title : 'Open Score',
+      properties: ['openDirectory', 'treatPackageAsDirectory'],
+    };
+    if (typeof opts.defaultPath === 'string') {
+      dialogOpts.defaultPath = opts.defaultPath;
+    }
+    const result = win !== null
+      ? await dialog.showOpenDialog(win, dialogOpts)
+      : await dialog.showOpenDialog(dialogOpts);
+    if (
+      result.canceled ||
+      !Array.isArray(result.filePaths) ||
+      result.filePaths.length === 0
+    ) {
+      return { canceled: true, filePath: null };
+    }
+    return { canceled: false, filePath: result.filePaths[0] };
+  });
+
   // Window-level IPC for the explicit-save model.
   //
   // setDocumentEdited drives both the dot in the close-button circle
