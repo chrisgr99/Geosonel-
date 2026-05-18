@@ -12,22 +12,22 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('gxwStorage', {
   listScores: () => ipcRenderer.invoke('gxw:list-scores'),
-  loadScoreRecord: (name) => ipcRenderer.invoke('gxw:load-score-record', name),
-  saveScoreRecord: (record) => ipcRenderer.invoke('gxw:save-score-record', record),
-  deleteScoreRecord: (name) => ipcRenderer.invoke('gxw:delete-score-record', name),
-  renameScoreRecord: (oldName, newName) =>
-    ipcRenderer.invoke('gxw:rename-score-record', oldName, newName),
+  loadScoreRecord: (scorePath) => ipcRenderer.invoke('gxw:load-score-record', scorePath),
+  saveScoreRecord: (scorePath, record) => ipcRenderer.invoke('gxw:save-score-record', scorePath, record),
+  deleteScoreRecord: (scorePath) => ipcRenderer.invoke('gxw:delete-score-record', scorePath),
+  renameScoreRecord: (oldPath, newPath) =>
+    ipcRenderer.invoke('gxw:rename-score-record', oldPath, newPath),
   loadAllScoreRecords: () => ipcRenderer.invoke('gxw:load-all-score-records'),
   getSetting: (key) => ipcRenderer.invoke('gxw:get-setting', key),
   setSetting: (key, value) => ipcRenderer.invoke('gxw:set-setting', key, value),
   getScoresFolder: () => ipcRenderer.invoke('gxw:get-scores-folder'),
   // Numbered backups (Stage 2.5 Phase 3 commit 2).
-  rotateBackupsBeforeSave: (scoreName, maxCount) =>
-    ipcRenderer.invoke('gxw:rotate-backups-before-save', scoreName, maxCount),
-  listBackups: (scoreName) =>
-    ipcRenderer.invoke('gxw:list-backups', scoreName),
-  loadBackupRecord: (scoreName, slotNumber) =>
-    ipcRenderer.invoke('gxw:load-backup-record', scoreName, slotNumber),
+  rotateBackupsBeforeSave: (scorePath, maxCount) =>
+    ipcRenderer.invoke('gxw:rotate-backups-before-save', scorePath, maxCount),
+  listBackups: (scorePath) =>
+    ipcRenderer.invoke('gxw:list-backups', scorePath),
+  loadBackupRecord: (scorePath, slotNumber) =>
+    ipcRenderer.invoke('gxw:load-backup-record', scorePath, slotNumber),
 });
 
 // Window-level IPC for the explicit-save model (Stage 2.5 Phase 1).

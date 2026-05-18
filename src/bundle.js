@@ -24,6 +24,7 @@ import {
     loadScoreRecord,
     deleteScoreRecord,
     listScores,
+    composeScorePathFromName,
 } from "./storage.js";
 import { getPreference } from "./preferences.js";
 
@@ -48,10 +49,26 @@ import { getPreference } from "./preferences.js";
 export class Bundle {
     /**
      * @param {string} name
+     * @param {string | null} [path]  Absolute folder path on disk (or
+     *   `<name>.gxs` on the IDB backend) where this bundle lives. Null
+     *   for an in-memory bundle that hasn't been saved yet — the
+     *   commit-3 Untitled flow. Bundle.save() requires a non-null path;
+     *   callers in the Untitled state route through Save As to set one.
      */
-    constructor(name) {
+    constructor(name, path = null) {
         /** @type {string} */
         this.name = name;
+
+        /**
+         * Storage path identifying where this bundle lives. Distinct
+         * from `name` (the display string): the path is the unique
+         * key used by storage.js and the IPC layer, while the name
+         * appears in the title bar, menus, and messages. They're kept
+         * in sync by construction: scoreNameFromPath(this.path)
+         * equals this.name for any saved bundle.
+         * @type {string | null}
+         */
+        this.path = path;
 
         /** @type {BundleFile[]} */
         this.files = [];
@@ -330,10 +347,12 @@ export class Bundle {
      * because a bundle just read from disk is by definition in
      * sync with disk.
      * @param {import("./storage.js").ScoreRecord} record
+     * @param {string} path   Storage path the record was loaded from.
+     *   Becomes the bundle's identity for subsequent saves.
      * @returns {Bundle}
      */
-    static fromRecord(record) {
-        const bundle = new Bundle(record.name);
+    static fromRecord(record, path) {
+        const bundle = new Bundle(record.name, path);
         for (const name of Object.keys(record.files)) {
             const entry = record.files[name];
             if (typeof entry.content === "string") {
@@ -349,18 +368,26 @@ export class Bundle {
     }
 
     /**
-     * Persist this bundle under its current name and clear the
-     * dirty flag. Disk mirroring (when configured) is triggered
-     * transparently via the afterSave event hook in storage.js;
-     * this method doesn't need to know anything about it.
+     * Persist this bundle to its current path and clear the dirty
+     * flag. Throws when the bundle has no path — the Untitled
+     * flow's first save must go through Save As, which sets a path
+     * before calling save(). Disk mirroring (when configured) is
+     * triggered transparently via the afterSave event hook in
+     * storage.js; this method doesn't need to know anything about
+     * it.
      *
      * The dirty flag is cleared after the underlying write
-     * resolves, so a save() that throws leaves the bundle in
-     * its previous dirty state and subscribers still see the
-     * unsaved-changes signal.
+     * resolves, so a save() that throws leaves the bundle in its
+     * previous dirty state and subscribers still see the unsaved-
+     * changes signal.
      */
     async save() {
-        await saveScoreRecord(this.toRecord());
+        if (this.path === null) {
+            throw new Error(
+                "Bundle.save called on an untitled bundle; use Save As to set a path first."
+            );
+        }
+        await saveScoreRecord(this.path, this.toRecord());
         this._captureSavedSnapshot();
         this.markClean();
     }
@@ -439,46 +466,49 @@ export function makeEmptyBundle(name) {
 }
 
 /**
- * Load a score from IndexedDB by name.
- * @param {string} name
+ * Load a score from storage by path.
+ * @param {string} path
  * @returns {Promise<Bundle | null>}
  */
-export async function loadScoreByName(name) {
-    const record = await loadScoreRecord(name);
+export async function loadScoreByPath(path) {
+    const record = await loadScoreRecord(path);
     if (record === null) return null;
-    return Bundle.fromRecord(record);
+    return Bundle.fromRecord(record, path);
 }
 
 /**
- * Create a new empty score under the given name, save it, and
- * return the bundle.
+ * Create a new empty score under the given name in the configured
+ * default location, save it, and return the bundle. The path is
+ * composed from the configured Scores folder (disk backend) or as
+ * `<name>.gxs` (IDB backend).
  * @param {string} name
  * @returns {Promise<Bundle>}
  */
 export async function createNewScore(name) {
+    const path = await composeScorePathFromName(name);
     const bundle = makeEmptyBundle(name);
+    bundle.path = path;
     await bundle.save();
     return bundle;
 }
 
 /**
- * List every score's name and updated timestamp, most recent
- * first. Thin pass-through for callers that don't want to
- * import from storage.js directly.
- * @returns {Promise<Array<{name: string, updatedAt: number}>>}
+ * List every score's storage path, display name, and updated
+ * timestamp, most recent first. Thin pass-through for callers
+ * that don't want to import from storage.js directly.
+ * @returns {Promise<Array<import("./storage.js").ScoreListEntry>>}
  */
 export async function listAvailableScores() {
     return await listScores();
 }
 
 /**
- * Delete a score by name. Removes from IndexedDB; the
- * afterDelete event hook in storage.js triggers the on-disk
- * folder removal transparently when a disk mirror is
- * connected. The caller is responsible for any user
- * confirmation prompt.
- * @param {string} name
+ * Delete a score by path. Removes from storage; the afterDelete
+ * event hook in storage.js triggers the on-disk folder removal
+ * transparently when a disk mirror is connected. The caller is
+ * responsible for any user confirmation prompt.
+ * @param {string} path
  */
-export async function deleteScoreByName(name) {
-    await deleteScoreRecord(name);
+export async function deleteScoreByPath(path) {
+    await deleteScoreRecord(path);
 }

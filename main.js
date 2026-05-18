@@ -44,20 +44,25 @@
 
 import {
     Bundle,
-    loadScoreByName,
+    loadScoreByPath,
     createNewScore,
     listAvailableScores,
 } from "./src/bundle.js";
 import {
     requestPersistentStorage,
-    getCurrentScoreName,
-    setCurrentScoreName,
+    getCurrentScorePath,
+    setCurrentScorePath,
     saveScoreRecord,
-    deleteScoreRecord,
+    renameScoreRecord,
     suppressNextSaveEmit,
     subscribeAfterSaveScore,
     subscribeAfterDeleteScore,
     setBackupErrorReporter,
+    migrateCurrentScoreSettingToPath,
+    composeScorePathFromName,
+    scoreNameFromPath,
+    joinScorePath,
+    dirname,
 } from "./src/storage.js";
 import { TabbedEditor } from "./src/editor.js";
 import { Transport } from "./src/transport.js";
@@ -81,7 +86,7 @@ import { DiskMirror } from "./src/diskMirror.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
 import { actionSaveAs } from "./src/scoreActions.js";
-import { recordScoreOpen } from "./src/recentFiles.js";
+import { recordScoreOpen, migrateRecentScoresToPaths } from "./src/recentFiles.js";
 import {
     parsePatternToPositions,
     formatParseResultForConsole,
@@ -168,6 +173,15 @@ async function main() {
     // --- Persistent storage request (best-effort, early) ---
     requestPersistentStorage().catch(() => {});
 
+    // --- One-time migrations to path-based identity ---
+    //
+    // Old installs persisted currentScoreName plus a name-
+    // based gxw.recentScores list. Resolve those into their
+    // path-based equivalents before any code below reads
+    // them. Idempotent after the first call.
+    await migrateCurrentScoreSettingToPath();
+    await migrateRecentScoresToPaths(composeScorePathFromName);
+
     // --- Persisted Focus Canvas state ---
     //
     // Apply the user's last Focus Canvas state to <body>
@@ -216,8 +230,8 @@ async function main() {
     // bundle is a transient throwaway — logging it in the
     // recent list would push out a real entry and surface
     // "Recovery" the next time the user opens the submenu.
-    if (!norunMode) {
-        recordScoreOpen(bundle.name);
+    if (!norunMode && bundle.path !== null) {
+        recordScoreOpen(bundle.path);
     }
 
     // --- Canvas, message area ---
@@ -613,11 +627,11 @@ async function main() {
     // \u2014 score actions, editor save, runScene's pre-save,
     // imports, restores \u2014 automatically pushes/deletes on
     // disk too. No call site needs to know about disk mirror.
-    subscribeAfterSaveScore(async (record) => {
+    subscribeAfterSaveScore(async (_path, record) => {
         await diskMirror.pushRecord(record);
     });
-    subscribeAfterDeleteScore(async (name) => {
-        await diskMirror.deleteScore(name);
+    subscribeAfterDeleteScore(async (path) => {
+        await diskMirror.deleteScore(scoreNameFromPath(path));
     });
 
     // Reconnect modal. When the disk mirror's permission lapses
@@ -830,6 +844,12 @@ async function main() {
      */
     const onExternalChange = async (newBundle) => {
         if (newBundle.name !== session.bundle.name) return;
+        // Disk-mirror pull constructs a bundle with the
+        // display name but no path — the mirror only knows
+        // names. Inherit the current session's path so
+        // subsequent saves through the primary storage land
+        // at the right location.
+        newBundle.path = session.bundle.path;
         // Clear canvas selection: the indexes we hold refer to
         // the previous version of this score's arrays. Even
         // when the score name is unchanged, an external write
@@ -915,7 +935,9 @@ async function main() {
             // (e.g. on Reload from Disk or Revert to Saved)
             // just refreshes its timestamp at the top of the
             // list, which is the desired behaviour.
-            recordScoreOpen(newBundle.name);
+            if (newBundle.path !== null) {
+                recordScoreOpen(newBundle.path);
+            }
 
             session.rewatch();
 
@@ -2344,17 +2366,17 @@ function applySceneParamsToTransport(scene, transport) {
  */
 async function resolveInitialBundle() {
     try {
-        const currentName = await getCurrentScoreName();
-        if (currentName) {
-            const bundle = await loadScoreByName(currentName);
+        const currentPath = await getCurrentScorePath();
+        if (currentPath !== null) {
+            const bundle = await loadScoreByPath(currentPath);
             if (bundle !== null) return bundle;
         }
 
         const scores = await listAvailableScores();
         if (scores.length > 0) {
-            const bundle = await loadScoreByName(scores[0].name);
-            if (bundle !== null) {
-                await setCurrentScoreName(bundle.name);
+            const bundle = await loadScoreByPath(scores[0].path);
+            if (bundle !== null && bundle.path !== null) {
+                await setCurrentScorePath(bundle.path);
                 return bundle;
             }
         }
@@ -2363,7 +2385,9 @@ async function resolveInitialBundle() {
     }
 
     const bundle = await createNewScore("Untitled");
-    await setCurrentScoreName(bundle.name);
+    if (bundle.path !== null) {
+        await setCurrentScorePath(bundle.path);
+    }
     return bundle;
 }
 
@@ -2430,14 +2454,13 @@ function wireInlineRename(el, session, messages) {
 }
 
 /**
- * Rename the current score to a new name. The bundle is
- * saved under the new name via Bundle.save() so the dirty
- * flag clears cleanly and the storage.js afterSave hook
- * fires (which the disk mirror picks up to push the new
- * folder). The old name's record is then deleted, with the
- * afterDelete hook taking the old folder out on disk. So
- * the rename appears on disk as a copy-then-delete, which
- * is functionally identical to a rename.
+ * Rename the current score to a new name. Under the disk
+ * backend this is a single atomic folder rename via
+ * renameScoreRecord, which preserves the score's .backups
+ * subfolder; under the IDB backend the public renameScore
+ * Record falls back to load + save + delete. The bundle's
+ * path and name are updated in place and a subsequent save
+ * (if the bundle is dirty) lands at the new path.
  *
  * @param {any} session
  * @param {string} newName
@@ -2448,11 +2471,20 @@ async function renameCurrentScoreTo(session, newName) {
     if (existing.some((s) => s.name === newName)) {
         throw new Error(`A score named "${newName}" already exists.`);
     }
-    const oldName = session.bundle.name;
+    const oldPath = session.bundle.path;
+    if (oldPath === null) {
+        throw new Error(
+            "Cannot rename an untitled bundle; use Save As to give it a path first."
+        );
+    }
+    const newPath = joinScorePath(dirname(oldPath), newName);
+    await renameScoreRecord(oldPath, newPath);
     session.bundle.name = newName;
-    await session.bundle.save();
-    await deleteScoreRecord(oldName);
-    await setCurrentScoreName(newName);
+    session.bundle.path = newPath;
+    if (session.bundle.dirty) {
+        await session.bundle.save();
+    }
+    await setCurrentScorePath(newPath);
     session.refreshScoreNameDisplay();
     if (typeof session.rewatch === "function") session.rewatch();
 }
@@ -2612,6 +2644,7 @@ function showFirstRunDialog() {
  */
 async function reconcileBundleWithDisk(bundle, mirror) {
     if (!mirror.getStatus().ready) return bundle;
+    if (bundle.path === null) return bundle;
     const diskBundle = await mirror.pullBundle(bundle.name);
     if (diskBundle === null) return bundle;
 
@@ -2630,10 +2663,15 @@ async function reconcileBundleWithDisk(bundle, mirror) {
         }
     }
 
-    // Persist disk version to IndexedDB. Suppress the mirror's
-    // push subscriber so we don't write back to disk what we
-    // just read.
-    suppressNextSaveEmit(diskBundle.name);
-    await saveScoreRecord(diskBundle.toRecord());
+    // The disk-pulled bundle inherits the in-memory bundle's
+    // path so its identity in the primary storage is
+    // preserved across the takeover.
+    diskBundle.path = bundle.path;
+
+    // Persist disk version to primary storage. Suppress the
+    // mirror's push subscriber so we don't write back to
+    // disk what we just read.
+    suppressNextSaveEmit(bundle.path);
+    await saveScoreRecord(bundle.path, diskBundle.toRecord());
     return diskBundle;
 }

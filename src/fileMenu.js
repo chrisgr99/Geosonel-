@@ -19,11 +19,11 @@
 import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
 import { confirmDiscardDialog } from "./dialog.js";
 import { getRecentScores, clearRecentScores } from "./recentFiles.js";
-import { listBackups } from "./storage.js";
+import { listBackups, scoreNameFromPath } from "./storage.js";
 import {
     actionNewScore,
     actionOpenScore,
-    actionOpenScoreByName,
+    actionOpenScoreByPath,
     actionDuplicateScore,
     actionSaveAs,
     actionRevert,
@@ -194,12 +194,12 @@ export function installFileMenu(ctx) {
  * @returns {DropdownEntry[]}
  */
 function buildRecentSubmenu(ctx, actionCtx) {
-    const current = ctx.session.bundle.name;
-    const recents = getRecentScores().filter((e) => e.name !== current);
+    const currentPath = ctx.session.bundle.path;
+    const recents = getRecentScores().filter((e) => e.path !== currentPath);
     /** @type {DropdownEntry[]} */
     const entries = recents.map((entry) => ({
-        label: entry.name,
-        action: () => { void actionOpenScoreByName(actionCtx, entry.name); },
+        label: scoreNameFromPath(entry.path),
+        action: () => { void actionOpenScoreByPath(actionCtx, entry.path); },
     }));
     if (entries.length > 0) {
         entries.push({ separator: true });
@@ -234,8 +234,9 @@ function buildRecentSubmenu(ctx, actionCtx) {
  * @returns {Promise<DropdownEntry[]>}
  */
 async function buildRevertToSubmenu(ctx, actionCtx) {
-    const name = ctx.session.bundle.name;
-    const slots = await listBackups(name);
+    const path = ctx.session.bundle.path;
+    if (path === null) return [];
+    const slots = await listBackups(path);
     /** @type {DropdownEntry[]} */
     const entries = slots.map((slot) => {
         const label = relativeDateLabel(slot.mtimeMs);

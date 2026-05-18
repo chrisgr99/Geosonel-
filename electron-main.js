@@ -276,18 +276,28 @@ async function readRecordFromFolder(folder, name) {
   };
 }
 
-async function readScoreRecord(name) {
-  const scoresFolder = await getScoresFolder();
-  return await readRecordFromFolder(
-    path.join(scoresFolder, scoreFolderName(name)),
-    name,
-  );
+async function readScoreRecord(scorePath) {
+  return await readRecordFromFolder(scorePath, scoreNameFromPath(scorePath));
 }
 
-async function writeScoreRecord(record) {
-  const scoresFolder = await ensureScoresFolder();
-  const scoreFolder = path.join(scoresFolder, scoreFolderName(record.name));
-  await fsp.mkdir(scoreFolder, { recursive: true });
+function scoreNameFromPath(scorePath) {
+  const base = path.basename(scorePath);
+  return scoreNameFromFolderName(base) ?? base;
+}
+
+async function writeScoreRecord(scorePath, record) {
+  // The renderer is the source of truth for where the score
+  // lives, so the path is used verbatim rather than being
+  // recomputed from record.name + the configured Scores
+  // folder. ensureScoresFolder is still called to make sure
+  // the parent directory exists for the common case where
+  // the score is being saved into the configured Scores
+  // folder for the first time; for paths outside it (the
+  // commit-3 anywhere-save case), the user picked the
+  // directory via Save panel and it already exists.
+  await ensureScoresFolder();
+  await fsp.mkdir(scorePath, { recursive: true });
+  const scoreFolder = scorePath;
 
   // Track which files should remain in the folder after this save.
   const keepFiles = new Set(Object.keys(record.files));
@@ -324,41 +334,43 @@ async function writeScoreRecord(record) {
   }
 }
 
-async function deleteScoreRecord(name) {
-  const scoresFolder = await getScoresFolder();
-  const scoreFolder = path.join(scoresFolder, scoreFolderName(name));
-  await fsp.rm(scoreFolder, { recursive: true, force: true });
+async function deleteScoreRecord(scorePath) {
+  await fsp.rm(scorePath, { recursive: true, force: true });
 }
 
 // Rename a score on disk by renaming its folder in place. The
 // folder rename is one syscall and atomic on the same volume,
 // which means the .backups subfolder follows the score to its
-// new name with no extra plumbing — contrast the older path
-// of save-under-new-name plus delete-old-name, which lost the
-// .backups history.
+// new location with no extra plumbing — contrast the older
+// path of save-under-new-name plus delete-old-name, which lost
+// the .backups history.
 //
 // The renderer's promptForUniqueName already guarantees the
 // destination doesn't exist, so a collision here would mean
 // the caller bypassed that guard or two callers raced. Throw
 // rather than silently overwriting; the in-app message area
 // surfaces the error to the user.
-async function renameScoreRecord(oldName, newName) {
-  if (oldName === newName) return;
-  const scoresFolder = await ensureScoresFolder();
-  const oldFolder = path.join(scoresFolder, scoreFolderName(oldName));
-  const newFolder = path.join(scoresFolder, scoreFolderName(newName));
-  if (!await pathExists(oldFolder)) {
+async function renameScoreRecord(oldPath, newPath) {
+  if (oldPath === newPath) return;
+  if (!await pathExists(oldPath)) {
     // Nothing to rename on disk — e.g. a brand-new bundle
     // that hasn't been saved yet. The renderer's follow-up
-    // save under the new name will create the folder.
+    // save under the new path will create the folder.
     return;
   }
-  if (await pathExists(newFolder)) {
+  if (await pathExists(newPath)) {
     throw new Error(
-      `Cannot rename "${oldName}" to "${newName}": a score with that name already exists.`
+      `Cannot rename to "${newPath}": a score with that name already exists.`
     );
   }
-  await fsp.rename(oldFolder, newFolder);
+  // Make sure the destination's parent directory exists
+  // before the rename. For commit-2 paths this is always the
+  // configured Scores folder (already ensured elsewhere),
+  // but the explicit mkdir keeps the IPC robust for the
+  // commit-3 anywhere-save case where the parent could be
+  // any directory.
+  await fsp.mkdir(path.dirname(newPath), { recursive: true });
+  await fsp.rename(oldPath, newPath);
 }
 
 async function listScoreFolders() {
@@ -372,7 +384,7 @@ async function listScoreFolders() {
     if (name === null) continue;
     const folderPath = path.join(scoresFolder, entry.name);
     const stat = await fsp.stat(folderPath);
-    results.push({ name, updatedAt: stat.mtimeMs });
+    results.push({ path: folderPath, name, updatedAt: stat.mtimeMs });
   }
   results.sort((a, b) => b.updatedAt - a.updatedAt);
   return results;
@@ -382,7 +394,7 @@ async function loadAllScoreRecords() {
   const list = await listScoreFolders();
   const records = [];
   for (const item of list) {
-    const record = await readScoreRecord(item.name);
+    const record = await readScoreRecord(item.path);
     if (record !== null) records.push(record);
   }
   return records;
@@ -409,11 +421,10 @@ async function loadAllScoreRecords() {
 
 const BACKUPS_DIRNAME = '.backups';
 
-async function rotateBackupsBeforeSave(scoreName, maxCount) {
+async function rotateBackupsBeforeSave(scorePath, maxCount) {
   if (typeof maxCount !== 'number' || maxCount <= 0) return;
 
-  const scoresFolder = await getScoresFolder();
-  const scoreFolder = path.join(scoresFolder, scoreFolderName(scoreName));
+  const scoreFolder = scorePath;
 
   // First save: nothing on disk yet, nothing to back up.
   if (!await pathExists(scoreFolder)) return;
@@ -465,9 +476,8 @@ async function rotateBackupsBeforeSave(scoreName, maxCount) {
   }
 }
 
-async function listBackups(scoreName) {
-  const scoresFolder = await getScoresFolder();
-  const backupsFolder = path.join(scoresFolder, scoreFolderName(scoreName), BACKUPS_DIRNAME);
+async function listBackups(scorePath) {
+  const backupsFolder = path.join(scorePath, BACKUPS_DIRNAME);
 
   if (!await pathExists(backupsFolder)) return [];
 
@@ -486,18 +496,17 @@ async function listBackups(scoreName) {
   return slots;
 }
 
-async function loadBackupRecord(scoreName, slotNumber) {
-  const scoresFolder = await getScoresFolder();
+async function loadBackupRecord(scorePath, slotNumber) {
   const slotFolder = path.join(
-    scoresFolder,
-    scoreFolderName(scoreName),
+    scorePath,
     BACKUPS_DIRNAME,
     String(slotNumber)
   );
-  // Pass scoreName (not the slot number) so the record's
-  // `name` field round-trips as the live score name. When
-  // the renderer reverts to this backup it saves under the
-  // original score name, which is what the user expects.
+  // Pass the score's display name (the path's stem) so the
+  // record's `name` field round-trips as the live score
+  // name. When the renderer reverts to this backup it saves
+  // under the original path, which is what the user expects.
+  const scoreName = scoreNameFromPath(scorePath);
   return await readRecordFromFolder(slotFolder, scoreName);
 }
 
@@ -579,20 +588,20 @@ function registerStorageHandlers() {
     return await listScoreFolders();
   });
 
-  ipcMain.handle('gxw:load-score-record', async (_event, name) => {
-    return await readScoreRecord(name);
+  ipcMain.handle('gxw:load-score-record', async (_event, scorePath) => {
+    return await readScoreRecord(scorePath);
   });
 
-  ipcMain.handle('gxw:save-score-record', async (_event, record) => {
-    await writeScoreRecord(record);
+  ipcMain.handle('gxw:save-score-record', async (_event, scorePath, record) => {
+    await writeScoreRecord(scorePath, record);
   });
 
-  ipcMain.handle('gxw:delete-score-record', async (_event, name) => {
-    await deleteScoreRecord(name);
+  ipcMain.handle('gxw:delete-score-record', async (_event, scorePath) => {
+    await deleteScoreRecord(scorePath);
   });
 
-  ipcMain.handle('gxw:rename-score-record', async (_event, oldName, newName) => {
-    await renameScoreRecord(oldName, newName);
+  ipcMain.handle('gxw:rename-score-record', async (_event, oldPath, newPath) => {
+    await renameScoreRecord(oldPath, newPath);
   });
 
   ipcMain.handle('gxw:load-all-score-records', async () => {
@@ -616,16 +625,16 @@ function registerStorageHandlers() {
 
   // --- Numbered backups (Stage 2.5 Phase 3 commit 2) ---
 
-  ipcMain.handle('gxw:rotate-backups-before-save', async (_event, scoreName, maxCount) => {
-    await rotateBackupsBeforeSave(scoreName, maxCount);
+  ipcMain.handle('gxw:rotate-backups-before-save', async (_event, scorePath, maxCount) => {
+    await rotateBackupsBeforeSave(scorePath, maxCount);
   });
 
-  ipcMain.handle('gxw:list-backups', async (_event, scoreName) => {
-    return await listBackups(scoreName);
+  ipcMain.handle('gxw:list-backups', async (_event, scorePath) => {
+    return await listBackups(scorePath);
   });
 
-  ipcMain.handle('gxw:load-backup-record', async (_event, scoreName, slotNumber) => {
-    return await loadBackupRecord(scoreName, slotNumber);
+  ipcMain.handle('gxw:load-backup-record', async (_event, scorePath, slotNumber) => {
+    return await loadBackupRecord(scorePath, slotNumber);
   });
 
   // Window-level IPC for the explicit-save model.

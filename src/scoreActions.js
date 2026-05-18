@@ -20,9 +20,9 @@
 import {
     Bundle,
     createNewScore,
-    loadScoreByName,
+    loadScoreByPath,
     listAvailableScores,
-    deleteScoreByName,
+    deleteScoreByPath,
 } from "./bundle.js";
 import {
     saveScoreRecord,
@@ -30,7 +30,10 @@ import {
     loadAllScoreRecords,
     loadBackupRecord,
     renameScoreRecord,
-    setCurrentScoreName,
+    setCurrentScorePath,
+    composeScorePathFromName,
+    joinScorePath,
+    dirname,
 } from "./storage.js";
 import { promptDialog, confirmDialog, confirmDiscardDialog } from "./dialog.js";
 import { forgetScore, renameInRecentScores } from "./recentFiles.js";
@@ -93,7 +96,7 @@ async function confirmDiscardChanges(ctx) {
 
 /**
  * New Score: prompt for a name, create an empty score under
- * that name, switch to it.
+ * that name in the configured Scores folder, switch to it.
  * @param {ScoreActionsContext} ctx
  */
 export async function actionNewScore(ctx) {
@@ -101,7 +104,9 @@ export async function actionNewScore(ctx) {
     const name = await promptForUniqueName("New score name:", "", ctx.messages);
     if (name === null) return;
     const bundle = await createNewScore(name);
-    await setCurrentScoreName(name);
+    if (bundle.path !== null) {
+        await setCurrentScorePath(bundle.path);
+    }
     await ctx.session.switchToBundle(bundle);
     ctx.messages.write(`Created score "${name}".`);
 }
@@ -119,48 +124,52 @@ export async function actionOpenScore(ctx) {
     const result = await openScoreDialog();
     if (result === null) return;
     if (result.action === "open") {
-        if (result.name === ctx.session.bundle.name) return;
+        if (result.path === ctx.session.bundle.path) return;
         if (!(await confirmDiscardChanges(ctx))) return;
-        const bundle = await loadScoreByName(result.name);
+        const bundle = await loadScoreByPath(result.path);
         if (bundle === null) {
             ctx.messages.write(`Score "${result.name}" could not be found.`, "error");
             return;
         }
-        await setCurrentScoreName(result.name);
+        await setCurrentScorePath(result.path);
         await ctx.session.switchToBundle(bundle);
         ctx.messages.write(`Switched to score "${result.name}".`);
     } else {
         if (!(await confirmDiscardChanges(ctx))) return;
-        await actionOpenAsDuplicate(ctx, result.name);
+        await actionOpenAsDuplicate(ctx, result.path);
     }
 }
 
 /**
- * Open a score by name directly, without going through the
+ * Open a score by path directly, without going through the
  * Open Score dialog. Used by the File menu's Open Recent
  * submenu: a click on a recent entry loads that score and
  * switches to it. Goes through the same dirty-state
  * confirmation gate as actionOpenScore so unsaved edits
- * aren't silently dropped. If the named score doesn't exist
- * (typical after the user deleted it through some other
- * path while it was still in the recent list), the entry is
- * removed from the recent list and an error is surfaced.
+ * aren't silently dropped. If the score at the path no
+ * longer exists (typical after the user deleted it through
+ * some other path while it was still in the recent list),
+ * the entry is removed from the recent list and an error
+ * is surfaced.
  *
  * @param {ScoreActionsContext} ctx
- * @param {string} name
+ * @param {string} path
  */
-export async function actionOpenScoreByName(ctx, name) {
-    if (name === ctx.session.bundle.name) return;
+export async function actionOpenScoreByPath(ctx, path) {
+    if (path === ctx.session.bundle.path) return;
     if (!(await confirmDiscardChanges(ctx))) return;
-    const bundle = await loadScoreByName(name);
+    const bundle = await loadScoreByPath(path);
     if (bundle === null) {
-        forgetScore(name);
-        ctx.messages.write(`Score "${name}" could not be found and was removed from Open Recent.`, "error");
+        forgetScore(path);
+        ctx.messages.write(
+            `Score at "${path}" could not be found and was removed from Open Recent.`,
+            "error"
+        );
         return;
     }
-    await setCurrentScoreName(name);
+    await setCurrentScorePath(path);
     await ctx.session.switchToBundle(bundle);
-    ctx.messages.write(`Switched to score "${name}".`);
+    ctx.messages.write(`Switched to score "${bundle.name}".`);
 }
 
 /**
@@ -261,20 +270,21 @@ export async function actionSaveAs(ctx) {
 
     // Write the in-memory bundle's state under the new name
     // via saveScoreRecord (Bundle.save would persist under
-    // the bundle's current name, not the new one). Then
+    // the bundle's current path, not the new one). Then
     // load the freshly-written record back as a clean
     // bundle and switch the editor over.
+    const newPath = await composeScorePathFromName(finalName);
     const record = ctx.session.bundle.toRecord();
     record.name = finalName;
     record.updatedAt = Date.now();
-    await saveScoreRecord(record);
+    await saveScoreRecord(newPath, record);
 
-    const bundle = await loadScoreByName(finalName);
+    const bundle = await loadScoreByPath(newPath);
     if (bundle === null) {
         ctx.messages.write(`Failed to save as "${finalName}".`, "error");
         return;
     }
-    await setCurrentScoreName(finalName);
+    await setCurrentScorePath(newPath);
     await ctx.session.switchToBundle(bundle);
     ctx.messages.write(`Saved as "${finalName}".`);
 }
@@ -297,13 +307,21 @@ export async function actionSaveAs(ctx) {
 export async function actionRevert(ctx) {
     if (!ctx.session.bundle.dirty) return;
     const name = ctx.session.bundle.name;
+    const path = ctx.session.bundle.path;
+    if (path === null) {
+        ctx.messages.write(
+            `Cannot revert "${name}" — the score has not been saved yet.`,
+            "error"
+        );
+        return;
+    }
     const ok = await confirmDialog({
         title: `Revert to the last saved version of \u201c${name}\u201d?`,
         description: "Any unsaved changes will be lost.",
         confirmLabel: "Revert",
     });
     if (!ok) return;
-    const bundle = await loadScoreByName(name);
+    const bundle = await loadScoreByPath(path);
     if (bundle === null) {
         ctx.messages.write(`Could not reload "${name}" from disk.`, "error");
         return;
@@ -334,6 +352,14 @@ export async function actionRevert(ctx) {
  */
 export async function actionRevertToBackup(ctx, slotNumber, label) {
     const name = ctx.session.bundle.name;
+    const path = ctx.session.bundle.path;
+    if (path === null) {
+        ctx.messages.write(
+            `Cannot revert "${name}" — the score has not been saved yet.`,
+            "error"
+        );
+        return;
+    }
     const ok = await confirmDialog({
         title: `Revert \u201c${name}\u201d to ${label}?`,
         description:
@@ -341,7 +367,7 @@ export async function actionRevertToBackup(ctx, slotNumber, label) {
         confirmLabel: "Revert",
     });
     if (!ok) return;
-    const record = await loadBackupRecord(name, slotNumber);
+    const record = await loadBackupRecord(path, slotNumber);
     if (record === null) {
         ctx.messages.write(
             `Could not load backup slot ${slotNumber} for "${name}".`,
@@ -357,8 +383,8 @@ export async function actionRevertToBackup(ctx, slotNumber, label) {
     // it that way), but defensively make sure here too.
     record.name = name;
     record.updatedAt = Date.now();
-    await saveScoreRecord(record);
-    const bundle = await loadScoreByName(name);
+    await saveScoreRecord(path, record);
+    const bundle = await loadScoreByPath(path);
     if (bundle === null) {
         ctx.messages.write(`Could not reload "${name}" after revert.`, "error");
         return;
@@ -372,17 +398,20 @@ export async function actionRevertToBackup(ctx, slotNumber, label) {
  * current one) into a new score and switch to it. Used by the
  * Open Score dialog's "Open as Duplicate" button.
  * @param {ScoreActionsContext} ctx
- * @param {string} sourceName
+ * @param {string} sourcePath
  */
-export async function actionOpenAsDuplicate(ctx, sourceName) {
-    const sourceRecord = await loadScoreRecord(sourceName);
+export async function actionOpenAsDuplicate(ctx, sourcePath) {
+    const sourceRecord = await loadScoreRecord(sourcePath);
     if (sourceRecord === null) {
-        ctx.messages.write(`Score "${sourceName}" could not be found.`, "error");
+        ctx.messages.write(
+            `Score at "${sourcePath}" could not be found.`,
+            "error"
+        );
         return;
     }
     const newName = await promptForUniqueName(
-        `Duplicate "${sourceName}" as:`,
-        `${sourceName} copy`,
+        `Duplicate "${sourceRecord.name}" as:`,
+        `${sourceRecord.name} copy`,
         ctx.messages
     );
     if (newName === null) return;
@@ -397,19 +426,20 @@ export async function actionOpenAsDuplicate(ctx, sourceName) {
  * @param {string} newName
  */
 async function duplicateScoreAs(ctx, sourceRecord, newName) {
+    const newPath = await composeScorePathFromName(newName);
     const record = {
         ...sourceRecord,
         name: newName,
         updatedAt: Date.now(),
     };
-    await saveScoreRecord(record);
+    await saveScoreRecord(newPath, record);
 
-    const bundle = await loadScoreByName(newName);
+    const bundle = await loadScoreByPath(newPath);
     if (bundle === null) {
         ctx.messages.write(`Failed to create duplicate "${newName}".`, "error");
         return;
     }
-    await setCurrentScoreName(newName);
+    await setCurrentScorePath(newPath);
     await ctx.session.switchToBundle(bundle);
     ctx.messages.write(`Duplicated as "${newName}".`);
 }
@@ -427,10 +457,24 @@ async function duplicateScoreAs(ctx, sourceRecord, newName) {
  * on-disk state and the new save lands cleanly. A rename
  * with no unsaved edits skips the save so no spurious
  * backup slot is created.
+ *
+ * Same-directory rename: the new path is the old path's
+ * parent plus the new leaf with .gxs applied. Anywhere-save
+ * in commit 3 will introduce a separate move flow if that's
+ * ever needed; rename here only ever changes the leaf.
+ *
  * @param {ScoreActionsContext} ctx
  */
 export async function actionRenameScore(ctx) {
     const oldName = ctx.session.bundle.name;
+    const oldPath = ctx.session.bundle.path;
+    if (oldPath === null) {
+        ctx.messages.write(
+            `Cannot rename "${oldName}" — the score has not been saved yet.`,
+            "error"
+        );
+        return;
+    }
     const newName = await promptForUniqueName(
         `Rename "${oldName}" to:`,
         oldName,
@@ -439,8 +483,10 @@ export async function actionRenameScore(ctx) {
     );
     if (newName === null || newName === oldName) return;
 
+    const newPath = joinScorePath(dirname(oldPath), newName);
+
     try {
-        await renameScoreRecord(oldName, newName);
+        await renameScoreRecord(oldPath, newPath);
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         ctx.messages.write(
@@ -451,20 +497,21 @@ export async function actionRenameScore(ctx) {
     }
 
     ctx.session.bundle.name = newName;
+    ctx.session.bundle.path = newPath;
     if (ctx.session.bundle.dirty) {
         // Persist any unsaved in-memory edits under the new
-        // name. The save's normal backup-rotation captures
+        // path. The save's normal backup-rotation captures
         // the just-renamed pre-edit state in slot 1.
         await ctx.session.bundle.save();
     }
-    await setCurrentScoreName(newName);
+    await setCurrentScorePath(newPath);
     ctx.session.refreshScoreNameDisplay();
     // Keep the Open Recent submenu's entry pointing at the
     // renamed score (without disturbing its position in the
-    // list) so the menu doesn't end up with a stale name
-    // entry for the deleted oldName plus no entry for the
-    // newName until something opens it next.
-    renameInRecentScores(oldName, newName);
+    // list) so the menu doesn't end up with a stale entry
+    // for the deleted oldPath plus no entry for the newPath
+    // until something opens it next.
+    renameInRecentScores(oldPath, newPath);
     ctx.messages.write(`Renamed "${oldName}" to "${newName}".`);
 }
 
@@ -475,16 +522,24 @@ export async function actionRenameScore(ctx) {
  */
 export async function actionDeleteScore(ctx) {
     const name = ctx.session.bundle.name;
+    const path = ctx.session.bundle.path;
+    if (path === null) {
+        ctx.messages.write(
+            `Cannot delete "${name}" — the score has not been saved yet.`,
+            "error"
+        );
+        return;
+    }
     const ok = window.confirm(
         `Delete score "${name}" permanently? This cannot be undone.`
     );
     if (!ok) return;
 
-    await deleteScoreByName(name);
+    await deleteScoreByPath(path);
     // Remove from the Open Recent submenu as well so the
     // menu doesn't keep a pointer at a score the user just
     // explicitly threw away.
-    forgetScore(name);
+    forgetScore(path);
     ctx.messages.write(`Deleted score "${name}".`);
 
     // Switch to another score if any exist; otherwise create a
@@ -492,12 +547,14 @@ export async function actionDeleteScore(ctx) {
     const remaining = await listAvailableScores();
     let next;
     if (remaining.length > 0) {
-        next = await loadScoreByName(remaining[0].name);
+        next = await loadScoreByPath(remaining[0].path);
     }
     if (!next) {
         next = await createNewScore("Untitled");
     }
-    await setCurrentScoreName(next.name);
+    if (next.path !== null) {
+        await setCurrentScorePath(next.path);
+    }
     await ctx.session.switchToBundle(next);
 }
 
@@ -552,14 +609,15 @@ export async function actionImportScore(ctx) {
     }
     record.name = finalName;
     record.updatedAt = Date.now();
-    await saveScoreRecord(record);
+    const newPath = await composeScorePathFromName(finalName);
+    await saveScoreRecord(newPath, record);
 
-    const bundle = await loadScoreByName(finalName);
+    const bundle = await loadScoreByPath(newPath);
     if (bundle === null) {
         ctx.messages.write(`Failed to import "${finalName}".`, "error");
         return;
     }
-    await setCurrentScoreName(finalName);
+    await setCurrentScorePath(newPath);
     await ctx.session.switchToBundle(bundle);
     ctx.messages.write(`Imported "${finalName}".`);
 }
@@ -639,7 +697,8 @@ export async function actionRestoreFromBackup(ctx) {
         }
         record.name = finalName;
         record.updatedAt = Date.now();
-        await saveScoreRecord(record);
+        const restorePath = await composeScorePathFromName(finalName);
+        await saveScoreRecord(restorePath, record);
         existing.add(finalName);
         imported++;
     }
@@ -653,7 +712,7 @@ export async function actionRestoreFromBackup(ctx) {
 // --- Open Score dialog ---
 
 /**
- * @typedef {{ action: "open" | "duplicate", name: string } | null} OpenDialogResult
+ * @typedef {{ action: "open" | "duplicate", path: string, name: string } | null} OpenDialogResult
  */
 
 /**
@@ -679,13 +738,20 @@ async function openScoreDialog() {
         dialog.appendChild(title);
 
         /** @type {string | null} */
+        let selectedPath = null;
+        /** @type {string | null} */
         let selectedName = null;
         /** @type {HTMLElement | null} */
         let selectedEl = null;
 
-        const selectRow = (/** @type {HTMLElement} */ el, /** @type {string} */ name) => {
+        const selectRow = (
+            /** @type {HTMLElement} */ el,
+            /** @type {string} */ path,
+            /** @type {string} */ name,
+        ) => {
             if (selectedEl !== null) selectedEl.classList.remove("selected");
             selectedEl = el;
+            selectedPath = path;
             selectedName = name;
             el.classList.add("selected");
             openBtn.disabled = false;
@@ -693,10 +759,11 @@ async function openScoreDialog() {
         };
 
         const commit = (/** @type {"open" | "duplicate"} */ action) => {
-            if (selectedName === null) return;
+            if (selectedPath === null || selectedName === null) return;
+            const path = selectedPath;
             const name = selectedName;
             cleanup();
-            resolve({ action, name });
+            resolve({ action, path, name });
         };
 
         if (scores.length === 0) {
@@ -723,19 +790,19 @@ async function openScoreDialog() {
                 dateEl.textContent = formatDate(s.updatedAt);
                 item.appendChild(dateEl);
 
-                item.addEventListener("click", () => selectRow(item, s.name));
+                item.addEventListener("click", () => selectRow(item, s.path, s.name));
                 item.addEventListener("dblclick", () => {
-                    selectRow(item, s.name);
+                    selectRow(item, s.path, s.name);
                     commit("open");
                 });
                 item.addEventListener("keydown", (e) => {
                     if (e.key === "Enter") {
                         e.preventDefault();
-                        selectRow(item, s.name);
+                        selectRow(item, s.path, s.name);
                         commit("open");
                     } else if (e.key === " ") {
                         e.preventDefault();
-                        selectRow(item, s.name);
+                        selectRow(item, s.path, s.name);
                     }
                 });
                 list.appendChild(item);
@@ -802,7 +869,10 @@ async function openScoreDialog() {
 
 /**
  * Prompt for a score name that is non-empty and (unless
- * allowCurrent matches) unique.
+ * allowCurrent matches) unique. Uniqueness is checked against
+ * the display names returned by listAvailableScores, which on
+ * the disk backend means "within the configured Scores
+ * folder".
  * @param {string} message
  * @param {string} defaultValue
  * @param {MessageArea} messages
