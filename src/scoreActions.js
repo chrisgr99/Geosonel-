@@ -30,9 +30,10 @@ import {
     loadAllScoreRecords,
     setCurrentScoreName,
 } from "./storage.js";
-import { promptDialog } from "./dialog.js";
+import { promptDialog, confirmDiscardDialog } from "./dialog.js";
 
 /** @typedef {import("./messages.js").MessageArea} MessageArea */
+/** @typedef {import("./editor.js").TabbedEditor} TabbedEditor */
 
 /**
  * @typedef {Object} ScoreSession
@@ -45,7 +46,45 @@ import { promptDialog } from "./dialog.js";
  * @typedef {Object} ScoreActionsContext
  * @property {ScoreSession} session
  * @property {MessageArea} messages
+ * @property {TabbedEditor} editor
  */
+
+// --- Unsaved-changes gate ---
+
+/**
+ * Before any action that switches away from the current bundle
+ * (New Score, Open Score, Duplicate Score, Import Score,
+ * Reload from Disk), check whether the current bundle has
+ * unsaved changes; if so, present the three-button Save /
+ * Don't Save / Cancel dialog and act on the user's decision.
+ *
+ * Returns true when the caller should proceed with the
+ * switch-away action, false when the caller should abort. On
+ * Save, the bundle is saved before returning true. On Don't
+ * Save, the dirty state is intentionally left in place; the
+ * caller's subsequent switchToBundle replaces the in-memory
+ * bundle so the unsaved edits are dropped naturally without
+ * needing to write anything to disk.
+ *
+ * Delete Score deliberately does not call this guard — the
+ * user is explicitly discarding the score, and the action's
+ * own confirmation prompt already covers the data-loss
+ * conversation.
+ *
+ * @param {ScoreActionsContext} ctx
+ * @returns {Promise<boolean>}
+ */
+async function confirmDiscardChanges(ctx) {
+    if (!ctx.session.bundle.dirty) return true;
+    const decision = await confirmDiscardDialog({
+        scoreName: ctx.session.bundle.name,
+    });
+    if (decision === "cancel") return false;
+    if (decision === "save") {
+        await ctx.editor.save();
+    }
+    return true;
+}
 
 // --- Simple actions ---
 
@@ -55,6 +94,7 @@ import { promptDialog } from "./dialog.js";
  * @param {ScoreActionsContext} ctx
  */
 export async function actionNewScore(ctx) {
+    if (!(await confirmDiscardChanges(ctx))) return;
     const name = await promptForUniqueName("New score name:", "", ctx.messages);
     if (name === null) return;
     const bundle = await createNewScore(name);
@@ -77,6 +117,7 @@ export async function actionOpenScore(ctx) {
     if (result === null) return;
     if (result.action === "open") {
         if (result.name === ctx.session.bundle.name) return;
+        if (!(await confirmDiscardChanges(ctx))) return;
         const bundle = await loadScoreByName(result.name);
         if (bundle === null) {
             ctx.messages.write(`Score "${result.name}" could not be found.`, "error");
@@ -86,18 +127,22 @@ export async function actionOpenScore(ctx) {
         await ctx.session.switchToBundle(bundle);
         ctx.messages.write(`Switched to score "${result.name}".`);
     } else {
+        if (!(await confirmDiscardChanges(ctx))) return;
         await actionOpenAsDuplicate(ctx, result.name);
     }
 }
 
 /**
  * Duplicate Score: prompt for a new name, clone the current
- * bundle under that name, switch to the clone. Replaces the
- * older "Save As" concept with a web-native name — there is
- * no Save, so there is no Save As; the action is duplication.
+ * bundle under that name, switch to the clone. The dirty-
+ * state check applies because switching to the clone drops
+ * the in-memory unsaved edits on the original; the user
+ * gets the chance to save the original first via the Save
+ * option in the discard prompt.
  * @param {ScoreActionsContext} ctx
  */
 export async function actionDuplicateScore(ctx) {
+    if (!(await confirmDiscardChanges(ctx))) return;
     const oldName = ctx.session.bundle.name;
     const newName = await promptForUniqueName(
         `Duplicate "${oldName}" as:`,
@@ -169,13 +214,13 @@ export async function actionRenameScore(ctx) {
     );
     if (newName === null || newName === oldName) return;
 
-    // Write the record under the new name, delete the old.
-    const record = ctx.session.bundle.toRecord();
-    record.name = newName;
-    record.updatedAt = Date.now();
-    await saveScoreRecord(record);
-    await deleteScoreByName(oldName);
+    // Save under the new name, then delete the old. Going
+    // through Bundle.save() keeps the dirty flag
+    // synchronised: in-memory edits (if any) land on disk
+    // under the new name and dirty clears cleanly.
     ctx.session.bundle.name = newName;
+    await ctx.session.bundle.save();
+    await deleteScoreByName(oldName);
     await setCurrentScoreName(newName);
     ctx.session.refreshScoreNameDisplay();
     ctx.messages.write(`Renamed "${oldName}" to "${newName}".`);
@@ -236,6 +281,7 @@ export async function actionExportScore(ctx) {
  * @param {ScoreActionsContext} ctx
  */
 export async function actionImportScore(ctx) {
+    if (!(await confirmDiscardChanges(ctx))) return;
     const file = await chooseJsonFile();
     if (file === null) return;
     let payload;

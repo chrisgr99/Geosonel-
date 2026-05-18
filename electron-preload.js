@@ -20,3 +20,30 @@ contextBridge.exposeInMainWorld('gxwStorage', {
   setSetting: (key, value) => ipcRenderer.invoke('gxw:set-setting', key, value),
   getScoresFolder: () => ipcRenderer.invoke('gxw:get-scores-folder'),
 });
+
+// Window-level IPC for the explicit-save model (Stage 2.5 Phase 1).
+//
+// setDocumentEdited drives the dot in the close-button circle that
+// macOS shows on a BrowserWindow with unsaved changes. The renderer
+// calls it from the bundle's dirty-change subscription so the dot
+// tracks the bundle's state.
+//
+// The close-request flow is the three-button "Save changes?" dialog's
+// plumbing: when the user tries to close the window with a dirty
+// bundle, the main process intercepts the close event and sends
+// gxw:close-requested to the renderer. The renderer shows the in-app
+// dialog, takes the user's decision, optionally saves, and sends
+// gxw:close-decision back to main with 'proceed' or 'cancel'. Main
+// then either calls window.close() (which won't re-intercept because
+// the close-confirmed flag is set) or does nothing (cancel).
+contextBridge.exposeInMainWorld('gxwWindow', {
+  setDocumentEdited: (edited) =>
+    ipcRenderer.invoke('gxw:set-document-edited', edited),
+  onCloseRequested: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('gxw:close-requested', listener);
+    return () => ipcRenderer.removeListener('gxw:close-requested', listener);
+  },
+  sendCloseDecision: (decision) =>
+    ipcRenderer.send('gxw:close-decision', decision),
+});

@@ -8,11 +8,16 @@
  * stitches together on demand (Cmd-Enter or Run menu) to
  * produce a Scene that the canvas renders on top of the grid.
  *
- * The save model is explicit-only: typing marks the bundle
- * dirty; Cmd-S saves. Run Scene implicitly saves first. A
- * visible indicator next to the score name shows Saved or
- * Unsaved. A beforeunload warning protects against tab close
- * with unsaved changes.
+ * The save model is explicit-only: typing or any other
+ * mutation marks the bundle dirty; Cmd-S saves. Run Scene
+ * executes from the in-memory bundle and never commits to
+ * disk. A visible indicator next to the score name shows
+ * Saved or Unsaved, and on macOS the BrowserWindow's close-
+ * button circle gets the standard documentEdited dot.
+ * A three-button Save / Don't Save / Cancel dialog protects
+ * against closing the window with unsaved changes in
+ * Electron; the web version falls back to the browser's
+ * generic beforeunload warning.
  *
  * Disk mirroring (optional) writes every save out to a folder
  * the user picks via Settings, and watches the active score's
@@ -31,7 +36,7 @@
  *     each with its own syntax highlighting and linter.
  *   - Disk mirroring for scores; auto-reload on external edits.
  *   - Explicit save (Cmd-S); no autosave timer.
- *   - Run Scene command (Cmd-Enter) with auto-save-before-run.
+ *   - Run Scene command (Cmd-Enter) executing from in-memory state.
  *   - First-load auto-run so the canvas shows something.
  */
 
@@ -72,7 +77,7 @@ import { installEditMenu } from "./src/editMenu.js";
 import { installAppMenu } from "./src/appMenu.js";
 import { SceneLoader } from "./src/sceneLoader.js";
 import { DiskMirror } from "./src/diskMirror.js";
-import { openDialog } from "./src/dialog.js";
+import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
 import {
     parsePatternToPositions,
@@ -238,6 +243,12 @@ async function main() {
     }
 
     // --- Saved indicator (top row) ---
+    //
+    // The textual Saved / Unsaved / just-saved badge in the
+    // top-right corner of the menu bar. The persistent dirty
+    // signal also drives the window title and, on Electron,
+    // setDocumentEdited (the standard macOS dot in the close-
+    // button circle). updateTitleBar handles those.
     const savedIndicatorEl = document.getElementById("saved-indicator");
     const setSavedIndicator = (/** @type {"saved" | "unsaved" | "just-saved"} */ state) => {
         if (!(savedIndicatorEl instanceof HTMLElement)) return;
@@ -253,6 +264,44 @@ async function main() {
         }
     };
     setSavedIndicator("saved");
+
+    // --- Electron detection and title-bar wiring ---
+    //
+    // The Electron build exposes window.gxwStorage (set in
+    // electron-preload.js); the web build does not. Title-bar
+    // surfaces differ between the two: Electron uses macOS's
+    // setDocumentEdited so the dirty signal appears as the
+    // dot in the close-button circle, while the web version
+    // adds a leading bullet to document.title because there
+    // is no close-button dot in a browser tab.
+    const isElectron =
+        typeof (/** @type {any} */ (window).gxwStorage) === "object" &&
+        (/** @type {any} */ (window).gxwStorage) !== null;
+
+    const updateTitleBar = (/** @type {boolean} */ dirty) => {
+        // Resolves session.bundle.name at call time, so the title
+        // tracks the current score after any switchToBundle or
+        // inline rename. Only called from places that fire after
+        // the session const further down is initialised — never
+        // synchronously during the early body of main().
+        const name = session.bundle.name;
+        const baseTitle = `${name} \u2014 GeoSonel`;
+        if (isElectron) {
+            document.title = baseTitle;
+            const gxwWindow = /** @type {any} */ (window).gxwWindow;
+            if (gxwWindow !== undefined &&
+                typeof gxwWindow.setDocumentEdited === "function") {
+                void gxwWindow.setDocumentEdited(dirty);
+            }
+        } else {
+            document.title = dirty ? `\u2022 ${baseTitle}` : baseTitle;
+        }
+    };
+    // Initial title bar set inline: session isn't constructed
+    // yet at this point in main(), so updateTitleBar (which
+    // resolves session.bundle.name) can't run. The bundle is
+    // freshly loaded from disk/IDB so dirty is false here.
+    document.title = `${bundle.name} \u2014 GeoSonel`;
 
     // --- Editor ---
     const tabBarEl = document.querySelector(".tab-bar");
@@ -297,6 +346,7 @@ async function main() {
     const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, bundle, {
         onDirtyChange: (dirty) => {
             setSavedIndicator(dirty ? "unsaved" : "saved");
+            updateTitleBar(dirty);
         },
         onSaved: () => {
             setSavedIndicator("just-saved");
@@ -571,15 +621,14 @@ async function main() {
 
     /**
      * Load the current score's scene.json and behaviours.js,
-     * build a Scene, and update the canvas. Saves the bundle
-     * first so the bytes on disk match what we executed.
-     * Errors are reported in the message area; the canvas
-     * retains the previous scene on failure.
+     * build a Scene, and update the canvas. Executes from the
+     * in-memory bundle state — the explicit-save model means
+     * Run no longer commits to disk first; Cmd-S is the only
+     * way bytes leave memory. Errors are reported in the
+     * message area; the canvas retains the previous scene on
+     * failure.
      */
     runScene = async () => {
-        if (editor.isDirty) {
-            await editor.save();
-        }
         await runBundleMigrations();
         await ensureIdentityFieldsAreFilled();
         const result = sceneLoader.load(session.bundle);
@@ -628,12 +677,12 @@ async function main() {
      * applied. Steady-state (already-migrated) bundles are
      * a no-op.
      *
-     * Persistence: the rename is committed to IndexedDB
-     * inside this function so the migrated state survives
-     * a reload. Without an explicit save here the bundle
-     * would be re-migrated every page load, since
-     * editor.reloadFromBundle resets the dirty flag and
-     * runScene's later save check sees nothing to persist.
+     * Persistence: the rename is committed to disk inside
+     * this function so the migrated state survives a
+     * reload. Without an explicit save here the bundle
+     * would be re-migrated every page load, since Run
+     * Scene no longer auto-saves and there is no other
+     * path that would write the rename out.
      */
     const runBundleMigrations = async () => {
         const renamed = migrateBehaviorsFilename(session.bundle);
@@ -646,10 +695,10 @@ async function main() {
             // editor falls back to the inspector tab.
             editor.reloadFromBundle();
             // Persist the migrated bundle so the next page
-            // load doesn't re-run the rename pass. save()
-            // also clears the dirty flag, leaving runScene's
-            // subsequent dirty-driven save paths to handle
-            // any further mutation in this same cycle.
+            // load doesn't re-run the rename pass. Save
+            // also clears the dirty flag the rename set
+            // via Bundle.markDirty, leaving the user a
+            // clean state on first paint.
             await editor.save();
         }
     };
@@ -676,10 +725,15 @@ async function main() {
      * steady state is reached.
      *
      * Done before sceneLoader.load() so the loader sees the
-     * normalised scene; done after editor.save() so we don't
-     * lose pending text edits in the JSON tab. If scene.json
-     * has a parse error we skip silently — sceneLoader will
-     * report the error from its own parse.
+     * normalised scene. If scene.json has a parse error we
+     * skip silently — sceneLoader will report the error
+     * from its own parse.
+     *
+     * When something does change, the bundle's updateContent
+     * marks it dirty. Migrations aren't user edits, so we
+     * save explicitly here to keep the dirty flag from
+     * surprising the composer on every page load: the score
+     * is normalised, then persisted as clean.
      */
     const ensureIdentityFieldsAreFilled = async () => {
         const sceneFile = session.bundle.getFile("scene.json");
@@ -701,6 +755,7 @@ async function main() {
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();
+        await editor.save();
     };
 
     // --- Score session ---
@@ -709,6 +764,13 @@ async function main() {
         if (scoreNameEl instanceof HTMLElement) {
             scoreNameEl.textContent = session.bundle.name;
         }
+        // The window title (and macOS's documentEdited dot,
+        // when running under Electron) is keyed on the score
+        // name plus dirty state, so rename gestures need to
+        // refresh it. updateTitleBar reads the current
+        // session.bundle on every call, so the new name is
+        // picked up automatically.
+        updateTitleBar(session.bundle.dirty);
     };
 
     /**
@@ -849,11 +911,11 @@ async function main() {
     //
     // Canvas edits are committed by parsing scene.json,
     // mutating it, stringifying back, updating the bundle in
-    // place, then re-running the scene. runScene auto-saves
-    // first, so each canvas edit also persists through the
-    // normal save pipeline (and out to disk if mirroring is
-    // on). The editor's Properties (JSON) view is refreshed
-    // via refreshActiveTabFromBundle so the JSON reflects the
+    // place, then re-running the scene. Bundle.updateContent
+    // marks the bundle dirty as a normal side effect; the
+    // user picks when to save via Cmd-S. The editor's
+    // Properties (JSON) view is refreshed via
+    // refreshActiveTabFromBundle so the JSON reflects the
     // new content immediately.
     const toolbarEl = document.getElementById("canvas-toolbar");
     if (!(toolbarEl instanceof HTMLElement)) {
@@ -1442,8 +1504,9 @@ async function main() {
     // matching scene.json mutation and route it through
     // applySceneEdit — the same pipeline the canvas toolbar
     // uses — so inspector edits and canvas edits share the
-    // dirty-state, auto-save, and re-run mechanics without
-    // either knowing about the other.
+    // dirty-marking and re-run mechanics without either
+    // knowing about the other. Persistence is explicit; the
+    // user decides when to save via Cmd-S.
     if (editor.inspector) {
         editor.inspector.setEditCallback(async (edit) => {
             if (edit.kind === "setMute") {
@@ -2045,7 +2108,7 @@ async function main() {
         toggleFocusCanvas,
         toggleAutoZoom,
     });
-    installFileMenu({ session, messages, imageImporter, diskMirror });
+    installFileMenu({ session, messages, imageImporter, diskMirror, editor });
     installEditMenu({ performUndo, performRedo, performDuplicate });
     installRunMenu({ runScene });
     installAppMenu({ diskMirror, messages });
@@ -2059,14 +2122,70 @@ async function main() {
         }
     });
 
-    // --- Protect unsaved changes on tab close ---
+    // --- Protect unsaved changes on close ---
+    //
+    // Two paths converge here. In the web build, beforeunload
+    // fires when the user closes the tab, navigates away, or
+    // reloads; the only thing we can do is return a non-empty
+    // string, which makes the browser show its generic Leave
+    // / Stay confirmation. The custom three-button dialog is
+    // unreachable from beforeunload because the event is
+    // synchronous and the dialog renders asynchronously. In-
+    // app switch-away gestures (New, Open, Duplicate, Import,
+    // Reload from Disk) use the custom dialog through the
+    // scoreActions guard.
+    //
+    // In the Electron build, beforeunload is skipped entirely:
+    // the main process's window-close interceptor runs first,
+    // sends gxw:close-requested to the renderer, and the
+    // renderer (in the onCloseRequested handler below) shows
+    // the same three-button dialog the in-app gestures use.
+    // Decision flows back to main via sendCloseDecision; main
+    // either calls close() again (which now bypasses the
+    // interceptor) or does nothing.
     window.addEventListener("beforeunload", (e) => {
-        if (editor.isDirty) {
+        if (isElectron) return;
+        if (session.bundle.dirty) {
             e.preventDefault();
             e.returnValue = "";
             return "";
         }
     });
+
+    if (isElectron) {
+        const gxwWindow = /** @type {any} */ (window).gxwWindow;
+        if (gxwWindow !== undefined &&
+            typeof gxwWindow.onCloseRequested === "function") {
+            gxwWindow.onCloseRequested(async () => {
+                if (!session.bundle.dirty) {
+                    gxwWindow.sendCloseDecision("proceed");
+                    return;
+                }
+                const decision = await confirmDiscardDialog({
+                    scoreName: session.bundle.name,
+                });
+                if (decision === "cancel") {
+                    gxwWindow.sendCloseDecision("cancel");
+                    return;
+                }
+                if (decision === "save") {
+                    try {
+                        await editor.save();
+                    } catch (err) {
+                        // If the save threw, the bundle is
+                        // still dirty; bail out of the close
+                        // rather than silently dropping the
+                        // user's work. They'll see whatever
+                        // error message the save path
+                        // already surfaced.
+                        gxwWindow.sendCloseDecision("cancel");
+                        return;
+                    }
+                }
+                gxwWindow.sendCloseDecision("proceed");
+            });
+        }
+    }
 
     // --- Initial auto-run so the canvas shows something ---
     //
@@ -2229,11 +2348,14 @@ function wireInlineRename(el, session, messages) {
 }
 
 /**
- * Rename the current score to a new name. The save and delete
- * events fire automatically through storage.js's hooks, which
- * the disk mirror picks up to push the new folder and delete
- * the old one. So the rename appears on disk as a copy-then-
- * delete, which is functionally identical to a rename.
+ * Rename the current score to a new name. The bundle is
+ * saved under the new name via Bundle.save() so the dirty
+ * flag clears cleanly and the storage.js afterSave hook
+ * fires (which the disk mirror picks up to push the new
+ * folder). The old name's record is then deleted, with the
+ * afterDelete hook taking the old folder out on disk. So
+ * the rename appears on disk as a copy-then-delete, which
+ * is functionally identical to a rename.
  *
  * @param {any} session
  * @param {string} newName
@@ -2245,12 +2367,9 @@ async function renameCurrentScoreTo(session, newName) {
         throw new Error(`A score named "${newName}" already exists.`);
     }
     const oldName = session.bundle.name;
-    const record = session.bundle.toRecord();
-    record.name = newName;
-    record.updatedAt = Date.now();
-    await saveScoreRecord(record);
-    await deleteScoreRecord(oldName);
     session.bundle.name = newName;
+    await session.bundle.save();
+    await deleteScoreRecord(oldName);
     await setCurrentScoreName(newName);
     session.refreshScoreNameDisplay();
     if (typeof session.rewatch === "function") session.rewatch();

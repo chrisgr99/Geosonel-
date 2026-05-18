@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GXW — Strudel smoke test</title>
+    <style>
+        body { font-family: system-ui, sans-serif; padding: 2rem;
+               line-height: 1.4; max-width: 60em; }
+        h1 { font-size: 1.2rem; margin-top: 0; }
+        button { padding: 0.5rem 1rem; margin-right: 0.5rem; }
+        #controls { margin: 1rem 0; }
+        #status { margin-top: 1rem; }
+        .ok   { color: #060; }
+        .err  { color: #a00; }
+        .info { color: #444; }
+    </style>
+
+    <!-- @strudel/web is an umbrella package that bundles core,
+         mini, webaudio, tonal, and the inter-package wiring into
+         a single coherent module. Pinned to 1.0.3 to match the
+         version on the official strudel.cc tutorial. tonal is
+         imported separately for direct music-theory use in
+         behaviours.js per section-27.
+
+         An earlier version of this page used a five-package
+         import map and called repl(...) directly, which surfaced
+         a duplicate-copies-of-core issue at runtime ("i.set is
+         not a function" inside scheduler.setPattern). The
+         umbrella sidesteps that whole class of problem because
+         everything that talks to core ships from a single
+         resolved bundle. -->
+    <script type="importmap">
+    {
+      "imports": {
+        "@strudel/web": "https://esm.sh/@strudel/web@1.0.3",
+        "tonal":        "https://esm.sh/tonal"
+      }
+    }
+    </script>
+</head>
+<body>
+    <h1>GXW Strudel smoke test</h1>
+    <p>
+        Standalone scratch page that verifies the import map
+        resolves @strudel/web and tonal, and that the umbrella's
+        initStrudel call wires up superdough such that a
+        sawtooth pattern produces audible sound. Not part of the
+        running GXW app; this is a Phase 1 commissioning check
+        only. Open the page through a local HTTP server (browsers
+        block ES modules over file://), watch the status list
+        below populate, then click Start.
+    </p>
+
+    <div id="controls">
+        <button id="start-btn" disabled>Start</button>
+        <button id="stop-btn" disabled>Stop</button>
+    </div>
+
+    <div id="status"></div>
+
+    <script type="module">
+        const statusEl = document.getElementById('status');
+        const log = (msg, cls) => {
+            const line = document.createElement('div');
+            if (cls) line.className = cls;
+            line.textContent = msg;
+            statusEl.appendChild(line);
+        };
+
+        try {
+            log('Loading packages...', 'info');
+
+            const web = await import('@strudel/web');
+            log('@strudel/web: ok', 'ok');
+
+            const tonal = await import('tonal');
+            log('tonal: ok', 'ok');
+
+            // initStrudel sets up the audio context lazily on
+            // first user gesture, registers the standard sound
+            // bank, and attaches the strudel pattern-building
+            // functions (note, s, hush, ...) as properties on
+            // window. We access them through window.x rather
+            // than as bare identifiers to keep it explicit that
+            // they are runtime-injected globals rather than
+            // module imports.
+            web.initStrudel();
+            log('initStrudel: ok', 'ok');
+
+            const startBtn = document.getElementById('start-btn');
+            const stopBtn  = document.getElementById('stop-btn');
+
+            startBtn.addEventListener('click', () => {
+                // Build a fresh pattern each click and start it.
+                // Sawtooth is a built-in superdough source so
+                // this does not depend on any sample bank.
+                window.note("c3 eb3 g3").s("sawtooth").play();
+            });
+            stopBtn.addEventListener('click', () => {
+                window.hush();
+            });
+
+            startBtn.disabled = false;
+            stopBtn .disabled = false;
+
+            log('Ready. Click Start to begin playback. Browsers '
+                + 'require a user gesture before audio can start, '
+                + 'so the first click both arms audio and starts '
+                + 'the scheduler.', 'info');
+        } catch (err) {
+            log('FAILED: ' + err.message, 'err');
+            console.error(err);
+        }
+    </script>
+</body>
+</html>

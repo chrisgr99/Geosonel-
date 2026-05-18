@@ -253,3 +253,126 @@ export function promptDialog(options) {
         }, 0);
     });
 }
+
+/**
+ * @typedef {"save" | "discard" | "cancel"} CloseDialogDecision
+ */
+
+/**
+ * @typedef {Object} ConfirmDiscardOptions
+ * @property {string} scoreName            Name of the score with unsaved changes (used in the dialog title).
+ * @property {string} [description]        Optional override for the body text.
+ * @property {string} [saveLabel]          Defaults to "Save".
+ * @property {string} [discardLabel]       Defaults to "Don't Save".
+ * @property {string} [cancelLabel]        Defaults to "Cancel".
+ */
+
+/**
+ * The macOS-style three-button "You have unsaved changes"
+ * prompt: Save (default), Don't Save, Cancel. Resolves to
+ * one of three strings naming the user's decision; caller
+ * decides what to do with it.
+ *
+ * Save is the primary action and is bound to Return. Cancel
+ * is bound to Escape and to clicks on the dimmed backdrop
+ * (consistent with every other modal in the app). Don't
+ * Save has no key binding by design — the destructive
+ * action requires an explicit click so it is never reached
+ * by accident.
+ *
+ * Used by:
+ *   - The Electron window-close interceptor when a close
+ *     gesture (red dot, Cmd-W, Cmd-Q) is initiated while
+ *     the bundle is dirty.
+ *   - In-app gestures that switch away from the current
+ *     score (New Score, Open Score, Duplicate Score,
+ *     Delete Score, Import Score, Reload Score from Disk).
+ *
+ * The web version's tab close, page reload, and browser
+ * navigation paths use the browser's generic beforeunload
+ * prompt instead; that path is out of the application's
+ * control and cannot use this dialog.
+ *
+ * @param {ConfirmDiscardOptions} options
+ * @returns {Promise<CloseDialogDecision>}
+ */
+export function confirmDiscardDialog(options) {
+    return new Promise((resolve) => {
+        let resolved = false;
+        /** @param {CloseDialogDecision} decision */
+        const settle = (decision) => {
+            if (resolved) return;
+            resolved = true;
+            handle.close();
+            resolve(decision);
+        };
+
+        const handle = openDialog({
+            title: `Save changes to “${options.scoreName}”?`,
+            onClose: () => {
+                // Backdrop click or Escape: treat as cancel.
+                if (!resolved) {
+                    resolved = true;
+                    resolve("cancel");
+                }
+            },
+        });
+
+        const { body } = handle;
+
+        const desc = document.createElement("div");
+        desc.className = "modal-description";
+        desc.textContent = options.description ??
+            "If you don’t save, your changes will be lost.";
+        body.appendChild(desc);
+
+        const buttons = document.createElement("div");
+        buttons.className = "modal-buttons";
+
+        // Cancel sits on the left; Don't Save in the middle; Save on the
+        // right as the primary action. This is the macOS HIG ordering for
+        // a destructive-prompt three-button dialog (where the safe answer
+        // is rightmost and the destructive action is set off in the
+        // middle position so it isn't pressed by accidental Return).
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "modal-button";
+        cancelBtn.textContent = options.cancelLabel ?? "Cancel";
+        cancelBtn.addEventListener("click", () => settle("cancel"));
+        buttons.appendChild(cancelBtn);
+
+        const discardBtn = document.createElement("button");
+        discardBtn.className = "modal-button";
+        discardBtn.textContent = options.discardLabel ?? "Don’t Save";
+        discardBtn.addEventListener("click", () => settle("discard"));
+        buttons.appendChild(discardBtn);
+
+        const saveBtn = document.createElement("button");
+        saveBtn.className = "modal-button modal-button-primary";
+        saveBtn.textContent = options.saveLabel ?? "Save";
+        saveBtn.addEventListener("click", () => settle("save"));
+        buttons.appendChild(saveBtn);
+
+        body.appendChild(buttons);
+
+        // Return triggers the primary action (Save). Escape is already
+        // handled by openDialog's keydown listener via the onClose path,
+        // so a separate Escape binding here would double-fire.
+        const onBodyKeyDown = (/** @type {KeyboardEvent} */ e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                settle("save");
+            }
+        };
+        document.addEventListener("keydown", onBodyKeyDown);
+        const origClose = handle.close;
+        handle.close = () => {
+            document.removeEventListener("keydown", onBodyKeyDown);
+            origClose();
+        };
+
+        // Focus the Save button so Return commits the primary action
+        // immediately. A microtask defers focus until the dialog is in
+        // the DOM.
+        setTimeout(() => saveBtn.focus(), 0);
+    });
+}

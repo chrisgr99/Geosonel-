@@ -6,12 +6,12 @@
  * below it. One editor; switching tabs swaps the editor's
  * document rather than creating multiple editor views.
  *
- * Persistence model: explicit save only. Typing marks the
- * bundle dirty. Calling save() persists to IndexedDB and
- * clears the dirty flag. There is no timer-driven autosave;
- * the composer (or the Run Scene command) decides when bytes
- * hit storage. This avoids autosaving mid-edit in a state the
- * composer didn't intend.
+ * Persistence model: explicit save only. Typing or any other
+ * mutation marks the bundle dirty; the bundle's own change
+ * stream propagates the state to subscribers (title bar, saved
+ * indicator). Calling save() persists and clears the dirty
+ * flag. There is no timer-driven autosave and no save-on-Run;
+ * the composer decides when bytes hit storage.
  *
  * When the active bundle changes (user opens a different
  * score), call setBundle() to swap in the new content.
@@ -273,8 +273,14 @@ export class TabbedEditor {
          *  replacement (tab switches, bundle swaps). */
         this._suppressDirty = false;
 
-        /** Has the bundle changed since the last save? */
-        this.isDirty = false;
+        /**
+         * Unsubscribe handle for the active bundle's dirty-
+         * change subscription. Re-bound on every bundle swap
+         * via _subscribeBundleDirty so the editor's onDirtyChange
+         * callback always reflects the current bundle's state.
+         * @type {(() => void) | null}
+         */
+        this._unsubBundleDirty = null;
 
         // Compartments allow us to swap the language extension
         // and linter dynamically when the active tab changes
@@ -286,6 +292,7 @@ export class TabbedEditor {
         this._mountEditor();
         this._mountInspector();
         this._renderTabs();
+        this._subscribeBundleDirty();
 
         // The form-based Properties inspector is the default
         // landing tab — for most editing the form is what the
@@ -294,33 +301,66 @@ export class TabbedEditor {
         this.selectTab(VIRTUAL_TAB_INSPECTOR);
     }
 
+    /**
+     * The canonical dirty signal lives on the bundle now;
+     * this accessor preserves the long-standing
+     * editor.isDirty API for external callers.
+     * @returns {boolean}
+     */
+    get isDirty() {
+        return this.bundle.dirty;
+    }
+
+    /**
+     * Bind the editor's onDirtyChange callback to the
+     * current bundle's dirty-change stream. Called from the
+     * constructor and from setBundle so the callback always
+     * tracks the live bundle. The old subscription is torn
+     * down before the new one is established.
+     */
+    _subscribeBundleDirty() {
+        if (this._unsubBundleDirty !== null) {
+            this._unsubBundleDirty();
+            this._unsubBundleDirty = null;
+        }
+        this._unsubBundleDirty = this.bundle.subscribeDirtyChange((dirty) => {
+            this.onDirtyChange(dirty);
+        });
+    }
+
     // --- Bundle lifecycle ---
 
     /**
      * Swap the editor over to a different bundle. Any pending
      * unsaved changes on the old bundle are discarded (the
-     * caller should save first if that matters). Resets dirty
-     * state to clean for the new bundle.
+     * caller should save first if that matters). The new
+     * bundle's dirty state is whatever it carries; the editor
+     * re-subscribes to its dirty-change stream and fires the
+     * onDirtyChange callback explicitly with the new state so
+     * the saved indicator and title bar refresh on swap.
      * @param {Bundle} bundle
      */
     async setBundle(bundle) {
         this.bundle = bundle;
         this.activeName = null;
-        this._setDirty(false);
+        this._subscribeBundleDirty();
         this._renderTabs();
         // Default to the form-based Properties inspector when
         // switching scores, matching the constructor's initial
         // landing behaviour.
         this.selectTab(VIRTUAL_TAB_INSPECTOR);
+        this.onDirtyChange(this.bundle.dirty);
     }
 
     /**
-     * Persist the current bundle to IndexedDB, clear dirty.
+     * Persist the current bundle and clear its dirty flag.
+     * Bundle.save() handles the dirty transition internally,
+     * which propagates back through this editor's bundle
+     * subscription to refresh dependent UI.
      */
     async save() {
         try {
             await this.bundle.save();
-            this._setDirty(false);
             this.onSaved();
         } catch (err) {
             console.error("GXW: save failed:", err);
@@ -333,8 +373,10 @@ export class TabbedEditor {
      * outside the editor (e.g. a disk-mirror external-change
      * detection) has already updated the bundle's in-memory
      * file contents and we just need the visible editor view
-     * to catch up. Clears dirty since the bundle and the on-
-     * disk content are now in sync by construction.
+     * to catch up. The bundle's dirty state is whatever the
+     * external code left it as; this method does not mark or
+     * clear it. Callers that want a clean state after the
+     * external sync should call bundle.markClean() themselves.
      */
     reloadFromBundle() {
         this._renderTabs();
@@ -352,17 +394,17 @@ export class TabbedEditor {
         } else if (this.bundle.textFiles.length > 0) {
             this.selectTab(VIRTUAL_TAB_INSPECTOR);
         }
-        this._setDirty(false);
     }
 
     /**
      * Sync the active tab's CodeMirror document with whatever
-     * is currently in the bundle, then mark the editor dirty.
-     * Used when canvas-driven edits (Add Sprite, drag-to-move)
-     * mutate scene.json out from under the editor: the editor
-     * needs to show the new content, and the bundle needs to
-     * reflect that there are unsaved changes the user can
-     * Cmd-S out to disk. The non-active tab's content lives
+     * is currently in the bundle. Used when canvas-driven edits
+     * (Add Sprite, drag-to-move) mutate scene.json out from
+     * under the editor: the editor needs to show the new
+     * content. The caller has already mutated the bundle (which
+     * marked it dirty through Bundle.updateContent), so this
+     * method's job is only to bring the visible CodeMirror
+     * document into sync. The non-active tab's content lives
      * only in the bundle until the user switches to it; that's
      * fine since selectTab pulls from the bundle each time.
      *
@@ -379,34 +421,22 @@ export class TabbedEditor {
      * CodeMirror's history that interferes with the redo
      * stack and breaks Cmd-Shift-Z after the user undoes
      * past the promote. Skipping the dispatch when content
-     * is unchanged preserves the history exactly. The
-     * dirty flag is still set so the bundle (which DOES
-     * differ from disk after scene.json was mutated) is
-     * saved on the next Cmd-S or Run Scene.
+     * is unchanged preserves the history exactly.
      */
     refreshActiveTabFromBundle() {
         if (this.activeName === null) return;
         // Virtual inspector tab does not back onto a file in
         // CodeMirror, so there's no document to refresh; the
         // bundle's scene.json content has already been updated
-        // by the caller. We still flip the dirty flag because
-        // the bundle differs from disk now, even though the
-        // form-inspector view doesn't reflect that yet (data
-        // binding comes in a later milestone).
-        if (this.activeName === VIRTUAL_TAB_INSPECTOR) {
-            this._setDirty(true);
-            return;
-        }
+        // by the caller and the bundle's own markDirty has
+        // fired. Nothing more to do here.
+        if (this.activeName === VIRTUAL_TAB_INSPECTOR) return;
         if (this.view === null) return;
         const file = this.bundle.getFile(this.activeName);
         if (file === null) return;
         if (file.content === this.view.state.doc.toString()) {
             // Content is already in sync. Skip the dispatch
             // to preserve CodeMirror's undo/redo history.
-            // Still mark dirty: another file in the bundle
-            // may have changed and this method's contract
-            // is bundle-level dirty signalling.
-            this._setDirty(true);
             return;
         }
         this._suppressDirty = true;
@@ -418,7 +448,6 @@ export class TabbedEditor {
             },
         });
         this._suppressDirty = false;
-        this._setDirty(true);
     }
 
     /**
@@ -1212,17 +1241,10 @@ export class TabbedEditor {
         // through to bundle.updateContent.
         if (this.activeName === VIRTUAL_TAB_INSPECTOR) return;
         if (this._suppressDirty) return;
+        // bundle.updateContent fires markDirty internally, which
+        // propagates back to this editor's onDirtyChange via the
+        // bundle subscription — no separate _setDirty call needed.
         this.bundle.updateContent(this.activeName, content);
-        this._setDirty(true);
-    }
-
-    /**
-     * @param {boolean} dirty
-     */
-    _setDirty(dirty) {
-        if (this.isDirty === dirty) return;
-        this.isDirty = dirty;
-        this.onDirtyChange(dirty);
     }
 
     // --- Tab rendering ---

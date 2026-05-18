@@ -63,6 +63,72 @@ export class Bundle {
          * @type {string | null}
          */
         this.imageName = null;
+
+        /**
+         * Has this bundle been mutated since its last save?
+         * The canonical dirty signal for the score; subscribers
+         * (title bar, saved indicator, close-with-unsaved-changes
+         * dialog) read this via subscribeDirtyChange. Mutation
+         * methods on this class set it to true automatically;
+         * save() clears it. A freshly-loaded or freshly-saved
+         * bundle is by definition not dirty.
+         * @type {boolean}
+         */
+        this.dirty = false;
+
+        /**
+         * Subscribers fired whenever dirty transitions.
+         * @type {Set<(dirty: boolean) => void>}
+         */
+        this._dirtyListeners = new Set();
+    }
+
+    // --- Dirty state ---
+
+    /**
+     * Subscribe to dirty-state transitions. The callback fires
+     * on every false→true or true→false change. Returns an
+     * unsubscribe function.
+     * @param {(dirty: boolean) => void} cb
+     * @returns {() => void}
+     */
+    subscribeDirtyChange(cb) {
+        this._dirtyListeners.add(cb);
+        return () => this._dirtyListeners.delete(cb);
+    }
+
+    /**
+     * Mark the bundle dirty. Called automatically by every
+     * data-mutating method below; external callers usually
+     * don't need to call this directly.
+     */
+    markDirty() {
+        this._setDirty(true);
+    }
+
+    /**
+     * Mark the bundle clean. Called by save() after a
+     * successful write; external callers can use this when
+     * they've persisted the bundle out-of-band and want the
+     * UI to reflect it.
+     */
+    markClean() {
+        this._setDirty(false);
+    }
+
+    /**
+     * @param {boolean} value
+     */
+    _setDirty(value) {
+        if (this.dirty === value) return;
+        this.dirty = value;
+        for (const cb of this._dirtyListeners) {
+            try {
+                cb(value);
+            } catch (err) {
+                console.error("GXW: bundle dirty listener threw.", err);
+            }
+        }
     }
 
     // --- Text file operations ---
@@ -99,9 +165,10 @@ export class Bundle {
     }
 
     /**
-     * Update a text file's content. With auto-persistence there
-     * is no dirty flag; the caller is expected to trigger a
-     * save separately (typically debounced).
+     * Update a text file's content and mark the bundle dirty.
+     * The save model is explicit: typing or programmatic edits
+     * mutate in-memory state and set the dirty flag, but nothing
+     * persists to disk until save() is called.
      * @param {string} name
      * @param {string} content
      */
@@ -109,12 +176,13 @@ export class Bundle {
         const file = this.getFile(name);
         if (file === null) return;
         file.content = content;
+        this.markDirty();
     }
 
     // --- Binary file operations (image importer-facing) ---
 
     /**
-     * Add or replace a binary file in the bundle.
+     * Add or replace a binary file in the bundle and mark dirty.
      * @param {string} name
      * @param {ArrayBuffer} content
      * @param {string} mimeType
@@ -128,6 +196,7 @@ export class Bundle {
         } else {
             this.files.push(file);
         }
+        this.markDirty();
     }
 
     /**
@@ -140,13 +209,15 @@ export class Bundle {
     }
 
     /**
-     * Remove a file from the bundle. If the removed file was
-     * the current image, imageName is cleared.
+     * Remove a file from the bundle and mark dirty. If the
+     * removed file was the current image, imageName is cleared.
      * @param {string} name
      */
     removeFile(name) {
+        const before = this.files.length;
         this.files = this.files.filter((f) => f.name !== name);
         if (this.imageName === name) this.imageName = null;
+        if (this.files.length !== before) this.markDirty();
     }
 
     /**
@@ -203,7 +274,10 @@ export class Bundle {
     }
 
     /**
-     * Rehydrate a Bundle from a stored record.
+     * Rehydrate a Bundle from a stored record. The result is
+     * marked clean regardless of which file kinds were loaded,
+     * because a bundle just read from disk is by definition in
+     * sync with disk.
      * @param {import("./storage.js").ScoreRecord} record
      * @returns {Bundle}
      */
@@ -218,17 +292,24 @@ export class Bundle {
             }
         }
         bundle.imageName = record.imageName;
+        bundle.markClean();
         return bundle;
     }
 
     /**
-     * Save this bundle to IndexedDB under its current name.
-     * Disk mirroring (when configured) is triggered
+     * Persist this bundle under its current name and clear the
+     * dirty flag. Disk mirroring (when configured) is triggered
      * transparently via the afterSave event hook in storage.js;
      * this method doesn't need to know anything about it.
+     *
+     * The dirty flag is cleared after the underlying write
+     * resolves, so a save() that throws leaves the bundle in
+     * its previous dirty state and subscribers still see the
+     * unsaved-changes signal.
      */
     async save() {
         await saveScoreRecord(this.toRecord());
+        this.markClean();
     }
 }
 

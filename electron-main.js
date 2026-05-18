@@ -32,6 +32,14 @@ app.setName('GeoSonel');
 
 let mainWindow;
 
+// Tracks whether the renderer has confirmed that the current close
+// gesture should proceed. Set to true after the renderer sends
+// 'gxw:close-decision' with 'proceed' (either no unsaved changes, or
+// the user picked Save or Don't Save). When the next 'close' event
+// fires, the handler sees the flag and allows the close to proceed
+// without another interception cycle.
+let closeConfirmed = false;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1600,
@@ -50,6 +58,21 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+  });
+
+  // Intercept the close gesture when the renderer has reported unsaved
+  // changes. The actual dirty signal is the documentEdited state, which
+  // mirrors the bundle's dirty flag via the gxw:set-document-edited IPC
+  // handler below. If the document is edited and we haven't already
+  // received a proceed decision, prevent the close and ask the renderer
+  // to show the three-button "Save changes?" dialog. The renderer's
+  // gxw:close-decision message brings us back to either close (proceed)
+  // or stay (cancel).
+  mainWindow.on('close', (event) => {
+    if (closeConfirmed) return;
+    if (!mainWindow.isDocumentEdited()) return;
+    event.preventDefault();
+    mainWindow.webContents.send('gxw:close-requested');
   });
 }
 
@@ -317,6 +340,31 @@ function registerStorageHandlers() {
 
   ipcMain.handle('gxw:get-scores-folder', async () => {
     return await getScoresFolder();
+  });
+
+  // Window-level IPC for the explicit-save model.
+  //
+  // setDocumentEdited drives both the dot in the close-button circle
+  // (a macOS BrowserWindow convention surfaced via the underlying
+  // documentEdited property) and the close-event interceptor's
+  // dirty check above. The renderer is the source of truth for
+  // dirty state; this handler just forwards it.
+  ipcMain.handle('gxw:set-document-edited', async (_event, edited) => {
+    if (mainWindow !== undefined && mainWindow !== null) {
+      mainWindow.setDocumentEdited(Boolean(edited));
+    }
+  });
+
+  // Close-decision return path. The renderer sends this after the user
+  // picks an option in the three-button "Save changes?" dialog. On
+  // 'proceed', set the close-confirmed flag and call close() again; the
+  // next 'close' event sees the flag and allows the close. On 'cancel',
+  // do nothing — the original close was already prevented.
+  ipcMain.on('gxw:close-decision', (_event, decision) => {
+    if (decision === 'proceed' && mainWindow !== undefined && mainWindow !== null) {
+      closeConfirmed = true;
+      mainWindow.close();
+    }
   });
 }
 

@@ -8,6 +8,7 @@
 // @ts-check
 
 import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
+import { confirmDiscardDialog } from "./dialog.js";
 import {
     actionNewScore,
     actionOpenScore,
@@ -23,6 +24,7 @@ import {
 /** @typedef {import("./scoreActions.js").ScoreSession} ScoreSession */
 /** @typedef {import("./messages.js").MessageArea} MessageArea */
 /** @typedef {import("./imageImporter.js").ImageImporter} ImageImporter */
+/** @typedef {import("./editor.js").TabbedEditor} TabbedEditor */
 
 /**
  * @typedef {Object} FileMenuContext
@@ -30,6 +32,7 @@ import {
  * @property {MessageArea} messages
  * @property {ImageImporter} imageImporter
  * @property {import("./diskMirror.js").DiskMirror} diskMirror
+ * @property {TabbedEditor} editor
  */
 
 /**
@@ -42,9 +45,15 @@ export function installFileMenu(ctx) {
         return;
     }
 
-    const actionCtx = { session: ctx.session, messages: ctx.messages };
+    const actionCtx = { session: ctx.session, messages: ctx.messages, editor: ctx.editor };
 
     const dropdown = buildDropdown([
+        {
+            label: "Save",
+            shortcut: "⌘S",
+            action: () => { void ctx.editor.save(); },
+        },
+        { separator: true },
         {
             label: "New Score\u2026",
             action: () => actionNewScore(actionCtx),
@@ -113,7 +122,10 @@ export function installFileMenu(ctx) {
  * action gives the user explicit control — useful when the
  * watcher missed something or when the user knows the AI
  * just finished editing and doesn't want to wait the polling
- * interval.
+ * interval. Gated by the unsaved-changes prompt because the
+ * disk content replaces the in-memory bundle wholesale; the
+ * user is offered Save / Don't Save / Cancel before any
+ * unsaved edits are dropped.
  * @param {FileMenuContext} ctx
  */
 async function actionReloadFromDisk(ctx) {
@@ -131,6 +143,15 @@ async function actionReloadFromDisk(ctx) {
             "error"
         );
         return;
+    }
+    if (ctx.session.bundle.dirty) {
+        const decision = await confirmDiscardDialog({
+            scoreName: ctx.session.bundle.name,
+        });
+        if (decision === "cancel") return;
+        if (decision === "save") {
+            await ctx.editor.save();
+        }
     }
     const name = ctx.session.bundle.name;
     const bundle = await ctx.diskMirror.pullBundle(name);
