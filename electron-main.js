@@ -9,7 +9,12 @@
 //
 // Storage layout on disk:
 //   <Scores folder>/                  default: ~/Documents/GeoSonel Scores
-//     <Score name>/
+//     <Score name>.gxs/               macOS package; Stage 6 will add Info.plist
+//                                     UTI declarations so Finder folds each .gxs
+//                                     folder into a single document icon and
+//                                     binds double-click back to GeoSonel.
+//                                     Until then, .gxs folders show in Finder as
+//                                     folders with the suffix visible.
 //       scene.json
 //       behaviors.js
 //       <image file>                  optional, named per the score's imageName
@@ -90,6 +95,28 @@ function applyDockIcon() {
 
 const SETTINGS_FILENAME = 'settings.json';
 const SCORE_META_FILENAME = '.gxw-meta.json';
+
+// Score folders on disk carry a .gxs extension so they read as
+// macOS packages — Stage 6 packaging will bind .gxs to GeoSonel
+// via Info.plist UTI declarations and Finder will then fold each
+// .gxs folder into a single document icon. The renderer continues
+// to refer to scores by extensionless display name; the helpers
+// below translate between the renderer's name and the on-disk
+// folder name. Keeping the translation isolated here (rather than
+// teaching the renderer about .gxs) is the explicit shape for
+// Stage 3 commit 1: every score-folder path computed in this file
+// goes through scoreFolderName, and every name parsed back out of
+// a directory listing goes through scoreNameFromFolderName.
+const SCORE_FOLDER_EXTENSION = '.gxs';
+
+function scoreFolderName(name) {
+  return name + SCORE_FOLDER_EXTENSION;
+}
+
+function scoreNameFromFolderName(folderName) {
+  if (!folderName.endsWith(SCORE_FOLDER_EXTENSION)) return null;
+  return folderName.slice(0, -SCORE_FOLDER_EXTENSION.length);
+}
 
 function getSettingsPath() {
   return path.join(app.getPath('userData'), SETTINGS_FILENAME);
@@ -251,12 +278,15 @@ async function readRecordFromFolder(folder, name) {
 
 async function readScoreRecord(name) {
   const scoresFolder = await getScoresFolder();
-  return await readRecordFromFolder(path.join(scoresFolder, name), name);
+  return await readRecordFromFolder(
+    path.join(scoresFolder, scoreFolderName(name)),
+    name,
+  );
 }
 
 async function writeScoreRecord(record) {
   const scoresFolder = await ensureScoresFolder();
-  const scoreFolder = path.join(scoresFolder, record.name);
+  const scoreFolder = path.join(scoresFolder, scoreFolderName(record.name));
   await fsp.mkdir(scoreFolder, { recursive: true });
 
   // Track which files should remain in the folder after this save.
@@ -296,7 +326,7 @@ async function writeScoreRecord(record) {
 
 async function deleteScoreRecord(name) {
   const scoresFolder = await getScoresFolder();
-  const scoreFolder = path.join(scoresFolder, name);
+  const scoreFolder = path.join(scoresFolder, scoreFolderName(name));
   await fsp.rm(scoreFolder, { recursive: true, force: true });
 }
 
@@ -315,8 +345,8 @@ async function deleteScoreRecord(name) {
 async function renameScoreRecord(oldName, newName) {
   if (oldName === newName) return;
   const scoresFolder = await ensureScoresFolder();
-  const oldFolder = path.join(scoresFolder, oldName);
-  const newFolder = path.join(scoresFolder, newName);
+  const oldFolder = path.join(scoresFolder, scoreFolderName(oldName));
+  const newFolder = path.join(scoresFolder, scoreFolderName(newName));
   if (!await pathExists(oldFolder)) {
     // Nothing to rename on disk — e.g. a brand-new bundle
     // that hasn't been saved yet. The renderer's follow-up
@@ -338,9 +368,11 @@ async function listScoreFolders() {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith('.')) continue;
+    const name = scoreNameFromFolderName(entry.name);
+    if (name === null) continue;
     const folderPath = path.join(scoresFolder, entry.name);
     const stat = await fsp.stat(folderPath);
-    results.push({ name: entry.name, updatedAt: stat.mtimeMs });
+    results.push({ name, updatedAt: stat.mtimeMs });
   }
   results.sort((a, b) => b.updatedAt - a.updatedAt);
   return results;
@@ -381,7 +413,7 @@ async function rotateBackupsBeforeSave(scoreName, maxCount) {
   if (typeof maxCount !== 'number' || maxCount <= 0) return;
 
   const scoresFolder = await getScoresFolder();
-  const scoreFolder = path.join(scoresFolder, scoreName);
+  const scoreFolder = path.join(scoresFolder, scoreFolderName(scoreName));
 
   // First save: nothing on disk yet, nothing to back up.
   if (!await pathExists(scoreFolder)) return;
@@ -435,7 +467,7 @@ async function rotateBackupsBeforeSave(scoreName, maxCount) {
 
 async function listBackups(scoreName) {
   const scoresFolder = await getScoresFolder();
-  const backupsFolder = path.join(scoresFolder, scoreName, BACKUPS_DIRNAME);
+  const backupsFolder = path.join(scoresFolder, scoreFolderName(scoreName), BACKUPS_DIRNAME);
 
   if (!await pathExists(backupsFolder)) return [];
 
@@ -458,7 +490,7 @@ async function loadBackupRecord(scoreName, slotNumber) {
   const scoresFolder = await getScoresFolder();
   const slotFolder = path.join(
     scoresFolder,
-    scoreName,
+    scoreFolderName(scoreName),
     BACKUPS_DIRNAME,
     String(slotNumber)
   );
@@ -467,6 +499,77 @@ async function loadBackupRecord(scoreName, slotNumber) {
   // the renderer reverts to this backup it saves under the
   // original score name, which is what the user expects.
   return await readRecordFromFolder(slotFolder, scoreName);
+}
+
+// --- One-time migration: rename pre-.gxs score folders ---
+//
+// Before Stage 3 every score lived as a plain folder under the
+// Scores folder; commit 1 of Stage 3 introduces the .gxs suffix.
+// Existing installs need their score folders renamed so the
+// post-commit disk backend, which only recognises .gxs folders,
+// can see them. This migration runs on every app launch and
+// renames each non-hidden, non-.gxs folder under the Scores folder
+// to have a .gxs suffix — but only if the folder contains a
+// scene.json file (so it actually is a score). Plain folders the
+// user keeps in the Scores folder for other purposes (archives,
+// notes, anything else) are left alone, distinguished by the
+// absence of scene.json.
+//
+// Safe to run on every launch: idempotent because folders that
+// already end in .gxs are skipped. A folder whose .gxs counterpart
+// already exists is logged and skipped rather than overwritten, so
+// a conflicting state has to be resolved by the user rather than
+// being papered over.
+async function migrateScoresFolderToGxsExtension() {
+  let folder;
+  try {
+    folder = await getScoresFolder();
+    if (!await pathExists(folder)) return;
+  } catch (err) {
+    console.warn('GXW: .gxs migration skipped, could not resolve Scores folder:', err);
+    return;
+  }
+
+  let entries;
+  try {
+    entries = await fsp.readdir(folder, { withFileTypes: true });
+  } catch (err) {
+    console.warn('GXW: .gxs migration skipped, could not read Scores folder:', err);
+    return;
+  }
+
+  let renamed = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+    if (entry.name.endsWith(SCORE_FOLDER_EXTENSION)) continue;
+
+    // Score heuristic: contains a scene.json file. Folders
+    // without scene.json are unrelated content the user has
+    // chosen to keep here and stay untouched.
+    const sceneJsonPath = path.join(folder, entry.name, 'scene.json');
+    if (!await pathExists(sceneJsonPath)) continue;
+
+    const newFolderName = entry.name + SCORE_FOLDER_EXTENSION;
+    const newPath = path.join(folder, newFolderName);
+    if (await pathExists(newPath)) {
+      console.warn(
+        `GXW: .gxs migration skipping "${entry.name}" — "${newFolderName}" already exists.`
+      );
+      continue;
+    }
+
+    try {
+      await fsp.rename(path.join(folder, entry.name), newPath);
+      renamed++;
+    } catch (err) {
+      console.warn(`GXW: .gxs migration failed for "${entry.name}":`, err);
+    }
+  }
+
+  if (renamed > 0) {
+    console.log(`GXW: migrated ${renamed} score folder(s) to .gxs extension.`);
+  }
 }
 
 // --- IPC handler registration ---
@@ -553,9 +656,10 @@ function registerStorageHandlers() {
 
 // --- App lifecycle ---
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   applyDockIcon();
   registerStorageHandlers();
+  await migrateScoresFolderToGxsExtension();
   createWindow();
 });
 
