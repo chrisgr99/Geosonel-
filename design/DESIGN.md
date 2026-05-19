@@ -1,6 +1,6 @@
 # GXW Design Document
 
-Version 2.6 — May 2026
+Version 2.7 — May 2026
 
 Status: Living document — sections split into individual files in `sections/`.
 
