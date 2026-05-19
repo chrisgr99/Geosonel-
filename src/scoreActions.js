@@ -565,6 +565,53 @@ export async function actionRevert(ctx) {
 }
 
 /**
+ * Reload from Disk: pull the active score's files from
+ * primary storage, replacing the in-memory bundle. Useful
+ * when external tools (an AI assistant, a text editor) have
+ * edited the score's files on disk and the user wants to
+ * pick up those changes immediately rather than waiting for
+ * any background watcher.
+ *
+ * Reads from bundle.path directly via loadScoreByPath, so
+ * the action works for any saved score regardless of where
+ * it lives on disk and regardless of whether disk mirroring
+ * is configured. Goes through the discard-changes gate so
+ * unsaved in-memory edits aren't silently dropped; the user
+ * gets the standard Save / Don't Save / Cancel choice when
+ * the bundle is dirty, and the action proceeds silently
+ * when it isn't.
+ *
+ * Untitled bundles can't be reloaded — there's no path to
+ * read from — and the File menu's Reload from Disk entry
+ * is greyed out for them. This function still guards
+ * against the null-path case defensively.
+ *
+ * @param {ScoreActionsContext} ctx
+ */
+export async function actionReloadFromDisk(ctx) {
+    const name = ctx.session.bundle.name;
+    const path = ctx.session.bundle.path;
+    if (path === null) {
+        ctx.messages.write(
+            `Cannot reload "${name}" \u2014 the score has not been saved yet.`,
+            "error"
+        );
+        return;
+    }
+    if (!(await confirmDiscardChanges(ctx))) return;
+    const bundle = await loadScoreByPath(path);
+    if (bundle === null) {
+        ctx.messages.write(
+            `Could not reload "${name}" from disk: not found at "${path}".`,
+            "error"
+        );
+        return;
+    }
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Reloaded "${name}" from disk.`);
+}
+
+/**
  * Revert to a specific numbered backup slot. Desktop-only;
  * web callers should never invoke this (the File menu's
  * Revert to submenu is gated on the Electron build).

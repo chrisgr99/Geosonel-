@@ -17,7 +17,6 @@
 // @ts-check
 
 import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
-import { confirmDiscardDialog } from "./dialog.js";
 import { getRecentScores, clearRecentScores } from "./recentFiles.js";
 import { listBackups, scoreNameFromPath } from "./storage.js";
 import {
@@ -28,6 +27,7 @@ import {
     actionSaveAs,
     actionRevert,
     actionRevertToBackup,
+    actionReloadFromDisk,
     actionRenameScore,
     actionDeleteScore,
     actionExportScore,
@@ -47,7 +47,6 @@ import {
  * @property {ScoreSession} session
  * @property {MessageArea} messages
  * @property {ImageImporter} imageImporter
- * @property {import("./diskMirror.js").DiskMirror} diskMirror
  * @property {TabbedEditor} editor
  * @property {boolean} isElectron  True when running under the Electron
  *   wrapper; selects between the desktop menu shape (no data-portability
@@ -168,7 +167,12 @@ export function installFileMenu(ctx) {
     entries.push({ separator: true });
     entries.push({
         label: "Reload from Disk",
-        action: () => actionReloadFromDisk(ctx),
+        // Greyed out for untitled bundles since there's no
+        // on-disk version to pull. Becomes available the
+        // moment the user runs Save As and the bundle
+        // acquires a real path.
+        disabled: () => ctx.session.bundle.path === null,
+        action: () => actionReloadFromDisk(actionCtx),
     });
 
     const dropdown = buildDropdown(entries);
@@ -309,55 +313,4 @@ function relativeDateLabel(mtimeMs) {
     }
     const monthDay = then.toLocaleDateString(undefined, monthDayOpts);
     return `${monthDay} at ${timeStr}`;
-}
-
-/**
- * Manually pull the current score's files from disk and load
- * them into the editor. The polling watcher already does this
- * automatically when external changes are detected, but this
- * action gives the user explicit control — useful when the
- * watcher missed something or when the user knows the AI
- * just finished editing and doesn't want to wait the polling
- * interval. Gated by the unsaved-changes prompt because the
- * disk content replaces the in-memory bundle wholesale; the
- * user is offered Save / Don't Save / Cancel before any
- * unsaved edits are dropped.
- * @param {FileMenuContext} ctx
- */
-async function actionReloadFromDisk(ctx) {
-    const status = ctx.diskMirror.getStatus();
-    if (!status.hasFolder) {
-        ctx.messages.write(
-            "Disk mirroring isn't configured. Open Settings to choose a folder.",
-            "error"
-        );
-        return;
-    }
-    if (!status.enabled) {
-        ctx.messages.write(
-            "Disk mirroring is paused. Resume it in Settings to reload from disk.",
-            "error"
-        );
-        return;
-    }
-    if (ctx.session.bundle.dirty) {
-        const decision = await confirmDiscardDialog({
-            scoreName: ctx.session.bundle.name,
-        });
-        if (decision === "cancel") return;
-        if (decision === "save") {
-            await ctx.editor.save();
-        }
-    }
-    const name = ctx.session.bundle.name;
-    const bundle = await ctx.diskMirror.pullBundle(name);
-    if (bundle === null) {
-        ctx.messages.write(
-            `No score named "${name}" found on disk, or its files couldn't be read.`,
-            "error"
-        );
-        return;
-    }
-    await ctx.session.switchToBundle(bundle);
-    ctx.messages.write(`Reloaded "${name}" from disk.`);
 }

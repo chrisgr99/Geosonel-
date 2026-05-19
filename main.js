@@ -2207,7 +2207,7 @@ async function main() {
         toggleFocusCanvas,
         toggleAutoZoom,
     });
-    installFileMenu({ session, messages, imageImporter, diskMirror, editor, isElectron });
+    installFileMenu({ session, messages, imageImporter, editor, isElectron });
     installEditMenu({ performUndo, performRedo, performDuplicate });
     installRunMenu({ runScene });
     installAppMenu({ diskMirror, messages });
