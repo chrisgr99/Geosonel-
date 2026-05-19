@@ -344,9 +344,11 @@ async function main() {
     const tabBarEl = document.querySelector(".tab-bar");
     const editorAreaEl = document.getElementById("editor-area");
     const inspectorAreaEl = document.getElementById("inspector-area");
+    const canvasInspectorAreaEl = document.getElementById("canvas-inspector-area");
     if (!(tabBarEl instanceof HTMLElement) ||
         !(editorAreaEl instanceof HTMLElement) ||
-        !(inspectorAreaEl instanceof HTMLElement)) {
+        !(inspectorAreaEl instanceof HTMLElement) ||
+        !(canvasInspectorAreaEl instanceof HTMLElement)) {
         console.error("GXW: editor mount points missing.");
         return;
     }
@@ -377,7 +379,7 @@ async function main() {
      */
     let currentScene = null;
 
-    const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, bundle, {
+    const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, bundle, {
         onDirtyChange: (dirty) => {
             updateTitleBar(dirty);
             // Push to the native menu so Revert to Saved's
@@ -746,13 +748,19 @@ async function main() {
             if (editor.inspector) {
                 editor.inspector.setScene(result.scene);
             }
-            // Sync the toolbar's canvas-size fields to the
-            // scene's current values. Doesn't disturb a
-            // focused field (the user may be mid-edit on
-            // W or H from a different code path), so this
-            // is safe to call unconditionally on every
-            // scene reload.
-            toolbar.setCanvasSize(result.scene.canvasW, result.scene.canvasH);
+            // Sync the Canvas inspector tab's W and H
+            // fields to the scene's current values.
+            // Doesn't disturb a focused field (the user
+            // may be mid-edit on W or H from a different
+            // code path), so this is safe to call
+            // unconditionally on every scene reload. The
+            // call used to land on toolbar.setCanvasSize
+            // before the Section 13.5 migration moved the
+            // fields into the Canvas inspector tab; same
+            // contract, different owner.
+            if (editor.canvasInspector) {
+                editor.canvasInspector.setCanvasSize(result.scene.canvasW, result.scene.canvasH);
+            }
             // Stage A5: refresh the current scene reference
             // and dispatch the canvas's current selection
             // (resolved to object ids against the freshly-
@@ -1107,21 +1115,26 @@ async function main() {
     toolbar.onImageImportClick(() => {
         imageImporter.importViaFilePicker();
     });
-    // The toolbar's canvas-size fields emit edits with the
-    // same shape inspector and canvas edits use
-    // ({kind, value}). Dispatched through applySceneEdit so
-    // they share the dirty-state, auto-save, and re-run
+    // The Canvas inspector tab's W and H fields emit
+    // edits with the same shape inspector and canvas edits
+    // use ({kind, value}). Dispatched through applySceneEdit
+    // so they share the dirty-state, auto-save, and re-run
     // mechanics. applySceneEdit is declared below this
     // line; the closure captures the binding and resolves
     // it at click/wheel time, by which point the variable
-    // is assigned.
-    toolbar.onSceneEdit(async (edit) => {
-        if (edit.kind === "setCanvasW") {
-            await applySceneEdit((data) => setCanvasW(data, edit.value));
-        } else if (edit.kind === "setCanvasH") {
-            await applySceneEdit((data) => setCanvasH(data, edit.value));
-        }
-    });
+    // is assigned. Before the Section 13.5 migration this
+    // subscription was on toolbar.onSceneEdit; the wiring
+    // moved here when the W/H fields migrated out of the
+    // toolbar.
+    if (editor.canvasInspector) {
+        editor.canvasInspector.onSceneEdit(async (edit) => {
+            if (edit.kind === "setCanvasW") {
+                await applySceneEdit((data) => setCanvasW(data, edit.value));
+            } else if (edit.kind === "setCanvasH") {
+                await applySceneEdit((data) => setCanvasH(data, edit.value));
+            }
+        });
+    }
 
     // Play Selected toggle. When on, only currently-
     // selected canvas objects fire their patterns; when

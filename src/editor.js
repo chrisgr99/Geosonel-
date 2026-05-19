@@ -28,6 +28,7 @@ import { json } from "https://esm.sh/@codemirror/lang-json@6?deps=@codemirror/st
 import { linter, lintGutter } from "https://esm.sh/@codemirror/lint@6?deps=@codemirror/state@6.5.2";
 import * as acorn from "https://esm.sh/acorn@8";
 import { Inspector } from "./inspector.js";
+import { CanvasInspector } from "./canvasInspector.js";
 import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect } from "./patternHighlight.js";
 
@@ -40,6 +41,18 @@ import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectId
  * area and shows the inspector area.
  */
 const VIRTUAL_TAB_INSPECTOR = "__inspector__";
+
+/**
+ * Sentinel name for the virtual Canvas tab. Like the
+ * Properties tab, the Canvas tab is selection-independent
+ * scene-level chrome (canvas dimensions, background image
+ * controls, image-transformation sliders, recent-image
+ * gallery) and does not back onto any file in the bundle.
+ * Selecting it hides the CodeMirror area and the
+ * Properties inspector area, and shows the canvas-
+ * inspector area. See DESIGN.md Section 13.5.
+ */
+const VIRTUAL_TAB_CANVAS = "__canvas__";
 
 /**
  * CodeMirror linter that runs the source through Acorn's
@@ -143,11 +156,14 @@ function jsonErrorPosition(message, source) {
  * disk-mirror, and AI editing — only the human-facing tab
  * text is affected here.
  *
- * scene.json shows as "Properties JSON" rather than
- * "Properties" because the Properties tab is now a virtual
- * tab hosting the form-based property inspector. The raw
- * JSON view stays available as a fallback (and will until
- * the inspector covers every editable scene field).
+ * scene.json renders with an empty label — a deliberately
+ * underemphasised, anonymous final tab whose footprint is
+ * just the tab chrome and (when dirty) a dirty dot. The raw
+ * JSON view stays available as a fallback for hand-editing
+ * fields the Properties inspector doesn't yet cover, but
+ * isn't called out by name in the strip; eventual retirement
+ * of the JSON view once the inspector covers every scene
+ * field will simply drop the tab.
  *
  * behaviors.js and behaviours.js both show as "Code" per
  * section 28's terminology, which treats the behaviour file
@@ -160,7 +176,7 @@ function jsonErrorPosition(message, source) {
  * the rename pass runs.
  */
 const TAB_LABELS = {
-    "scene.json": "Properties JSON",
+    "scene.json": "",
     "behaviors.js": "Code",
     "behaviours.js": "Code",
 };
@@ -248,13 +264,15 @@ export class TabbedEditor {
      * @param {HTMLElement} tabBarElement
      * @param {HTMLElement} editorAreaElement
      * @param {HTMLElement} inspectorAreaElement
+     * @param {HTMLElement} canvasInspectorAreaElement
      * @param {Bundle} bundle
      * @param {EditorCallbacks} [callbacks]
      */
-    constructor(tabBarElement, editorAreaElement, inspectorAreaElement, bundle, callbacks = {}) {
+    constructor(tabBarElement, editorAreaElement, inspectorAreaElement, canvasInspectorAreaElement, bundle, callbacks = {}) {
         this.tabBar = tabBarElement;
         this.editorArea = editorAreaElement;
         this.inspectorArea = inspectorAreaElement;
+        this.canvasInspectorArea = canvasInspectorAreaElement;
         this.bundle = bundle;
         this.onDirtyChange = callbacks.onDirtyChange ?? (() => {});
         this.onSaved = callbacks.onSaved ?? (() => {});
@@ -291,6 +309,7 @@ export class TabbedEditor {
 
         this._mountEditor();
         this._mountInspector();
+        this._mountCanvasInspector();
         this._renderTabs();
         this._subscribeBundleDirty();
 
@@ -389,15 +408,22 @@ export class TabbedEditor {
      */
     reloadFromBundle() {
         this._renderTabs();
-        const isVirtual = this.activeName === VIRTUAL_TAB_INSPECTOR;
+        const isVirtual =
+            this.activeName === VIRTUAL_TAB_INSPECTOR ||
+            this.activeName === VIRTUAL_TAB_CANVAS;
         const stillExists = this.activeName !== null &&
             !isVirtual &&
             this.bundle.getFile(this.activeName) !== null;
-        if (isVirtual) {
+        if (this.activeName === VIRTUAL_TAB_INSPECTOR) {
             // Inspector is its own surface; reselecting it
             // keeps the same tab visually highlighted and
             // (eventually, when bound) re-reads scene data.
             this.selectTab(VIRTUAL_TAB_INSPECTOR);
+        } else if (this.activeName === VIRTUAL_TAB_CANVAS) {
+            // Same treatment for the Canvas tab: reselect
+            // keeps it active and the canvas-inspector
+            // area visible.
+            this.selectTab(VIRTUAL_TAB_CANVAS);
         } else if (stillExists) {
             this.selectTab(/** @type {string} */ (this.activeName));
         } else if (this.bundle.textFiles.length > 0) {
@@ -786,19 +812,35 @@ export class TabbedEditor {
     }
 
     /**
-     * Toggle visibility between the CodeMirror editor area and
-     * the inspector area. Both occupy the same flex slot in the
-     * editor pane and only one is shown at a time.
-     * @param {boolean} showInspector
+     * Mount the canvas inspector into the canvas-inspector
+     * area. Like _mountInspector, the CanvasInspector owns
+     * its own DOM subtree; the editor's only job is to
+     * show or hide the area when the Canvas tab becomes
+     * active. main.js reaches this.canvasInspector after
+     * construction to wire setCanvasSize and onSceneEdit,
+     * the same wiring the toolbar used to expose before
+     * the W/H field migration.
      */
-    _setInspectorVisible(showInspector) {
-        if (this.inspectorArea === null) return;
-        if (showInspector) {
-            this.inspectorArea.classList.remove("hidden");
-            this.editorArea.classList.add("hidden");
-        } else {
-            this.inspectorArea.classList.add("hidden");
-            this.editorArea.classList.remove("hidden");
+    _mountCanvasInspector() {
+        if (this.canvasInspectorArea === null) return;
+        this.canvasInspector = new CanvasInspector(this.canvasInspectorArea);
+    }
+
+    /**
+     * Show exactly one of the three editor-pane areas:
+     * the CodeMirror editor area, the Properties
+     * inspector area, or the Canvas inspector area. All
+     * three occupy the same flex slot under the tab bar;
+     * the .hidden class controls which one paints.
+     * @param {"editor" | "inspector" | "canvas-inspector"} which
+     */
+    _showArea(which) {
+        this.editorArea.classList.toggle("hidden", which !== "editor");
+        if (this.inspectorArea !== null) {
+            this.inspectorArea.classList.toggle("hidden", which !== "inspector");
+        }
+        if (this.canvasInspectorArea !== null) {
+            this.canvasInspectorArea.classList.toggle("hidden", which !== "canvas-inspector");
         }
     }
 
@@ -809,11 +851,20 @@ export class TabbedEditor {
      */
     selectTab(name) {
         // Virtual inspector tab. No CodeMirror document swap;
-        // we just toggle which area is visible and update the
+        // we just show the inspector area and update the
         // tab-bar selection styling.
         if (name === VIRTUAL_TAB_INSPECTOR) {
             this.activeName = name;
-            this._setInspectorVisible(true);
+            this._showArea("inspector");
+            this._renderTabs();
+            return;
+        }
+
+        // Virtual Canvas tab. Same pattern: show the canvas-
+        // inspector area, no CodeMirror swap.
+        if (name === VIRTUAL_TAB_CANVAS) {
+            this.activeName = name;
+            this._showArea("canvas-inspector");
             this._renderTabs();
             return;
         }
@@ -822,7 +873,7 @@ export class TabbedEditor {
         if (file === null || this.view === null) return;
 
         this.activeName = name;
-        this._setInspectorVisible(false);
+        this._showArea("editor");
 
         const exts = extensionsForFile(name);
 
@@ -916,7 +967,7 @@ export class TabbedEditor {
         }
 
         this.activeName = name;
-        this._setInspectorVisible(false);
+        this._showArea("editor");
 
         const exts = extensionsForFile(name);
 
@@ -954,6 +1005,19 @@ export class TabbedEditor {
      */
     selectInspectorTab() {
         this.selectTab(VIRTUAL_TAB_INSPECTOR);
+    }
+
+    /**
+     * Switch to the Canvas tab. Equivalent to clicking
+     * the Canvas tab in the tab bar: the CodeMirror
+     * editor area and the Properties inspector area are
+     * hidden, and the canvas-inspector area is shown.
+     * Exposed symmetrically with selectInspectorTab so
+     * future menu items or canvas gestures that want to
+     * land on the Canvas tab have a clean entry point.
+     */
+    selectCanvasTab() {
+        this.selectTab(VIRTUAL_TAB_CANVAS);
     }
 
     /**
@@ -1347,31 +1411,54 @@ export class TabbedEditor {
     // --- Tab rendering ---
 
     /**
-     * Render the tab bar. The Properties tab (form inspector)
-     * is virtual — it has no backing file and is rendered
-     * first regardless of bundle file order. The Code tab
-     * (behaviors.js / behaviours.js) follows, then Properties
-     * JSON (scene.json), then any other text files in the
-     * bundle in their natural order. Pinning the order this
-     * way means the form-based Properties tab is always
-     * leftmost and the raw JSON view sits next to its
-     * companion Code tab regardless of how the bundle stores
-     * its files.
+     * Render the tab bar. Two virtual tabs come first —
+     * Properties (form inspector) and Canvas (scene-level
+     * canvas chrome per DESIGN.md Section 13.5), neither
+     * of which backs onto a file in the bundle. Then the
+     * Code tabs (behaviors.js / behaviours.js) for the
+     * authored source. Last comes scene.json, rendered
+     * with an empty label — a deliberately anonymous
+     * fallback tab the user can still click to reach the
+     * raw JSON view, kept around for hand-editing fields
+     * the Properties inspector doesn't yet cover. Any
+     * other text files in the bundle (rare; resources
+     * the user has added) follow in their natural order
+     * after the pinned tabs.
      */
     _renderTabs() {
         this.tabBar.innerHTML = "";
 
         // Virtual Properties tab (form inspector).
         this.tabBar.appendChild(
-            this._renderVirtualTab(VIRTUAL_TAB_INSPECTOR, "Properties"),
+            this._renderVirtualTab(
+                VIRTUAL_TAB_INSPECTOR,
+                "Properties",
+                /* dirtyBackingFile */ "scene.json",
+            ),
         );
 
-        // File tabs in display order. Code first so the
-        // composer reads function declarations and pattern
-        // blocks before the declarative scene data;
-        // Properties JSON second. Both legacy and v2.4
-        // filenames are listed so a bundle in either state
-        // renders correctly during the migration window.
+        // Virtual Canvas tab. Selection-independent
+        // scene-level chrome; doesn't carry a dirty dot
+        // because the Properties and J tabs already
+        // surface scene.json's dirty state and a third
+        // signal for the same backing file would just
+        // duplicate the cue.
+        this.tabBar.appendChild(
+            this._renderVirtualTab(
+                VIRTUAL_TAB_CANVAS,
+                "Canvas",
+                /* dirtyBackingFile */ null,
+            ),
+        );
+
+        // File tabs in display order. Code tabs first so
+        // the composer reads function declarations and
+        // pattern blocks before the declarative scene data,
+        // and so the anonymous scene.json tab sits at the
+        // far right where it doesn't draw the eye. Both
+        // legacy and v2.4 behaviour filenames are listed so
+        // a bundle in either state renders correctly during
+        // the migration window.
         const orderedNames = ["behaviors.js", "behaviours.js", "scene.json"];
         const renderedNames = new Set();
         for (const name of orderedNames) {
@@ -1394,12 +1481,20 @@ export class TabbedEditor {
     }
 
     /**
-     * Build a tab element for the virtual Properties tab.
+     * Build a tab element for a virtual (file-less) tab.
+     * Virtual tabs include Properties (the form inspector)
+     * and Canvas (the canvas-inspector). dirtyBackingFile,
+     * if provided, names the bundle file whose per-file
+     * dirty state lights this tab's dirty dot — used by
+     * the Properties tab to track scene.json. Pass null
+     * for tabs that never carry a dirty dot regardless of
+     * underlying state, like Canvas.
      * @param {string} virtualName
      * @param {string} label
+     * @param {string | null} dirtyBackingFile
      * @returns {HTMLDivElement}
      */
-    _renderVirtualTab(virtualName, label) {
+    _renderVirtualTab(virtualName, label, dirtyBackingFile) {
         const el = document.createElement("div");
         el.className = "tab";
         if (virtualName === this.activeName) {
@@ -1408,10 +1503,8 @@ export class TabbedEditor {
         } else {
             el.setAttribute("aria-selected", "false");
         }
-        // The virtual Properties tab is backed by scene.json
-        // (the inspector edits scene.json), so its dirty
-        // indicator tracks scene.json's per-file dirty state.
-        if (this.bundle.isFileDirty("scene.json")) {
+        if (dirtyBackingFile !== null &&
+            this.bundle.isFileDirty(dirtyBackingFile)) {
             el.classList.add("tab-dirty");
         }
         el.setAttribute("role", "tab");

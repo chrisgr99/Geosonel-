@@ -539,12 +539,19 @@ html, body {
 
 /* --- CodeMirror editor area & Inspector area --- */
 
-/* Both occupy the same flex slot under the tab bar; only one
- * is visible at a time. The .hidden helper toggles which.
- * Shared base rules go on the combined selector; type-specific
- * styling continues below for each. */
+/* All three occupy the same flex slot under the tab bar;
+ * only one is visible at a time. The .hidden helper
+ * toggles which. Shared base rules go on the combined
+ * selector; type-specific styling continues below for
+ * each. The canvas-inspector-area is the Section 13.5
+ * sibling of the property inspector — selection-
+ * independent scene-level chrome (canvas dimensions,
+ * background-image controls, image-transformation
+ * sliders, recent-image gallery) reached through the
+ * Canvas tab. */
 #editor-area,
-#inspector-area {
+#inspector-area,
+#canvas-inspector-area {
     flex: 1 1 auto;
     overflow: hidden;
     min-height: 0;
@@ -552,7 +559,8 @@ html, body {
 }
 
 #editor-area.hidden,
-#inspector-area.hidden {
+#inspector-area.hidden,
+#canvas-inspector-area.hidden {
     display: none;
 }
 
@@ -563,6 +571,79 @@ html, body {
 #inspector-area {
     background-color: #2a2a2a;
     overflow-y: auto;
+}
+
+#canvas-inspector-area {
+    background-color: #2a2a2a;
+    overflow-y: auto;
+}
+
+/* --- Canvas inspector --- */
+
+/* Canvas inspector layout. Stage 1 scope: a top row with
+ * Load Image / Remove Image placeholder buttons and the
+ * W / H numeric fields, plus a horizontal separator
+ * anticipating the gallery Stage 3 lands below. Later
+ * stages add the gallery grid, a second separator, and
+ * the image-transformation sliders.
+ *
+ * The top row uses simple flex with a small gap. The W
+ * and H fields reuse the .toolbar-canvas-field styling
+ * (lighter-grey fill, green border, monospace digits)
+ * unchanged from their toolbar origin so the behaviour
+ * and visuals are identical to what migrated. Single-
+ * letter axis labels sit immediately before each field
+ * so the user reads "W [field] H [field]" as a pair of
+ * labelled values. The buttons in Stage 1 are disabled
+ * placeholders; Stage 4 wires them. */
+.canvas-insp-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 14px;
+    min-height: 100%;
+}
+
+.canvas-insp-top-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.canvas-insp-button {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 4px 12px;
+    height: 28px;
+    font-size: 12pt;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+    user-select: none;
+}
+
+.canvas-insp-button:hover:not(:disabled) {
+    background-color: #3a3a3a;
+}
+
+.canvas-insp-button:disabled {
+    color: #707070;
+    border-color: #555555;
+    cursor: default;
+}
+
+.canvas-insp-axis-label {
+    color: #c8c8c8;
+    font-size: 11pt;
+    margin-left: 6px;
+    user-select: none;
+}
+
+.canvas-insp-separator {
+    height: 2px;
+    background-color: #777777;
+    margin: 14px 0;
 }
 
 #editor-area .cm-editor {

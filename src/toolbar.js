@@ -9,9 +9,9 @@
  * creation tool buttons (sprite, trigger, curve), the image
  * import button, the Play Selected toggle, the transport
  * cluster (rewind, play, musical position readout, BPM
- * input), the canvas-size W and H fields, and the MIDI
- * indicator at the far right. Item ordering is fixed by
- * the IN_FLIGHT spec; see that file for the rationale.
+ * input), and the MIDI indicator at the far right. Item
+ * ordering is fixed by the IN_FLIGHT spec; see that file
+ * for the rationale.
  *
  * Tool buttons. Each tool has three states: idle, armed
  * (one-shot — single placement, then back to idle), and
@@ -45,16 +45,14 @@
  * as the File menu's Import Image command but right next to
  * where the user is composing — the shortest path from "I
  * want to add a background image" to a native picker. The
- * Canvas W and H fields expose per-scene canvas size
- * (integers in 1..200) as numeric fields editable both by
- * typing and by scroll-wheel scrubbing. Edits propagate
- * through the toolbar's scene-edit callback to main.js's
- * applySceneEdit pipeline, the same path inspector and
- * canvas edits travel. The MIDI indicator at the far right
- * is wired by main.js's wireMidiIndicator helper after the
+ * Canvas W and H fields that used to live in this strip have
+ * migrated to the Canvas inspector tab per DESIGN.md Section
+ * 13.5; the freed-up space is absorbed by the existing
+ * toolbar-spacer. The MIDI indicator at the far right is
+ * wired by main.js's wireMidiIndicator helper after the
  * toolbar is constructed; the helper finds the indicator
- * element by id, attaches the MIDISender event handlers, and
- * updates the label and the per-send flash class.
+ * element by id, attaches the MIDISender event handlers,
+ * and updates the label and the per-send flash class.
  *
  * Subscriptions exposed:
  *   - onChange: active tool name (or null for idle) plus
@@ -65,10 +63,6 @@
  *     to idle.
  *   - onImageImportClick: fires when the user clicks the
  *     Image Import button.
- *   - onSceneEdit: fires when a canvas-size field commits a
- *     change; the edit object carries a kind tag and the
- *     new value, mirroring the shape canvas and inspector
- *     edits use.
  *   - onPlaySelectedToggle: fires when the Play Selected
  *     button is toggled; receives the new active flag.
  *   - onFocusCanvasClick: fires when the Focus Canvas
@@ -190,11 +184,6 @@ const FOCUS_CANVAS_ICON_SVG =
     `<rect class="sidebar-toggle-fill" x="1" y="2" width="6" height="12" rx="1.5" fill="currentColor"/>` +
     `</svg>`;
 
-const CANVAS_DIMENSION_MIN = 1;
-const CANVAS_DIMENSION_MAX = 200;
-const CANVAS_DIMENSION_DEFAULT_W = 32;
-const CANVAS_DIMENSION_DEFAULT_H = 24;
-
 export class Toolbar {
     /**
      * @param {HTMLElement} container  Element to mount the toolbar in.
@@ -209,27 +198,8 @@ export class Toolbar {
         /** @type {Map<string, HTMLButtonElement>} */
         this._buttons = new Map();
 
-        // Canvas-size state. Mirrors the scene's canvasW and
-        // canvasH whenever main.js calls setCanvasSize after
-        // a scene reload; defaults match the legacy hardcoded
-        // image region so a freshly-mounted toolbar with no
-        // scene yet displays the same numbers older versions
-        // implicitly used. The field references below are
-        // populated by _render and updated in place by
-        // setCanvasSize so the user's mid-edit (a focused
-        // field) isn't disturbed by an unrelated scene
-        // reload.
-        this._canvasW = CANVAS_DIMENSION_DEFAULT_W;
-        this._canvasH = CANVAS_DIMENSION_DEFAULT_H;
-        /** @type {HTMLDivElement | null} */
-        this._canvasWField = null;
-        /** @type {HTMLDivElement | null} */
-        this._canvasHField = null;
-
         /** @type {Array<() => void>} */
         this._imageImportListeners = [];
-        /** @type {Array<(edit: any) => void>} */
-        this._sceneEditListeners = [];
 
         // Play Selected toggle state. Independent of the
         // tool-button armed/locked state machine: this is a
@@ -283,20 +253,6 @@ export class Toolbar {
      */
     onImageImportClick(cb) {
         this._imageImportListeners.push(cb);
-    }
-
-    /**
-     * Subscribe to scene-edit emissions from the toolbar's
-     * canvas-size fields. The callback receives an edit
-     * object shaped like the inspector's edits — currently
-     * { kind: "setCanvasW" | "setCanvasH", value: number }.
-     * main.js routes these through applySceneEdit so they
-     * share the dirty-state, auto-save, and re-run mechanics
-     * with inspector and canvas edits.
-     * @param {(edit: any) => void} cb
-     */
-    onSceneEdit(cb) {
-        this._sceneEditListeners.push(cb);
     }
 
     /**
@@ -407,31 +363,6 @@ export class Toolbar {
     }
 
     /**
-     * Update the displayed canvas-size values. Called by
-     * main.js after each scene reload so the fields track
-     * whatever scene.json declares (or the migration default
-     * of 32 × 24 for scenes that predate the canvas-size
-     * feature). Doesn't touch a focused field — if the user
-     * is mid-edit on W or H, an unrelated scene reload
-     * shouldn't overwrite their typed value before they get
-     * a chance to commit. The internal mirror values are
-     * updated unconditionally so the diff check at commit
-     * time still reflects the latest scene state.
-     * @param {number} w
-     * @param {number} h
-     */
-    setCanvasSize(w, h) {
-        this._canvasW = w;
-        this._canvasH = h;
-        if (this._canvasWField !== null && document.activeElement !== this._canvasWField) {
-            this._canvasWField.textContent = String(w);
-        }
-        if (this._canvasHField !== null && document.activeElement !== this._canvasHField) {
-            this._canvasHField.textContent = String(h);
-        }
-    }
-
-    /**
      * Called by the consumer (canvas) after a placement
      * happens while the toolbar was armed. If the tool was
      * armed (not locked), revert to idle. If it was locked,
@@ -448,8 +379,6 @@ export class Toolbar {
     _render() {
         this.container.innerHTML = "";
         this._buttons.clear();
-        this._canvasWField = null;
-        this._canvasHField = null;
         this._playSelectedButton = null;
         this._focusCanvasButton = null;
 
@@ -499,17 +428,16 @@ export class Toolbar {
         // to that module.
         this.container.appendChild(this._buildTransportCluster());
 
-        // Position 11: flex spacer. Pushes the canvas-size
-        // controls and MIDI indicator to the right edge of
-        // the toolbar.
+        // Position 11: flex spacer. Pushes the MIDI
+        // indicator to the right edge of the toolbar.
+        // Absorbs the space previously occupied by the
+        // Canvas W and H fields, which now live in the
+        // Canvas inspector tab per DESIGN.md Section 13.5.
         const spacer = document.createElement("div");
         spacer.className = "toolbar-spacer";
         this.container.appendChild(spacer);
 
-        // Positions 12-13: Canvas W and H fields.
-        this.container.appendChild(this._buildCanvasSizeControls());
-
-        // Position 14: MIDI indicator at the far right.
+        // Position 12: MIDI indicator at the far right.
         // wireMidiIndicator in main.js attaches the
         // MIDISender event handlers to this element after
         // the toolbar is constructed.
@@ -751,32 +679,6 @@ export class Toolbar {
     }
 
     /**
-     * Build the canvas-size W and H controls. "Canvas:"
-     * label, then W field, then H field, with a small gap
-     * between the two fields but no separator character
-     * between them — the user reads the two numbers as a
-     * width-and-height pair, and the Canvas: label anchors
-     * the meaning.
-     * @returns {HTMLDivElement}
-     */
-    _buildCanvasSizeControls() {
-        const canvasControls = document.createElement("div");
-        canvasControls.className = "toolbar-canvas-controls";
-
-        const label = document.createElement("span");
-        label.className = "toolbar-canvas-label";
-        label.textContent = "Canvas:";
-        canvasControls.appendChild(label);
-
-        this._canvasWField = this._buildCanvasField("w");
-        canvasControls.appendChild(this._canvasWField);
-        this._canvasHField = this._buildCanvasField("h");
-        canvasControls.appendChild(this._canvasHField);
-
-        return canvasControls;
-    }
-
-    /**
      * Build the MIDI indicator element. Lives at the far
      * right of the toolbar; main.js's wireMidiIndicator
      * helper finds it by id and attaches MIDISender event
@@ -794,142 +696,6 @@ export class Toolbar {
         return el;
     }
 
-    /**
-     * Build one canvas-dimension numeric field. Editable by
-     * typing (Enter to commit, Escape to revert, blur to
-     * commit silently) and by scroll-wheel scrubbing in
-     * 1.0-unit increments. Hard-blocks values outside
-     * 1..200 — Enter on a bad value squiggles red and
-     * keeps focus; blur on a bad value silently reverts.
-     * Scroll-wheel scrubbing emits an edit on every notch
-     * so the canvas redraws live with the new size; typed
-     * commits emit on Enter or blur.
-     *
-     * @param {"w" | "h"} axis
-     * @returns {HTMLDivElement}
-     */
-    _buildCanvasField(axis) {
-        const field = document.createElement("div");
-        field.className = "toolbar-canvas-field";
-        field.setAttribute("contenteditable", "plaintext-only");
-        field.setAttribute("spellcheck", "false");
-        field.setAttribute("aria-label", axis === "w" ? "Canvas width" : "Canvas height");
-        field.title = axis === "w"
-            ? "Canvas width in canvas units. Scroll to scrub, type to set, Enter to commit."
-            : "Canvas height in canvas units. Scroll to scrub, type to set, Enter to commit.";
-        field.textContent = String(axis === "w" ? this._canvasW : this._canvasH);
-
-        // Scroll-wheel scrubbing. 1.0-unit increments are
-        // coarser than the inspector's 0.3 (canvas size has
-        // a much wider range and integer-only values; small
-        // fractional steps would feel sluggish and would
-        // need rounding anyway). Wheel events on a field
-        // that currently has keyboard focus pass through to
-        // the browser so the user's text-cursor scrolling
-        // works as expected; on an unfocused field, wheel
-        // scrubs the value and emits an edit per notch.
-        field.addEventListener("wheel", (e) => {
-            if (document.activeElement === field) return;
-            const current = parseInt(field.textContent ?? "", 10);
-            if (!Number.isFinite(current)) return;
-            e.preventDefault();
-            const direction = e.deltaY < 0 ? 1 : -1;
-            const target = clamp(current + direction, CANVAS_DIMENSION_MIN, CANVAS_DIMENSION_MAX);
-            if (target === current) return;
-            field.textContent = String(target);
-            if (axis === "w") this._canvasW = target;
-            else this._canvasH = target;
-            this._emitCanvasSizeEdit(axis, target);
-        }, { passive: false });
-
-        // Select all on focus so the user's first keystroke
-        // replaces the existing value rather than inserting
-        // into it. Mirrors the inspector's editable-field
-        // convention.
-        field.addEventListener("focus", () => {
-            const sel = window.getSelection();
-            if (sel === null) return;
-            const range = document.createRange();
-            range.selectNodeContents(field);
-            sel.removeAllRanges();
-            sel.addRange(range);
-        });
-
-        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
-            const text = (field.textContent ?? "").trim();
-            const n = parseInt(text, 10);
-            const stored = axis === "w" ? this._canvasW : this._canvasH;
-            const valid =
-                Number.isFinite(n) &&
-                String(n) === text &&
-                n >= CANVAS_DIMENSION_MIN &&
-                n <= CANVAS_DIMENSION_MAX;
-            if (!valid) {
-                if (mode === "blur") {
-                    // Silently revert: an abandoned bad value
-                    // shouldn't carry forward.
-                    field.textContent = String(stored);
-                    field.classList.remove("error");
-                    return;
-                }
-                field.classList.add("error");
-                return;
-            }
-            field.classList.remove("error");
-            if (n === stored) return;
-            if (axis === "w") this._canvasW = n;
-            else this._canvasH = n;
-            field.textContent = String(n);
-            this._emitCanvasSizeEdit(axis, n);
-        };
-
-        field.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                tryCommit("enter");
-                return;
-            }
-            if (e.key === "Escape") {
-                e.preventDefault();
-                field.textContent = String(axis === "w" ? this._canvasW : this._canvasH);
-                field.classList.remove("error");
-                field.blur();
-                return;
-            }
-            // Clear an error squiggle on any other keystroke
-            // so the user sees their corrections in step
-            // with their typing.
-            if (field.classList.contains("error")) {
-                queueMicrotask(() => field.classList.remove("error"));
-            }
-        });
-        field.addEventListener("blur", () => {
-            tryCommit("blur");
-        });
-
-        return field;
-    }
-
-    /**
-     * Emit a canvas-size edit to every registered
-     * scene-edit listener. The edit shape mirrors inspector
-     * edits: { kind, value }. main.js dispatches on kind to
-     * the matching sceneEditor mutator.
-     * @param {"w" | "h"} axis
-     * @param {number} value
-     */
-    _emitCanvasSizeEdit(axis, value) {
-        const edit = {
-            kind: axis === "w" ? "setCanvasW" : "setCanvasH",
-            value,
-        };
-        for (const cb of this._sceneEditListeners) {
-            try { cb(edit); } catch (err) {
-                console.error("GXW: toolbar scene-edit listener threw.", err);
-            }
-        }
-    }
-
     _refreshButtons() {
         for (const [name, btn] of this._buttons) {
             btn.classList.remove("toolbar-tool-armed", "toolbar-tool-locked");
@@ -942,17 +708,4 @@ export class Toolbar {
             }
         }
     }
-}
-
-/**
- * Clamp a number to [min, max].
- * @param {number} n
- * @param {number} min
- * @param {number} max
- * @returns {number}
- */
-function clamp(n, min, max) {
-    if (n < min) return min;
-    if (n > max) return max;
-    return n;
 }
