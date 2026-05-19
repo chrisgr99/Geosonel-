@@ -1,6 +1,6 @@
 # GXW Design Document
 
-Version 2.5 — May 2026
+Version 2.6 — May 2026
 
 Status: Living document — sections split into individual files in `sections/`.
 
@@ -25,7 +25,7 @@ GeoSonel is a web app for composing music that emerges from 2D scenes. A scene i
 - [Section 13 — User Interface](sections/section-13-user-interface.md)
 - [Section 13.5 — Canvas](sections/section-13-5-canvas.md)
 - [Section 14 — Authoring Workflow](sections/section-14-authoring-workflow.md)
-- [Section 15 — AI Handoff](sections/section-15-ai-handoff.md)
+- [Section 15 — Disk Mirror and AI Integration](sections/section-15-ai-handoff.md)
 - [Section 16 — Score Bundle](sections/section-16-score-bundle.md)
 - [Section 17 — Version Management via Git](sections/section-17-version-management.md)
 - [Section 18 — Auto-Reload](sections/section-18-auto-reload.md)
