@@ -29,22 +29,17 @@
 </head>
 <body>
     <div id="app">
-        <!-- Combined top row: menu on the left, transport centred, wordmark on the right. -->
+        <!-- Top row: in-page menubar for the web build only.
+             Hidden on Electron via body.electron-mode rules
+             in main.css; the native macOS menu bar replaces
+             it there. The transport controls, score name,
+             saved indicator, Focus Canvas toggle, MIDI
+             indicator, and wordmark that formerly lived here
+             all migrated into #canvas-toolbar in the toolbar
+             reorganization. The score name now lives in the
+             macOS native window title bar, with "(Unsaved)"
+             appended while dirty. -->
         <header id="top-row">
-            <!-- Focus Canvas toggle: collapses the editor pane,
-                 body divider, message divider, and message area
-                 so the canvas fills the body. Always visible in
-                 the top row so it remains accessible whether
-                 Focus Canvas is active or not. The same toggle
-                 is bound to Cmd-Shift-F and the View → Focus
-                 Canvas menu item. State is persisted in
-                 localStorage so the choice survives reloads. -->
-            <button id="sidebar-toggle-btn" class="sidebar-toggle-btn" aria-label="Focus Canvas" title="Focus Canvas (⇧⌘F)">
-                <svg class="sidebar-toggle-icon" viewBox="0 0 20 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                    <rect x="1" y="2" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
-                    <rect class="sidebar-toggle-fill" x="1" y="2" width="6" height="12" rx="1.5" fill="currentColor"/>
-                </svg>
-            </button>
             <nav id="menubar" role="menubar" aria-label="Main menu">
                 <div class="menu-item" role="menuitem" tabindex="0">GXW</div>
                 <div class="menu-item" role="menuitem" tabindex="0">File</div>
@@ -52,37 +47,11 @@
                 <div class="menu-item" role="menuitem" tabindex="0">View</div>
                 <div class="menu-item" role="menuitem" tabindex="0">Run</div>
             </nav>
-
-            <div id="transport-controls" aria-label="Transport">
-                <button class="transport-btn engine-state-idle" id="load-engine-btn" aria-label="Load audio engine">Load Engine</button>
-                <button class="transport-btn" id="rewind-btn" aria-label="Rewind to start">⏮</button>
-                <button class="transport-btn" id="play-btn" aria-label="Play">▶</button>
-                <div class="elapsed-time" id="elapsed-time">0:00:00</div>
-                <div class="musical-position" id="musical-position">1.1.000</div>
-                <div class="field-group" id="bpm-group">
-                    <label for="bpm-input" class="field-label">BPM</label>
-                    <input
-                        type="number"
-                        id="bpm-input"
-                        class="field-input"
-                        min="1"
-                        max="1000"
-                        step="1"
-                        value="120"
-                    >
-                </div>
-                <div class="midi-indicator" id="midi-indicator" aria-label="MIDI output status">MIDI: —</div>
-            </div>
-
-            <div id="app-wordmark" aria-hidden="true">
-                <span id="saved-indicator" class="saved-indicator">Saved</span>
-                <span id="current-score-name" title="Click to rename"></span>
-                <span id="wordmark-text">GXW</span>
-            </div>
         </header>
 
-        <!-- Horizontal grey divider below the top row -->
-        <div class="divider-horizontal" aria-hidden="true"></div>
+        <!-- Horizontal grey divider below the top row.
+             Hidden alongside #top-row on Electron. -->
+        <div id="top-divider" class="divider-horizontal" aria-hidden="true"></div>
 
         <!-- Main body: editor left, canvas right, draggable divider between. -->
         <main id="body">

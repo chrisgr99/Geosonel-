@@ -2,48 +2,80 @@
  * Toolbar.
  *
  * Horizontal strip of canvas-related controls across the top
- * of the canvas pane. Two clusters: object-creation tools on
- * the left, and a right-side cluster with an image-import
- * button plus the canvas size (W and H) numeric fields.
+ * of the canvas pane. Following the top-row elimination, the
+ * toolbar is the only chrome strip in the app (above the
+ * canvas / editor split) and hosts every persistent control:
+ * the Focus Canvas toggle at the far left, the three object-
+ * creation tool buttons (sprite, trigger, curve), the image
+ * import button, the Play Selected toggle, the transport
+ * cluster (rewind, play, musical position readout, BPM
+ * input), the canvas-size W and H fields, and the MIDI
+ * indicator at the far right. Item ordering is fixed by
+ * the IN_FLIGHT spec; see that file for the rationale.
  *
- * Left cluster (tool buttons). Each tool has three states:
- * idle, armed (one-shot — single placement, then back to
- * idle), and locked (repeat placements until the user
- * disarms). The user enters armed state with a single click
- * on a tool button and locked state with a double-click. The
- * Escape key or clicking the tool button again exits either
- * state. The toolbar ships three creation tools: Add Sprite
- * (click-to-place), Add Trigger (click-to-place), and Add
- * Curve (drag-to-define an ellipse bounding box, Shift
- * during drag constrains to a circle). Each tool's icon
- * carries a small plus mark at the lower right to signal
- * create mode, mirroring the GeoSonix toolbar convention.
- * The cluster is built to grow by extending the TOOL_DEFS
- * array.
+ * Tool buttons. Each tool has three states: idle, armed
+ * (one-shot — single placement, then back to idle), and
+ * locked (repeat placements until the user disarms). Single
+ * click on a tool button arms it; double-click locks it.
+ * The Escape key or clicking the tool button again exits
+ * either state. The cluster currently ships three creation
+ * tools: Add Sprite (click-to-place), Add Trigger (click-
+ * to-place), and Add Curve (drag-to-define an ellipse
+ * bounding box, Shift during drag constrains to a circle).
+ * Each tool's icon carries a small plus mark at the lower
+ * right to signal create mode, mirroring the GeoSonix
+ * convention. The cluster is built to grow by extending the
+ * TOOL_DEFS array.
  *
- * Right cluster. The image-import button surfaces the same
- * file-picker flow as the File menu's Import Image command
- * but right next to where the user is composing — it's the
- * shortest path from "I want to add a background image" to a
- * native picker. The Canvas controls expose the per-scene
- * canvas size (W and H, integers in 1..200) as numeric
- * fields editable both by typing and by scroll-wheel
- * scrubbing. Edits propagate through the toolbar's
- * scene-edit callback to main.js's applySceneEdit pipeline,
- * the same path inspector and canvas edits travel.
+ * Focus Canvas, Play Selected, and the transport cluster
+ * surface persistent state rather than transient tool modes.
+ * The Focus Canvas button reflects body.focus-canvas; main.js
+ * calls setFocusCanvasActive whenever the body class changes
+ * so the button stays in sync regardless of which entry point
+ * (button click, View menu item, Cmd-Shift-F) fired the
+ * toggle. The Play Selected button owns its own boolean
+ * state and emits onPlaySelectedToggle on every flip. The
+ * transport cluster uses the same element IDs as before
+ * (rewind-btn, play-btn, musical-position, bpm-input,
+ * bpm-group) so TransportBarView's getElementById lookups
+ * find them in their new toolbar locations without code
+ * changes to that module.
  *
- * The toolbar communicates outward via three callbacks:
- *   - onChange fires whenever the active tool or its lock
- *     state changes; the Canvas uses this to update its
- *     cursor and click behaviour, and afterPlacement() is
- *     called by the canvas to put the toolbar back to idle
- *     after a single-shot placement.
- *   - onImageImportClick fires when the user clicks the
- *     image-import button.
- *   - onSceneEdit fires when a canvas-size field commits a
+ * The Image Import button surfaces the same file-picker flow
+ * as the File menu's Import Image command but right next to
+ * where the user is composing — the shortest path from "I
+ * want to add a background image" to a native picker. The
+ * Canvas W and H fields expose per-scene canvas size
+ * (integers in 1..200) as numeric fields editable both by
+ * typing and by scroll-wheel scrubbing. Edits propagate
+ * through the toolbar's scene-edit callback to main.js's
+ * applySceneEdit pipeline, the same path inspector and
+ * canvas edits travel. The MIDI indicator at the far right
+ * is wired by main.js's wireMidiIndicator helper after the
+ * toolbar is constructed; the helper finds the indicator
+ * element by id, attaches the MIDISender event handlers, and
+ * updates the label and the per-send flash class.
+ *
+ * Subscriptions exposed:
+ *   - onChange: active tool name (or null for idle) plus
+ *     locked flag, fired whenever the tool state changes.
+ *     The canvas uses this to update its cursor and click
+ *     behaviour; afterPlacement() is called by the canvas
+ *     after a single-shot placement so the toolbar reverts
+ *     to idle.
+ *   - onImageImportClick: fires when the user clicks the
+ *     Image Import button.
+ *   - onSceneEdit: fires when a canvas-size field commits a
  *     change; the edit object carries a kind tag and the
  *     new value, mirroring the shape canvas and inspector
  *     edits use.
+ *   - onPlaySelectedToggle: fires when the Play Selected
+ *     button is toggled; receives the new active flag.
+ *   - onFocusCanvasClick: fires when the Focus Canvas
+ *     button is clicked. The button does not own focus-
+ *     canvas state; main.js's toggleFocusCanvas closure
+ *     toggles document.body.classList and calls back into
+ *     setFocusCanvasActive to update the button's visual.
  */
 
 // @ts-check
@@ -114,11 +146,10 @@ const TOOL_DEFS = [
 // Image-import icon. A picture-frame outline with a small
 // sun (top-left) and a mountain-range silhouette (bottom)
 // — the universal "image" convention. Stroked in the same
-// blue as the sprite boundary so the right cluster reads
-// as part of the same toolbar visual system. The frame
-// shape is what makes this distinct from a generic-action
-// icon: the user sees a frame and immediately reads
-// "image".
+// blue as the sprite boundary so the cluster reads as part
+// of the same toolbar visual system. The frame shape is
+// what makes this distinct from a generic-action icon: the
+// user sees a frame and immediately reads "image".
 const IMAGE_IMPORT_ICON_SVG =
     `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
     `<rect x="3" y="4" width="18" height="16" rx="1.5" stroke="#7db8d6" stroke-width="2" fill="none"/>` +
@@ -142,6 +173,21 @@ const PLAY_SELECTED_ICON_SVG =
     `<path d="M 10 8.5 A 3.5 3.5 0 0 1 10 15.5" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
     `<path d="M 13 6 A 6 6 0 0 1 13 18" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
     `<path d="M 16 3.5 A 8.5 8.5 0 0 1 16 20.5" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
+    `</svg>`;
+
+// Focus Canvas icon. A small rectangle with a filled left
+// segment representing the editor pane; the fill fades out
+// (via the .sidebar-toggle-btn.sidebar-collapsed CSS rule)
+// when Focus Canvas is active. Same SVG that lived in
+// index.html as the top-row sidebar-toggle-btn before the
+// top-row elimination; preserved verbatim here so the
+// existing .sidebar-toggle-btn / .sidebar-toggle-icon /
+// .sidebar-toggle-fill CSS rules continue to apply without
+// a rename.
+const FOCUS_CANVAS_ICON_SVG =
+    `<svg class="sidebar-toggle-icon" viewBox="0 0 20 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">` +
+    `<rect x="1" y="2" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>` +
+    `<rect class="sidebar-toggle-fill" x="1" y="2" width="6" height="12" rx="1.5" fill="currentColor"/>` +
     `</svg>`;
 
 const CANVAS_DIMENSION_MIN = 1;
@@ -202,6 +248,18 @@ export class Toolbar {
         /** @type {HTMLButtonElement | null} */
         this._playSelectedButton = null;
 
+        // Focus Canvas button. The toolbar renders the
+        // button and emits click events; main.js owns the
+        // body class toggle and calls setFocusCanvasActive
+        // to keep the button's visual in sync. The button
+        // does NOT own its own state — it reflects external
+        // state, which is what the body.focus-canvas class
+        // represents.
+        /** @type {Array<() => void>} */
+        this._focusCanvasClickListeners = [];
+        /** @type {HTMLButtonElement | null} */
+        this._focusCanvasButton = null;
+
         this._render();
     }
 
@@ -256,6 +314,18 @@ export class Toolbar {
      */
     onPlaySelectedToggle(cb) {
         this._playSelectedListeners.push(cb);
+    }
+
+    /**
+     * Subscribe to Focus Canvas button clicks. main.js wires
+     * this to its toggleFocusCanvas closure, which toggles
+     * document.body's focus-canvas class, persists the new
+     * state to localStorage, and calls setFocusCanvasActive
+     * back into the toolbar so the button's visual updates.
+     * @param {() => void} cb
+     */
+    onFocusCanvasClick(cb) {
+        this._focusCanvasClickListeners.push(cb);
     }
 
     /** @returns {{tool: string | null, locked: boolean}} */
@@ -315,6 +385,28 @@ export class Toolbar {
     }
 
     /**
+     * Push the current Focus Canvas state onto the button's
+     * visuals (icon-fill fade plus aria-label and title
+     * text). Called by main.js from its toggleFocusCanvas
+     * closure after the body class flips so the button stays
+     * in sync regardless of which entry point (button click,
+     * View menu item, Cmd-Shift-F) fired the toggle.
+     * Idempotent — calling with the current value is a no-op
+     * beyond a class assignment.
+     * @param {boolean} active
+     */
+    setFocusCanvasActive(active) {
+        if (this._focusCanvasButton === null) return;
+        this._focusCanvasButton.classList.toggle(
+            "sidebar-collapsed",
+            active === true,
+        );
+        const label = active ? "Exit Focus Canvas" : "Focus Canvas";
+        this._focusCanvasButton.setAttribute("aria-label", label);
+        this._focusCanvasButton.setAttribute("title", `${label} (\u21e7\u2318F)`);
+    }
+
+    /**
      * Update the displayed canvas-size values. Called by
      * main.js after each scene reload so the fields track
      * whatever scene.json declares (or the migration default
@@ -359,48 +451,88 @@ export class Toolbar {
         this._canvasWField = null;
         this._canvasHField = null;
         this._playSelectedButton = null;
+        this._focusCanvasButton = null;
 
-        // Left cluster: object-creation tools.
+        // Position 1: Focus Canvas toggle at the far left.
+        this.container.appendChild(this._buildFocusCanvasButton());
+
+        // Group separator between the focus-canvas toggle
+        // and the object-creation tool cluster. Reads as
+        // "different kinds of controls" at a glance so the
+        // toolbar doesn't feel like one undifferentiated
+        // row of buttons.
+        this.container.appendChild(this._buildGroupSeparator());
+
+        // Positions 2-4: object-creation tools.
         for (const def of TOOL_DEFS) {
             this.container.appendChild(this._buildToolButton(def));
         }
 
-        // Group separator. A fixed-width empty span between
-        // the object-creation tools and the Play Selected
-        // toggle so the two read as distinct groups without
-        // a heavy visible divider. Sized to leave a clear
-        // gap that the eye registers as "these are separate
-        // controls" without taking up so much room that the
-        // toolbar feels sparse on narrow windows.
-        const groupSep = document.createElement("div");
-        groupSep.className = "toolbar-group-separator";
-        this.container.appendChild(groupSep);
+        // Position 5: Image Import. Sits with the creation
+        // tools because adding a background image is the
+        // closest sibling activity to placing sprites,
+        // triggers, and curves — you're "adding content to
+        // the canvas" in all four cases.
+        this.container.appendChild(this._buildImageImportButton());
 
-        // Play Selected toggle. Sits with the playback-
-        // related controls on the left rather than with the
-        // canvas-creation tools, so the user reads it as a
-        // "what plays" control rather than a "what gets
-        // added to the canvas" control. Visual state and
-        // click behaviour are owned by _buildPlaySelectedButton.
+        // Group separator between the creation-and-import
+        // cluster and the playback controls.
+        this.container.appendChild(this._buildGroupSeparator());
+
+        // Position 6: Play Selected toggle. Sits with the
+        // playback-related controls because flipping it
+        // changes what plays, not what's on the canvas.
         this.container.appendChild(this._buildPlaySelectedButton());
 
-        // Spacer pushes the right cluster to the right edge of
-        // the toolbar. Implemented as a flex-grow filler in
-        // the CSS; the element itself just has to exist
-        // between the two clusters.
+        // Group separator between the Play Selected toggle
+        // and the transport cluster. Play Selected is a
+        // "what plays" gate; the transport is "is it playing
+        // right now" — different enough activities that the
+        // eye benefits from reading them as distinct groups.
+        this.container.appendChild(this._buildGroupSeparator());
+
+        // Positions 7-10: transport cluster (rewind, play,
+        // musical-position readout, BPM input). Same element
+        // IDs as the previous top-row transport-controls
+        // section so TransportBarView's getElementById
+        // lookups continue to find them without code changes
+        // to that module.
+        this.container.appendChild(this._buildTransportCluster());
+
+        // Position 11: flex spacer. Pushes the canvas-size
+        // controls and MIDI indicator to the right edge of
+        // the toolbar.
         const spacer = document.createElement("div");
         spacer.className = "toolbar-spacer";
         this.container.appendChild(spacer);
 
-        // Right cluster: image import button + canvas size.
-        this.container.appendChild(this._buildRightCluster());
+        // Positions 12-13: Canvas W and H fields.
+        this.container.appendChild(this._buildCanvasSizeControls());
+
+        // Position 14: MIDI indicator at the far right.
+        // wireMidiIndicator in main.js attaches the
+        // MIDISender event handlers to this element after
+        // the toolbar is constructed.
+        this.container.appendChild(this._buildMidiIndicator());
 
         this._refreshButtons();
     }
 
     /**
-     * Build one tool button for the left cluster. Wires the
-     * single-click / double-click toggling behaviour
+     * Build a vertical group separator. Used between adjacent
+     * button clusters on the toolbar so the eye reads them
+     * as distinct groups rather than one continuous row.
+     * @returns {HTMLDivElement}
+     */
+    _buildGroupSeparator() {
+        const sep = document.createElement("div");
+        sep.className = "toolbar-group-separator";
+        return sep;
+    }
+
+    /**
+     * Build one tool button for the creation cluster. Wires
+     * the single-click / double-click toggling behaviour
      * (single-click arms or disarms; double-click locks or
      * disarms).
      * @param {ToolDef} def
@@ -459,17 +591,70 @@ export class Toolbar {
     }
 
     /**
-     * Build the Play Selected toggle button. A standalone
-     * button placed between the object-creation tools and
-     * the flex spacer, separated from the tools by a
-     * .toolbar-group-separator so the eye reads them as
-     * distinct groups. Toggle behaviour (boolean on / off)
-     * rather than the tool buttons' armed-or-locked state
-     * machine: a single click flips the active flag, which
-     * the click handler relays through setPlaySelectedActive
-     * so visual state and subscribers stay in sync.
-     * aria-pressed reflects the boolean state for screen
-     * readers and Voice Control.
+     * Build the Focus Canvas toggle button at the far left
+     * of the toolbar. The button does not own focus-canvas
+     * state — main.js's toggleFocusCanvas closure owns the
+     * body class and persists it; this button just emits
+     * onFocusCanvasClick and reflects the current state via
+     * the .sidebar-collapsed CSS class set by
+     * setFocusCanvasActive.
+     * @returns {HTMLButtonElement}
+     */
+    _buildFocusCanvasButton() {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.id = "sidebar-toggle-btn";
+        btn.className = "sidebar-toggle-btn";
+        btn.setAttribute("aria-label", "Focus Canvas");
+        btn.setAttribute("title", "Focus Canvas (\u21e7\u2318F)");
+        btn.innerHTML = FOCUS_CANVAS_ICON_SVG;
+        btn.addEventListener("click", () => {
+            for (const cb of this._focusCanvasClickListeners) {
+                try { cb(); } catch (err) {
+                    console.error("GXW: focus-canvas listener threw.", err);
+                }
+            }
+        });
+        this._focusCanvasButton = btn;
+        return btn;
+    }
+
+    /**
+     * Build the Image Import button. Placed in the creation
+     * cluster between the curve tool and the Play Selected
+     * toggle. Distinct visually from the tool buttons (no
+     * armed/locked states) but shares the same square
+     * footprint so the toolbar reads as a row of consistent
+     * controls.
+     * @returns {HTMLButtonElement}
+     */
+    _buildImageImportButton() {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "toolbar-action-button";
+        btn.setAttribute("aria-label", "Import Image");
+        btn.title = "Import Image. Opens a file picker for PNG, JPEG, or WEBP.";
+        btn.innerHTML = IMAGE_IMPORT_ICON_SVG;
+        btn.addEventListener("click", () => {
+            for (const cb of this._imageImportListeners) {
+                try { cb(); } catch (err) {
+                    console.error("GXW: image-import listener threw.", err);
+                }
+            }
+        });
+        return btn;
+    }
+
+    /**
+     * Build the Play Selected toggle button. Sits between
+     * the creation cluster and the transport cluster.
+     * Toggle behaviour (boolean on / off) rather than the
+     * tool buttons' armed-or-locked state machine: a single
+     * click flips the active flag, which the click handler
+     * relays through setPlaySelectedActive so visual state
+     * and subscribers stay in sync. aria-pressed reflects
+     * the boolean state for screen readers and Voice
+     * Control.
      * @returns {HTMLButtonElement}
      */
     _buildPlaySelectedButton() {
@@ -492,42 +677,89 @@ export class Toolbar {
     }
 
     /**
-     * Build the right-side cluster: image-import button
-     * followed by the Canvas: W H controls. Returned as a
-     * single container element so the caller can append it
-     * to the toolbar in one step and the CSS gap between the
-     * two sub-elements stays scoped to this cluster.
+     * Build the transport cluster: rewind button, play
+     * button, musical-position readout, and BPM input.
+     * Returned as a single container element so the four
+     * pieces flow together with a tight inter-element gap.
+     * Element IDs preserved from the previous top-row
+     * transport-controls section (rewind-btn, play-btn,
+     * musical-position, bpm-input, bpm-group) so
+     * TransportBarView's getElementById lookups continue to
+     * find them without code changes. Click handlers and
+     * value commits are wired by TransportBarView, not by
+     * the toolbar — the toolbar just creates the DOM.
      * @returns {HTMLDivElement}
      */
-    _buildRightCluster() {
+    _buildTransportCluster() {
         const cluster = document.createElement("div");
-        cluster.className = "toolbar-right-cluster";
+        cluster.className = "toolbar-transport-cluster";
+        cluster.style.display = "flex";
+        cluster.style.alignItems = "center";
+        cluster.style.gap = "8px";
+        cluster.style.flex = "0 0 auto";
 
-        // Image-import action button. Distinct visually from
-        // the tool buttons (no armed/locked states) but
-        // shares the same square footprint so the toolbar
-        // reads as a row of consistent controls.
-        const imgBtn = document.createElement("button");
-        imgBtn.type = "button";
-        imgBtn.className = "toolbar-action-button";
-        imgBtn.setAttribute("aria-label", "Import Image");
-        imgBtn.title = "Import Image. Opens a file picker for PNG, JPEG, or WEBP.";
-        imgBtn.innerHTML = IMAGE_IMPORT_ICON_SVG;
-        imgBtn.addEventListener("click", () => {
-            for (const cb of this._imageImportListeners) {
-                try { cb(); } catch (err) {
-                    console.error("GXW: image-import listener threw.", err);
-                }
-            }
-        });
-        cluster.appendChild(imgBtn);
+        // Rewind. Glyph ⏮ (U+23EE).
+        const rewindBtn = document.createElement("button");
+        rewindBtn.type = "button";
+        rewindBtn.className = "transport-btn";
+        rewindBtn.id = "rewind-btn";
+        rewindBtn.setAttribute("aria-label", "Rewind to start");
+        rewindBtn.textContent = "\u23ee";
+        cluster.appendChild(rewindBtn);
 
-        // Canvas size controls. Layout: "Canvas:" label,
-        // then W field, then H field, with a small gap
-        // between the two fields but no separator character
-        // between them — the user reads the two numbers as
-        // a width-and-height pair, and the Canvas: label
-        // anchors the meaning.
+        // Play. Glyph ▶ (U+25B6); TransportBarView swaps to
+        // ⏸ (U+23F8) while playing.
+        const playBtn = document.createElement("button");
+        playBtn.type = "button";
+        playBtn.className = "transport-btn";
+        playBtn.id = "play-btn";
+        playBtn.setAttribute("aria-label", "Play");
+        playBtn.textContent = "\u25b6";
+        cluster.appendChild(playBtn);
+
+        // Musical position readout (bars.beats.ticks).
+        const musicalPosition = document.createElement("div");
+        musicalPosition.className = "musical-position";
+        musicalPosition.id = "musical-position";
+        musicalPosition.textContent = "1.1.000";
+        cluster.appendChild(musicalPosition);
+
+        // BPM group: label + numeric input.
+        const bpmGroup = document.createElement("div");
+        bpmGroup.className = "field-group";
+        bpmGroup.id = "bpm-group";
+
+        const bpmLabel = document.createElement("label");
+        bpmLabel.className = "field-label";
+        bpmLabel.setAttribute("for", "bpm-input");
+        bpmLabel.textContent = "BPM";
+        bpmGroup.appendChild(bpmLabel);
+
+        const bpmInput = document.createElement("input");
+        bpmInput.type = "number";
+        bpmInput.id = "bpm-input";
+        bpmInput.className = "field-input";
+        bpmInput.min = "1";
+        bpmInput.max = "1000";
+        bpmInput.step = "1";
+        bpmInput.value = "120";
+        bpmGroup.appendChild(bpmInput);
+
+        cluster.appendChild(bpmGroup);
+
+        return cluster;
+    }
+
+    /**
+     * Build the canvas-size W and H controls. "Canvas:"
+     * label, then W field, then H field, with a small gap
+     * between the two fields but no separator character
+     * between them — the user reads the two numbers as a
+     * width-and-height pair, and the Canvas: label anchors
+     * the meaning.
+     * @returns {HTMLDivElement}
+     */
+    _buildCanvasSizeControls() {
         const canvasControls = document.createElement("div");
         canvasControls.className = "toolbar-canvas-controls";
 
@@ -541,9 +773,25 @@ export class Toolbar {
         this._canvasHField = this._buildCanvasField("h");
         canvasControls.appendChild(this._canvasHField);
 
-        cluster.appendChild(canvasControls);
+        return canvasControls;
+    }
 
-        return cluster;
+    /**
+     * Build the MIDI indicator element. Lives at the far
+     * right of the toolbar; main.js's wireMidiIndicator
+     * helper finds it by id and attaches MIDISender event
+     * handlers (ready event for the port name, send event
+     * for the per-note flash). Placeholder text "MIDI: —"
+     * shows the indicator's footprint before init completes.
+     * @returns {HTMLDivElement}
+     */
+    _buildMidiIndicator() {
+        const el = document.createElement("div");
+        el.className = "midi-indicator";
+        el.id = "midi-indicator";
+        el.setAttribute("aria-label", "MIDI output status");
+        el.textContent = "MIDI: \u2014";
+        return el;
     }
 
     /**

@@ -14,21 +14,26 @@
  *
  *   Conditional visibility: when the transport has a BPM, the
  *   musical-position display and BPM field are visible. When
- *   BPM is null (time-based piece), they are hidden and only
- *   the wall-clock display shows.
+ *   BPM is null (time-based piece), they are hidden.
  *
  * v2.3 removed the score-level time signature display from the
  * transport bar (per DESIGN.md §13). The Transport class still
  * tracks an internal time-signature value for the bars.beats
  * portion of the musical-position readout, but it is no longer
  * exposed through the UI.
+ *
+ * Following the top-row elimination, the transport elements
+ * live inside the canvas-toolbar built by toolbar.js; the
+ * elapsed-time wall-clock display and the Load Engine button
+ * were dropped in the same pass. TransportBarView no longer
+ * receives or wires the StrudelRuntime; engine loading runs
+ * automatically on the first user interaction, handled by
+ * main.js.
  */
 
 // @ts-check
 
 /** @typedef {import("./transport.js").Transport} Transport */
-/** @typedef {import("./strudel/runtime.js").StrudelRuntime} StrudelRuntime */
-/** @typedef {import("./strudel/runtime.js").RuntimeStatus} RuntimeStatus */
 
 const PLAY_GLYPH = "▶";
 const PAUSE_GLYPH = "⏸";
@@ -36,15 +41,9 @@ const PAUSE_GLYPH = "⏸";
 export class TransportBarView {
     /**
      * @param {Transport} transport
-     * @param {StrudelRuntime | null} [strudelRuntime] Optional;
-     *     when provided, the Load Engine button gets wired to
-     *     it. Passing null leaves the button visible but inert,
-     *     useful for tests that mount the transport bar without
-     *     a runtime.
      */
-    constructor(transport, strudelRuntime = null) {
+    constructor(transport) {
         this.transport = transport;
-        this.strudelRuntime = strudelRuntime;
 
         // Gather DOM references. If any of these are missing,
         // the transport bar is malformed and we log and bail.
@@ -55,16 +54,12 @@ export class TransportBarView {
             document.getElementById("rewind-btn")
         );
         this.musicalPositionEl = document.getElementById("musical-position");
-        this.elapsedTimeEl = document.getElementById("elapsed-time");
         this.bpmInput = /** @type {HTMLInputElement | null} */ (
             document.getElementById("bpm-input")
         );
         this.bpmGroup = document.getElementById("bpm-group");
-        this.loadEngineBtn = /** @type {HTMLButtonElement | null} */ (
-            document.getElementById("load-engine-btn")
-        );
 
-        if (!this.playBtn || !this.rewindBtn || !this.elapsedTimeEl ||
+        if (!this.playBtn || !this.rewindBtn ||
             !this.musicalPositionEl || !this.bpmInput || !this.bpmGroup) {
             console.error("GXW: transport DOM elements missing; view not bound.");
             return;
@@ -74,74 +69,9 @@ export class TransportBarView {
         this._applyBpmToField();
         this._applyPlayState();
         this._applyBpmVisibility();
-        this._wireLoadEngine();
 
         this._tick = this._tick.bind(this);
         requestAnimationFrame(this._tick);
-    }
-
-    // --- Load Engine button ---
-
-    _wireLoadEngine() {
-        if (!this.loadEngineBtn) return;
-        if (this.strudelRuntime === null) {
-            // No runtime to wire; leave the button as a visible
-            // affordance but disable it so clicks do nothing.
-            this.loadEngineBtn.disabled = true;
-            return;
-        }
-        this.loadEngineBtn.addEventListener("click", () => {
-            if (!this.strudelRuntime) return;
-            // The click is the user gesture that lets the
-            // AudioContext start. Runtime.init() handles the
-            // rest; the button reacts via the status listener
-            // below.
-            this.strudelRuntime.init().catch(() => {
-                // Errors are already logged inside init; the
-                // status transition to "failed" updates the
-                // button label below.
-            });
-        });
-        this.strudelRuntime.onStatusChange((status) => this._applyEngineStatus(status));
-    }
-
-    /**
-     * @param {RuntimeStatus} status
-     */
-    _applyEngineStatus(status) {
-        if (!this.loadEngineBtn) return;
-        // Swap a single state class on the button so CSS can
-        // style each state distinctly (orange idle, dim while
-        // loading, green when loaded, red on failure).
-        this.loadEngineBtn.classList.remove(
-            "engine-state-idle",
-            "engine-state-loading",
-            "engine-state-loaded",
-            "engine-state-failed",
-        );
-        this.loadEngineBtn.classList.add(`engine-state-${status}`);
-        switch (status) {
-            case "idle":
-                this.loadEngineBtn.textContent = "Load Engine";
-                this.loadEngineBtn.disabled = false;
-                this.loadEngineBtn.setAttribute("aria-label", "Load audio engine");
-                break;
-            case "loading":
-                this.loadEngineBtn.textContent = "Loading...";
-                this.loadEngineBtn.disabled = true;
-                this.loadEngineBtn.setAttribute("aria-label", "Audio engine loading");
-                break;
-            case "loaded":
-                this.loadEngineBtn.textContent = "Engine Loaded";
-                this.loadEngineBtn.disabled = true;
-                this.loadEngineBtn.setAttribute("aria-label", "Audio engine loaded");
-                break;
-            case "failed":
-                this.loadEngineBtn.textContent = "Load Engine (retry)";
-                this.loadEngineBtn.disabled = false;
-                this.loadEngineBtn.setAttribute("aria-label", "Audio engine failed; click to retry");
-                break;
-        }
     }
 
     // --- Wiring ---
@@ -261,11 +191,6 @@ export class TransportBarView {
     // --- Animation frame loop for time displays ---
 
     _tick() {
-        if (this.elapsedTimeEl) {
-            this.elapsedTimeEl.textContent = formatElapsed(
-                this.transport.elapsedSeconds
-            );
-        }
         if (this.musicalPositionEl && this.transport.bpm !== null) {
             const pos = this.transport.musicalPosition;
             this.musicalPositionEl.textContent =
@@ -278,23 +203,6 @@ export class TransportBarView {
 // --- Formatting helpers ---
 
 /**
- * Format wall-clock elapsed time as minutes:seconds:hundredths.
- * Minutes grows without limit. Seconds and hundredths are zero-
- * padded to two digits.
- * @param {number} seconds
- * @returns {string}
- */
-function formatElapsed(seconds) {
-    if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
-    const totalHundredths = Math.floor(seconds * 100);
-    const hundredths = totalHundredths % 100;
-    const totalSeconds = Math.floor(totalHundredths / 100);
-    const secs = totalSeconds % 60;
-    const mins = Math.floor(totalSeconds / 60);
-    return `${mins}:${pad2(secs)}:${pad2(hundredths)}`;
-}
-
-/**
  * Format musical position as bars.beats.ticks (e.g. "17.3.240").
  * Bars and beats are 1-based integers; ticks are zero-padded to
  * three digits.
@@ -303,14 +211,6 @@ function formatElapsed(seconds) {
  */
 function formatMusicalPosition(pos) {
     return `${pos.bars}.${pos.beats}.${pad3(pos.ticks)}`;
-}
-
-/**
- * @param {number} n
- * @returns {string}
- */
-function pad2(n) {
-    return n < 10 ? `0${n}` : String(n);
 }
 
 /**

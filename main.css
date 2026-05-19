@@ -2,15 +2,19 @@
  *
  * Carries forward the desktop app's palette and spacing decisions:
  * near-black editor background with warm off-white text, mid-grey
- * 3-pixel dividers between every region, dark metallic transport
- * controls, and large readable fonts.
+ * 3-pixel dividers between every region, and large readable fonts.
  *
- * The top row combines the menu bar (left) and the transport
- * controls (right) on a single horizontal strip. The body below
- * holds the canvas and editor panes side by side. There is no
- * bottom chrome — the bottom of the body reaches the window edge
- * so the OS dock doesn't pop up over app controls on auto-hide
- * systems.
+ * Layout shape. The top row in HTML now contains only the in-page
+ * menubar, and only the web build shows it; on Electron, the
+ * native macOS menu bar takes over and body.electron-mode hides
+ * the entire top row plus its divider so the canvas-toolbar sits
+ * flush at the top of the window. The transport controls, score
+ * name, saved indicator, Focus Canvas toggle, MIDI indicator,
+ * and wordmark that formerly lived in the top row all migrated
+ * into the canvas-toolbar. The body below holds the canvas and
+ * editor panes side by side. There is no bottom chrome — the
+ * bottom of the body reaches the window edge so the OS dock
+ * doesn't pop up over app controls on auto-hide systems.
  *
  * Colour naming conventions:
  *   Near-black:   #2a2a2a  (editor background, input field fill)
@@ -75,7 +79,11 @@ html, body {
     background-color: #2a2a2a;
 }
 
-/* Root app container — fills the viewport. Top row, divider, body. */
+/* Root app container — fills the viewport. Top row, divider,
+ * body. The auto / 3px / 1fr tracks size to the menubar on
+ * web; on Electron the body.electron-mode override collapses
+ * the top two rows entirely (see the rule near the bottom of
+ * this file) so the canvas-toolbar sits flush at the top. */
 #app {
     display: grid;
     grid-template-rows: auto 3px 1fr;
@@ -83,113 +91,40 @@ html, body {
     width: 100%;
 }
 
-/* --- Top row (menu + transport) --- */
+/* Editor-pane width sync. Set by main.js on every editor-pane
+ * resize and on initial-width restore, so the canvas-toolbar
+ * can compensate for the editor pane's width when Focus
+ * Canvas is active. Without the compensation, entering Focus
+ * Canvas shifts every toolbar item leftward by the editor
+ * pane's previous width and breaks muscle memory for where
+ * each button lives on screen. The body.focus-canvas
+ * #canvas-toolbar rule near the bottom of this file uses this
+ * variable to pad the toolbar's left edge by exactly that
+ * width, keeping each toolbar item at its normal absolute
+ * screen position whether Focus Canvas is on or off. */
+:root {
+    --editor-pane-width: 0px;
+}
+
+/* --- Top row (web-build menubar) --- */
 
 #top-row {
     display: flex;
     align-items: center;
     background-color: #3a3a3a;
-    height: 50px;
+    height: 40px;
     padding: 0 8px;
-    gap: 16px;
 }
 
-/* Three-column layout: menu left, transport centred, wordmark
- * right. Each side section has equal flex weight so they occupy
- * matching widths, which keeps the centred transport visually
- * anchored to the window centre regardless of content widths. */
-#menubar,
-#app-wordmark {
+#menubar {
     flex: 1 1 0;
     display: flex;
     align-items: center;
     min-width: 0;
-}
-
-#menubar {
     justify-content: flex-start;
     gap: 4px;
     font-weight: bold;
     color: #ffffff;
-}
-
-#app-wordmark {
-    justify-content: flex-end;
-    gap: 14px;
-    padding-right: 8px;
-}
-
-#current-score-name {
-    color: #d0d0d0;
-    font-size: 14pt;
-    font-weight: normal;
-    letter-spacing: 0;
-    text-shadow: none;
-    max-width: 300px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    cursor: pointer;
-    padding: 2px 4px;
-    border: 1px solid transparent;
-    border-radius: 2px;
-}
-
-#current-score-name:hover {
-    background-color: #444444;
-    border-color: #555555;
-}
-
-#current-score-name.editing {
-    background-color: #222222;
-    border-color: #00ff33;
-    outline: none;
-    cursor: text;
-    max-width: none;
-    overflow: visible;
-}
-
-.saved-indicator {
-    color: #808080;
-    font-size: 11pt;
-    font-weight: normal;
-    letter-spacing: 0;
-    text-shadow: none;
-    opacity: 0.7;
-    transition: color 0.15s ease-out, opacity 0.3s ease-out;
-    min-width: 60px;
-    text-align: right;
-}
-
-.saved-indicator.unsaved {
-    color: #d4a05a;
-    opacity: 1;
-}
-
-.saved-indicator.just-saved {
-    color: #7dd68a;
-    opacity: 1;
-}
-
-/* In the web build, the indicator label expands from "Saved"
- * to "Saved to browser storage" so the storage layer is named
- * on every save. The wider min-width prevents the indicator
- * from jittering when the text alternates between "Unsaved"
- * (shorter) and the longer saved label. Applied by main.js
- * via a class toggle gated on the !isElectron check; the
- * Electron build keeps the narrower default min-width because
- * its label stays plain "Saved". */
-.saved-indicator.saved-indicator-web-mode {
-    min-width: 200px;
-}
-
-#wordmark-text {
-    color: #00ff33;
-    font-size: 30pt;
-    font-weight: bold;
-    letter-spacing: 2px;
-    line-height: 1;
-    text-shadow: 0 0 6px rgba(0, 255, 51, 0.4);
 }
 
 .menu-item {
@@ -207,11 +142,11 @@ html, body {
 
 /* Focus Canvas toggle button.
  *
- * Sits as the leftmost element in the top row, before the
- * menubar. Toggles Focus Canvas mode via the same closure
- * the View menu's Focus Canvas item and Cmd-Shift-F use,
- * so all three entry points share one piece of state.
- * The icon is a small rectangle with a filled left segment
+ * Sits as the leftmost element in the canvas-toolbar.
+ * Toggles Focus Canvas mode via the same closure the View
+ * menu's Focus Canvas item and Cmd-Shift-F use, so all
+ * three entry points share one piece of state. The icon
+ * is a small rectangle with a filled left segment
  * representing the editor pane; the fill fades out when
  * Focus Canvas is active so the button shows the mode's
  * current state at a glance. Always visible — when Focus
@@ -259,33 +194,21 @@ html, body {
     opacity: 0;
 }
 
-#transport-controls {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex: 0 0 auto;
-}
-
-/* Tighter gap between the musical-position readout and the
- * BPM/time-signature cluster, so the time signature reads as
- * belonging with the BPM rather than floating on its own. */
-#transport-controls #bpm-group {
-    margin-left: 4px;
-}
-
-#transport-controls #time-sig-group {
-    margin-left: -4px;
-}
-
-/* Transport buttons (rewind, play-pause) */
+/* Transport buttons (rewind, play-pause) inside the
+ * canvas-toolbar. Sized to match the toolbar's 32-pixel
+ * button footprint so they read as siblings of the tool
+ * buttons rather than oversized chrome from a different
+ * visual era. Circular shape is preserved so they still
+ * carry the conventional transport-control identity at a
+ * glance. */
 .transport-btn {
-    width: 40px;
-    height: 40px;
-    border-radius: 20px;
+    width: 32px;
+    height: 32px;
+    border-radius: 16px;
     background-color: #555555;
     color: #f0f0f0;
     border: 1px solid #777777;
-    font-size: 18pt;
+    font-size: 14pt;
     font-weight: bold;
     cursor: pointer;
     padding: 0;
@@ -293,6 +216,7 @@ html, body {
     align-items: center;
     justify-content: center;
     line-height: 1;
+    flex: 0 0 auto;
 }
 
 .transport-btn:hover,
@@ -301,29 +225,32 @@ html, body {
     outline: none;
 }
 
-/* Time displays: wall-clock and musical position, side by side,
- * same size, same vertical alignment. Monospace so digits don't
- * shift horizontally as values change. */
-.elapsed-time,
+/* Musical position display: monospace digits so they don't
+ * shift horizontally as values change. Sized to read clearly
+ * against the toolbar's other elements without dominating
+ * the strip. */
 .musical-position {
     color: #f0f0f0;
     font-family: "SF Mono", "Menlo", "Courier New", monospace;
-    font-size: 18pt;
+    font-size: 14pt;
     font-weight: normal;
     line-height: 1;
     padding: 0 4px;
+    flex: 0 0 auto;
 }
 
-/* BPM group: small label + numeric input. */
+/* BPM group: small label + numeric input. Lives inside the
+ * canvas-toolbar next to the musical-position readout. */
 .field-group {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex: 0 0 auto;
 }
 
 .field-label {
     color: #c8c8c8;
-    font-size: 12pt;
+    font-size: 11pt;
 }
 
 .field-input {
@@ -331,10 +258,10 @@ html, body {
     color: #f0f0f0;
     border: 1px solid #777777;
     padding: 2px 4px;
-    font-size: 14pt;
+    font-size: 12pt;
     font-weight: normal;
-    width: 64px;
-    height: 28px;
+    width: 56px;
+    height: 24px;
     font-family: inherit;
 }
 
@@ -343,14 +270,14 @@ html, body {
     color: #f0f0f0;
     border: 1px solid #777777;
     padding: 2px 8px;
-    font-size: 14pt;
+    font-size: 12pt;
     font-weight: normal;
-    height: 28px;
+    height: 24px;
     display: inline-flex;
     align-items: center;
 }
 
-/* MIDI output indicator in the transport bar.
+/* MIDI output indicator in the canvas-toolbar.
  *
  * Shows the chosen MIDI port name once MIDISender.init
  * completes ("MIDI: IAC Bus 1" for the typical macOS
@@ -2068,70 +1995,6 @@ body.focus-canvas #canvas-pane {
     text-decoration-thickness: 2px;
 }
 
-/* Load Engine button.
- *
- * Sized and styled to fit the "Load Engine" text in a transport
- * bar slot, with state colours that signal lifecycle at a
- * glance: orange in the idle state (action available), dim
- * while loading, green once the engine has loaded, red on
- * failure. The state class (engine-state-idle / loading /
- * loaded / failed) is swapped by transportBar.js's
- * _applyEngineStatus method.
- */
-#load-engine-btn {
-    font-size: 0.6rem;
-    line-height: 1;
-    padding: 0.2rem 0.4rem;
-    border-radius: 4px;
-    border: 1px solid transparent;
-    color: white;
-    cursor: pointer;
-    white-space: nowrap;
-    /* Fixed width sized to fit the longest label
-     * ("Load Engine (retry)") with a small horizontal margin
-     * so text never crowds the button edges. The width also
-     * keeps the surrounding transport bar from reflowing when
-     * the state class changes. */
-    width: 100px;
-    text-align: center;
-}
-
-#load-engine-btn.engine-state-idle {
-    background-color: #ec8b1a;
-    border-color: #c47011;
-}
-
-#load-engine-btn.engine-state-idle:hover {
-    background-color: #f5a23e;
-}
-
-#load-engine-btn.engine-state-loading {
-    background-color: #b08c5f;
-    border-color: #8a6e49;
-    cursor: progress;
-    /* Override default disabled greying so the loading state
-     * still reads clearly under accessibility zoom. */
-    opacity: 1;
-}
-
-#load-engine-btn.engine-state-loaded {
-    background-color: #3aa84a;
-    border-color: #2c8a3a;
-    /* Override default disabled greying — the green should
-     * read as success, not as inert. */
-    opacity: 1;
-    cursor: default;
-}
-
-#load-engine-btn.engine-state-failed {
-    background-color: #c83e3e;
-    border-color: #a02d2d;
-}
-
-#load-engine-btn.engine-state-failed:hover {
-    background-color: #d65656;
-}
-
 /* --- CodeMirror selection highlight override --- */
 /*
  * CodeMirror's selection background (oneDark default) sits
@@ -2164,17 +2027,43 @@ body.focus-canvas #canvas-pane {
 }
 
 /*
- * Electron-build native menu takeover (Stage 5 commit 5c).
+ * Electron-build native menu takeover.
  *
  * When running under Electron, the macOS native menu bar
  * at the top of the screen replaces the in-page menubar.
- * main.js sets body.electron-mode on startup; this rule
- * hides the in-page menu nav so the top row's other
- * content (sidebar toggle, transport controls, wordmark)
- * fills the space cleanly. The web build never sets the
- * class, so its in-page menu remains visible and
- * functional.
+ * main.js sets body.electron-mode on startup; these rules
+ * then hide the entire #top-row (which on Electron contains
+ * only the menubar) along with the divider beneath it, and
+ * collapse the grid's top two tracks so the canvas-toolbar
+ * sits flush at the very top of the window. The web build
+ * never sets the class, so its menubar and divider remain
+ * visible and functional.
  */
-body.electron-mode #menubar {
+body.electron-mode #top-row,
+body.electron-mode #top-divider {
     display: none;
+}
+
+body.electron-mode #app {
+    grid-template-rows: 1fr;
+}
+
+/* Focus Canvas spacer.
+ *
+ * When body.focus-canvas is active, the editor pane
+ * collapses to zero width and the canvas pane (which
+ * hosts the toolbar) expands to fill the body. Without
+ * the compensation below, every toolbar item shifts
+ * leftward by the editor pane's previous width, breaking
+ * muscle memory for where each button lives on screen.
+ * The padding-left here re-introduces exactly that width,
+ * so the Focus Canvas button at the toolbar's far left
+ * stays at its normal absolute screen position and every
+ * downstream item follows. main.js keeps the
+ * --editor-pane-width variable in sync with the divider's
+ * onDrag and the initial-width restore, so the
+ * compensation tracks the user's current pane size.
+ */
+body.focus-canvas #canvas-toolbar {
+    padding-left: var(--editor-pane-width);
 }

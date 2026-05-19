@@ -11,12 +11,12 @@
  * The save model is explicit-only: typing or any other
  * mutation marks the bundle dirty; Cmd-S saves. Run Scene
  * executes from the in-memory bundle and never commits to
- * disk. A visible indicator next to the score name shows
- * Saved or Unsaved, and on macOS the BrowserWindow's close-
- * button circle gets the standard documentEdited dot.
- * A three-button Save / Don't Save / Cancel dialog protects
- * against closing the window with unsaved changes in
- * Electron; the web version falls back to the browser's
+ * disk. The macOS window title bar shows the score name
+ * with a " (Unsaved)" suffix while dirty and, on Electron,
+ * the close-button circle gets the standard documentEdited
+ * dot. A three-button Save / Don't Save / Cancel dialog
+ * protects against closing the window with unsaved changes
+ * in Electron; the web version falls back to the browser's
  * generic beforeunload warning.
  *
  * Disk mirroring (optional) writes every save out to a folder
@@ -191,10 +191,10 @@ async function main() {
     // area never briefly paint visible on a reload where
     // the user had Focus Canvas active. The CSS rule for
     // body.focus-canvas overrides the editor pane's and
-    // message area's flex-basis to zero, so the first
-    // paint already shows the canvas filling the body. The
-    // same toggle is wired to the sidebar button, the View
-    // menu's Focus Canvas item, and Cmd-Shift-F.
+    // message area's flex-basis to zero, so the first paint
+    // already shows the canvas filling the body. The same
+    // toggle is wired to the toolbar's Focus Canvas button,
+    // the View menu's Focus Canvas item, and Cmd-Shift-F.
     try {
         if (localStorage.getItem("gxw.layout.focusCanvas") === "true") {
             document.body.classList.add("focus-canvas");
@@ -281,98 +281,64 @@ async function main() {
     //
     // The Electron build exposes window.gxwStorage (set in
     // electron-preload.js); the web build does not. The
-    // detection feeds the saved-indicator labelling and the
-    // title-bar wiring below: in the web build, the indicator
-    // reads "Saved to browser storage" instead of plain
-    // "Saved" and the window title carries a "(Browser)"
-    // suffix so the IndexedDB durability tradeoff comes up on
-    // every save and on every glance at the title bar. In the
-    // Electron build, the dirty signal additionally appears
-    // as the standard macOS dot in the close-button circle
-    // via setDocumentEdited.
+    // detection feeds the title-bar wiring below: the web
+    // build's title carries a "(Browser)" suffix so the
+    // IndexedDB durability tradeoff comes up on every
+    // glance at the title bar, while the Electron build's
+    // title is the plain score name and the dirty signal
+    // additionally appears as the standard macOS dot in the
+    // close-button circle via setDocumentEdited.
     const isElectron =
         typeof (/** @type {any} */ (window).gxwStorage) === "object" &&
         (/** @type {any} */ (window).gxwStorage) !== null;
 
     // Tag the document body so CSS can hide the in-page
-    // menubar (Stage 5 commit 5c). The macOS native menu
-    // bar at the top of the screen has taken over; the
-    // in-page menu would be redundant and confusing. The
-    // web build never sets this class, so its in-page menu
-    // remains visible and functional.
+    // top row (which on Electron contains only the menubar,
+    // since the native macOS menu bar takes over). The web
+    // build never sets this class, so its menubar and the
+    // divider beneath it remain visible and functional.
     if (isElectron) {
         document.body.classList.add("electron-mode");
     }
 
-    // --- Saved indicator (top row) ---
-    //
-    // The textual Saved / Unsaved / just-saved badge in the
-    // top-right corner of the menu bar. The persistent dirty
-    // signal also drives the window title and, on Electron,
-    // setDocumentEdited (the standard macOS dot in the close-
-    // button circle). updateTitleBar handles those. In the
-    // web build the "Saved" label is replaced with "Saved to
-    // browser storage" so the storage layer is named on every
-    // save; CSS gives the wider label a matching min-width
-    // via the saved-indicator-web-mode class so the indicator
-    // doesn't jitter on text changes.
-    const savedIndicatorEl = document.getElementById("saved-indicator");
-    if (!isElectron && savedIndicatorEl instanceof HTMLElement) {
-        savedIndicatorEl.classList.add("saved-indicator-web-mode");
-    }
-    const savedLabel = isElectron ? "Saved" : "Saved to browser storage";
-    const setSavedIndicator = (/** @type {"saved" | "unsaved" | "just-saved"} */ state) => {
-        if (!(savedIndicatorEl instanceof HTMLElement)) return;
-        savedIndicatorEl.classList.remove("unsaved", "just-saved");
-        if (state === "unsaved") {
-            savedIndicatorEl.textContent = "Unsaved";
-            savedIndicatorEl.classList.add("unsaved");
-        } else {
-            savedIndicatorEl.textContent = savedLabel;
-            if (state === "just-saved") {
-                savedIndicatorEl.classList.add("just-saved");
-            }
-        }
-    };
-    setSavedIndicator("saved");
-
     // --- Title-bar wiring ---
     //
-    // The window title carries the score name and a
-    // "(Browser)" suffix in the web build so users always
-    // see at a glance which storage layer holds their work.
-    // The dirty signal is surfaced by setDocumentEdited under
-    // Electron (the close-button dot) and by a leading bullet
-    // on the title text on web (there is no close-button dot
-    // in a browser tab).
+    // The window title is now the sole on-screen score-name
+    // and dirty-state surface (the top row's in-page span
+    // and saved indicator are gone). Composition: score
+    // name, optional " (Unsaved)" suffix while dirty,
+    // optional " (Browser)" suffix on the web build to
+    // surface the IndexedDB durability tradeoff. On Electron
+    // the macOS close-button dot via setDocumentEdited stays
+    // as a bonus signal but is no longer the primary dirty
+    // indicator — the in-title "(Unsaved)" carries that
+    // load.
     const updateTitleBar = (/** @type {boolean} */ dirty) => {
         // Resolves session.bundle.name at call time, so the title
         // tracks the current score after any switchToBundle or
-        // inline rename. Only called from places that fire after
-        // the session const further down is initialised — never
-        // synchronously during the early body of main().
+        // File menu rename. Only called from places that fire
+        // after the session const further down is initialised —
+        // never synchronously during the early body of main().
         const name = session.bundle.name;
-        const baseTitle = isElectron
-            ? `${name} \u2014 GeoSonel`
-            : `${name} \u2014 GeoSonel (Browser)`;
+        const dirtyMark = dirty ? " (Unsaved)" : "";
+        const browserMark = isElectron ? "" : " (Browser)";
+        document.title = `${name}${dirtyMark} \u2014 GeoSonel${browserMark}`;
         if (isElectron) {
-            document.title = baseTitle;
             const gxwWindow = /** @type {any} */ (window).gxwWindow;
             if (gxwWindow !== undefined &&
                 typeof gxwWindow.setDocumentEdited === "function") {
                 void gxwWindow.setDocumentEdited(dirty);
             }
-        } else {
-            document.title = dirty ? `\u2022 ${baseTitle}` : baseTitle;
         }
     };
     // Initial title bar set inline: session isn't constructed
     // yet at this point in main(), so updateTitleBar (which
     // resolves session.bundle.name) can't run. The bundle is
     // freshly loaded from disk/IDB so dirty is false here.
-    document.title = isElectron
-        ? `${bundle.name} \u2014 GeoSonel`
-        : `${bundle.name} \u2014 GeoSonel (Browser)`;
+    {
+        const browserMark = isElectron ? "" : " (Browser)";
+        document.title = `${bundle.name} \u2014 GeoSonel${browserMark}`;
+    }
 
     // --- Editor ---
     const tabBarEl = document.querySelector(".tab-bar");
@@ -384,9 +350,6 @@ async function main() {
         console.error("GXW: editor mount points missing.");
         return;
     }
-    /** @type {any} */
-    let justSavedTimeout = null;
-
     /** @type {() => Promise<void>} */
     let runScene = async () => {};
 
@@ -416,7 +379,6 @@ async function main() {
 
     const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, bundle, {
         onDirtyChange: (dirty) => {
-            setSavedIndicator(dirty ? "unsaved" : "saved");
             updateTitleBar(dirty);
             // Push to the native menu so Revert to Saved's
             // disabled-when-clean gate stays in sync with the
@@ -426,9 +388,11 @@ async function main() {
             pushMenuState({ dirty });
         },
         onSaved: () => {
-            setSavedIndicator("just-saved");
-            clearTimeout(justSavedTimeout);
-            justSavedTimeout = setTimeout(() => setSavedIndicator("saved"), 1000);
+            // Title-bar transition from "(Unsaved)" → clean is
+            // driven by onDirtyChange, which fires immediately
+            // after a successful save. No additional just-
+            // saved indicator survives the top-row removal;
+            // the title-bar transition is the signal.
         },
         onRunScene: () => { runScene(); },
         onPromotePattern: (objectId, expressionBody) => {
@@ -462,7 +426,17 @@ async function main() {
     // up over the session.
     const transport = new Transport();
     const strudelRuntime = new StrudelRuntime(transport);
-    new TransportBarView(transport, strudelRuntime);
+    // TransportBarView is constructed AFTER the toolbar
+    // below; the toolbar builds the transport DOM elements
+    // (rewind-btn, play-btn, musical-position, bpm-input,
+    // bpm-group), and TransportBarView's getElementById
+    // lookups must run after those elements exist. The
+    // intermediate setup (strudel auto-load handlers,
+    // MIDISender, simulation, firing engine, dividers,
+    // imageImporter, diskMirror, sceneLoader, runScene
+    // definition, session, reconcile) doesn't depend on
+    // the transport view being bound, so deferring is
+    // safe.
     /** @type {any} */ (window).strudelRuntime = strudelRuntime;
 
     {
@@ -488,7 +462,10 @@ async function main() {
     // on the ready event, flashing on each note send.
     const midiSender = new MIDISender(transport);
     void midiSender.init();
-    wireMidiIndicator(midiSender);
+    // wireMidiIndicator(midiSender) is deferred until after
+    // the canvas-toolbar is constructed below; the MIDI
+    // indicator element lives inside the toolbar now, so it
+    // doesn't exist in the DOM until Toolbar.render runs.
 
     // When the strudel engine finishes loading, re-parse
     // every curve's cyclePattern so marker diamonds appear
@@ -579,7 +556,7 @@ async function main() {
     // for installDivider; the divider then sets the pane's
     // style.flex either to a persisted user size or to the
     // floor, overriding the CSS default. To gain canvas room
-    // entirely, use the sidebar button in the top row, View
+    // entirely, use the toolbar's Focus Canvas button, View
     // → Focus Canvas, or Cmd-Shift-F, which collapse the
     // editor pane, the body divider, the message divider,
     // and the message area together.
@@ -610,8 +587,51 @@ async function main() {
         orientation: "vertical",
         minPanePx: inspectorFloor,
         persistKey: "gxw.layout.editorPaneWidth",
-        onDrag: () => canvas.scheduleDraw(),
+        onDrag: () => {
+            // Update --editor-pane-width on every drag so
+            // body.focus-canvas #canvas-toolbar's padding-
+            // left tracks the user's current pane size.
+            // The variable is read by the focus-canvas
+            // spacer rule in main.css.
+            if (editorPaneEl instanceof HTMLElement) {
+                document.documentElement.style.setProperty(
+                    "--editor-pane-width",
+                    `${editorPaneEl.offsetWidth}px`,
+                );
+            }
+            canvas.scheduleDraw();
+        },
     });
+    // Initial --editor-pane-width sync. installDivider just
+    // applied either the persisted size or the inspector
+    // floor to editor-pane's inline flex; resolve the same
+    // value here from localStorage so the CSS variable
+    // matches without going through offsetWidth, which would
+    // read zero when Focus Canvas is restored as active on
+    // first paint. This keeps the focus-canvas spacer rule
+    // (body.focus-canvas #canvas-toolbar { padding-left:
+    // var(--editor-pane-width); } in main.css) reading the
+    // intended width whether Focus Canvas is on or off.
+    {
+        let initialPaneWidth = inspectorFloor;
+        try {
+            const stored = parseInt(
+                localStorage.getItem("gxw.layout.editorPaneWidth") ?? "",
+                10,
+            );
+            if (Number.isFinite(stored) && stored > 0) {
+                initialPaneWidth = Math.max(stored, inspectorFloor ?? 0);
+            }
+        } catch (e) {
+            // localStorage unavailable; fall back to floor.
+        }
+        if (typeof initialPaneWidth === "number" && initialPaneWidth > 0) {
+            document.documentElement.style.setProperty(
+                "--editor-pane-width",
+                `${initialPaneWidth}px`,
+            );
+        }
+    }
     installDivider({
         dividerId: "message-divider",
         firstPaneId: "message-area",
@@ -857,17 +877,18 @@ async function main() {
     };
 
     // --- Score session ---
-    const scoreNameEl = document.getElementById("current-score-name");
+    //
+    // refreshScoreNameDisplay used to update both an in-page
+    // score-name span and the window title; with the in-page
+    // span removed in the toolbar reorganization, the window
+    // title (and the macOS documentEdited dot under Electron)
+    // is the only on-screen surface. The function is kept
+    // under its existing name so callers like
+    // renameCurrentScoreTo and switchToBundle continue to
+    // work without changes; updateTitleBar reads the current
+    // session.bundle on every call, so the new name flows
+    // through automatically.
     const refreshScoreNameDisplay = () => {
-        if (scoreNameEl instanceof HTMLElement) {
-            scoreNameEl.textContent = session.bundle.name;
-        }
-        // The window title (and macOS's documentEdited dot,
-        // when running under Electron) is keyed on the score
-        // name plus dirty state, so rename gestures need to
-        // refresh it. updateTitleBar reads the current
-        // session.bundle on every call, so the new name is
-        // picked up automatically.
         updateTitleBar(session.bundle.dirty);
     };
 
@@ -911,7 +932,6 @@ async function main() {
         } else {
             await canvas.setImage(null);
         }
-        setSavedIndicator("saved");
         await runScene();
         messages.write("Reloaded from disk.");
     };
@@ -970,7 +990,6 @@ async function main() {
                 await canvas.setImage(null);
             }
             refreshScoreNameDisplay();
-            setSavedIndicator("saved");
 
             // Record this score in the Open Recent submenu's
             // backing list. switchToBundle is the convergence
@@ -1061,6 +1080,20 @@ async function main() {
         return;
     }
     const toolbar = new Toolbar(toolbarEl);
+
+    // Wire the transport view and MIDI indicator now that
+    // the toolbar has built its DOM. Both modules find
+    // their elements by id; the transport view binds
+    // rewind-btn, play-btn, musical-position, bpm-input,
+    // bpm-group, and the MIDI indicator helper finds
+    // midi-indicator. These calls were deferred from the
+    // earlier transport / MIDISender construction because
+    // those elements now live inside the toolbar rather
+    // than in the top row and don't exist in the DOM until
+    // Toolbar.render runs.
+    new TransportBarView(transport);
+    wireMidiIndicator(midiSender);
+
     canvas.setToolbar(toolbar);
     toolbar.onChange((tool, locked) => {
         canvas.setActiveTool(tool, locked);
@@ -2148,11 +2181,6 @@ async function main() {
         void applyCanvasEdit((data) => removeObjects(data, sel));
     });
 
-    // --- Inline rename ---
-    if (scoreNameEl instanceof HTMLElement) {
-        wireInlineRename(scoreNameEl, session, messages);
-    }
-
     // --- Menus ---
     //
     // Focus Canvas collapses the editor pane, the body
@@ -2160,25 +2188,13 @@ async function main() {
     // together so the canvas fills as much of the window
     // as possible — useful for image-driven composition
     // where every pixel of canvas helps. Three entry
-    // points share one closure: the sidebar button at the
-    // top of the menu bar, the View menu's Focus Canvas
-    // item, and Cmd-Shift-F. The closure persists the new
-    // state to localStorage so the choice survives reloads,
-    // updates the button's visual to reflect whether Focus
-    // Canvas is currently active, and schedules a canvas
-    // redraw because the canvas pane's container is
-    // resizing.
-    const sidebarToggleBtn = document.getElementById("sidebar-toggle-btn");
-    const updateSidebarButtonState = () => {
-        if (!(sidebarToggleBtn instanceof HTMLElement)) return;
-        const active = document.body.classList.contains("focus-canvas");
-        sidebarToggleBtn.classList.toggle("sidebar-collapsed", active);
-        const label = active ? "Exit Focus Canvas" : "Focus Canvas";
-        sidebarToggleBtn.setAttribute("aria-label", label);
-        sidebarToggleBtn.setAttribute("title", `${label} (⇧⌘F)`);
-    };
-    updateSidebarButtonState();
-
+    // points share one closure: the Focus Canvas button at
+    // the far left of the canvas-toolbar, the View menu's
+    // Focus Canvas item, and Cmd-Shift-F. The closure
+    // persists the new state to localStorage so the choice
+    // survives reloads, asks the toolbar to refresh its
+    // button visual, and schedules a canvas redraw because
+    // the canvas pane's container is resizing.
     const toggleFocusCanvas = () => {
         document.body.classList.toggle("focus-canvas");
         const active = document.body.classList.contains("focus-canvas");
@@ -2192,13 +2208,19 @@ async function main() {
             // toggle; the user just won't get the choice
             // back on next reload.
         }
-        updateSidebarButtonState();
+        toolbar.setFocusCanvasActive(active);
         canvas.scheduleDraw();
     };
 
-    if (sidebarToggleBtn instanceof HTMLElement) {
-        sidebarToggleBtn.addEventListener("click", toggleFocusCanvas);
-    }
+    // Wire the toolbar's Focus Canvas button to the same
+    // closure the View menu's Focus Canvas item and the
+    // Cmd-Shift-F native menu accelerator use, so all three
+    // entry points share one piece of state. The toolbar
+    // owns the button; main.js's role is just to hand it
+    // the closure and push the initial state so the button
+    // visual reflects whatever the user had before reload.
+    toolbar.onFocusCanvasClick(toggleFocusCanvas);
+    toolbar.setFocusCanvasActive(document.body.classList.contains("focus-canvas"));
 
     // Auto Zoom toggle. When active, the View menu's Zoom
     // In/Out/Reset items grey out and the canvas
@@ -2533,78 +2555,6 @@ async function resolveInitialBundle() {
         await setCurrentScorePath(bundle.path);
     }
     return bundle;
-}
-
-/**
- * Wire the current-score-name element so clicking it enters
- * an editable state.
- * @param {HTMLElement} el
- * @param {any} session
- * @param {import("./src/messages.js").MessageArea} messages
- */
-function wireInlineRename(el, session, messages) {
-    el.addEventListener("click", () => {
-        if (el.classList.contains("editing")) return;
-        startEdit();
-    });
-
-    const startEdit = () => {
-        if (session.bundle.path === null) {
-            // Untitled bundle has no on-disk folder to rename.
-            // Point the user at Save As; once a path exists,
-            // renaming becomes available.
-            messages.write(
-                "Save the score first before renaming it.",
-                "info"
-            );
-            return;
-        }
-        const originalName = session.bundle.name;
-        el.classList.add("editing");
-        el.setAttribute("contenteditable", "true");
-        el.focus();
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        const sel = window.getSelection();
-        if (sel !== null) {
-            sel.removeAllRanges();
-            sel.addRange(range);
-        }
-
-        const finish = async (/** @type {boolean} */ commit) => {
-            el.removeEventListener("keydown", onKey);
-            el.removeEventListener("blur", onBlur);
-            el.classList.remove("editing");
-            el.removeAttribute("contenteditable");
-            const proposed = (el.textContent ?? "").trim();
-            if (!commit || proposed === "" || proposed === originalName) {
-                el.textContent = originalName;
-                return;
-            }
-            try {
-                await renameCurrentScoreTo(session, proposed);
-                messages.write(`Renamed to "${proposed}".`);
-            } catch (err) {
-                el.textContent = originalName;
-                const msg = err instanceof Error ? err.message : String(err);
-                messages.write(`Rename failed: ${msg}`, "error");
-            }
-        };
-
-        const onKey = (/** @type {KeyboardEvent} */ e) => {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                finish(true);
-            } else if (e.key === "Escape") {
-                e.preventDefault();
-                finish(false);
-            }
-        };
-        const onBlur = () => finish(true);
-
-        el.addEventListener("keydown", onKey);
-        el.addEventListener("blur", onBlur);
-    };
 }
 
 /**
