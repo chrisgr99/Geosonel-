@@ -234,7 +234,6 @@ function buildTemplate() {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
-        { role: 'pasteAndMatchStyle' },
         { role: 'delete' },
         { role: 'selectAll' },
         { type: 'separator' },
@@ -278,6 +277,17 @@ function buildTemplate() {
           label: 'Focus Canvas',
           click: () => send('toggle-focus-canvas'),
         },
+        { type: 'separator' },
+        // Reload / Force Reload / Toggle Developer Tools.
+        // Placed at the bottom of the View menu since they're
+        // recovery and debugging affordances used much less
+        // often than the zoom and focus items above. All
+        // three use Electron's built-in roles, so accelerators
+        // (Cmd-R, Cmd-Shift-R, Option-Cmd-I) come for free and
+        // no IPC plumbing is needed.
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
       ],
     },
 
