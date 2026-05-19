@@ -204,6 +204,19 @@ function applyDockIcon() {
 const SETTINGS_FILENAME = 'settings.json';
 const SCORE_META_FILENAME = '.gxw-meta.json';
 
+// Image gallery storage (Stage 2 of Canvas inspector tab work).
+//
+// Metadata (entries, maxCount) lives in settings.json under the
+// imageGallery key. Full-resolution copies live as <id>.jpg files
+// in <userData>/imageCache/. The cache folder is created lazily
+// on the first add. See DESIGN.md Section 13.5 and src/gallery.js
+// for the design.
+const IMAGE_CACHE_DIRNAME = 'imageCache';
+const GALLERY_SETTINGS_KEY = 'imageGallery';
+const GALLERY_DEFAULT_MAX_COUNT = 40;
+const GALLERY_MAX_COUNT_CEILING = 200;
+const GALLERY_MAX_COUNT_FLOOR = 5;
+
 // Score folders on disk carry a .gxs extension so they read as
 // macOS packages — Stage 6 packaging will bind .gxs to GeoSonel
 // via Info.plist UTI declarations and Finder will then fold each
@@ -261,6 +274,75 @@ async function ensureScoresFolder() {
   const folder = await getScoresFolder();
   await fsp.mkdir(folder, { recursive: true });
   return folder;
+}
+
+// --- Image gallery storage helpers ---
+
+function getImageCacheFolder() {
+  return path.join(app.getPath('userData'), IMAGE_CACHE_DIRNAME);
+}
+
+async function ensureImageCacheFolder() {
+  const folder = getImageCacheFolder();
+  await fsp.mkdir(folder, { recursive: true });
+  return folder;
+}
+
+function galleryCachePathFor(id) {
+  return path.join(getImageCacheFolder(), id + '.jpg');
+}
+
+// Read the imageGallery key from settings.json, returning a
+// normalised {entries, maxCount} object. Missing or malformed
+// state degrades to defaults rather than throwing, so a fresh
+// install lands in a usable state without the renderer needing
+// to special-case it.
+async function readGalleryState() {
+  const settings = await readSettings();
+  const raw = settings[GALLERY_SETTINGS_KEY];
+  if (raw === undefined || raw === null || typeof raw !== 'object') {
+    return { entries: [], maxCount: GALLERY_DEFAULT_MAX_COUNT };
+  }
+  const entries = Array.isArray(raw.entries) ? raw.entries : [];
+  let maxCount = typeof raw.maxCount === 'number'
+    ? Math.floor(raw.maxCount)
+    : GALLERY_DEFAULT_MAX_COUNT;
+  if (maxCount < GALLERY_MAX_COUNT_FLOOR) maxCount = GALLERY_MAX_COUNT_FLOOR;
+  if (maxCount > GALLERY_MAX_COUNT_CEILING) maxCount = GALLERY_MAX_COUNT_CEILING;
+  return { entries, maxCount };
+}
+
+async function writeGalleryState(state) {
+  const settings = await readSettings();
+  settings[GALLERY_SETTINGS_KEY] = state;
+  await writeSettings(settings);
+}
+
+function sortedByRecency(entries) {
+  return [...entries].sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
+}
+
+// 12-hex-char id with the "img_" prefix; matches the renderer-
+// side scheme in src/gallery.js so ids round-trip cleanly
+// regardless of which backend generated them.
+function generateGalleryId() {
+  const bytes = require('node:crypto').randomBytes(6);
+  return 'img_' + bytes.toString('hex');
+}
+
+// Best-effort cache-file deletion. ENOENT is silently ignored
+// because the file may already be gone (manual user cleanup,
+// crashed write, repeated remove call); other errors are logged
+// but not propagated, since failing to unlink a cache file
+// should never block a state update.
+async function tryUnlinkGalleryCacheFile(id) {
+  try {
+    await fsp.unlink(galleryCachePathFor(id));
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.warn(`GXW: failed to unlink gallery cache file for ${id}:`, err);
+    }
+  }
 }
 
 // --- MIME type inference ---
@@ -743,6 +825,141 @@ function registerStorageHandlers() {
 
   ipcMain.handle('gxw:load-backup-record', async (_event, scorePath, slotNumber) => {
     return await loadBackupRecord(scorePath, slotNumber);
+  });
+
+  // --- Image gallery (Stage 2 of Canvas inspector tab work) ---
+  //
+  // Renderer-side abstraction lives in src/gallery.js. Five
+  // handlers cover the full surface: list, add, remove,
+  // set-max-count, load-image. Match-and-promote on add lives
+  // here so the cap and eviction policy are enforced at one
+  // place (the main process owns settings.json and the cache
+  // folder; the renderer just makes the calls).
+
+  ipcMain.handle('gxw:gallery-list', async () => {
+    const state = await readGalleryState();
+    return {
+      entries: sortedByRecency(state.entries),
+      maxCount: state.maxCount,
+    };
+  });
+
+  ipcMain.handle('gxw:gallery-add', async (_event, input) => {
+    const state = await readGalleryState();
+    const sourcePath = typeof input?.sourcePath === 'string'
+      ? input.sourcePath
+      : '';
+    const thumbnailBase64 = typeof input?.thumbnailBase64 === 'string'
+      ? input.thumbnailBase64
+      : '';
+
+    // Match-and-promote: if any existing entry shares this
+    // sourcePath, update its addedAt to now and return that
+    // entry's id. Empty sourcePath disables the match
+    // (paste-and-similar always create new entries).
+    if (sourcePath !== '') {
+      const existing = state.entries.find((e) => e.sourcePath === sourcePath);
+      if (existing !== undefined) {
+        existing.addedAt = Date.now();
+        await writeGalleryState({
+          entries: state.entries,
+          maxCount: state.maxCount,
+        });
+        return {
+          id: existing.id,
+          entries: sortedByRecency(state.entries),
+        };
+      }
+    }
+
+    // New entry. Write the cache file before updating
+    // settings.json so a failed write doesn't leave a
+    // dangling metadata entry pointing at nothing.
+    const id = generateGalleryId();
+    await ensureImageCacheFolder();
+    const buffer = Buffer.from(input.normalizedBytes);
+    await fsp.writeFile(galleryCachePathFor(id), buffer);
+
+    state.entries.push({
+      id,
+      sourcePath,
+      thumbnailBase64,
+      addedAt: Date.now(),
+    });
+
+    // Eviction. If the gallery is now over cap, drop oldest
+    // entries until it fits, unlinking their cache files.
+    if (state.entries.length > state.maxCount) {
+      const sorted = sortedByRecency(state.entries);
+      const keep = sorted.slice(0, state.maxCount);
+      const evict = sorted.slice(state.maxCount);
+      for (const e of evict) {
+        await tryUnlinkGalleryCacheFile(e.id);
+      }
+      state.entries = keep;
+    }
+
+    await writeGalleryState({
+      entries: state.entries,
+      maxCount: state.maxCount,
+    });
+    return { id, entries: sortedByRecency(state.entries) };
+  });
+
+  ipcMain.handle('gxw:gallery-remove', async (_event, id) => {
+    if (typeof id !== 'string' || id === '') {
+      const state = await readGalleryState();
+      return { entries: sortedByRecency(state.entries) };
+    }
+    const state = await readGalleryState();
+    const remaining = state.entries.filter((e) => e.id !== id);
+    await tryUnlinkGalleryCacheFile(id);
+    await writeGalleryState({
+      entries: remaining,
+      maxCount: state.maxCount,
+    });
+    return { entries: sortedByRecency(remaining) };
+  });
+
+  ipcMain.handle('gxw:gallery-set-max-count', async (_event, n) => {
+    let clamped = typeof n === 'number'
+      ? Math.floor(n)
+      : GALLERY_DEFAULT_MAX_COUNT;
+    if (clamped < GALLERY_MAX_COUNT_FLOOR) clamped = GALLERY_MAX_COUNT_FLOOR;
+    if (clamped > GALLERY_MAX_COUNT_CEILING) clamped = GALLERY_MAX_COUNT_CEILING;
+
+    const state = await readGalleryState();
+    let entries = state.entries;
+
+    // Reducing the cap below the current entry count triggers
+    // eviction down to the new cap, oldest-first.
+    if (entries.length > clamped) {
+      const sorted = sortedByRecency(entries);
+      const keep = sorted.slice(0, clamped);
+      const evict = sorted.slice(clamped);
+      for (const e of evict) {
+        await tryUnlinkGalleryCacheFile(e.id);
+      }
+      entries = keep;
+    }
+
+    await writeGalleryState({ entries, maxCount: clamped });
+    return { entries: sortedByRecency(entries), maxCount: clamped };
+  });
+
+  ipcMain.handle('gxw:gallery-load-image', async (_event, id) => {
+    if (typeof id !== 'string' || id === '') {
+      throw new Error('Gallery loadImage called with empty id.');
+    }
+    const buffer = await fsp.readFile(galleryCachePathFor(id));
+    // Slice into a fresh ArrayBuffer so the renderer receives
+    // bytes detached from Node's Buffer pool. The structured-
+    // clone IPC will then ship the buffer cleanly across.
+    const ab = buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength,
+    );
+    return { bytes: ab, mimeType: 'image/jpeg' };
   });
 
   // --- Native dialogs (Stage 3 commit 3a) ---

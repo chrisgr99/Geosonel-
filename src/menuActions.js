@@ -163,12 +163,6 @@ export function installMenuActions(ctx) {
             case "delete-score":
                 void actionDeleteScore(actionCtx);
                 break;
-            case "import-image":
-                void ctx.imageImporter.importViaFilePicker();
-                break;
-            case "import-image-from-url":
-                void ctx.imageImporter.importFromUrlPrompt();
-                break;
             case "remove-image":
                 ctx.imageImporter.removeCurrentImage();
                 break;

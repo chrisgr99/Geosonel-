@@ -125,14 +125,6 @@ export function installFileMenu(ctx) {
         },
         { separator: true },
         {
-            label: "Import Image\u2026",
-            action: () => ctx.imageImporter.importViaFilePicker(),
-        },
-        {
-            label: "Import Image from URL\u2026",
-            action: () => ctx.imageImporter.importFromUrlPrompt(),
-        },
-        {
             label: "Remove Image",
             action: () => ctx.imageImporter.removeCurrentImage(),
         },

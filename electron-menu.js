@@ -196,14 +196,6 @@ function buildTemplate() {
         },
         { type: 'separator' },
         {
-          label: 'Import Image\u2026',
-          click: () => send('import-image'),
-        },
-        {
-          label: 'Import Image from URL\u2026',
-          click: () => send('import-image-from-url'),
-        },
-        {
           label: 'Remove Image',
           click: () => send('remove-image'),
         },

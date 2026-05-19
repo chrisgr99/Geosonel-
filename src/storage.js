@@ -50,9 +50,10 @@
 import { getPreference } from "./preferences.js";
 
 const DB_NAME = "gxw";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const SCORES_STORE = "scores";
 const SETTINGS_STORE = "settings";
+export const GALLERY_STORE = "gallery";
 
 const CURRENT_SCORE_PATH_KEY = "currentScorePath";
 const LEGACY_CURRENT_SCORE_NAME_KEY = "currentScoreName";
@@ -219,7 +220,13 @@ export async function composeScorePathFromName(name) {
 
 /**
  * Open the GXW database, creating or upgrading its object
- * stores as needed.
+ * stores as needed. The schema currently has three stores:
+ * scores (one record per .gxs bundle), settings (small
+ * key/value app state), and gallery (recent-image entries
+ * for the web build's gallery feature; see src/gallery.js).
+ * All three are idempotent-create so a fresh launch on a
+ * new browser and an upgrade from a previous version both
+ * land in the same shape.
  * @returns {Promise<IDBDatabase>}
  */
 function openDb() {
@@ -232,6 +239,15 @@ function openDb() {
             }
             if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
                 db.createObjectStore(SETTINGS_STORE);
+            }
+            // Gallery store landed at DB_VERSION 3. Holds
+            // one record per gallery entry, keyed by the
+            // entry's generated id. Records carry both
+            // metadata and the full-resolution image Blob
+            // inline; src/gallery.js's web backend reads
+            // from here.
+            if (!db.objectStoreNames.contains(GALLERY_STORE)) {
+                db.createObjectStore(GALLERY_STORE, { keyPath: "id" });
             }
         };
         req.onsuccess = () => resolve(req.result);

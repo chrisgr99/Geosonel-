@@ -1,26 +1,34 @@
 /**
  * Image importer.
  *
- * A single import pipeline fed by four paths:
- *   1. File menu picker (Import Image).
- *   2. File menu URL prompt (Import Image from URL).
- *   3. Drag-and-drop onto the canvas or app window.
- *   4. Paste (Cmd-V) anywhere in the app except text-editing
+ * A single import pipeline fed by three paths:
+ *   1. File picker invoked from UI surfaces (the canvas
+ *      toolbar's Image button in Stage 1; the Canvas
+ *      inspector tab's Load Image button in Stage 4).
+ *   2. Drag-and-drop onto the canvas or app window.
+ *   3. Paste (Cmd-V) anywhere in the app except text-editing
  *      widgets.
  *
  * Each path produces an {ArrayBuffer, mimeType, suggestedName}
  * triple that is handed to importImage(). That function
- * validates the format, stores it in the bundle, triggers a
- * canvas redraw, persists to IndexedDB, and logs a message.
+ * validates the format, normalizes the image to the canonical
+ * 1000×1000 JPEG@70 form via imageNormalize (uniform
+ * geometry for pattern signals; see imageNormalize.js for
+ * the rationale), stores the normalized bytes in the bundle,
+ * triggers a canvas redraw, persists to storage, and logs a
+ * message.
  *
- * Accepted formats: PNG, JPEG, WEBP. Other formats are rejected
- * with a message.
+ * Accepted input formats: PNG, JPEG, WEBP. Other formats
+ * are rejected with a message. All stored content emerges
+ * as image/jpeg with a .jpg extension regardless of source.
  *
- * Maximum file size: 20MB. Files above this are rejected. Can
- * be raised later if needed.
+ * Maximum file size: 20MB on input. Files above this are
+ * rejected before normalization runs.
  */
 
 // @ts-check
+
+import { normalizeForCanvas } from "./imageNormalize.js";
 
 /** @typedef {import("./bundle.js").Bundle} Bundle */
 /** @typedef {import("./canvas.js").Canvas} Canvas */
@@ -85,16 +93,6 @@ export class ImageImporter {
             if (file) await this._importFromFile(file);
         });
         input.click();
-    }
-
-    /**
-     * Prompt the user for a URL and fetch its bytes into the
-     * bundle.
-     */
-    async importFromUrlPrompt() {
-        const url = window.prompt("Image URL:");
-        if (url === null || url.trim() === "") return;
-        await this._importFromUrl(url.trim());
     }
 
     /**
@@ -202,56 +200,39 @@ export class ImageImporter {
     }
 
     /**
-     * @param {string} url
-     */
-    async _importFromUrl(url) {
-        let response;
-        try {
-            response = await fetch(url);
-        } catch (err) {
-            this.messages.write(
-                `Could not fetch ${url}: ${err instanceof Error ? err.message : String(err)}`,
-                "error"
-            );
-            return;
-        }
-        if (!response.ok) {
-            this.messages.write(
-                `Fetch failed: ${response.status} ${response.statusText}`,
-                "error"
-            );
-            return;
-        }
-        const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-        if (!ACCEPTED_MIME_TYPES.has(mimeType)) {
-            this.messages.write(
-                `URL served unsupported type "${mimeType}". Use PNG, JPEG, or WEBP.`,
-                "error"
-            );
-            return;
-        }
-        const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > MAX_BYTES) {
-            this.messages.write(
-                `Ignoring fetched image: ${Math.round(bytes.byteLength / 1024 / 1024)}MB exceeds the 20MB limit.`,
-                "error"
-            );
-            return;
-        }
-        const name = deriveNameFromUrl(url, mimeType);
-        await this._storeAndRender(name, bytes, mimeType);
-    }
-
-    /**
-     * Common final step: put the bytes into the bundle, tell the
-     * canvas to render them, persist to IndexedDB, and log.
+     * Common final step: normalize the bytes to the
+     * canonical 1000×1000 JPEG@70 form, put the normalized
+     * bytes into the bundle, tell the canvas to render them,
+     * persist to storage, and log. The pre-normalize bytes
+     * never reach the bundle — every score's embedded image
+     * is the post-normalization version so pattern signals
+     * see uniform geometry regardless of how the image
+     * arrived.
      * @param {string} name
      * @param {ArrayBuffer} bytes
      * @param {string} mimeType
      */
     async _storeAndRender(name, bytes, mimeType) {
-        this.bundle.replaceImage(name, bytes, mimeType);
-        await this.canvas.setImage({ bytes, mimeType });
+        let normalized;
+        try {
+            normalized = await normalizeForCanvas(bytes, mimeType);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.messages.write(
+                `Could not normalize image "${name}": ${msg}`,
+                "error",
+            );
+            return;
+        }
+        // Every stored image lands as JPEG; rewrite the
+        // extension so the bundle's filename matches the
+        // bytes inside it. A screenshot.png that's actually
+        // JPEG bytes after normalization would be a
+        // misleading filename downstream (export, disk
+        // mirror, AI-edit tooling all read the extension).
+        const normalizedName = forceJpgExtension(name);
+        this.bundle.replaceImage(normalizedName, normalized.bytes, normalized.mimeType);
+        await this.canvas.setImage({ bytes: normalized.bytes, mimeType: normalized.mimeType });
         try {
             await this.bundle.save();
         } catch (err) {
@@ -262,7 +243,7 @@ export class ImageImporter {
             );
             return;
         }
-        this.messages.write(`Imported image "${name}".`);
+        this.messages.write(`Imported image "${normalizedName}".`);
     }
 }
 
@@ -287,23 +268,17 @@ function generatePastedName(mimeType) {
 }
 
 /**
- * Try to extract a usable filename from a URL's path; fall back
- * to a timestamp if the URL has no obvious filename.
- * @param {string} url
- * @param {string} mimeType
+ * Rewrite a filename's extension to .jpg. The normalize
+ * step in _storeAndRender produces JPEG bytes unconditionally,
+ * so the stored filename should match. Names without any
+ * extension get one appended.
+ * @param {string} name
  * @returns {string}
  */
-function deriveNameFromUrl(url, mimeType) {
-    try {
-        const parsed = new URL(url);
-        const last = parsed.pathname.split("/").pop() ?? "";
-        if (last && /\.[a-z0-9]{2,5}$/i.test(last)) {
-            return last;
-        }
-    } catch {
-        // Malformed URL: fall through to timestamp-based name.
-    }
-    return generatePastedName(mimeType);
+function forceJpgExtension(name) {
+    const dot = name.lastIndexOf(".");
+    if (dot === -1) return name + ".jpg";
+    return name.slice(0, dot) + ".jpg";
 }
 
 /**

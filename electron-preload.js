@@ -114,3 +114,32 @@ contextBridge.exposeInMainWorld('gxwMidi', {
   send: (bytes, delayMs) =>
     ipcRenderer.invoke('gxw:midi-send', bytes, delayMs),
 });
+
+// Image gallery IPC (Stage 2 of Canvas inspector tab work).
+//
+// Renderer-side abstraction is src/gallery.js, which routes
+// through window.gxwGallery in the Electron build (set up
+// here) and falls back to IndexedDB in the web build. The
+// main process owns settings.json's imageGallery key and
+// the <userData>/imageCache/ folder; these wrappers are
+// thin pass-throughs to the IPC handlers in
+// electron-main.js.
+//
+// add takes {sourcePath, normalizedBytes, thumbnailBase64}
+// where normalizedBytes is the 1000×1000 JPEG@70 bytes
+// produced by src/imageNormalize.js. The match-and-promote
+// logic (existing entries with matching sourcePath get
+// promoted instead of duplicated) lives in the main
+// process handler.
+//
+// loadImage returns {bytes, mimeType} matching the shape
+// canvas.setImage accepts.
+contextBridge.exposeInMainWorld('gxwGallery', {
+  list: () => ipcRenderer.invoke('gxw:gallery-list'),
+  add: (input) => ipcRenderer.invoke('gxw:gallery-add', input),
+  remove: (id) => ipcRenderer.invoke('gxw:gallery-remove', id),
+  setMaxCount: (n) =>
+    ipcRenderer.invoke('gxw:gallery-set-max-count', n),
+  loadImage: (id) =>
+    ipcRenderer.invoke('gxw:gallery-load-image', id),
+});
