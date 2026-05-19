@@ -90,3 +90,27 @@ contextBridge.exposeInMainWorld('gxwMenu', {
   pushState: (state) =>
     ipcRenderer.invoke('gxw:menu-state', state),
 });
+
+// Virtual MIDI port IPC. GeoSonel publishes a CoreMIDI
+// virtual source named "GeoSonel" from the main process
+// via node-midi; the renderer's MIDISender uses this
+// bridge to query the port's status at init time and to
+// dispatch outgoing MIDI bytes during playback.
+//
+// getStatus: returns { ready, portName }. The renderer
+// emits a "ready" event to the toolbar indicator when
+// ready is true so the indicator's label reads
+// "MIDI: <portName>".
+//
+// send: takes a MIDI byte array (status, data1, data2)
+// and a delayMs value (renderer's computed midiTime minus
+// performance.now()). Main schedules the actual MIDI
+// write via setTimeout for positive delays and dispatches
+// immediately otherwise. The MIDISender fire-and-forgets
+// the returned Promise so the per-event budget isn't held
+// up by the IPC round trip.
+contextBridge.exposeInMainWorld('gxwMidi', {
+  getStatus: () => ipcRenderer.invoke('gxw:midi-get-status'),
+  send: (bytes, delayMs) =>
+    ipcRenderer.invoke('gxw:midi-send', bytes, delayMs),
+});

@@ -33,11 +33,117 @@ const fsp = require('node:fs/promises');
 
 const { installMenu, updateMenuState } = require('./electron-menu.js');
 
+// --- Native MIDI loader ---
+//
+// @julusian/midi is a maintained fork of node-midi that uses
+// Node-API (N-API) for its native binding. N-API is ABI-
+// stable across V8 / Node / Electron versions, so the
+// prebuilt binaries shipped with the package work across
+// reasonable upgrade ranges without an electron-rebuild
+// step. The upstream `midi` package uses NAN, which doesn't
+// compile against modern V8's external-pointer-tag API.
+//
+// Loading is wrapped in try/catch in case the prebuilt
+// binary doesn't match the current platform or ABI. Failure
+// is non-fatal: the app launches normally, the virtual
+// MIDI port is unavailable, and the renderer's MIDISender
+// reports the unavailability to the user.
+let midi = null;
+try {
+  midi = require('@julusian/midi');
+} catch (err) {
+  console.warn(
+    `GXW: @julusian/midi could not be loaded (${err.message}). ` +
+    `Virtual MIDI port will be unavailable. Try removing ` +
+    `node_modules and package-lock.json, then 'npm install' again.`,
+  );
+}
+
 // Set the app name early so it appears in the menu bar, the About dialog,
 // and the Force Quit listing instead of the default "Electron".
 app.setName('GeoSonel');
 
 let mainWindow;
+
+// --- Virtual MIDI port ---
+//
+// GeoSonel publishes a CoreMIDI virtual source named "GeoSonel"
+// via node-midi. Any DAW (Logic Pro, Bitwig Studio, etc.) sees
+// this port in its MIDI input list and can route from it like
+// any hardware MIDI source, removing the need for the user to
+// set up an IAC Driver bus or any third-party virtual MIDI
+// driver. This replaces the Web MIDI output-port enumeration
+// model on Electron: the renderer doesn't pick a port; it
+// sends to the virtual port we publish.
+//
+// Lifecycle. The port opens in app.whenReady (or stays null
+// if node-midi failed to load), receives sends from the
+// renderer via the gxw:midi-send IPC channel, and closes on
+// app will-quit. The renderer's MIDISender queries
+// gxw:midi-get-status at init time so it knows whether to
+// emit the "ready" event to the toolbar indicator.
+//
+// Timing. The renderer passes a delayMs argument computed as
+// (midiTime - performance.now()) where midiTime is the same
+// performance.now()-domain timestamp Web MIDI's scheduled
+// output.send accepts. Main schedules the actual MIDI write
+// via setTimeout if delayMs > 0.5, dispatching immediately
+// otherwise. setTimeout-based scheduling on Node has 1-4ms
+// jitter typically, a precision regression from CoreMIDI's
+// sub-millisecond hardware-level scheduling that Web MIDI
+// gives us on the browser path. For typical musical material
+// the difference is below the audible threshold; for very
+// tight rhythms it may be noticeable, in which case a future
+// commit could replace setTimeout with a native scheduled-
+// send path via a small custom binding to CoreMIDI's
+// MIDIPacket + MIDISend with timestamps.
+//
+// Platform note. macOS and Linux support virtual MIDI ports
+// natively (CoreMIDI, ALSA). Windows does not — RtMidi can't
+// create virtual ports on Windows. Windows users would need a
+// third-party driver like loopMIDI. GeoSonel is macOS-first
+// so this is not currently a constraint.
+const MIDI_PORT_NAME = 'GeoSonel';
+/** @type {any} */
+let midiOutput = null;
+let midiPortOpen = false;
+
+function openMidiVirtualPort() {
+  if (midi === null) return;
+  try {
+    midiOutput = new midi.Output();
+    midiOutput.openVirtualPort(MIDI_PORT_NAME);
+    midiPortOpen = true;
+    console.log(`GXW: opened virtual MIDI port "${MIDI_PORT_NAME}".`);
+  } catch (err) {
+    midiOutput = null;
+    midiPortOpen = false;
+    console.warn(
+      `GXW: could not open virtual MIDI port: ${err.message}. ` +
+      `MIDI sending will be unavailable.`,
+    );
+  }
+}
+
+function closeMidiVirtualPort() {
+  if (midiOutput === null) return;
+  try {
+    midiOutput.closePort();
+  } catch (err) {
+    console.warn(`GXW: error closing MIDI port: ${err.message}`);
+  }
+  midiOutput = null;
+  midiPortOpen = false;
+}
+
+function sendMidiMessage(bytes) {
+  if (midiOutput === null) return;
+  try {
+    midiOutput.sendMessage(bytes);
+  } catch (err) {
+    console.warn(`GXW: MIDI send failed: ${err.message}`);
+  }
+}
 
 // Tracks whether the renderer has confirmed that the current close
 // gesture should proceed. Set to true after the renderer sends
@@ -741,6 +847,37 @@ function registerStorageHandlers() {
       mainWindow.close();
     }
   });
+
+  // --- Virtual MIDI port (Electron-only) ---
+  //
+  // Status query. The renderer's MIDISender calls this at
+  // init time to decide whether to emit a "ready" event to
+  // the toolbar indicator. Returns the port name when ready
+  // so the indicator's label reads "MIDI: GeoSonel" rather
+  // than a generic string.
+  ipcMain.handle('gxw:midi-get-status', async () => {
+    return {
+      ready: midiPortOpen,
+      portName: midiPortOpen ? MIDI_PORT_NAME : null,
+    };
+  });
+
+  // Send a MIDI byte array. delayMs is the renderer's
+  // computed (midiTime - performance.now()) value; main
+  // uses setTimeout for positive delays and dispatches
+  // synchronously otherwise. Invalid input is silently
+  // dropped: bad bytes would cause node-midi to throw, and
+  // the per-event budget can't afford the round-trip cost
+  // of validating in detail. The output's own try/catch in
+  // sendMidiMessage logs anything that does slip through.
+  ipcMain.handle('gxw:midi-send', async (_event, bytes, delayMs) => {
+    if (!Array.isArray(bytes)) return;
+    if (typeof delayMs === 'number' && delayMs > 0.5) {
+      setTimeout(() => sendMidiMessage(bytes), delayMs);
+    } else {
+      sendMidiMessage(bytes);
+    }
+  });
 }
 
 // --- App lifecycle ---
@@ -748,9 +885,20 @@ function registerStorageHandlers() {
 app.whenReady().then(async () => {
   applyDockIcon();
   registerStorageHandlers();
+  openMidiVirtualPort();
   await migrateScoresFolderToGxsExtension();
   createWindow();
   installMenu(mainWindow);
+});
+
+// Close the virtual MIDI port cleanly on quit so we don't
+// leave a dangling port registered in CoreMIDI's port list
+// after the app exits. Without this, CoreMIDI eventually
+// reaps the port when the process dies, but the gap between
+// process exit and reap can briefly confuse a DAW that was
+// connected to the port.
+app.on('will-quit', () => {
+  closeMidiVirtualPort();
 });
 
 // On macOS, apps usually stay running when all windows are closed; the user

@@ -75,6 +75,18 @@
  * fire. Events: { type: "ready", portName } at init
  * completion; { type: "send", note, velocity, channel } on
  * each noteOn dispatched.
+ *
+ * Build branching. Two backends share this class. On the
+ * Electron build (window.gxwMidi exists, exposed by
+ * electron-preload.js), bytes route through the gxw:midi-
+ * send IPC channel to the main process, which holds open a
+ * named virtual CoreMIDI source called "GeoSonel" via node-
+ * midi. The renderer never enumerates ports; the DAW sees
+ * GeoSonel as a MIDI input and routes from it. On the web
+ * build (no window.gxwMidi), bytes route through Web MIDI
+ * as before. The build choice is detected at init() time;
+ * _sendBytes dispatches to the right backend per-call so
+ * the rest of the class doesn't have to know.
  */
 
 // @ts-check
@@ -130,19 +142,84 @@ export class MIDISender {
          * @type {Array<{channel: number, noteNumber: number, audioOffTime: number}>}
          */
         this._pendingNoteOffs = [];
+
+        // Build mode. Set by init() — "webmidi" for the
+        // browser path (using navigator.requestMIDIAccess),
+        // "electron" for the Electron path (using
+        // window.gxwMidi bridge to the main process's
+        // virtual port). _sendBytes routes per-byte-array
+        // dispatch to the right backend so the rest of the
+        // class doesn't have to know.
+        /** @type {"webmidi" | "electron"} */
+        this._mode = "webmidi";
+        /** @type {any} */
+        this._gxwMidi = null;
     }
 
     /**
-     * Async initialisation. Calls navigator.requestMIDIAccess
-     * and chooses a port. Safe to call once at app load.
-     * Errors (permission denied, no Web MIDI support) put
-     * the sender in non-functional state without throwing;
-     * sends become no-ops and a console.warn explains the
-     * cause.
+     * Async initialisation. Branches between the Electron
+     * virtual-port path (window.gxwMidi exposed by
+     * electron-preload.js) and the Web MIDI path. Safe to
+     * call once at app load. Errors put the sender in non-
+     * functional state without throwing; sends become no-ops
+     * and a console.warn explains the cause.
      *
      * @returns {Promise<void>}
      */
     async init() {
+        const gxwMidi = (typeof window !== "undefined")
+            ? /** @type {any} */ (window).gxwMidi
+            : undefined;
+        if (gxwMidi !== undefined && gxwMidi !== null) {
+            await this._initElectron(gxwMidi);
+        } else {
+            await this._initWebMidi();
+        }
+    }
+
+    /**
+     * Electron init path. Queries the main process's MIDI
+     * status (which reflects whether node-midi loaded and
+     * the virtual port opened successfully) and emits the
+     * "ready" event to the toolbar indicator when the port
+     * is open. The portName in the ready event comes from
+     * main and is typically "GeoSonel" so the indicator
+     * label reads "MIDI: GeoSonel".
+     *
+     * @param {any} gxwMidi
+     */
+    async _initElectron(gxwMidi) {
+        let status;
+        try {
+            status = await gxwMidi.getStatus();
+        } catch (err) {
+            console.warn("[MIDI] gxwMidi.getStatus failed:", err);
+            return;
+        }
+        if (status === null || status === undefined || status.ready !== true) {
+            console.warn(
+                "[MIDI] Virtual MIDI port could not be opened in the Electron main " +
+                "process. MIDI sending will be unavailable. Check that node-midi " +
+                "is installed and electron-rebuild has run.",
+            );
+            return;
+        }
+        this._mode = "electron";
+        this._gxwMidi = gxwMidi;
+        this._chosenPortName = typeof status.portName === "string" ? status.portName : "GeoSonel";
+        this._isReady = true;
+        this._emit({ type: "ready", portName: this._chosenPortName });
+    }
+
+    /**
+     * Web MIDI init path. Calls navigator.requestMIDIAccess
+     * and chooses a port. Used in the web build and as a
+     * fallback path for tests that load this module outside
+     * an Electron renderer.
+     *
+     * @returns {Promise<void>}
+     */
+    async _initWebMidi() {
         if (typeof navigator.requestMIDIAccess !== "function") {
             console.warn("[MIDI] Web MIDI not supported in this browser.");
             return;
@@ -183,8 +260,50 @@ export class MIDISender {
             );
             return;
         }
+        this._mode = "webmidi";
         this._isReady = true;
         this._emit({ type: "ready", portName: this._chosenPortName });
+    }
+
+    /**
+     * Internal byte-level dispatch. Routes to the active
+     * backend for the current build: Web MIDI's
+     * output.send(bytes, midiTime) on web, or
+     * gxwMidi.send(bytes, delayMs) over IPC on Electron.
+     * The Electron path computes delayMs as
+     * (midiTime - performance.now()) so the main process
+     * can schedule the actual MIDI write via setTimeout if
+     * the delay is positive, dispatching immediately
+     * otherwise. Precision tradeoff: Web MIDI's scheduled-
+     * send uses OS-level CoreMIDI timing with sub-
+     * millisecond precision; the IPC + setTimeout path on
+     * Electron has a few milliseconds of jitter. For
+     * typical musical material the difference is below the
+     * audible threshold; for very tight rhythms it may be
+     * noticeable.
+     *
+     * @param {number[]} bytes
+     * @param {number} [midiTime] Absolute performance.now() time. Omit for immediate dispatch.
+     */
+    _sendBytes(bytes, midiTime) {
+        if (this._mode === "electron") {
+            if (this._gxwMidi === null) return;
+            const delayMs = typeof midiTime === "number"
+                ? Math.max(0, midiTime - performance.now())
+                : 0;
+            // Fire-and-forget. Awaiting the IPC round trip
+            // would block the per-event budget the firing
+            // engine relies on; the main side's dispatch
+            // is synchronous on receipt.
+            void this._gxwMidi.send(bytes, delayMs);
+            return;
+        }
+        if (this._output === null) return;
+        if (typeof midiTime === "number") {
+            this._output.send(bytes, midiTime);
+        } else {
+            this._output.send(bytes);
+        }
     }
 
     /**
@@ -207,11 +326,31 @@ export class MIDISender {
      * indicator to update its label on ready and to flash
      * on each send.
      *
+     * Late-subscribe handling: if the sender is already
+     * ready by the time a callback subscribes (typical on
+     * Electron, where gxwMidi.getStatus resolves much
+     * faster than Web MIDI's requestMIDIAccess), fire a
+     * synthetic ready event to the new subscriber
+     * immediately. Without this, a subscriber wired after
+     * init completes would never see the ready event and
+     * the toolbar indicator would stay at its placeholder
+     * label.
+     *
      * @param {(event: MIDIEvent) => void} callback
      * @returns {() => void}
      */
     onEvent(callback) {
         this._listeners.add(callback);
+        if (this._isReady) {
+            try {
+                callback({
+                    type: "ready",
+                    portName: this._chosenPortName ?? undefined,
+                });
+            } catch (err) {
+                console.warn("[MIDI] late-subscribe ready handler threw:", err);
+            }
+        }
         return () => this._listeners.delete(callback);
     }
 
@@ -260,7 +399,7 @@ export class MIDISender {
      * @param {number} duration
      */
     send(value, audioTime, duration) {
-        if (!this._isReady || this._output === null) return;
+        if (!this._isReady) return;
         if (value === null || typeof value !== "object") return;
 
         const noteStr = value.note;
@@ -307,14 +446,14 @@ export class MIDISender {
             const off = this._pendingNoteOffs[i];
             if (off.channel === channel && off.noteNumber === noteNumber) {
                 const status = 0x80 | (off.channel - 1);
-                this._output.send([status, off.noteNumber, 0]);
+                this._sendBytes([status, off.noteNumber, 0]);
                 this._pendingNoteOffs.splice(i, 1);
                 break;
             }
         }
 
         const statusOn = 0x90 | (channel - 1);
-        this._output.send([statusOn, noteNumber, velocity], noteOnMidiTime);
+        this._sendBytes([statusOn, noteNumber, velocity], noteOnMidiTime);
         this._pendingNoteOffs.push({
             channel,
             noteNumber,
@@ -341,14 +480,14 @@ export class MIDISender {
      * @param {number} audioNow Current audioContext.currentTime in seconds.
      */
     tick(audioNow) {
-        if (!this._isReady || this._output === null) return;
+        if (!this._isReady) return;
         if (this._pendingNoteOffs.length === 0) return;
         /** @type {Array<{channel: number, noteNumber: number, audioOffTime: number}>} */
         const remaining = [];
         for (const off of this._pendingNoteOffs) {
             if (off.audioOffTime <= audioNow) {
                 const status = 0x80 | (off.channel - 1);
-                this._output.send([status, off.noteNumber, 0]);
+                this._sendBytes([status, off.noteNumber, 0]);
             } else {
                 remaining.push(off);
             }
@@ -367,13 +506,13 @@ export class MIDISender {
      * scheduler on pause.
      */
     panic() {
-        if (!this._isReady || this._output === null) {
+        if (!this._isReady) {
             this._pendingNoteOffs = [];
             return;
         }
         for (const off of this._pendingNoteOffs) {
             const status = 0x80 | (off.channel - 1);
-            this._output.send([status, off.noteNumber, 0]);
+            this._sendBytes([status, off.noteNumber, 0]);
         }
         this._pendingNoteOffs = [];
     }

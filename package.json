@@ -6,6 +6,9 @@
   "scripts": {
     "start": "electron ."
   },
+  "dependencies": {
+    "@julusian/midi": "^3.6.0"
+  },
   "devDependencies": {
     "electron": "^42.1.0"
   }
