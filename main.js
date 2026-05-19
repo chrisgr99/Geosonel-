@@ -294,6 +294,16 @@ async function main() {
         typeof (/** @type {any} */ (window).gxwStorage) === "object" &&
         (/** @type {any} */ (window).gxwStorage) !== null;
 
+    // Tag the document body so CSS can hide the in-page
+    // menubar (Stage 5 commit 5c). The macOS native menu
+    // bar at the top of the screen has taken over; the
+    // in-page menu would be redundant and confusing. The
+    // web build never sets this class, so its in-page menu
+    // remains visible and functional.
+    if (isElectron) {
+        document.body.classList.add("electron-mode");
+    }
+
     // --- Saved indicator (top row) ---
     //
     // The textual Saved / Unsaved / just-saved badge in the
@@ -2235,15 +2245,24 @@ async function main() {
         // localStorage unavailable; default to Auto Zoom off.
     }
 
-    installViewMenu({
-        canvas,
-        toggleFocusCanvas,
-        toggleAutoZoom,
-    });
-    installFileMenu({ session, messages, imageImporter, editor, isElectron });
-    installEditMenu({ performUndo, performRedo, performDuplicate });
-    installRunMenu({ runScene });
-    installAppMenu({ diskMirror, messages });
+    // In-page menu installation. The web build relies on
+    // these dropdowns and their window-level keyboard
+    // shortcuts; the Electron build's native macOS menu
+    // (electron-menu.js) replaces both surfaces in sub-
+    // commit 5c, so the in-page installers are skipped
+    // when running under Electron to avoid double-firing
+    // accelerators and ghost dropdowns no one can see.
+    if (!isElectron) {
+        installViewMenu({
+            canvas,
+            toggleFocusCanvas,
+            toggleAutoZoom,
+        });
+        installFileMenu({ session, messages, imageImporter, editor, isElectron });
+        installEditMenu({ performUndo, performRedo, performDuplicate });
+        installRunMenu({ runScene });
+        installAppMenu({ diskMirror, messages });
+    }
 
     // --- Native menu (Stage 5 commit 5a) ---
     //
@@ -2289,25 +2308,32 @@ async function main() {
     });
 
     // --- Save and Save As shortcuts (Cmd-S, Cmd-Shift-S) ---
-    window.addEventListener("keydown", (e) => {
-        const meta = e.metaKey || e.ctrlKey;
-        if (meta && e.key.toLowerCase() === "s") {
-            e.preventDefault();
-            if (e.shiftKey) {
-                void actionSaveAs({ session, messages, editor });
-            } else if (session.bundle.path === null) {
-                // Untitled bundle: route Cmd-S through Save As
-                // so the user gets the Save panel and the
-                // bundle acquires a real path before being
-                // persisted. Bundle.save() throws on a null
-                // path, so calling editor.save() here directly
-                // would surface as an error instead.
-                void actionSaveAs({ session, messages, editor });
-            } else {
-                editor.save();
+    //
+    // Web-build only. The Electron build's native menu has
+    // its own accelerators on Save and Save As, and binding
+    // a window-level listener for the same keys would
+    // double-fire the action on every press.
+    if (!isElectron) {
+        window.addEventListener("keydown", (e) => {
+            const meta = e.metaKey || e.ctrlKey;
+            if (meta && e.key.toLowerCase() === "s") {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    void actionSaveAs({ session, messages, editor });
+                } else if (session.bundle.path === null) {
+                    // Untitled bundle: route Cmd-S through Save As
+                    // so the user gets the Save panel and the
+                    // bundle acquires a real path before being
+                    // persisted. Bundle.save() throws on a null
+                    // path, so calling editor.save() here directly
+                    // would surface as an error instead.
+                    void actionSaveAs({ session, messages, editor });
+                } else {
+                    editor.save();
+                }
             }
-        }
-    });
+        });
+    }
 
     // --- Protect unsaved changes on close ---
     //

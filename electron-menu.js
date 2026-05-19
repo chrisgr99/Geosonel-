@@ -2,29 +2,34 @@
 //
 // Stage 5 of the Electron migration. The menu lives in the
 // main process; menu clicks dispatch to the renderer via
-// the gxw:menu-action IPC channel, where a small dispatcher
-// (src/menuActions.js) routes each action name to the same
-// handler functions the in-page menu uses today.
+// the gxw:menu-action IPC channel as { action, payload }
+// objects, where a small dispatcher (src/menuActions.js)
+// routes each action name to the matching handler
+// function. The renderer-side handlers are the same
+// actionXxx functions src/scoreActions.js exposes, so menu
+// clicks and (web-only) in-page menu clicks converge on
+// the same code path.
 //
-// During Stage 5 commit 5a the in-page menu bar remains
-// visible alongside the native menu. The native menu adds
-// click items only — no keyboard accelerators yet — because
-// the in-page menu's window-level keyboard listeners still
-// own the shortcuts, and binding accelerators here would
-// cause double-firing when the user pressed e.g. Cmd-S. Sub-
-// commit 5c retires the in-page menu and its listeners, and
-// adds accelerators here at the same time.
+// Keyboard accelerators on every custom item carry the
+// standard Mac shortcuts (Cmd-S, Cmd-Z, Cmd-N, etc.); Cut,
+// Copy, Paste, Delete, Select All, Minimize, Zoom, Bring
+// All to Front, Hide, Quit, Reload, Force Reload, and
+// Toggle Developer Tools use Electron's built-in roles so
+// they get their standard accelerators and behaviour
+// without any IPC plumbing. The native menu is the only
+// menu surface on Electron; main.js skips the in-page
+// menu installers when running under Electron and hides
+// the in-page menubar nav via the body.electron-mode CSS
+// rule.
 //
 // Disabled and checked states (Revert to Saved when clean,
 // Reload from Disk when Untitled, Auto Zoom checkmark, zoom
-// items when Auto Zoom is on) come from the renderer via the
-// gxw:menu-state IPC. Whenever the renderer pushes a new
-// state, the menu is rebuilt and reapplied.
-//
-// Dynamic submenus (Open Recent, Revert to) are deferred to
-// sub-commit 5b; for now they're absent from the native
-// menu, and users still reach those features through the
-// in-page menu.
+// items when Auto Zoom is on) come from the renderer via
+// the gxw:menu-state IPC. Open Recent and Revert to are
+// dynamic submenus rebuilt from the menuState's recent-
+// scores list and backup-slots list on every state push.
+// Whenever the renderer pushes a new state, the menu is
+// rebuilt and reapplied.
 
 const { app, Menu } = require('electron');
 
@@ -119,6 +124,7 @@ function buildTemplate() {
         { type: 'separator' },
         {
           label: 'Settings\u2026',
+          accelerator: 'CmdOrCtrl+,',
           click: () => send('show-settings'),
         },
         { type: 'separator' },
@@ -143,10 +149,12 @@ function buildTemplate() {
       submenu: [
         {
           label: 'Save',
+          accelerator: 'CmdOrCtrl+S',
           click: () => send('save'),
         },
         {
           label: 'Save As\u2026',
+          accelerator: 'Shift+CmdOrCtrl+S',
           click: () => send('save-as'),
         },
         {
@@ -162,10 +170,12 @@ function buildTemplate() {
         { type: 'separator' },
         {
           label: 'New\u2026',
+          accelerator: 'CmdOrCtrl+N',
           click: () => send('new-score'),
         },
         {
           label: 'Open\u2026',
+          accelerator: 'CmdOrCtrl+O',
           click: () => send('open-score'),
         },
         {
@@ -224,10 +234,12 @@ function buildTemplate() {
       submenu: [
         {
           label: 'Undo',
+          accelerator: 'CmdOrCtrl+Z',
           click: () => send('undo'),
         },
         {
           label: 'Redo',
+          accelerator: 'Shift+CmdOrCtrl+Z',
           click: () => send('redo'),
         },
         { type: 'separator' },
@@ -239,6 +251,7 @@ function buildTemplate() {
         { type: 'separator' },
         {
           label: 'Duplicate',
+          accelerator: 'CmdOrCtrl+D',
           click: () => send('duplicate-canvas-edit'),
         },
       ],
@@ -253,16 +266,19 @@ function buildTemplate() {
       submenu: [
         {
           label: 'Zoom In',
+          accelerator: 'CmdOrCtrl+=',
           enabled: !autoZoom,
           click: () => send('zoom-in'),
         },
         {
           label: 'Zoom Out',
+          accelerator: 'CmdOrCtrl+-',
           enabled: !autoZoom,
           click: () => send('zoom-out'),
         },
         {
           label: 'Reset Zoom',
+          accelerator: 'CmdOrCtrl+0',
           enabled: !autoZoom,
           click: () => send('reset-zoom'),
         },
@@ -275,6 +291,7 @@ function buildTemplate() {
         { type: 'separator' },
         {
           label: 'Focus Canvas',
+          accelerator: 'Shift+CmdOrCtrl+F',
           click: () => send('toggle-focus-canvas'),
         },
         { type: 'separator' },
@@ -299,6 +316,7 @@ function buildTemplate() {
       submenu: [
         {
           label: 'Run Scene',
+          accelerator: 'CmdOrCtrl+Return',
           click: () => send('run-scene'),
         },
       ],

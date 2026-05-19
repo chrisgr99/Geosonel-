@@ -2162,3 +2162,19 @@ body.focus-canvas #canvas-pane {
     background-color: #5a4580 !important;
     background: #5a4580 !important;
 }
+
+/*
+ * Electron-build native menu takeover (Stage 5 commit 5c).
+ *
+ * When running under Electron, the macOS native menu bar
+ * at the top of the screen replaces the in-page menubar.
+ * main.js sets body.electron-mode on startup; this rule
+ * hides the in-page menu nav so the top row's other
+ * content (sidebar toggle, transport controls, wordmark)
+ * fills the space cleanly. The web build never sets the
+ * class, so its in-page menu remains visible and
+ * functional.
+ */
+body.electron-mode #menubar {
+    display: none;
+}

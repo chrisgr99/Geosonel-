@@ -199,21 +199,26 @@ export function installMenuActions(ctx) {
 
             // --- Edit ---
             //
-            // Undo, Redo, and Duplicate dispatch to the
-            // canvas-level handlers. These are click-only in
-            // sub-commit 5a (no native menu accelerator), so
-            // they fire only when the user picks the menu
-            // item explicitly — focus has been on the menu,
-            // not on a text editor, so the canvas action is
-            // unambiguously what the user wants. Sub-commit
-            // 5c adds accelerators and switches to focus-
-            // aware dispatch so Cmd-Z in CodeMirror still
-            // does CodeMirror's undo.
+            // Undo and Redo dispatch through TabbedEditor's
+            // focus-aware tryUndoInFocus / tryRedoInFocus,
+            // which detect whether focus is in CodeMirror,
+            // a plain text input, or somewhere else and
+            // route accordingly. When the editor reports it
+            // didn't handle the gesture (return false), the
+            // canvas undo stack takes over via performUndo /
+            // performRedo. This is what makes Cmd-Z do the
+            // right thing under native menu accelerators:
+            // CodeMirror's own undo still runs when the user
+            // is typing code, INPUT undo runs in text
+            // fields, and canvas undo runs everywhere else.
+            // Duplicate stays as a straight performDuplicate;
+            // it's always a canvas-level gesture and has no
+            // text-context analogue.
             case "undo":
-                ctx.performUndo();
+                if (!ctx.editor.tryUndoInFocus()) ctx.performUndo();
                 break;
             case "redo":
-                ctx.performRedo();
+                if (!ctx.editor.tryRedoInFocus()) ctx.performRedo();
                 break;
             case "duplicate-canvas-edit":
                 ctx.performDuplicate();

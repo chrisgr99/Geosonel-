@@ -21,7 +21,7 @@
 
 import { EditorView, keymap, lineNumbers, drawSelection } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
 import { EditorState, Compartment } from "https://esm.sh/@codemirror/state@6.5.2";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
+import { defaultKeymap, history, historyKeymap, indentWithTab, undo as cmUndo, redo as cmRedo } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
 import { indentOnInput, indentUnit, bracketMatching } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
 import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6?deps=@codemirror/state@6.5.2";
 import { json } from "https://esm.sh/@codemirror/lang-json@6?deps=@codemirror/state@6.5.2";
@@ -531,6 +531,75 @@ export class TabbedEditor {
         this.view.dispatch({
             effects: setKnownObjectIdsEffect.of(knownObjectIds),
         });
+    }
+
+    /**
+     * Try to handle an Undo gesture against the currently-
+     * focused element. Called by the native macOS menu's
+     * Cmd-Z dispatcher (src/menuActions.js) so the
+     * accelerator does the right thing depending on where
+     * the cursor is:
+     *
+     *   - Focus inside .cm-editor: call CodeMirror's own
+     *     undo command against this editor's view. Same
+     *     effect the historyKeymap's Mod-z binding would
+     *     have produced if the native menu hadn't
+     *     preempted the keystroke.
+     *   - Focus inside an INPUT / TEXTAREA / contenteditable:
+     *     fall through to document.execCommand("undo"),
+     *     which triggers the browser's native text-input
+     *     undo. Deprecated in spec but functional in
+     *     Chromium, which is what Electron runs.
+     *   - Anything else (canvas focus, body focus, menu
+     *     focus): return false so the caller can fall
+     *     through to the canvas undo stack.
+     *
+     * Returns true iff the keystroke was handled here.
+     *
+     * @returns {boolean}
+     */
+    tryUndoInFocus() {
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement)) return false;
+        if (focused.closest(".cm-editor") !== null) {
+            if (this.view !== null) {
+                cmUndo(this.view);
+                return true;
+            }
+            return false;
+        }
+        if (focused.tagName === "INPUT" ||
+            focused.tagName === "TEXTAREA" ||
+            focused.isContentEditable) {
+            document.execCommand("undo");
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Symmetric with tryUndoInFocus for Cmd-Shift-Z. See
+     * that method's comment for the dispatch logic.
+     *
+     * @returns {boolean}
+     */
+    tryRedoInFocus() {
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement)) return false;
+        if (focused.closest(".cm-editor") !== null) {
+            if (this.view !== null) {
+                cmRedo(this.view);
+                return true;
+            }
+            return false;
+        }
+        if (focused.tagName === "INPUT" ||
+            focused.tagName === "TEXTAREA" ||
+            focused.isContentEditable) {
+            document.execCommand("redo");
+            return true;
+        }
+        return false;
     }
 
     // --- Mounting ---
