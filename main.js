@@ -81,13 +81,13 @@ import { installFileMenu } from "./src/fileMenu.js";
 import { installRunMenu } from "./src/runMenu.js";
 import { installEditMenu } from "./src/editMenu.js";
 import { installAppMenu } from "./src/appMenu.js";
-import { installMenuActions, pushMenuState } from "./src/menuActions.js";
+import { installMenuActions, pushMenuState, pushRecentScoresToMenu, pushBackupsToMenu } from "./src/menuActions.js";
 import { SceneLoader } from "./src/sceneLoader.js";
 import { DiskMirror } from "./src/diskMirror.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
 import { actionSaveAs } from "./src/scoreActions.js";
-import { recordScoreOpen, migrateRecentScoresToPaths } from "./src/recentFiles.js";
+import { recordScoreOpen, migrateRecentScoresToPaths, subscribeToRecentScores } from "./src/recentFiles.js";
 import {
     parsePatternToPositions,
     formatParseResultForConsole,
@@ -636,6 +636,15 @@ async function main() {
     // disk too. No call site needs to know about disk mirror.
     subscribeAfterSaveScore(async (_path, record) => {
         await diskMirror.pushRecord(record);
+        // After every save the backups submenu may have a
+        // new slot 1 (rotation copied the pre-save state
+        // into the slot before the write). Refresh the
+        // native menu's Revert to submenu so it shows the
+        // newly-rotated slot. Path is non-null here because
+        // saveScoreRecord is only ever called with a real
+        // path; untitled bundles take the actionSaveAs
+        // detour first which sets a path before saving.
+        void pushBackupsToMenu(_path);
     });
     subscribeAfterDeleteScore(async (path) => {
         await diskMirror.deleteScore(scoreNameFromPath(path));
@@ -970,6 +979,14 @@ async function main() {
             // disabled-when-untitled gate tracks the new
             // bundle's path nullness.
             pushMenuState({ isUntitled: newBundle.path === null });
+
+            // Refresh the native menu's Open Recent and
+            // Revert to submenus. Open Recent filters out
+            // the now-active bundle from its list; Revert
+            // to fetches the new bundle's backup slots from
+            // disk and renders their labels.
+            pushRecentScoresToMenu(newBundle.path);
+            void pushBackupsToMenu(newBundle.path);
 
             session.rewatch();
 
@@ -2256,6 +2273,19 @@ async function main() {
         dirty: session.bundle.dirty,
         isUntitled: session.bundle.path === null,
         autoZoom: canvas.getAutoZoom(),
+    });
+    // Push initial Open Recent and Revert to submenu data,
+    // and subscribe to future changes in the recent-scores
+    // list so the submenu rebuilds whenever the user opens
+    // a new score, deletes one, renames one, or clears the
+    // menu. Backups are refreshed in switchToBundle and in
+    // the afterSaveScore subscriber, not subscribed to
+    // independently, because every event that changes the
+    // backups list happens at one of those two points.
+    pushRecentScoresToMenu(session.bundle.path);
+    void pushBackupsToMenu(session.bundle.path);
+    subscribeToRecentScores(() => {
+        pushRecentScoresToMenu(session.bundle.path);
     });
 
     // --- Save and Save As shortcuts (Cmd-S, Cmd-Shift-S) ---

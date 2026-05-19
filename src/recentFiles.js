@@ -37,6 +37,43 @@ const STORAGE_KEY = "gxw.recentScores";
 const MAX_ENTRIES = 10;
 
 /**
+ * Subscribers notified after every write to the recent-
+ * scores list. The native macOS menu's Open Recent submenu
+ * lives in the main process and rebuilds from a snapshot
+ * pushed across IPC; main.js wires a subscriber here to
+ * push the snapshot on every change so the submenu stays
+ * in sync without the four modifier functions having to
+ * know about it.
+ * @type {Set<() => void>}
+ */
+const subscribers = new Set();
+
+/**
+ * Register a callback that fires after every write to the
+ * recent-scores list. Returns an unsubscribe function.
+ * Subscribers are called synchronously after writeList
+ * completes (after the localStorage write), so calling
+ * getRecentScores from inside the callback returns the
+ * just-written list.
+ * @param {() => void} callback
+ * @returns {() => void}
+ */
+export function subscribeToRecentScores(callback) {
+    subscribers.add(callback);
+    return () => { subscribers.delete(callback); };
+}
+
+function notifySubscribers() {
+    for (const cb of subscribers) {
+        try {
+            cb();
+        } catch (err) {
+            console.error("GXW: recent-scores subscriber threw:", err);
+        }
+    }
+}
+
+/**
  * @typedef {Object} RecentScoreEntry
  * @property {string} path           Storage path identifying the score.
  * @property {number} lastOpenedAt   Wall-clock ms timestamp of the last
@@ -89,6 +126,7 @@ function writeList(list) {
     } catch (e) {
         // Quota or private mode; menu just won't remember.
     }
+    notifySubscribers();
 }
 
 /**

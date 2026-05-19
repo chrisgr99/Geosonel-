@@ -29,26 +29,75 @@
 const { app, Menu } = require('electron');
 
 // Mutable state pushed from the renderer via gxw:menu-state.
-// Drives disabled/checked flags across the menu. The
-// initial values assume a clean Untitled bundle with Auto
-// Zoom off — the renderer pushes the real state on startup
-// so the first user-visible menu is built with current
-// values.
+// Drives disabled/checked flags and the Open Recent / Revert
+// to submenu contents. The initial values assume a clean
+// Untitled bundle with Auto Zoom off and empty recent /
+// backup lists — the renderer pushes the real state on
+// startup so the first user-visible menu is built with
+// current values.
 const menuState = {
   dirty: false,
   isUntitled: true,
   autoZoom: false,
+  /** @type {Array<{path: string, name: string}>} */
+  recentScores: [],
+  /** @type {Array<{slotNumber: number, label: string}>} */
+  backups: [],
 };
 
 let currentWindow = null;
 
-function send(action) {
+// Menu actions dispatch through the gxw:menu-action IPC
+// channel as { action, payload } objects. Most static items
+// only need the action name and pass payload=null; dynamic
+// submenu items (Open Recent, Revert to) carry per-item
+// payloads identifying which score or backup slot was
+// clicked.
+function send(action, payload = null) {
   if (currentWindow === null || currentWindow.isDestroyed()) return;
-  currentWindow.webContents.send('gxw:menu-action', action);
+  currentWindow.webContents.send('gxw:menu-action', { action, payload });
 }
 
 function buildTemplate() {
-  const { dirty, isUntitled, autoZoom } = menuState;
+  const { dirty, isUntitled, autoZoom, recentScores, backups } = menuState;
+
+  // Open Recent submenu items. macOS convention: list of
+  // recent entries, separator, Clear Menu (always present,
+  // disabled when empty). The renderer pre-filters the
+  // currently-open score from the list so we don't have to
+  // check it here.
+  /** @type {any[]} */
+  const openRecentItems = [];
+  for (const entry of recentScores) {
+    openRecentItems.push({
+      label: entry.name,
+      click: () => send('open-recent', { path: entry.path }),
+    });
+  }
+  if (openRecentItems.length > 0) {
+    openRecentItems.push({ type: 'separator' });
+  }
+  openRecentItems.push({
+    label: 'Clear Menu',
+    enabled: recentScores.length > 0,
+    click: () => send('clear-recent'),
+  });
+
+  // Revert to submenu items. Backups are pre-rendered by the
+  // renderer with their relative-date labels so the main
+  // process doesn't need its own clock-formatting logic. The
+  // parent Revert to menu entry is disabled when the list
+  // is empty (untitled bundle, no save yet, or simply no
+  // backups rotated in), so this submenu is only reachable
+  // when there's at least one slot to revert to.
+  /** @type {any[]} */
+  const revertToItems = backups.map((slot) => ({
+    label: slot.label,
+    click: () => send('revert-to-backup', {
+      slotNumber: slot.slotNumber,
+      label: slot.label,
+    }),
+  }));
 
   return [
     // Application menu — the leftmost menu on macOS,
@@ -87,8 +136,8 @@ function buildTemplate() {
     // build entries; the data-portability cluster (Export,
     // Import, Back Up, Restore) stays web-only and isn't
     // present here. Open Recent and Revert to are dynamic
-    // submenus deferred to sub-commit 5b. All items click-
-    // only in 5a; accelerators land in 5c.
+    // submenus rebuilt from menuState.recentScores and
+    // menuState.backups on every state push.
     {
       label: 'File',
       submenu: [
@@ -105,6 +154,11 @@ function buildTemplate() {
           enabled: dirty,
           click: () => send('revert'),
         },
+        {
+          label: 'Revert to',
+          enabled: backups.length > 0,
+          submenu: revertToItems,
+        },
         { type: 'separator' },
         {
           label: 'New\u2026',
@@ -113,6 +167,10 @@ function buildTemplate() {
         {
           label: 'Open\u2026',
           click: () => send('open-score'),
+        },
+        {
+          label: 'Open Recent',
+          submenu: openRecentItems,
         },
         {
           label: 'Duplicate\u2026',
@@ -274,12 +332,14 @@ function installMenu(win) {
  * electron-main.js whenever the renderer reports a state
  * change. Partial updates are supported — fields not in
  * the patch keep their previous values.
- * @param {{dirty?: boolean, isUntitled?: boolean, autoZoom?: boolean}} state
+ * @param {{dirty?: boolean, isUntitled?: boolean, autoZoom?: boolean, recentScores?: Array<{path: string, name: string}>, backups?: Array<{slotNumber: number, label: string}>}} state
  */
 function updateMenuState(state) {
   if (typeof state.dirty === 'boolean') menuState.dirty = state.dirty;
   if (typeof state.isUntitled === 'boolean') menuState.isUntitled = state.isUntitled;
   if (typeof state.autoZoom === 'boolean') menuState.autoZoom = state.autoZoom;
+  if (Array.isArray(state.recentScores)) menuState.recentScores = state.recentScores;
+  if (Array.isArray(state.backups)) menuState.backups = state.backups;
   rebuildMenu();
 }
 

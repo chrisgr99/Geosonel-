@@ -30,15 +30,26 @@
 import {
     actionNewScore,
     actionOpenScore,
+    actionOpenScoreByPath,
     actionDuplicateScore,
     actionSaveAs,
     actionRevert,
+    actionRevertToBackup,
     actionReloadFromDisk,
     actionRenameScore,
     actionDeleteScore,
 } from "./scoreActions.js";
 import { openAboutDialog } from "./aboutDialog.js";
 import { openSettingsDialog } from "./settingsDialog.js";
+import {
+    getRecentScores,
+    clearRecentScores,
+} from "./recentFiles.js";
+import {
+    listBackups,
+    scoreNameFromPath,
+} from "./storage.js";
+import { relativeDateLabel } from "./relativeDate.js";
 
 /** @typedef {import("./scoreActions.js").ScoreSession} ScoreSession */
 /** @typedef {import("./messages.js").MessageArea} MessageArea */
@@ -67,6 +78,8 @@ import { openSettingsDialog } from "./settingsDialog.js";
  * @property {boolean} [dirty]
  * @property {boolean} [isUntitled]
  * @property {boolean} [autoZoom]
+ * @property {Array<{path: string, name: string}>} [recentScores]
+ * @property {Array<{slotNumber: number, label: string}>} [backups]
  */
 
 /**
@@ -104,7 +117,17 @@ export function installMenuActions(ctx) {
         editor: ctx.editor,
     };
 
-    gxwMenu.onAction((action) => {
+    gxwMenu.onAction((message) => {
+        // Messages arrive as { action, payload } objects.
+        // Payload is null for static items, an object
+        // identifying the chosen entry for dynamic-submenu
+        // clicks (Open Recent, Revert to).
+        const action = typeof message === "object" && message !== null
+            ? message.action
+            : message;
+        const payload = typeof message === "object" && message !== null
+            ? message.payload
+            : null;
         switch (action) {
             // --- File ---
             case "save":
@@ -151,6 +174,27 @@ export function installMenuActions(ctx) {
                 break;
             case "reload-from-disk":
                 void actionReloadFromDisk(actionCtx);
+                break;
+
+            // --- File: Open Recent / Revert to ---
+            case "open-recent":
+                if (payload !== null && typeof payload.path === "string") {
+                    void actionOpenScoreByPath(actionCtx, payload.path);
+                }
+                break;
+            case "clear-recent":
+                clearRecentScores();
+                break;
+            case "revert-to-backup":
+                if (payload !== null &&
+                    typeof payload.slotNumber === "number" &&
+                    typeof payload.label === "string") {
+                    void actionRevertToBackup(
+                        actionCtx,
+                        payload.slotNumber,
+                        payload.label,
+                    );
+                }
                 break;
 
             // --- Edit ---
@@ -228,4 +272,64 @@ export function installMenuActions(ctx) {
 export function pushMenuState(state) {
     if (gxwMenu === null) return;
     void gxwMenu.pushState(state);
+}
+
+/**
+ * Push the current recent-scores list to the native menu's
+ * Open Recent submenu. Filters out the currently-active
+ * bundle (clicking it would be a no-op anyway and showing
+ * it just wastes a slot, matching the in-page menu's
+ * behaviour). The display name shown in each menu row is
+ * derived from the path via scoreNameFromPath, so renames
+ * of the underlying folder reflect automatically when the
+ * folder still lives at the recorded path.
+ *
+ * No-op on the web build.
+ *
+ * @param {string | null} currentBundlePath
+ */
+export function pushRecentScoresToMenu(currentBundlePath) {
+    if (gxwMenu === null) return;
+    const recents = getRecentScores()
+        .filter((e) => e.path !== currentBundlePath)
+        .map((e) => ({ path: e.path, name: scoreNameFromPath(e.path) }));
+    pushMenuState({ recentScores: recents });
+}
+
+/**
+ * Push the current bundle's backup slot list to the native
+ * menu's Revert to submenu. Reads the slots from disk via
+ * storage.listBackups, renders each slot's mtime as a
+ * relative-date label, and pushes the result. The native
+ * menu's parent Revert to entry is disabled when the list
+ * is empty (untitled bundle, no save yet on a saved
+ * bundle, or simply no backups rotated in), so the
+ * submenu opens only when there's at least one slot.
+ *
+ * Untitled bundles (path === null) push an empty list,
+ * which lands as Revert to disabled in the menu. No-op on
+ * the web build (storage's listBackups is a no-op there
+ * anyway, but we short-circuit on gxwMenu absence so the
+ * IPC isn't sent).
+ *
+ * @param {string | null} bundlePath
+ * @returns {Promise<void>}
+ */
+export async function pushBackupsToMenu(bundlePath) {
+    if (gxwMenu === null) return;
+    if (bundlePath === null) {
+        pushMenuState({ backups: [] });
+        return;
+    }
+    try {
+        const slots = await listBackups(bundlePath);
+        const labelled = slots.map((slot) => ({
+            slotNumber: slot.slotNumber,
+            label: relativeDateLabel(slot.mtimeMs),
+        }));
+        pushMenuState({ backups: labelled });
+    } catch (err) {
+        console.error("GXW: pushBackupsToMenu failed:", err);
+        pushMenuState({ backups: [] });
+    }
 }
