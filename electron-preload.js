@@ -71,3 +71,22 @@ contextBridge.exposeInMainWorld('gxwDialog', {
   showOpenDialog: (options) =>
     ipcRenderer.invoke('gxw:show-open-dialog', options),
 });
+
+// Native menu IPC (Stage 5 commit 5a).
+//
+// onAction registers a listener for menu-action dispatch
+// from the main process. The native menu's click handlers
+// call webContents.send('gxw:menu-action', actionName), and
+// the renderer's dispatcher (src/menuActions.js) routes
+// each action name to the same handler the in-page menu
+// uses. pushState reports state changes back to the main
+// process so the menu's disabled / checked flags refresh.
+contextBridge.exposeInMainWorld('gxwMenu', {
+  onAction: (callback) => {
+    const listener = (_event, action) => callback(action);
+    ipcRenderer.on('gxw:menu-action', listener);
+    return () => ipcRenderer.removeListener('gxw:menu-action', listener);
+  },
+  pushState: (state) =>
+    ipcRenderer.invoke('gxw:menu-state', state),
+});

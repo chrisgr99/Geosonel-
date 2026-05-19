@@ -31,6 +31,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 
+const { installMenu, updateMenuState } = require('./electron-menu.js');
+
 // Set the app name early so it appears in the menu bar, the About dialog,
 // and the Force Quit listing instead of the default "Electron".
 app.setName('GeoSonel');
@@ -703,6 +705,18 @@ function registerStorageHandlers() {
     return { canceled: false, filePath: result.filePaths[0] };
   });
 
+  // --- Native menu state push (Stage 5 commit 5a) ---
+  //
+  // The renderer is the source of truth for the state
+  // values that drive the native menu's disabled / checked
+  // flags (bundle dirty, bundle isUntitled, autoZoom). It
+  // pushes a partial state patch through this handler
+  // whenever any of those values changes; the menu is
+  // rebuilt with the new state and reapplied.
+  ipcMain.handle('gxw:menu-state', async (_event, state) => {
+    updateMenuState(state ?? {});
+  });
+
   // Window-level IPC for the explicit-save model.
   //
   // setDocumentEdited drives both the dot in the close-button circle
@@ -736,6 +750,7 @@ app.whenReady().then(async () => {
   registerStorageHandlers();
   await migrateScoresFolderToGxsExtension();
   createWindow();
+  installMenu(mainWindow);
 });
 
 // On macOS, apps usually stay running when all windows are closed; the user

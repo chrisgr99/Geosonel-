@@ -81,6 +81,7 @@ import { installFileMenu } from "./src/fileMenu.js";
 import { installRunMenu } from "./src/runMenu.js";
 import { installEditMenu } from "./src/editMenu.js";
 import { installAppMenu } from "./src/appMenu.js";
+import { installMenuActions, pushMenuState } from "./src/menuActions.js";
 import { SceneLoader } from "./src/sceneLoader.js";
 import { DiskMirror } from "./src/diskMirror.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
@@ -407,6 +408,12 @@ async function main() {
         onDirtyChange: (dirty) => {
             setSavedIndicator(dirty ? "unsaved" : "saved");
             updateTitleBar(dirty);
+            // Push to the native menu so Revert to Saved's
+            // disabled-when-clean gate stays in sync with the
+            // bundle state. No-op on the web build, since
+            // pushMenuState short-circuits when window.gxwMenu
+            // is absent.
+            pushMenuState({ dirty });
         },
         onSaved: () => {
             setSavedIndicator("just-saved");
@@ -958,6 +965,11 @@ async function main() {
             if (newBundle.path !== null) {
                 recordScoreOpen(newBundle.path);
             }
+
+            // Push to the native menu so Reload from Disk's
+            // disabled-when-untitled gate tracks the new
+            // bundle's path nullness.
+            pushMenuState({ isUntitled: newBundle.path === null });
 
             session.rewatch();
 
@@ -2185,6 +2197,10 @@ async function main() {
             // Persistence failed; the in-memory toggle
             // still took effect.
         }
+        // Push to the native menu so the Auto Zoom
+        // checkmark and the disabled state of Zoom
+        // In/Out/Reset track the new value.
+        pushMenuState({ autoZoom: newState });
     };
 
     // Restore the user's last Auto Zoom state. Done after
@@ -2211,6 +2227,36 @@ async function main() {
     installEditMenu({ performUndo, performRedo, performDuplicate });
     installRunMenu({ runScene });
     installAppMenu({ diskMirror, messages });
+
+    // --- Native menu (Stage 5 commit 5a) ---
+    //
+    // Install the IPC dispatcher that routes native macOS
+    // menu clicks to the same action functions the in-page
+    // menu uses, then push the current state so the native
+    // menu's disabled / checked flags reflect reality on
+    // first paint. installMenuActions is a no-op on the web
+    // build (no window.gxwMenu bridge), so this section is
+    // Electron-effective only — the web build's in-page
+    // menu continues to be the only menu surface.
+    installMenuActions({
+        session,
+        messages,
+        editor,
+        imageImporter,
+        canvas,
+        diskMirror,
+        performUndo,
+        performRedo,
+        performDuplicate,
+        runScene: () => { void runScene(); },
+        toggleFocusCanvas,
+        toggleAutoZoom,
+    });
+    pushMenuState({
+        dirty: session.bundle.dirty,
+        isUntitled: session.bundle.path === null,
+        autoZoom: canvas.getAutoZoom(),
+    });
 
     // --- Save and Save As shortcuts (Cmd-S, Cmd-Shift-S) ---
     window.addEventListener("keydown", (e) => {
