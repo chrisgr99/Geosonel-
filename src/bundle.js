@@ -493,6 +493,25 @@ export async function createNewScore(name) {
 }
 
 /**
+ * Create a fresh untitled score in memory. No disk write, no
+ * path; the bundle exists only in the renderer until the user
+ * runs Save As. Used by the Logic-style New flow: actionNewScore
+ * drops the user straight into a pristine scratchpad and the
+ * first Cmd-S routes through Save As to commit it to disk.
+ *
+ * The bundle is born clean (dirty=false), matching Logic and
+ * Pages — a brand-new empty document doesn't yet carry unsaved
+ * work, and closing it without any edits should be silent. The
+ * dirty flag flips on the first user edit through the same
+ * mutators every saved bundle uses.
+ *
+ * @returns {Bundle}
+ */
+export function createUntitledScore() {
+    return makeEmptyBundle("Untitled");
+}
+
+/**
  * List every score's storage path, display name, and updated
  * timestamp, most recent first. Thin pass-through for callers
  * that don't want to import from storage.js directly.

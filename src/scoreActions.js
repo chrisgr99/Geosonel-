@@ -20,6 +20,7 @@
 import {
     Bundle,
     createNewScore,
+    createUntitledScore,
     loadScoreByPath,
     listAvailableScores,
     deleteScoreByPath,
@@ -143,7 +144,19 @@ async function confirmDiscardChanges(ctx) {
     });
     if (decision === "cancel") return false;
     if (decision === "save") {
-        await ctx.editor.save();
+        if (ctx.session.bundle.path === null) {
+            // Untitled bundle: bring up Save As so the user
+            // can give it a path. Cancelling the Save panel
+            // counts as cancelling the overall switch-away
+            // gesture, so we return false and the caller
+            // aborts. We detect cancellation by checking
+            // whether the bundle acquired a path; a
+            // successful Save As sets one via switchToBundle.
+            await actionSaveAs(ctx);
+            if (ctx.session.bundle.path === null) return false;
+        } else {
+            await ctx.editor.save();
+        }
     }
     return true;
 }
@@ -151,20 +164,25 @@ async function confirmDiscardChanges(ctx) {
 // --- Simple actions ---
 
 /**
- * New Score: prompt for a name, create an empty score under
- * that name in the configured Scores folder, switch to it.
+ * New Score: create a fresh in-memory Untitled bundle and
+ * switch to it. The bundle isn't written to disk until the
+ * user runs Save (which routes through Save As for untitled
+ * bundles) or Save As directly. Logic-style: the user starts
+ * editing immediately and decides on the filename and
+ * location at first save.
+ *
+ * The dirty-state gate fires before creating the new bundle
+ * so any unsaved edits in the current score get the Save /
+ * Don't Save / Cancel treatment. The new untitled bundle
+ * itself is born clean (dirty=false).
+ *
  * @param {ScoreActionsContext} ctx
  */
 export async function actionNewScore(ctx) {
     if (!(await confirmDiscardChanges(ctx))) return;
-    const name = await promptForUniqueName("New score name:", "", ctx.messages);
-    if (name === null) return;
-    const bundle = await createNewScore(name);
-    if (bundle.path !== null) {
-        await setCurrentScorePath(bundle.path);
-    }
+    const bundle = createUntitledScore();
     await ctx.session.switchToBundle(bundle);
-    ctx.messages.write(`Created score "${name}".`);
+    ctx.messages.write("New untitled score.");
 }
 
 /**
@@ -374,8 +392,14 @@ async function actionSaveAsNative(ctx) {
     const oldPath = ctx.session.bundle.path;
 
     const defaultDir = await getDefaultSaveDirectory();
+    // Drop the " copy" suffix for untitled bundles — they
+    // haven't been saved anywhere yet, so the default name
+    // is just the bundle's display name. Saved bundles use
+    // "<name> copy" so a Save As against a real file lands
+    // on a distinct name by default.
+    const defaultName = oldPath === null ? oldName : `${oldName} copy`;
     const defaultPath = defaultDir !== ""
-        ? joinScorePath(defaultDir, `${oldName} copy`)
+        ? joinScorePath(defaultDir, defaultName)
         : undefined;
 
     const result = await showNativeSaveDialog({
@@ -393,6 +417,9 @@ async function actionSaveAsNative(ctx) {
         // and the gesture is effectively save-in-place. Route
         // through editor.save() so the bundle's identity
         // doesn't churn through a needless switchToBundle.
+        // Only reachable when oldPath is non-null, since
+        // chosenPath comes from the Save panel and is never
+        // null.
         await ctx.editor.save();
         return;
     }
@@ -423,11 +450,14 @@ async function actionSaveAsNative(ctx) {
  */
 async function actionSaveAsInApp(ctx) {
     const oldName = ctx.session.bundle.name;
+    const oldPath = ctx.session.bundle.path;
     const existing = new Set(
         (await listAvailableScores()).map((s) => s.name)
     );
 
-    let value = `${oldName} copy`;
+    // Drop the " copy" suffix for untitled bundles, matching
+    // the native Save panel's default-name logic.
+    let value = oldPath === null ? oldName : `${oldName} copy`;
     let errorMessage = "";
     /** @type {string | null} */
     let finalName = null;
@@ -445,12 +475,16 @@ async function actionSaveAsInApp(ctx) {
             errorMessage = "Name cannot be empty.";
             continue;
         }
-        if (name === oldName) {
+        if (name === oldName && oldPath !== null) {
             // Save-in-place: matches native macOS Save
             // panel behaviour when the user types the
             // current filename. Goes through the standard
             // editor.save() path so the onSaved toast and
             // dirty-state transition fire normally.
+            // Skipped for untitled bundles (oldPath===null)
+            // because there is no in-place to save to;
+            // typing the name just commits the bundle to
+            // disk under that name for the first time.
             await ctx.editor.save();
             return;
         }
@@ -743,14 +777,18 @@ export async function actionDeleteScore(ctx) {
     ctx.messages.write(`Deleted score "${name}".`);
 
     // Switch to another score if any exist; otherwise create a
-    // fresh default so the user always has something open.
+    // fresh in-memory Untitled so the user always has something
+    // open. Matching the new Logic-style New flow: the fallback
+    // bundle isn't written to disk — the user just deleted a
+    // score, they don't want another file appearing
+    // automatically.
     const remaining = await listAvailableScores();
     let next;
     if (remaining.length > 0) {
         next = await loadScoreByPath(remaining[0].path);
     }
     if (!next) {
-        next = await createNewScore("Untitled");
+        next = createUntitledScore();
     }
     if (next.path !== null) {
         await setCurrentScorePath(next.path);

@@ -758,8 +758,13 @@ async function main() {
             // load doesn't re-run the rename pass. Save
             // also clears the dirty flag the rename set
             // via Bundle.markDirty, leaving the user a
-            // clean state on first paint.
-            await editor.save();
+            // clean state on first paint. Skipped for
+            // untitled bundles (no path to save to); the
+            // first Save As will commit the migrated state
+            // along with anything else the user has done.
+            if (session.bundle.path !== null) {
+                await editor.save();
+            }
         }
     };
 
@@ -815,7 +820,14 @@ async function main() {
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
         editor.refreshActiveTabFromBundle();
-        await editor.save();
+        // Persist the normalised state so the dirty flag the
+        // migration set via updateContent doesn't surprise
+        // the composer on first paint. Skipped for untitled
+        // bundles; the first Save As will commit the
+        // normalised state along with anything else.
+        if (session.bundle.path !== null) {
+            await editor.save();
+        }
     };
 
     // --- Score session ---
@@ -887,6 +899,14 @@ async function main() {
          * the right score's files.
          */
         rewatch() {
+            if (session.bundle.path === null) {
+                // Untitled bundle: not on disk, nothing to
+                // watch and no active-score marker to set.
+                // Stop any prior watch so the mirror doesn't
+                // keep polling for a former score's files.
+                diskMirror.watch(null, null);
+                return;
+            }
             diskMirror.watch(session.bundle.name, onExternalChange);
             void diskMirror.setActiveScore(session.bundle.name);
         },
@@ -2199,6 +2219,14 @@ async function main() {
             e.preventDefault();
             if (e.shiftKey) {
                 void actionSaveAs({ session, messages, editor });
+            } else if (session.bundle.path === null) {
+                // Untitled bundle: route Cmd-S through Save As
+                // so the user gets the Save panel and the
+                // bundle acquires a real path before being
+                // persisted. Bundle.save() throws on a null
+                // path, so calling editor.save() here directly
+                // would surface as an error instead.
+                void actionSaveAs({ session, messages, editor });
             } else {
                 editor.save();
             }
@@ -2252,17 +2280,31 @@ async function main() {
                     return;
                 }
                 if (decision === "save") {
-                    try {
-                        await editor.save();
-                    } catch (err) {
-                        // If the save threw, the bundle is
-                        // still dirty; bail out of the close
-                        // rather than silently dropping the
-                        // user's work. They'll see whatever
-                        // error message the save path
-                        // already surfaced.
-                        gxwWindow.sendCloseDecision("cancel");
-                        return;
+                    if (session.bundle.path === null) {
+                        // Untitled bundle on close: bring up
+                        // Save As so the user can give it a
+                        // path before the window closes. If
+                        // they cancel the Save panel, cancel
+                        // the close as well rather than
+                        // silently dropping their work.
+                        await actionSaveAs({ session, messages, editor });
+                        if (session.bundle.path === null) {
+                            gxwWindow.sendCloseDecision("cancel");
+                            return;
+                        }
+                    } else {
+                        try {
+                            await editor.save();
+                        } catch (err) {
+                            // If the save threw, the bundle is
+                            // still dirty; bail out of the close
+                            // rather than silently dropping the
+                            // user's work. They'll see whatever
+                            // error message the save path
+                            // already surfaced.
+                            gxwWindow.sendCloseDecision("cancel");
+                            return;
+                        }
                     }
                 }
                 gxwWindow.sendCloseDecision("proceed");
@@ -2405,6 +2447,16 @@ function wireInlineRename(el, session, messages) {
     });
 
     const startEdit = () => {
+        if (session.bundle.path === null) {
+            // Untitled bundle has no on-disk folder to rename.
+            // Point the user at Save As; once a path exists,
+            // renaming becomes available.
+            messages.write(
+                "Save the score first before renaming it.",
+                "info"
+            );
+            return;
+        }
         const originalName = session.bundle.name;
         el.classList.add("editing");
         el.setAttribute("contenteditable", "true");
