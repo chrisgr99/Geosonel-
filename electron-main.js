@@ -447,6 +447,7 @@ async function readRecordFromFolder(folder, name) {
   let imageName = null;
   let imageContentHash = null;
   let pinnedSlots = [];
+  let displayBrightness = 100;
   try {
     const metaText = await fsp.readFile(
       path.join(folder, SCORE_META_FILENAME),
@@ -475,6 +476,17 @@ async function readRecordFromFolder(folder, name) {
       pinnedSlots = meta.pinnedSlots.map((v) =>
         typeof v === 'string' ? v : null
       );
+    }
+    // Stage 6 extension: per-score display brightness
+    // for the canvas image, 0–100. Older sidecars
+    // predate this field and the value stays at the
+    // default 100 (no change). Clamped here so a value
+    // edited externally to be out of range can't push
+    // the renderer into an invalid state.
+    if (typeof meta.displayBrightness === 'number'
+        && Number.isFinite(meta.displayBrightness)) {
+      const v = meta.displayBrightness;
+      displayBrightness = v < 0 ? 0 : (v > 100 ? 100 : v);
     }
   } catch (err) {
     if (err.code !== 'ENOENT') {
@@ -538,6 +550,7 @@ async function readRecordFromFolder(folder, name) {
     imageContentHash,
     pinnedSlots,
     pinnedFiles,
+    displayBrightness,
     updatedAt: stat.mtimeMs,
   };
 }
@@ -575,12 +588,20 @@ async function writeScoreRecord(scorePath, record) {
   // scores carry their pins. Missing or invalid entries
   // normalise to null so the on-disk array always has the
   // hash-or-null shape the renderer expects.
+  // displayBrightness joined the sidecar in Stage 6;
+  // absent or non-numeric values normalise to the
+  // default 100 so older renderers reading a freshly-
+  // written sidecar still see a well-formed value.
   const meta = {
     imageName: record.imageName ?? null,
     imageContentHash: record.imageContentHash ?? null,
     pinnedSlots: Array.isArray(record.pinnedSlots)
       ? record.pinnedSlots.map((v) => (typeof v === 'string' ? v : null))
       : [],
+    displayBrightness: typeof record.displayBrightness === 'number'
+        && Number.isFinite(record.displayBrightness)
+      ? Math.max(0, Math.min(100, record.displayBrightness))
+      : 100,
   };
   await fsp.writeFile(
     path.join(scoreFolder, SCORE_META_FILENAME),

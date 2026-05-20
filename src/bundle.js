@@ -147,6 +147,25 @@ export class Bundle {
         this.pinnedBytes = new Map();
 
         /**
+         * Per-score display brightness for the canvas
+         * image, 0 to 100. Applied as a multiplicative
+         * globalAlpha at draw time on the rendered
+         * display bitmap inside canvas.js's _drawImage,
+         * so triggers, sprites, curves, and any image-
+         * derived signals (pxLt, OKLCh, anything that
+         * samples image pixels) all read from the
+         * unmodified original bitmap — the dim is purely
+         * a visual concession for editing over busy image
+         * content. Default 100 (no change); 0 fades the
+         * image fully toward the canvas-region
+         * background colour. Travels with the score
+         * through toRecord / fromRecord. See DESIGN.md
+         * Section 13.5 and Section 26.
+         * @type {number}
+         */
+        this.displayBrightness = 100;
+
+        /**
          * Has this bundle been mutated since its last save?
          * The canonical dirty signal for the score; subscribers
          * (title bar, saved indicator, close-with-unsaved-changes
@@ -405,25 +424,13 @@ export class Bundle {
     // --- Pinned image operations (Stage 5) ---
 
     /**
-     * Find the first empty pinned slot index, or null when
-     * every slot is occupied. Used by pinCurrentImage to
-     * decide where a new pin lands, and by the Canvas
-     * inspector's Pin-button enable logic.
-     * @returns {number | null}
-     */
-    findFirstEmptyPinnedSlot() {
-        for (let i = 0; i < PINNED_SLOTS_COUNT; i++) {
-            if (this.pinnedSlots[i] === null) return i;
-        }
-        return null;
-    }
-
-    /**
      * Find the slot index holding a particular content
-     * hash, or null when the hash isn't pinned. Used for
-     * the Pin-button "already pinned to slot N" disabled
-     * message and for the active-frame logic on score
-     * open.
+     * hash, or null when the hash isn't pinned. Used by
+     * the score-open active-frame logic (matching the
+     * bundle's imageContentHash against pinned slots so
+     * the green frame lights the right slot) and by
+     * dropHashOnPinnedSlot to decide between the splice-
+     * reorder and replace-target cases.
      * @param {string} hash
      * @returns {number | null}
      */
@@ -446,60 +453,114 @@ export class Bundle {
     }
 
     /**
-     * Pin the current background image into the first
-     * empty pinned slot. Copies the bytes into
-     * pinnedBytes under the current image's content hash
-     * and writes the hash into the slot; the bundle is
-     * marked dirty on success.
+     * Drop an image onto a specific pinned slot. The Stage
+     * 5 second-commit pinning gesture: the user drags a
+     * shared thumbnail down into a specific slot in the
+     * pinned section, and this method does whatever the
+     * drop should mean given the current pinned state.
      *
-     * Returns an outcome object describing what happened:
-     *   { ok: true, slot: N }              pinned into 0-indexed slot N
-     *   { ok: false, reason: "no-image" }  no current background to pin
-     *   { ok: false, reason: "no-hash" }   current image carries no content hash
-     *                                       (shouldn't normally happen — the
-     *                                       score-open syncGalleryFromBundle
-     *                                       backfills the hash; surfaced so
-     *                                       the Pin button can disable rather
-     *                                       than silently fail in the corner
-     *                                       case)
-     *   { ok: false, reason: "already-pinned", slot: N }
-     *                                       the current image's hash is
-     *                                       already pinned in slot N
-     *   { ok: false, reason: "full" }      every pinned slot is occupied
+     * Two cases:
      *
-     * Callers (canvasInspector, main.js wiring) translate
-     * the outcome into the appropriate UI feedback.
+     * Hash is NOT currently in any pinned slot. The drop
+     * is a fresh pin. Whatever was at targetSlotIdx (image
+     * or null) is replaced; if the displaced image was the
+     * last reference to its hash anywhere in pinnedSlots,
+     * its bytes are garbage-collected from pinnedBytes.
+     * The dragged image's bytes are added to pinnedBytes
+     * if they aren't already keyed there.
      *
-     * @returns {{ ok: true, slot: number }
-     *   | { ok: false, reason: "no-image" | "no-hash" | "full" }
-     *   | { ok: false, reason: "already-pinned", slot: number }}
+     * Hash IS currently in another pinned slot. The drop
+     * is a reorder: splice the hash out of its current
+     * slot and insert it at targetSlotIdx, with other
+     * slots between source and target shifting to fill
+     * the gap. The pinned slot count stays at
+     * PINNED_SLOTS_COUNT (one removed, one inserted),
+     * the target's previous occupant shifts toward the
+     * source position rather than being replaced, and
+     * pinnedBytes is unchanged (the same hash still
+     * occupies the array).
+     *
+     * No-op cases (out-of-range target, dropping a hash
+     * onto its own current slot) return without dirtying
+     * the bundle.
+     *
+     * @param {string} hash       Content hash of the image being dropped.
+     * @param {ArrayBuffer} bytes Image bytes (typically the normalised
+     *   1000×1000 JPEG@70 — must match what generated the
+     *   hash; the caller from main.js loads from the
+     *   gallery cache to get exactly these bytes).
+     * @param {number} targetSlotIdx 0-indexed pinned slot the drop landed on.
+     * @returns {boolean} True iff the operation actually mutated state
+     *   (false for the out-of-range and drop-on-own-slot
+     *   no-op cases). Callers can use this to skip the
+     *   save and the user-visible message on a no-op
+     *   without re-checking the no-op conditions
+     *   themselves.
      */
-    pinCurrentImage() {
-        if (this.imageName === null) {
-            return { ok: false, reason: "no-image" };
+    dropHashOnPinnedSlot(hash, bytes, targetSlotIdx) {
+        if (targetSlotIdx < 0 || targetSlotIdx >= PINNED_SLOTS_COUNT) return false;
+        const currentIdx = this.pinnedSlots.indexOf(hash);
+        if (currentIdx === targetSlotIdx) return false;
+        if (currentIdx >= 0) {
+            // Reorder: splice out, then splice in. The
+            // single splice-then-splice pair preserves
+            // the array length (one removed, one
+            // inserted), so we don't need to truncate or
+            // pad afterwards. pinnedBytes is unchanged
+            // because the hash hasn't gained or lost a
+            // reference — it just moved positions.
+            this.pinnedSlots.splice(currentIdx, 1);
+            this.pinnedSlots.splice(targetSlotIdx, 0, hash);
+        } else {
+            // Fresh pin: replace whatever was at the
+            // target slot. Capture the displaced hash
+            // first so we can decide whether to GC its
+            // bytes after the swap; the bundle invariant
+            // is that pinnedBytes contains no orphan
+            // keys, so a slot losing its last reference
+            // means its bytes need to drop out of the
+            // map too.
+            const displacedHash = this.pinnedSlots[targetSlotIdx];
+            this.pinnedSlots[targetSlotIdx] = hash;
+            if (!this.pinnedBytes.has(hash)) {
+                this.pinnedBytes.set(hash, bytes);
+            }
+            if (displacedHash !== null
+                && !this.pinnedSlots.includes(displacedHash)) {
+                this.pinnedBytes.delete(displacedHash);
+            }
         }
-        if (this.imageContentHash === null) {
-            return { ok: false, reason: "no-hash" };
-        }
-        const existingSlot = this.findPinnedSlotForHash(this.imageContentHash);
-        if (existingSlot !== null) {
-            return { ok: false, reason: "already-pinned", slot: existingSlot };
-        }
-        const emptySlot = this.findFirstEmptyPinnedSlot();
-        if (emptySlot === null) {
-            return { ok: false, reason: "full" };
-        }
-        const currentImage = this.getCurrentImage();
-        if (currentImage === null) {
-            // Defensive: imageName was set but the binary
-            // file isn't actually in the files array. Treat
-            // as no-image rather than crashing.
-            return { ok: false, reason: "no-image" };
-        }
-        this.pinnedBytes.set(this.imageContentHash, currentImage.content);
-        this.pinnedSlots[emptySlot] = this.imageContentHash;
         this.markDirty();
-        return { ok: true, slot: emptySlot };
+        return true;
+    }
+
+    // --- Display brightness (Stage 6) ---
+
+    /**
+     * Set the per-score display brightness. Clamps the
+     * input to 0–100 and marks the bundle dirty on any
+     * actual change. Same-value pushes (typical for a
+     * slider holding still at one position, or for the
+     * value already in effect at score open) trigger no
+     * dirty flag and no subscriber fan-out.
+     *
+     * The visual effect lives in canvas.js's _drawImage,
+     * which reads this value via the canvas's own
+     * setDisplayBrightness mirror; the bundle field is
+     * the persistent source of truth that the canvas
+     * mirror is synced against at score open and on
+     * every user adjustment.
+     *
+     * @param {number} value  0–100; outside that range is clamped.
+     */
+    setDisplayBrightness(value) {
+        const n = typeof value === "number" && Number.isFinite(value)
+            ? value
+            : 100;
+        const clamped = n < 0 ? 0 : (n > 100 ? 100 : n);
+        if (clamped === this.displayBrightness) return;
+        this.displayBrightness = clamped;
+        this.markDirty();
     }
 
     /**
@@ -556,6 +617,7 @@ export class Bundle {
             imageContentHash: this.imageContentHash,
             pinnedSlots: this.pinnedSlots.slice(),
             pinnedFiles,
+            displayBrightness: this.displayBrightness,
             updatedAt: Date.now(),
         };
     }
@@ -610,6 +672,21 @@ export class Bundle {
                     bundle.pinnedBytes.set(hash, bytes);
                 }
             }
+        }
+        // displayBrightness (Stage 6). Older records
+        // predate this field and load with the default
+        // 100 (no change), which keeps existing scores
+        // looking identical to their pre-Stage-6 state
+        // until the user explicitly adjusts the slider.
+        // The value is clamped on load so an out-of-range
+        // value persisted by some future external tool
+        // can't push the bundle into an invalid state.
+        if (typeof record.displayBrightness === "number"
+            && Number.isFinite(record.displayBrightness)) {
+            const v = record.displayBrightness;
+            bundle.displayBrightness = v < 0 ? 0 : (v > 100 ? 100 : v);
+        } else {
+            bundle.displayBrightness = 100;
         }
         bundle._captureSavedSnapshot();
         bundle.markClean();

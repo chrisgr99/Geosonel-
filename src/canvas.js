@@ -356,6 +356,24 @@ export class Canvas {
         this._imageOKLCh = null;
 
         /**
+         * Per-score display brightness, 0–100. Applied as
+         * a multiplicative globalAlpha at draw time inside
+         * _drawImage so the rendered image fades toward the
+         * canvas-region background colour as the value
+         * drops. The signal sampling path is not affected
+         * — _imagePixels and _imageOKLCh are both built
+         * from _imageBitmapOriginal, not the displayed
+         * bitmap, and the alpha only touches the on-screen
+         * draw call. The canvas owns a mirror of the
+         * bundle's value so the draw loop has the value
+         * synchronously; main.js syncs the mirror via
+         * setDisplayBrightness on score open and on each
+         * slider adjustment.
+         * @type {number}
+         */
+        this._displayBrightness = 100;
+
+        /**
          * The scene to render on top of the grid, or null if
          * no sketch has been run yet.
          * @type {import("./scene.js").Scene | null}
@@ -766,6 +784,34 @@ export class Canvas {
             this._drawScheduled = false;
             this._draw();
         });
+    }
+
+    /**
+     * Set the per-score display brightness. Clamps the
+     * value to 0–100 and schedules a redraw on any actual
+     * change. The canvas's stored value is the source of
+     * truth for the draw loop; the bundle's matching
+     * field is the persistent source of truth. main.js
+     * pushes both whenever the user moves the Brightness
+     * slider and pushes the canvas value on score open
+     * from the bundle's stored value.
+     *
+     * Cheap to call: no bitmap re-derivation, no
+     * subscriber fan-out, just a field write plus a
+     * coalesced draw. Same-value pushes early-return so
+     * a slider that holds at one position doesn't churn
+     * redundant draws.
+     *
+     * @param {number} value  0–100; outside that range is clamped.
+     */
+    setDisplayBrightness(value) {
+        const n = typeof value === "number" && Number.isFinite(value)
+            ? value
+            : 100;
+        const clamped = n < 0 ? 0 : (n > 100 ? 100 : n);
+        if (clamped === this._displayBrightness) return;
+        this._displayBrightness = clamped;
+        this.scheduleDraw();
     }
 
     // --- Coordinate conversion ---
@@ -3421,12 +3467,29 @@ export class Canvas {
         const right = this.toPixelX(halfW);
         const top = this.toPixelY(halfH);
         const bottom = this.toPixelY(-halfH);
+        // Apply the per-score display brightness as a
+        // multiplicative globalAlpha. The fence's BG_COLOUR
+        // has already been laid down by _fillCanvasRegion
+        // before _drawImage runs, so an alpha < 1 fades the
+        // image toward that background colour. The save /
+        // restore of globalAlpha is multiplicative against
+        // whatever the surrounding context state already
+        // is; in the current draw order ctx.globalAlpha is
+        // 1 going into _drawImage, but restoring the
+        // previous value rather than hardcoding 1 keeps the
+        // method safe under future changes to the surrounding
+        // draw sequence. _displayBrightness lives in the
+        // 0–100 user-facing range; dividing by 100 turns it
+        // into the 0–1 alpha multiplier.
+        const prevAlpha = ctx.globalAlpha;
+        ctx.globalAlpha = prevAlpha * (this._displayBrightness / 100);
         ctx.drawImage(
             this._imageBitmap,
             left, top,
             right - left,
             bottom - top
         );
+        ctx.globalAlpha = prevAlpha;
     }
 
     _drawGrid() {

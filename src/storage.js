@@ -85,6 +85,12 @@ const SCORE_FOLDER_EXTENSION = ".gxs";
  *   .gxs folder's pinned/ subfolder; on IDB they're inline in the
  *   record. Optional; absent or empty when the score has no pinned
  *   images.
+ * @property {number} [displayBrightness]  Per-score display brightness
+ *   for the canvas image, 0–100 (Stage 6 of Canvas inspector work).
+ *   Applied as a render-time globalAlpha in canvas.js's _drawImage; does
+ *   not touch the source bitmap or the music-signal sampling path.
+ *   Optional for backward compatibility — absent or non-numeric values
+ *   load with the default 100 (no change).
  * @property {number} updatedAt              Epoch milliseconds of last save.
  */
 

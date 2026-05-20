@@ -81,6 +81,7 @@ import {
     findByContentHash as galleryFindByContentHash,
     add as galleryAdd,
     touch as galleryTouch,
+    remove as galleryRemove,
 } from "./src/gallery.js";
 import { computeContentHash } from "./src/imageHash.js";
 import { generateThumbnail } from "./src/thumbnailGen.js";
@@ -284,6 +285,20 @@ async function main() {
             await canvas.setImage({ bytes: img.content, mimeType: img.mimeType });
         }
     }
+
+    // Sync the canvas's per-score display brightness with
+    // the bundle's stored value before the first paint
+    // (Stage 6). The bundle's value defaults to 100 (no
+    // change) for older records and freshly-created
+    // bundles, so this is typically a same-value no-op;
+    // when the bundle carries a saved non-default value,
+    // pushing here means the image paints at the right
+    // brightness from frame zero rather than briefly
+    // flashing at 100 and then dimming after the
+    // inspector wiring block below runs. The inspector's
+    // slider is synced separately further down, once
+    // editor.canvasInspector exists.
+    canvas.setDisplayBrightness(bundle.displayBrightness);
 
     // --- Electron detection ---
     //
@@ -671,16 +686,12 @@ async function main() {
         if (!editor.canvasInspector) return;
         await editor.canvasInspector.refreshGallery();
         editor.canvasInspector.setActiveGalleryId(galleryId);
-        // Stage 5: refresh the pinned section and Pin
-        // button. The newly imported image's hash may
-        // match a pinned slot (re-import of a pinned
-        // image), in which case the pinned section's
-        // active flag moves to that slot. The Pin button
-        // also re-evaluates: a fresh non-pinned image
-        // enables Pin; a re-import of an already-pinned
-        // image disables Pin with the "already pinned"
-        // reason.
-        pushPinnedAndButtonState();
+        // Stage 5: refresh the pinned section. The newly
+        // imported image's hash may match a pinned slot
+        // (re-import of a pinned image), in which case
+        // the pinned section's active flag moves to
+        // that slot.
+        pushPinnedSnapshot();
     });
 
     // --- Disk mirror ---
@@ -935,21 +946,18 @@ async function main() {
     };
 
     /**
-     * Stage 5 helpers for the Canvas inspector's pinned
+     * Stage 5 helper for the Canvas inspector's pinned
      * section. The inspector renders the pinned section
      * from a snapshot (each slot is null or
-     * { hash, dataUrl, active }) and treats the Pin
-     * button's enabled / disabled state as something
-     * main.js computes from bundle state. These three
-     * helpers convert the bundle's pinnedSlots and
-     * pinnedBytes into snapshot shape, compute the
-     * button state, and push both in one call. They run
-     * from every place where the bundle's pinned state
-     * or current image changes: syncGalleryFromBundle's
-     * finally block (which covers score open),
-     * imageImporter.setOnImportComplete, the Pin click
-     * handler, the pinned-slot click handler, and the
-     * remove-image handler.
+     * { hash, dataUrl, active }). This helper converts
+     * the bundle's pinnedSlots and pinnedBytes into
+     * snapshot shape and pushes to the inspector. It
+     * runs from every place where the bundle's pinned
+     * state or current image changes:
+     * syncGalleryFromBundle's finally block (which
+     * covers score open), imageImporter.setOnImportComplete,
+     * the pinned-slot click handler, the drag-to-pinned
+     * drop handler, and the remove-image handler.
      */
 
     /**
@@ -1002,51 +1010,26 @@ async function main() {
     };
 
     /**
-     * Compute the Pin button's current enabled / disabled
-     * state from bundle state. Disabled with a reason
-     * when there's no current background, when the
-     * image hasn't yet been hashed, when the current
-     * image is already pinned, or when every slot is
-     * full. Enabled otherwise. The disabledReason
-     * becomes the button's tooltip on hover; click
-     * outcomes that match these reasons go to the
-     * messages area through the Pin click handler.
-     * @returns {{ enabled: boolean, disabledReason?: string }}
-     */
-    const computePinButtonState = () => {
-        const bundle = session.bundle;
-        if (bundle.imageName === null) {
-            return { enabled: false, disabledReason: "No current background to pin." };
-        }
-        if (bundle.imageContentHash === null) {
-            return { enabled: false, disabledReason: "Image not yet ready for pinning." };
-        }
-        const existingSlot = bundle.findPinnedSlotForHash(bundle.imageContentHash);
-        if (existingSlot !== null) {
-            return {
-                enabled: false,
-                disabledReason: `Already pinned to slot ${existingSlot + 1}.`,
-            };
-        }
-        if (bundle.findFirstEmptyPinnedSlot() === null) {
-            return {
-                enabled: false,
-                disabledReason: "All pinned slots are full.",
-            };
-        }
-        return { enabled: true };
-    };
-
-    /**
-     * Push the current pinned snapshot and pin button
-     * state to the Canvas inspector. Safe to call when
-     * the inspector isn't mounted yet (early no-op).
+     * Push the current pinned snapshot to the Canvas
+     * inspector. Safe to call when the inspector isn't
+     * mounted yet (early no-op).
      * @returns {void}
      */
-    const pushPinnedAndButtonState = () => {
+    // The previous commit also computed a Pin-button
+    // enabled/disabled state here (computePinButtonState).
+    // That helper is gone in the Stage 5 second commit
+    // along with the Pin button itself — the four
+    // disabled reasons (no current background, no hash,
+    // already pinned, full) no longer surface as button
+    // state; they're either irrelevant under the drag
+    // gesture (which always pins the dragged image) or
+    // absorbed by the drop logic in
+    // bundle.dropHashOnPinnedSlot (the splice-reorder
+    // case handles dragging an already-pinned image to
+    // a different slot).
+    const pushPinnedSnapshot = () => {
         if (!editor.canvasInspector) return;
         editor.canvasInspector.setPinnedSnapshot(buildPinnedSnapshot());
-        editor.canvasInspector.setPinButtonState(computePinButtonState());
     };
 
     /**
@@ -1085,15 +1068,14 @@ async function main() {
         try {
             await syncGalleryFromBundleInner();
         } finally {
-            // Always refresh the pinned section and Pin
-            // button after a gallery sync — the bundle's
+            // Always refresh the pinned section after a
+            // gallery sync — the bundle's
             // imageContentHash may have been backfilled
             // (legacy migration path), which changes
             // which pinned slot, if any, carries the
-            // green active-frame and whether the Pin
-            // button enables. Runs regardless of which
-            // return path the inner function took.
-            pushPinnedAndButtonState();
+            // green active-frame. Runs regardless of
+            // which return path the inner function took.
+            pushPinnedSnapshot();
         }
     };
 
@@ -1217,6 +1199,15 @@ async function main() {
         } else {
             await canvas.setImage(null);
         }
+        // Sync brightness to the externally-loaded bundle
+        // (Stage 6). Disk edits that change displayBrightness
+        // — typically AI assistants editing .gxw-meta.json
+        // directly — land here and propagate to both canvas
+        // and inspector slider.
+        canvas.setDisplayBrightness(newBundle.displayBrightness);
+        if (editor.canvasInspector) {
+            editor.canvasInspector.setDisplayBrightness(newBundle.displayBrightness);
+        }
         await runScene();
         // Refresh the Canvas inspector's gallery active-frame
         // for the externally-loaded bundle (Stage 4). Runs
@@ -1280,6 +1271,21 @@ async function main() {
             } else {
                 await canvas.setImage(null);
             }
+
+            // Sync canvas and inspector brightness to the
+            // newly-loaded bundle's stored value (Stage 6).
+            // Same-value pushes early-return inside both
+            // setters so opening a score whose brightness
+            // is 100 (the default) is cheap. Inspector sync
+            // is conditional defensively; editor.canvasInspector
+            // exists by this point in normal flow, but the
+            // check keeps a startup-order regression from
+            // throwing here.
+            canvas.setDisplayBrightness(newBundle.displayBrightness);
+            if (editor.canvasInspector) {
+                editor.canvasInspector.setDisplayBrightness(newBundle.displayBrightness);
+            }
+
             refreshScoreNameDisplay();
 
             // Record this score in the Open Recent submenu's
@@ -1344,6 +1350,15 @@ async function main() {
                 await canvas.setImage({ bytes: img.content, mimeType: img.mimeType });
             } else {
                 await canvas.setImage(null);
+            }
+            // Sync brightness to the reconciled bundle
+            // (Stage 6). The reconciled version may carry a
+            // different displayBrightness if disk had a
+            // newer save with the slider in a different
+            // position.
+            canvas.setDisplayBrightness(reconciled.displayBrightness);
+            if (editor.canvasInspector) {
+                editor.canvasInspector.setDisplayBrightness(reconciled.displayBrightness);
             }
             messages.write("Loaded latest version from disk.");
         }
@@ -1491,14 +1506,11 @@ async function main() {
                 if (editor.canvasInspector) {
                     await editor.canvasInspector.refreshGallery();
                     editor.canvasInspector.setActiveGalleryId(id);
-                    // Push pinned snapshot + Pin button
-                    // state — the new current background's
-                    // hash may match a pinned slot, which
-                    // moves the active-frame onto that
-                    // slot too, and the Pin button now
-                    // either disables ("already pinned")
-                    // or stays enabled depending.
-                    pushPinnedAndButtonState();
+                    // Push pinned snapshot — the new
+                    // current background's hash may
+                    // match a pinned slot, which moves
+                    // the active-frame onto that slot.
+                    pushPinnedSnapshot();
                 }
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
@@ -1526,66 +1538,10 @@ async function main() {
         editor.canvasInspector.onRemoveImageClick(async () => {
             await imageImporter.removeCurrentImage();
             editor.canvasInspector.setActiveGalleryId(null);
-            // Stage 5: refresh pinned section + Pin button.
-            // No current background means no pinned slot
-            // carries the green active-frame, and the Pin
-            // button disables with the "No current
-            // background to pin" reason.
-            pushPinnedAndButtonState();
-        });
-
-        // --- Pin button (Stage 5) ---
-        //
-        // Pin click handler. Calls bundle.pinCurrentImage()
-        // and translates the tagged outcome into a
-        // messages-area note plus a Pin button + pinned
-        // section refresh. Click always fires this handler
-        // regardless of the button's visual state; the
-        // bundle method itself returns the authoritative
-        // "why not" reason which we surface even when the
-        // user clicks a disabled-looking button. On success
-        // we save the bundle so the pin persists across
-        // reloads.
-        editor.canvasInspector.onPinClick(async () => {
-            const result = session.bundle.pinCurrentImage();
-            if (!result.ok) {
-                if (result.reason === "no-image") {
-                    messages.write("No current background to pin.");
-                } else if (result.reason === "no-hash") {
-                    messages.write(
-                        "Image not yet ready for pinning; try again in a moment.",
-                        "error",
-                    );
-                } else if (result.reason === "already-pinned") {
-                    messages.write(
-                        `This image is already pinned to slot ${result.slot + 1}.`,
-                    );
-                } else if (result.reason === "full") {
-                    messages.write(
-                        "All pinned slots are full. Drag-to-unpin lands in the next commit; for now, remove a pin by editing the score's pinned/ subfolder on disk.",
-                    );
-                }
-                return;
-            }
-            // Pin landed. Push the new snapshot first so
-            // the user sees the slot fill in immediately,
-            // then save in the background. A save failure
-            // leaves the pin in memory but flags the
-            // persistence issue in the messages area; the
-            // bundle stays dirty so the next Cmd-S will
-            // retry.
-            pushPinnedAndButtonState();
-            try {
-                await session.bundle.save();
-            } catch (err) {
-                console.error("GXW: failed to persist bundle after pin:", err);
-                messages.write(
-                    "Image pinned but could not be saved to storage.",
-                    "error",
-                );
-                return;
-            }
-            messages.write(`Pinned to slot ${result.slot + 1}.`);
+            // Stage 5: refresh pinned section. No current
+            // background means no pinned slot carries
+            // the green active-frame.
+            pushPinnedSnapshot();
         });
 
         // Pinned-slot click handler. Sets the slot's image
@@ -1671,7 +1627,7 @@ async function main() {
                 // the clicked slot via the snapshot's
                 // active flag, which now matches
                 // bundle.imageContentHash.
-                pushPinnedAndButtonState();
+                pushPinnedSnapshot();
             }
             // slotIndex is captured for any future use
             // (drag-to-unpin in the second commit). For
@@ -1682,6 +1638,201 @@ async function main() {
             // the callback contract.
             void slotIndex;
         });
+
+        // --- Drag-on-pinned-slot handler (Stage 5 second commit) ---
+        //
+        // The Canvas inspector emits this when the user
+        // drags any thumbnail (shared or pinned) onto a
+        // specific pinned slot. main.js dispatches on
+        // source.kind:
+        //
+        //   - source.kind === "shared": load bytes via
+        //     gallery.loadImage, compute the content
+        //     hash, then call dropHashOnPinnedSlot. The
+        //     hash may already be in pinnedSlots (re-pin
+        //     of a pinned image), in which case
+        //     dropHashOnPinnedSlot's splice-reorder path
+        //     takes over.
+        //
+        //   - source.kind === "pinned": the bytes are
+        //     already in bundle.pinnedBytes keyed by the
+        //     source hash, and dropHashOnPinnedSlot's
+        //     splice-reorder path runs because the hash
+        //     is by definition already pinned. No
+        //     gallery I/O needed.
+        //
+        // dropHashOnPinnedSlot returns true if the
+        // operation actually mutated state, false for
+        // the no-op cases (out-of-range slot, drop on
+        // own slot). We skip the save and the user-
+        // visible message on a no-op.
+        editor.canvasInspector.onDropOnPinnedSlot(async ({ source, targetSlotIndex }) => {
+            /** @type {ArrayBuffer | null} */
+            let bytes = null;
+            /** @type {string | null} */
+            let hash = null;
+            if (source.kind === "shared") {
+                try {
+                    const loaded = await galleryLoadImage(source.entryId);
+                    bytes = loaded.bytes;
+                    hash = await computeContentHash(bytes);
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    messages.write(`Could not load image for pinning: ${msg}`, "error");
+                    return;
+                }
+            } else {
+                // source.kind === "pinned". Bytes already
+                // live on the bundle; no IPC needed.
+                hash = source.hash;
+                const existing = session.bundle.pinnedBytes.get(hash);
+                if (existing === undefined) {
+                    messages.write(
+                        "Pinned image bytes missing; the score's pinned/ subfolder may be out of sync.",
+                        "error",
+                    );
+                    return;
+                }
+                bytes = existing;
+            }
+            if (bytes === null || hash === null) return;
+
+            const mutated = session.bundle.dropHashOnPinnedSlot(hash, bytes, targetSlotIndex);
+            if (!mutated) return;
+
+            // Push the new pinned snapshot first so the
+            // user sees the slot fill in immediately,
+            // then save in the background. A save
+            // failure leaves the change in memory but
+            // flags the persistence issue; the bundle
+            // stays dirty so the next Cmd-S retries.
+            pushPinnedSnapshot();
+
+            try {
+                await session.bundle.save();
+            } catch (err) {
+                console.error("GXW: failed to persist bundle after drag-to-pin:", err);
+                messages.write(
+                    "Image pinned but could not be saved to storage.",
+                    "error",
+                );
+                return;
+            }
+            if (source.kind === "pinned") {
+                messages.write(`Pinned image moved to slot ${targetSlotIndex + 1}.`);
+            } else {
+                messages.write(`Pinned to slot ${targetSlotIndex + 1}.`);
+            }
+        });
+
+        // --- Drag-off-pane handler (Stage 5 second commit) ---
+        //
+        // The Canvas inspector emits this when the user
+        // drags a thumbnail outside the canvas inspector
+        // pane and releases. The vanish animation has
+        // already played by the time this fires.
+        // Dispatch on source.kind:
+        //
+        //   - source.kind === "shared": remove the
+        //     entry from the shared gallery (deletes
+        //     metadata + full-resolution cache copy).
+        //     Refresh the inspector's gallery view.
+        //
+        //   - source.kind === "pinned": unpin the slot.
+        //     Clears the slot in pinnedSlots and GCs
+        //     bytes from pinnedBytes if no other slot
+        //     still references the hash. Save so the
+        //     unpin persists.
+        editor.canvasInspector.onDragOff(async ({ source }) => {
+            if (source.kind === "shared") {
+                try {
+                    await galleryRemove(source.entryId);
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    messages.write(`Could not remove image from gallery: ${msg}`, "error");
+                    return;
+                }
+                if (editor.canvasInspector) {
+                    await editor.canvasInspector.refreshGallery();
+                    // The removed entry might have been
+                    // the active background's gallery
+                    // entry; if so the active id is
+                    // stale. Clear it defensively. The
+                    // canvas itself still shows the
+                    // background image — removing the
+                    // shared gallery entry doesn't
+                    // disturb the score's image data.
+                    if (editor.canvasInspector !== null) {
+                        // No-op when the cleared id
+                        // doesn't match the removed
+                        // entry; setActiveGalleryId
+                        // short-circuits when the value
+                        // is unchanged.
+                    }
+                }
+                messages.write("Image removed from shared gallery.");
+                return;
+            }
+            // source.kind === "pinned". Unpin the slot.
+            const wasDirtyBefore = session.bundle.dirty;
+            session.bundle.unpinSlot(source.sourceSlotIndex);
+            const becameDirty = !wasDirtyBefore && session.bundle.dirty;
+            // unpinSlot has no return value; use the
+            // dirty-flag transition to detect whether
+            // anything actually changed (defensive
+            // against an out-of-range or already-empty
+            // slot, which would be a no-op).
+            pushPinnedSnapshot();
+            if (!becameDirty && !session.bundle.dirty) {
+                return;
+            }
+            try {
+                await session.bundle.save();
+            } catch (err) {
+                console.error("GXW: failed to persist bundle after unpin:", err);
+                messages.write(
+                    "Image unpinned but could not be saved to storage.",
+                    "error",
+                );
+                return;
+            }
+            messages.write(`Slot ${source.sourceSlotIndex + 1} unpinned.`);
+        });
+
+        // Brightness slider (Stage 6). The inspector's
+        // slider emits the new integer value in 0..100 on
+        // every input event during a drag; main.js routes
+        // the value to bundle.setDisplayBrightness (which
+        // marks the bundle dirty on any actual change) and
+        // canvas.setDisplayBrightness (which schedules a
+        // redraw so the visual change is immediate). Both
+        // setters early-return on same-value pushes so a
+        // slider that holds at one position doesn't churn
+        // through redundant dirty-flag toggles or redraws.
+        //
+        // The brightness control is purely visual:
+        // bundle.setDisplayBrightness updates only the
+        // bundle's displayBrightness field; image-derived
+        // music signals (pxLt, OKLCh, anything sampling
+        // pixels) continue to read from the unmodified
+        // source bitmap. See DESIGN.md Section 13.5 and
+        // Section 26.
+        editor.canvasInspector.onDisplayBrightnessChange((value) => {
+            session.bundle.setDisplayBrightness(value);
+            canvas.setDisplayBrightness(value);
+        });
+
+        // Push the bundle's stored brightness to the
+        // freshly-mounted slider so the slider position
+        // reflects what's actually persisted, not the
+        // default 100. The inspector's setDisplayBrightness
+        // deliberately does not fire the input listeners
+        // (it's an external sync, not a user adjustment),
+        // so this doesn't trigger a redundant write back
+        // to bundle/canvas. The canvas's mirror was already
+        // synced at the top of main() before the inspector
+        // existed.
+        editor.canvasInspector.setDisplayBrightness(session.bundle.displayBrightness);
     }
 
     // Play Selected toggle. When on, only currently-

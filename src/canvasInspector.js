@@ -10,14 +10,14 @@
  * shared recent-image gallery, and (Stage 6) the image-
  * transformation sliders.
  *
- * Stage 5 layout. Top to bottom: top row with Load
- * Image, Remove Image, Pin, W [field], H [field]; a
- * horizontal separator; the per-score pinned section as
- * a 2-row by 3-column grid of 6 fixed slots; a section
- * divider; the shared recent-image gallery as a 3-column
- * grid of however many entries the gallery currently
- * holds, scrolling vertically when it overflows the
- * pane.
+ * Stage 5 layout. Top to bottom: top row with the
+ * "Image:" section caption, Load and Clear buttons,
+ * and the canvas W and H numeric fields; a horizontal
+ * separator; the per-score pinned section as a 2-row by
+ * 3-column grid of 6 fixed slots; a section divider;
+ * the shared recent-image gallery as a 3-column grid of
+ * however many entries the gallery currently holds,
+ * scrolling vertically when it overflows the pane.
  *
  * Gallery width. Both grids size their thumbnails by
  * dividing a fixed parent width (the CSS variable
@@ -39,11 +39,29 @@
  * orchestration (set as current background, then add-
  * or-promote in the shared gallery so the recipient of
  * a shared score builds up their own shared gallery
- * only from images they actually use). The Pin button
- * on the top row pins the current background via the
- * onPinClick callback; main.js dispatches via
- * bundle.pinCurrentImage and translates the outcome
- * into a messages-area note.
+ * only from images they actually use).
+ *
+ * Pinning gesture. The Stage 5 second-commit redesign
+ * replaces the original Pin button with drag mechanics
+ * that span both gallery sections. Three drag intents:
+ *
+ *   - Drag a shared thumb onto a pinned slot — pins
+ *     (fresh pin or splice-reorder, depending on whether
+ *     the dragged image is already pinned elsewhere).
+ *   - Drag a pinned thumb onto another pinned slot —
+ *     reorders pinned slots (splice).
+ *   - Drag any thumb outside the canvas inspector pane —
+ *     removes from shared (shared thumb dragged) or
+ *     unpins (pinned thumb dragged), with a vanish
+ *     animation on release.
+ *
+ * The drag mechanics live in this module and emit
+ * onDropOnPinnedSlot({ source, targetSlotIndex }) or
+ * onDragOff({ source }) on release, where source is a
+ * discriminated union of { kind: "shared", entryId } or
+ * { kind: "pinned", hash, sourceSlotIndex }. main.js
+ * dispatches via bundle.dropHashOnPinnedSlot,
+ * bundle.unpinSlot, or gallery.remove as appropriate.
  *
  * Shared section. Recency-bump (Stage 5): new imports
  * prepend, clicks promote to front. Click on a shared
@@ -55,15 +73,15 @@
  * encoded in the snapshot entries' active flag.
  *
  * Wiring contract. setCanvasSize and onSceneEdit mirror
- * Stage 1's. Existing for shared section:
- * onSetBackgroundFromGallery, setActiveGalleryId,
- * refreshGallery. New for Stage 5: onPinClick,
- * onSetBackgroundFromPinnedSlot, setPinnedSnapshot,
- * setPinButtonState. The remeasureGalleryWidth hook lets
- * main.js re-trigger the Starting State row measurement
- * after events that might shift the inspector's natural
- * width (tab switches into Canvas, scene reloads that
- * rebuild the Properties tab).
+ * Stage 1's. Shared section: onSetBackgroundFromGallery,
+ * setActiveGalleryId, refreshGallery. Pinned section:
+ * onSetBackgroundFromPinnedSlot, setPinnedSnapshot.
+ * Drag-spanning callbacks: onDropOnPinnedSlot, onDragOff.
+ * The remeasureGalleryWidth hook lets main.js re-trigger
+ * the Starting State row measurement after events that
+ * might shift the inspector's natural width (tab switches
+ * into Canvas, scene reloads that rebuild the Properties
+ * tab).
  */
 
 // @ts-check
@@ -92,6 +110,17 @@ const GALLERY_WIDTH_FALLBACK = 420;
 // _measureGalleryWidth runs, it picks up the real
 // value derived from the measured gallery width.
 const THUMB_SIZE_FALLBACK = 136;
+
+// Click-versus-drag motion threshold in CSS pixels.
+// A pointerdown followed by a pointerup with less than
+// this much cumulative motion in either axis is treated
+// as a click (synthesises onSetBackgroundFromGallery on
+// shared thumbs). Crossing the threshold transitions
+// into drag mode and the click intent is dropped. Same
+// value canvas.js uses for its own click-versus-drag
+// discrimination, so the two surfaces feel identical
+// under fast clicks.
+const DRAG_THRESHOLD_PX = 4;
 
 export class CanvasInspector {
     /**
@@ -175,35 +204,93 @@ export class CanvasInspector {
          */
         this._pinnedSnapshot = new Array(PINNED_SLOTS_COUNT).fill(null);
 
-        /**
-         * Pin button visual state. main.js updates this
-         * whenever the bundle changes in a way that
-         * affects pinnability (image set or removed,
-         * pinned slot filled or cleared, current image
-         * hash recomputed). The disabledReason becomes
-         * the button's tooltip when the button is
-         * disabled. The button always fires onPinClick
-         * when clicked regardless of state; main.js
-         * dispatches via bundle.pinCurrentImage and
-         * surfaces the authoritative outcome in the
-         * messages area.
-         * @type {{ enabled: boolean, disabledReason: string }}
-         */
-        this._pinButtonState = {
-            enabled: false,
-            disabledReason: "No current background to pin",
-        };
-
         /** @type {HTMLDivElement | null} */
         this._pinnedGridEl = null;
-        /** @type {HTMLButtonElement | null} */
-        this._pinButtonEl = null;
-
-        /** @type {Array<() => void>} */
-        this._pinClickListeners = [];
 
         /** @type {Array<(intent: { slotIndex: number, hash: string }) => void>} */
         this._setBackgroundFromPinnedListeners = [];
+
+        /** @type {Array<(intent: { source: DragSource, targetSlotIndex: number }) => void>} */
+        this._dropOnPinnedSlotListeners = [];
+
+        /** @type {Array<(intent: { source: DragSource }) => void>} */
+        this._dragOffListeners = [];
+
+        /**
+         * Active drag state, or null when no drag is in
+         * progress. Set on pointerdown on any draggable
+         * thumbnail (shared entry or populated pinned
+         * slot); transitions to dragging=true once motion
+         * crosses DRAG_THRESHOLD_PX; cleared on pointerup,
+         * pointercancel, or at the end of the vanish
+         * animation when an off-pane drop is processed.
+         *
+         * source identifies what's being dragged —
+         * { kind: "shared", entryId } when dragging from
+         * the shared gallery, { kind: "pinned", hash,
+         * sourceSlotIndex } when dragging from a pinned
+         * slot. The drop semantics in _onDocumentPointerUp
+         * branch on source.kind plus the drop target
+         * (pinned slot, off-pane, or elsewhere) to pick
+         * the right emit.
+         *
+         * previewSrc is the full <img>-ready URL (data:
+         * URI) the drag preview displays. The preview
+         * field carries the floating element (added to
+         * document.body during drag, removed on cleanup
+         * or at the end of the vanish animation).
+         *
+         * currentTarget is the pinned-slot element under
+         * the cursor, or null when not over a pinned
+         * slot — drives the .drop-target class and the
+         * targetSlotIndex value on drop. offPane is true
+         * when the cursor is outside the canvas
+         * inspector pane's bounding rect; an off-pane
+         * drop after threshold means "remove" or "unpin"
+         * depending on source.kind, and gets the vanish
+         * animation.
+         *
+         * @typedef {{ kind: "shared", entryId: string }
+         *   | { kind: "pinned", hash: string, sourceSlotIndex: number }} DragSource
+         *
+         * @type {null | {
+         *   source: DragSource,
+         *   previewSrc: string,
+         *   startX: number,
+         *   startY: number,
+         *   pointerId: number,
+         *   dragging: boolean,
+         *   preview: HTMLDivElement | null,
+         *   currentTarget: HTMLElement | null,
+         *   offPane: boolean,
+         *   onMove: (e: PointerEvent) => void,
+         *   onUp: (e: PointerEvent) => void,
+         * }}
+         */
+        this._dragState = null;
+
+        // --- Brightness slider state (Stage 6) ---
+
+        /**
+         * Reference to the rendered brightness slider
+         * input. Held so setDisplayBrightness can write
+         * its value programmatically (typically on score
+         * open, to sync against the bundle's stored
+         * value). Null before _render mounts the slider.
+         * @type {HTMLInputElement | null}
+         */
+        this._brightnessSlider = null;
+
+        /**
+         * Callbacks registered via
+         * onDisplayBrightnessChange. Fire on every input
+         * event from the slider, passing the new integer
+         * value in 0..100. main.js routes the value to
+         * both the bundle (for persistence) and the
+         * canvas (for immediate visual update).
+         * @type {Array<(value: number) => void>}
+         */
+        this._displayBrightnessListeners = [];
 
         this._render();
         // Kick off the initial gallery load. _render has
@@ -293,19 +380,6 @@ export class CanvasInspector {
     // --- Pinned section API (Stage 5) ---
 
     /**
-     * Register a callback for Pin button clicks. The
-     * callback fires on every click regardless of the
-     * button's visual enabled state; main.js dispatches
-     * via bundle.pinCurrentImage and translates the
-     * outcome (ok or one of the disabled reasons) into
-     * the messages area.
-     * @param {() => void} cb
-     */
-    onPinClick(cb) {
-        this._pinClickListeners.push(cb);
-    }
-
-    /**
      * Register a callback for clicks on populated pinned
      * slots. Receives { slotIndex, hash } where slotIndex
      * is the 0-indexed position and hash is the entry's
@@ -314,6 +388,40 @@ export class CanvasInspector {
      */
     onSetBackgroundFromPinnedSlot(cb) {
         this._setBackgroundFromPinnedListeners.push(cb);
+    }
+
+    /**
+     * Register a callback for drops onto a pinned slot.
+     * Receives { source, targetSlotIndex } where source
+     * is a discriminated union:
+     *   { kind: "shared", entryId }   — drag started
+     *     from a shared gallery thumbnail; main.js loads
+     *     bytes via gallery.loadImage and computes hash.
+     *   { kind: "pinned", hash, sourceSlotIndex } — drag
+     *     started from a populated pinned slot; main.js
+     *     reads bytes from bundle.pinnedBytes directly.
+     * Either way main.js eventually calls
+     * bundle.dropHashOnPinnedSlot(hash, bytes, targetSlotIndex).
+     * @param {(intent: { source: any, targetSlotIndex: number }) => void} cb
+     */
+    onDropOnPinnedSlot(cb) {
+        this._dropOnPinnedSlotListeners.push(cb);
+    }
+
+    /**
+     * Register a callback for drag-off-pane releases
+     * (drag-to-remove). Receives { source } with the
+     * same discriminated union shape as
+     * onDropOnPinnedSlot. main.js dispatches based on
+     * source.kind: gallery.remove(entryId) for shared,
+     * bundle.unpinSlot(sourceSlotIndex) for pinned. The
+     * vanish animation runs before the emit fires, so
+     * by the time main.js sees the callback the preview
+     * has already faded out.
+     * @param {(intent: { source: any }) => void} cb
+     */
+    onDragOff(cb) {
+        this._dragOffListeners.push(cb);
     }
 
     /**
@@ -336,21 +444,6 @@ export class CanvasInspector {
     }
 
     /**
-     * Update the Pin button's visual enabled / disabled
-     * state. The button always fires onPinClick when
-     * clicked regardless of visual state; this update
-     * controls the .disabled class and the tooltip text.
-     * @param {{ enabled: boolean, disabledReason?: string }} state
-     */
-    setPinButtonState(state) {
-        this._pinButtonState = {
-            enabled: !!state.enabled,
-            disabledReason: state.disabledReason ?? "",
-        };
-        this._applyPinButtonState();
-    }
-
-    /**
      * Re-measure the Starting State row and update the
      * CSS variable that sizes both gallery grids. Called
      * by main.js after events that might shift the
@@ -365,6 +458,43 @@ export class CanvasInspector {
         this._measureGalleryWidth();
     }
 
+    // --- Brightness slider API (Stage 6) ---
+
+    /**
+     * Register a callback that fires on every input event
+     * from the Brightness slider. The callback receives
+     * the new integer value in 0..100. main.js routes the
+     * value to both bundle.setDisplayBrightness (for
+     * persistence) and canvas.setDisplayBrightness (for
+     * immediate visual update).
+     * @param {(value: number) => void} cb
+     */
+    onDisplayBrightnessChange(cb) {
+        this._displayBrightnessListeners.push(cb);
+    }
+
+    /**
+     * Set the slider's value programmatically. Called by
+     * main.js on score open to sync the slider with the
+     * newly-loaded bundle's displayBrightness. Clamps to
+     * 0..100; no-op when the slider isn't mounted yet
+     * (timing race) or already shows the target value.
+     * Does not fire the input listeners — this is an
+     * external sync, not a user adjustment.
+     * @param {number} value 0..100; outside range is clamped.
+     */
+    setDisplayBrightness(value) {
+        if (this._brightnessSlider === null) return;
+        const n = typeof value === "number" && Number.isFinite(value)
+            ? value
+            : 100;
+        const clamped = n < 0 ? 0 : (n > 100 ? 100 : n);
+        const rounded = Math.round(clamped);
+        const current = parseInt(this._brightnessSlider.value, 10);
+        if (current === rounded) return;
+        this._brightnessSlider.value = String(rounded);
+    }
+
     // --- Internals ---
 
     _render() {
@@ -374,7 +504,7 @@ export class CanvasInspector {
         this._panelEl = null;
         this._sharedGridEl = null;
         this._pinnedGridEl = null;
-        this._pinButtonEl = null;
+        this._brightnessSlider = null;
 
         const panel = document.createElement("div");
         panel.className = "canvas-insp-panel";
@@ -397,14 +527,15 @@ export class CanvasInspector {
         this._panelEl = panel;
 
         // Top row: "Image:" section caption, Load,
-        // Clear, Pin, W [field], H [field]. The caption
-        // anchors the image-related controls; the
-        // tightened button labels (Load was "Load
-        // Image", Clear was "Remove Image") plus the
-        // reduced button padding in the .canvas-insp-
-        // button rule keep total row width close to the
-        // inspector floor so the row reads as one
-        // horizontal strip rather than wrapping.
+        // Clear, then a "Size:" sub-caption and the
+        // canvasW and canvasH numeric fields. The two
+        // captions sit at the same visual level so the
+        // row reads as one strip with two labelled
+        // groups (image controls, size fields). The Pin
+        // button that lived here through Stage 5 first
+        // commit is gone; pinning is now the drag-from-
+        // shared-to-pinned gesture handled by the drag
+        // mechanics below.
         const topRow = document.createElement("div");
         topRow.className = "canvas-insp-top-row";
 
@@ -441,30 +572,19 @@ export class CanvasInspector {
         });
         topRow.appendChild(removeBtn);
 
-        // Pin button (Stage 5). Always clickable; the
-        // visual disabled state is driven by
-        // setPinButtonState and surfaces via a CSS
-        // .disabled class plus a tooltip explaining why.
-        // The click handler always fires onPinClick;
-        // main.js dispatches via bundle.pinCurrentImage
-        // and translates the outcome into the messages
-        // area regardless of visual state, so a click on
-        // a disabled-looking button still tells the user
-        // why nothing happened.
-        const pinBtn = document.createElement("button");
-        pinBtn.type = "button";
-        pinBtn.className = "canvas-insp-button";
-        pinBtn.textContent = "Pin";
-        pinBtn.addEventListener("click", () => {
-            for (const cb of this._pinClickListeners) {
-                try { cb(); } catch (err) {
-                    console.error("GXW: canvas-inspector pin-click listener threw.", err);
-                }
-            }
-        });
-        this._pinButtonEl = pinBtn;
-        this._applyPinButtonState();
-        topRow.appendChild(pinBtn);
+        // "Size:" sub-caption labelling the W and H
+        // fields. Same visual style as the "Image:"
+        // caption that opens the row so both read at the
+        // same hierarchical level. The extra
+        // .canvas-insp-size-caption class adds a margin-
+        // left so the caption visually starts a new group
+        // rather than continuing the Image / Load / Clear
+        // strip at the row's normal 8 px gap.
+        const sizeCaption = document.createElement("span");
+        sizeCaption.className =
+            "canvas-insp-section-caption canvas-insp-size-caption";
+        sizeCaption.textContent = "Size:";
+        topRow.appendChild(sizeCaption);
 
         const wLabel = document.createElement("span");
         wLabel.className = "canvas-insp-axis-label";
@@ -484,7 +604,54 @@ export class CanvasInspector {
 
         panel.appendChild(topRow);
 
-        // Horizontal separator below the top row.
+        // Brightness slider row (Stage 6). Sits between
+        // the top button row and the divider that
+        // separates image controls from the pinned
+        // section. The label reuses
+        // .canvas-insp-section-caption so it reads at
+        // the same visual level as "Image:" and "Size:"
+        // above; the slider extends to the right edge of
+        // the top row's natural width via the row's flex
+        // layout. The slider drives the canvas's
+        // displayBrightness via the registered listeners;
+        // main.js routes the value to both bundle and
+        // canvas. Per DESIGN.md Section 13.5 the control
+        // is purely visual — image-derived signals
+        // continue to read from the unmodified source
+        // bitmap.
+        const brightnessRow = document.createElement("div");
+        brightnessRow.className = "canvas-insp-brightness-row";
+
+        const brightnessLabel = document.createElement("span");
+        brightnessLabel.className = "canvas-insp-section-caption";
+        brightnessLabel.textContent = "Brightness";
+        brightnessRow.appendChild(brightnessLabel);
+
+        const brightnessSlider = document.createElement("input");
+        brightnessSlider.type = "range";
+        brightnessSlider.className = "canvas-insp-brightness-slider";
+        brightnessSlider.min = "0";
+        brightnessSlider.max = "100";
+        brightnessSlider.step = "1";
+        brightnessSlider.value = "100";
+        brightnessSlider.setAttribute("aria-label", "Canvas image brightness");
+        brightnessSlider.title = "Dim the displayed image to make overlays easier to read. Music-side signals continue to read from the original image regardless of this setting.";
+        brightnessSlider.addEventListener("input", () => {
+            const n = parseInt(brightnessSlider.value, 10);
+            if (!Number.isFinite(n)) return;
+            for (const cb of this._displayBrightnessListeners) {
+                try { cb(n); } catch (err) {
+                    console.error("GXW: canvas-inspector brightness listener threw.", err);
+                }
+            }
+        });
+        brightnessRow.appendChild(brightnessSlider);
+        this._brightnessSlider = brightnessSlider;
+
+        panel.appendChild(brightnessRow);
+
+        // Horizontal separator below the brightness row,
+        // before the pinned section.
         const topSep = document.createElement("div");
         topSep.className = "canvas-insp-separator";
         panel.appendChild(topSep);
@@ -735,7 +902,7 @@ export class CanvasInspector {
         }
         for (const entry of this._galleryEntries) {
             const slot = document.createElement("div");
-            slot.className = "canvas-insp-thumb";
+            slot.className = "canvas-insp-thumb canvas-insp-shared-slot";
             if (entry.id === this._activeGalleryId) {
                 slot.classList.add("active");
             }
@@ -744,11 +911,22 @@ export class CanvasInspector {
             // image itself, not an alt-text description.
             img.alt = "";
             img.draggable = false;
-            img.src = "data:image/png;base64," + entry.thumbnailBase64;
+            const previewSrc = "data:image/png;base64," + entry.thumbnailBase64;
+            img.src = previewSrc;
             slot.appendChild(img);
             const entryId = entry.id;
-            slot.addEventListener("click", () => {
-                this._emitSetBackground(entryId);
+            // Drag-spanning gesture: pointerdown starts a
+            // state machine that either synthesises a
+            // click on pointerup-below-threshold, emits
+            // a drop on pointerup-over-pinned-slot, or
+            // emits a drag-off on pointerup-outside-pane.
+            // No separate click listener; the threshold
+            // logic synthesises the click intent so we
+            // don't get double-fires from click +
+            // pointerup-below-threshold.
+            slot.addEventListener("pointerdown", (e) => {
+                if (e.button !== 0) return;
+                this._onSharedPointerDown(e, entryId, previewSrc);
             });
             grid.appendChild(slot);
         }
@@ -770,6 +948,14 @@ export class CanvasInspector {
         for (let i = 0; i < PINNED_SLOTS_COUNT; i++) {
             const slot = document.createElement("div");
             slot.className = "canvas-insp-thumb canvas-insp-pinned-slot";
+            // Tag the slot's index on a data attribute so
+            // the drag mechanics (which find slots via
+            // document.elementFromPoint) can read the
+            // index off the DOM rather than maintaining a
+            // parallel array. Set on every slot — empty
+            // and populated alike — so empty slots are
+            // valid drop targets too.
+            slot.dataset.slotIndex = String(i);
             const entry = this._pinnedSnapshot[i];
             if (entry === null) {
                 slot.classList.add("empty");
@@ -784,29 +970,25 @@ export class CanvasInspector {
                 slot.appendChild(img);
                 const slotIndex = i;
                 const hash = entry.hash;
-                slot.addEventListener("click", () => {
-                    this._emitSetBackgroundFromPinnedSlot(slotIndex, hash);
+                const previewSrc = entry.dataUrl;
+                // Pointerdown starts the drag state
+                // machine. Below-threshold pointerup
+                // synthesises a click (set-as-background
+                // for this pinned slot); above-threshold
+                // pointerup over another pinned slot
+                // emits a reorder; above-threshold
+                // pointerup outside the inspector pane
+                // emits a drag-off (unpin). The click
+                // handler used to be a plain click
+                // listener; like the shared section, the
+                // threshold logic now synthesises it to
+                // avoid double-fires.
+                slot.addEventListener("pointerdown", (e) => {
+                    if (e.button !== 0) return;
+                    this._onPinnedPointerDown(e, slotIndex, hash, previewSrc);
                 });
             }
             grid.appendChild(slot);
-        }
-    }
-
-    /**
-     * Apply the Pin button's current visual state. Toggles
-     * the .disabled class and updates the tooltip text.
-     * The button stays click-handled in both states; the
-     * disabled visual is purely a hint.
-     */
-    _applyPinButtonState() {
-        const btn = this._pinButtonEl;
-        if (btn === null) return;
-        if (this._pinButtonState.enabled) {
-            btn.classList.remove("disabled");
-            btn.title = "Pin the current background image into the per-score pinned section.";
-        } else {
-            btn.classList.add("disabled");
-            btn.title = this._pinButtonState.disabledReason || "Pin is not available right now.";
         }
     }
 
@@ -831,6 +1013,386 @@ export class CanvasInspector {
                 console.error("GXW: canvas-inspector pinned-set-background listener threw.", err);
             }
         }
+    }
+
+    /**
+     * @param {{ source: any, targetSlotIndex: number }} intent
+     */
+    _emitDropOnPinnedSlot(intent) {
+        for (const cb of this._dropOnPinnedSlotListeners) {
+            try { cb(intent); } catch (err) {
+                console.error("GXW: canvas-inspector drop-on-pinned-slot listener threw.", err);
+            }
+        }
+    }
+
+    /**
+     * @param {{ source: any }} intent
+     */
+    _emitDragOff(intent) {
+        for (const cb of this._dragOffListeners) {
+            try { cb(intent); } catch (err) {
+                console.error("GXW: canvas-inspector drag-off listener threw.", err);
+            }
+        }
+    }
+
+    // --- Drag mechanics (Stage 5 second commit) ---
+
+    /**
+     * Start tracking a potential drag from a shared
+     * thumbnail. Sets up document-level pointermove and
+     * pointerup listeners; the drag is only committed
+     * (preview shown, drop targets highlighted) once
+     * motion crosses DRAG_THRESHOLD_PX. Below that
+     * threshold pointerup synthesises a click intent
+     * (set-as-background); above it, pointerup branches
+     * on the cursor location (pinned slot, off-pane,
+     * elsewhere) to pick the right emit.
+     *
+     * @param {PointerEvent} e
+     * @param {string} entryId
+     * @param {string} previewSrc Full <img>-ready src for the drag preview.
+     */
+    _onSharedPointerDown(e, entryId, previewSrc) {
+        this._startDrag(e, { kind: "shared", entryId }, previewSrc);
+    }
+
+    /**
+     * Start tracking a potential drag from a populated
+     * pinned slot. Below-threshold pointerup synthesises
+     * a click (set-as-background for this slot's image);
+     * above-threshold pointerup over another pinned slot
+     * emits a reorder; above-threshold pointerup outside
+     * the inspector pane emits a drag-off (unpin).
+     *
+     * @param {PointerEvent} e
+     * @param {number} slotIndex
+     * @param {string} hash
+     * @param {string} previewSrc Full <img>-ready src for the drag preview.
+     */
+    _onPinnedPointerDown(e, slotIndex, hash, previewSrc) {
+        this._startDrag(
+            e,
+            { kind: "pinned", hash, sourceSlotIndex: slotIndex },
+            previewSrc,
+        );
+    }
+
+    /**
+     * Shared drag-state initialisation. Captures the
+     * source kind, the preview src, and the start
+     * pointer position; attaches document-level
+     * listeners; preventDefaults the source event so
+     * the browser's native drag image and text-
+     * selection behaviour stay out of the way.
+     *
+     * @param {PointerEvent} e
+     * @param {any} source
+     * @param {string} previewSrc
+     */
+    _startDrag(e, source, previewSrc) {
+        // If another drag is already in progress (shouldn't
+        // happen under normal pointer event sequencing, but
+        // be defensive against odd race conditions) clear
+        // it before starting a new one.
+        if (this._dragState !== null) {
+            this._cleanupDragState();
+        }
+
+        const onMove = (/** @type {PointerEvent} */ ev) => {
+            this._onDocumentPointerMove(ev);
+        };
+        const onUp = (/** @type {PointerEvent} */ ev) => {
+            this._onDocumentPointerUp(ev);
+        };
+
+        this._dragState = {
+            source,
+            previewSrc,
+            startX: e.clientX,
+            startY: e.clientY,
+            pointerId: e.pointerId,
+            dragging: false,
+            preview: null,
+            currentTarget: null,
+            offPane: false,
+            onMove,
+            onUp,
+        };
+
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+
+        e.preventDefault();
+    }
+
+    /**
+     * Pointer move during a tracked drag. Below threshold
+     * we wait; once over threshold we transition into
+     * drag mode (preview element added, body class set)
+     * and update the preview position, drop-target
+     * highlight, and off-pane state on every move.
+     *
+     * @param {PointerEvent} e
+     */
+    _onDocumentPointerMove(e) {
+        const state = this._dragState;
+        if (state === null) return;
+        if (e.pointerId !== state.pointerId) return;
+
+        if (!state.dragging) {
+            const dx = e.clientX - state.startX;
+            const dy = e.clientY - state.startY;
+            if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+            // Threshold crossed — enter drag mode.
+            state.dragging = true;
+            state.preview = this._createDragPreview(state.previewSrc);
+            document.body.appendChild(state.preview);
+            document.body.classList.add("dragging-canvas-insp-thumb");
+        }
+
+        if (state.preview !== null) {
+            state.preview.style.left = e.clientX + "px";
+            state.preview.style.top = e.clientY + "px";
+        }
+        this._updateDropTarget(e.clientX, e.clientY);
+    }
+
+    /**
+     * Pointer up during a tracked drag. Branches:
+     *   - Below threshold → synthesise a click intent
+     *     (set-as-background, scoped by source kind).
+     *   - Above threshold over a pinned slot → emit
+     *     onDropOnPinnedSlot with the source and target.
+     *   - Above threshold outside the inspector pane →
+     *     vanish-animate the preview, then emit
+     *     onDragOff.
+     *   - Above threshold elsewhere (over a shared slot,
+     *     over the inspector chrome, etc.) → silent
+     *     cancel.
+     *
+     * @param {PointerEvent} e
+     */
+    _onDocumentPointerUp(e) {
+        const state = this._dragState;
+        if (state === null) return;
+        if (e.pointerId !== state.pointerId && e.type === "pointerup") {
+            return;
+        }
+
+        const wasDragging = state.dragging;
+        const dropTarget = state.currentTarget;
+        const offPane = state.offPane;
+        const source = state.source;
+
+        if (!wasDragging) {
+            // Click intent. Clean up immediately, then
+            // emit set-as-background scoped by source.
+            this._cleanupDragState();
+            if (source.kind === "shared") {
+                this._emitSetBackground(source.entryId);
+            } else {
+                this._emitSetBackgroundFromPinnedSlot(
+                    source.sourceSlotIndex,
+                    source.hash,
+                );
+            }
+            return;
+        }
+
+        if (dropTarget !== null) {
+            const raw = dropTarget.dataset.slotIndex;
+            const slotIndex = raw === undefined ? -1 : parseInt(raw, 10);
+            this._cleanupDragState();
+            if (slotIndex >= 0 && slotIndex < PINNED_SLOTS_COUNT) {
+                this._emitDropOnPinnedSlot({
+                    source,
+                    targetSlotIndex: slotIndex,
+                });
+            }
+            return;
+        }
+
+        if (offPane) {
+            // Vanish animation → emit drag-off when it
+            // finishes. Document listeners detach
+            // immediately so a follow-up pointer down
+            // starts a fresh drag rather than colliding
+            // with the in-progress vanish.
+            this._vanishPreviewThenFinish(() => {
+                this._emitDragOff({ source });
+            });
+            return;
+        }
+
+        // Above-threshold release somewhere that isn't a
+        // pinned slot and isn't off-pane (e.g. over a
+        // shared slot, over the inspector chrome). Silent
+        // cancel.
+        this._cleanupDragState();
+    }
+
+    /**
+     * Find the pinned slot under the cursor and update
+     * the .drop-target class so exactly one slot at a
+     * time carries the highlight. Also tracks whether
+     * the cursor is outside the inspector pane (off-pane)
+     * for the drag-to-remove gesture. Uses
+     * document.elementFromPoint; the drag preview is
+     * styled pointer-events: none so it doesn't show up
+     * in the hit test.
+     *
+     * @param {number} clientX
+     * @param {number} clientY
+     */
+    _updateDropTarget(clientX, clientY) {
+        const state = this._dragState;
+        if (state === null) return;
+        const el = document.elementFromPoint(clientX, clientY);
+        /** @type {HTMLElement | null} */
+        let pinnedSlot = null;
+        /** @type {boolean} */
+        let insidePane = false;
+        if (el instanceof HTMLElement) {
+            const slotEl = el.closest(".canvas-insp-pinned-slot");
+            if (slotEl instanceof HTMLElement) {
+                pinnedSlot = slotEl;
+            }
+            const paneEl = el.closest("#canvas-inspector-area");
+            if (paneEl !== null) {
+                insidePane = true;
+            }
+        }
+        const offPane = !insidePane;
+
+        // Off-pane suppresses the drop-target highlight
+        // entirely — a pinned slot under the cursor would
+        // be highlighted by the closest() check above, but
+        // when the cursor is conceptually outside the
+        // pane (over the canvas, over the editor, off the
+        // window edge) we treat the gesture as a remove,
+        // not a drop. In practice the elementFromPoint
+        // will return null when off-window, so pinnedSlot
+        // is already null in that case — this is
+        // defensive against unusual paths.
+        const effectiveTarget = offPane ? null : pinnedSlot;
+
+        if (effectiveTarget !== state.currentTarget) {
+            if (state.currentTarget !== null) {
+                state.currentTarget.classList.remove("drop-target");
+            }
+            state.currentTarget = effectiveTarget;
+            if (effectiveTarget !== null) {
+                effectiveTarget.classList.add("drop-target");
+            }
+        }
+
+        if (offPane !== state.offPane) {
+            state.offPane = offPane;
+            if (state.preview !== null) {
+                state.preview.classList.toggle("will-remove", offPane);
+            }
+        }
+    }
+
+    /**
+     * Build the floating drag-preview element. Positioned
+     * by _onDocumentPointerMove via style.left and
+     * style.top; CSS handles the rest (fixed positioning,
+     * size, semi-transparency, pointer-events: none).
+     *
+     * @param {string} previewSrc Full <img>-ready src.
+     * @returns {HTMLDivElement}
+     */
+    _createDragPreview(previewSrc) {
+        const div = document.createElement("div");
+        div.className = "canvas-insp-drag-preview";
+        const img = document.createElement("img");
+        img.alt = "";
+        img.draggable = false;
+        img.src = previewSrc;
+        div.appendChild(img);
+        return div;
+    }
+
+    /**
+     * Detach the document listeners immediately, then
+     * trigger the vanish animation on the preview;
+     * after the animation completes, finish cleanup
+     * (remove preview, clear body class) and invoke the
+     * callback (which fires the appropriate drag-off
+     * emit). Splitting the cleanup this way lets a
+     * follow-up pointerdown start a fresh drag without
+     * waiting for the vanish to finish.
+     *
+     * @param {() => void} onFinish
+     */
+    _vanishPreviewThenFinish(onFinish) {
+        const state = this._dragState;
+        if (state === null) {
+            onFinish();
+            return;
+        }
+        // Detach listeners and clear any drop-target
+        // highlight; the preview persists so the
+        // animation can play.
+        document.removeEventListener("pointermove", state.onMove);
+        document.removeEventListener("pointerup", state.onUp);
+        document.removeEventListener("pointercancel", state.onUp);
+        if (state.currentTarget !== null) {
+            state.currentTarget.classList.remove("drop-target");
+            state.currentTarget = null;
+        }
+        const preview = state.preview;
+        this._dragState = null;
+
+        if (preview === null) {
+            document.body.classList.remove("dragging-canvas-insp-thumb");
+            onFinish();
+            return;
+        }
+        // Trigger the CSS animation by adding the
+        // .vanishing class; it runs forwards-fill so the
+        // preview stays at the final state (opacity 0,
+        // scale 1.4) until we remove it.
+        preview.classList.add("vanishing");
+        const VANISH_MS = 350;
+        setTimeout(() => {
+            preview.remove();
+            document.body.classList.remove("dragging-canvas-insp-thumb");
+            onFinish();
+        }, VANISH_MS);
+    }
+
+    /**
+     * Immediate cleanup: remove the drop-target
+     * highlight, remove the drag preview, clear the
+     * dragging body class, detach document listeners,
+     * and null out _dragState. Safe to call from any
+     * drag-state transition; idempotent when _dragState
+     * is already null. Used by the non-vanish paths
+     * (click intent, drop on pinned slot, silent cancel).
+     * Off-pane drops use _vanishPreviewThenFinish
+     * instead.
+     */
+    _cleanupDragState() {
+        const state = this._dragState;
+        if (state === null) return;
+        document.removeEventListener("pointermove", state.onMove);
+        document.removeEventListener("pointerup", state.onUp);
+        document.removeEventListener("pointercancel", state.onUp);
+        if (state.currentTarget !== null) {
+            state.currentTarget.classList.remove("drop-target");
+        }
+        if (state.preview !== null) {
+            state.preview.remove();
+        }
+        if (state.dragging) {
+            document.body.classList.remove("dragging-canvas-insp-thumb");
+        }
+        this._dragState = null;
     }
 }
 
