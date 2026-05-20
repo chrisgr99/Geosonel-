@@ -614,7 +614,7 @@ html, body {
     background-color: #2a2a2a;
     color: #f0f0f0;
     border: 1px solid #777777;
-    padding: 4px 12px;
+    padding: 4px 10px;
     height: 28px;
     font-size: 12pt;
     font-family: inherit;
@@ -623,14 +623,16 @@ html, body {
     user-select: none;
 }
 
-.canvas-insp-button:hover:not(:disabled) {
+.canvas-insp-button:hover:not(:disabled):not(.disabled) {
     background-color: #3a3a3a;
 }
 
-.canvas-insp-button:disabled {
+.canvas-insp-button:disabled,
+.canvas-insp-button.disabled {
     color: #707070;
     border-color: #555555;
     cursor: default;
+    background-color: transparent;
 }
 
 .canvas-insp-axis-label {
@@ -640,44 +642,92 @@ html, body {
     user-select: none;
 }
 
+/* Section caption preceding a row of related controls
+ * (Stage 5: the top row's "Image:" caption). Bolder and
+ * lighter than .canvas-insp-axis-label so it reads as a
+ * section header rather than as an inline field label.
+ * white-space: nowrap keeps the caption from breaking
+ * across lines if the parent ever wraps. */
+.canvas-insp-section-caption {
+    color: #e0e0e0;
+    font-weight: 600;
+    font-size: 12pt;
+    margin-right: 4px;
+    white-space: nowrap;
+    user-select: none;
+}
+
 .canvas-insp-separator {
     height: 2px;
     background-color: #777777;
     margin: 14px 0;
 }
 
-/* Recent-image gallery grid (Stage 3 of Canvas inspector
- * tab work, DESIGN.md Section 13.5). Four columns at
- * a fixed 72×72 pixel thumbnail size, left-aligned
- * within the panel. The fixed pixel sizing is a Stage 4
- * UX redesign — the gallery used to use repeat(4, 1fr)
- * which scaled each thumbnail with the inspector pane's
- * width, and the per-frame image-resize during a body-
- * divider drag made the drag visibly slow. With fixed
- * dimensions the browser doesn't re-lay out thumbnails
- * on every drag frame, so the drag feels responsive
- * again; and the gallery's footprint becomes predictable
- * regardless of pane width.
+/* Recent-image gallery and per-score pinned section
+ * (Stage 5 redesign, DESIGN.md Section 13.5). Both
+ * sections render as 3-column grids with fixed pixel
+ * column widths, sized by the CSS variable
+ * --canvas-insp-thumb-size that canvasInspector.js
+ * computes at mount time from the measured Properties
+ * inspector Starting State row width minus the inter-
+ * column gap. Thumbnails take the same fixed pixel
+ * dimensions explicitly. The fixed pixel sizing is
+ * critical for body-divider drag performance: with flex
+ * columns and aspect-ratio children the browser re-lays
+ * out every thumbnail on every drag frame even when the
+ * gallery's own width is constant, because parent
+ * reflow marks descendant layout dirty. Stage 4 first
+ * established this fix with its hardcoded 72px columns;
+ * Stage 5 keeps the same pattern but adapts the size to
+ * the natural inspector floor for better readability.
  *
- * Grid total width: 4 × 72 + 3 × 8 = 312 px. The
- * inspector floor (computed in main.js from the
- * Properties tab's natural content width) is wider than
- * this, so the gallery fits comfortably with empty space
- * to its right when the pane is at any reasonable width.
- * justify-content: start pins the grid to the left so
- * the empty space lives consistently on the right edge.
+ * Pinned section. Six fixed slots in a 2-row by 3-column
+ * grid. Column count is 3; rows fall out implicitly from
+ * the slot count. Placeholders for empty slots so the
+ * grid's footprint reads even when the score has no
+ * pins yet.
  *
- * Square slots so the 96×96 PNG thumbnails sit uncropped
- * via object-fit: contain. The grid lives inside
- * .canvas-insp-panel which itself lives inside
- * #canvas-inspector-area, whose overflow-y: auto rule
- * handles vertical scrolling when the gallery grows past
- * the viewport. */
+ * Shared gallery. Variable number of slots (one per
+ * entry) under the recency-bump model. Vertical
+ * scrolling falls through to #canvas-inspector-area's
+ * overflow-y. Empty-state message replaces the grid
+ * when the entry list is empty so the section's
+ * purpose stays visible. */
+.canvas-insp-pinned {
+    display: grid;
+    grid-template-columns: repeat(3, var(--canvas-insp-thumb-size, 136px));
+    gap: 6px;
+}
+
 .canvas-insp-gallery {
     display: grid;
-    grid-template-columns: repeat(4, 72px);
-    gap: 8px;
-    justify-content: start;
+    grid-template-columns: repeat(3, var(--canvas-insp-thumb-size, 136px));
+    gap: 6px;
+}
+
+/* Divider between the pinned section and the shared
+ * gallery. Heavier than .canvas-insp-separator (which
+ * sits between control rows) so the section boundary
+ * reads at a glance. Width matches the gallery's so the
+ * divider doesn't extend past the grids on either side. */
+.canvas-insp-section-divider {
+    height: 3px;
+    background-color: #777777;
+    margin: 14px 0;
+    width: var(--canvas-insp-gallery-width, 420px);
+}
+
+/* Empty-state message shown in the shared gallery when
+ * no entries exist. grid-column: 1 / -1 makes it span
+ * the full grid width so it reads as one centred line
+ * rather than wedging into a single column. */
+.canvas-insp-gallery-empty {
+    color: #a0a0a0;
+    font-style: italic;
+    font-size: 12pt;
+    padding: 20px 0;
+    text-align: center;
+    grid-column: 1 / -1;
 }
 
 /* Thumbnail slot. Three states share this base: empty
@@ -689,19 +739,21 @@ html, body {
  * space for the active frame so adding the active class
  * doesn't push neighbouring slots around.
  *
- * Fixed 72×72 px size matches the gallery grid's column
- * width. box-sizing: border-box keeps the total
- * dimensions including the 2 px border at exactly 72 px,
- * so the slot's outer footprint matches what the grid
- * reserves for it. Stage 4 UX redesign replaced the
- * earlier aspect-ratio sizing here — the old grid scaled
- * slots with the pane width via repeat(4, 1fr) and used
- * aspect-ratio to keep them square; with fixed-width
- * columns the explicit width and height read more
- * directly. */
+ * Stage 5: explicit fixed-pixel width and height driven by
+ * the --canvas-insp-thumb-size CSS variable the grid
+ * columns use, with the height computed via calc as two
+ * thirds of the width for a 3:2 aspect (wider than tall).
+ * The 3:2 aspect matches the typical canvas aspect ratio
+ * and the typical landscape imported image so the dominant
+ * case needs little or no letterboxing inside the thumb.
+ * Fixed pixel dimensions (rather than aspect-ratio) match
+ * Stage 4's pattern for body-divider drag performance:
+ * explicit pixel dimensions skip the per-frame layout work
+ * that flex columns + aspect-ratio children would otherwise
+ * incur during parent reflow. */
 .canvas-insp-thumb {
-    width: 72px;
-    height: 72px;
+    width: var(--canvas-insp-thumb-size, 136px);
+    height: calc(var(--canvas-insp-thumb-size, 136px) * 2 / 3);
     box-sizing: border-box;
     background-color: #3a3a3a;
     border: 2px solid transparent;
@@ -739,7 +791,7 @@ html, body {
 .canvas-insp-thumb img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: fill;
     display: block;
     pointer-events: none;
 }
@@ -1473,6 +1525,23 @@ html, body {
 #message-area,
 #message-divider.divider-draggable {
     transition: flex 220ms ease-out;
+}
+
+/* Suppress the Focus Canvas flex transition during user
+ * divider drags. The transition above interpolates flex
+ * over 220ms, which is right for a one-shot Focus Canvas
+ * toggle but causes visible lag during a drag (paneDivider
+ * sets style.flex 60+ times per second and each update
+ * kicks off a fresh easing animation, so the pane width
+ * chases the cursor with easing rather than tracking it).
+ * paneDivider adds .dragging-divider to document.body on
+ * drag start and removes it on drag end. */
+body.dragging-divider #editor-pane,
+body.dragging-divider #canvas-pane,
+body.dragging-divider #message-area,
+body.dragging-divider #body-divider.divider-draggable,
+body.dragging-divider #message-divider.divider-draggable {
+    transition: none;
 }
 
 /* Focus Canvas mode. Collapses the editor pane, the body

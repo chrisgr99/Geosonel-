@@ -130,6 +130,10 @@ export function installDivider(options) {
         dragPointerId = e.pointerId;
         divider.setPointerCapture(e.pointerId);
         divider.classList.add("dragging");
+        // Suppress the Focus Canvas flex transition for
+        // the duration of the drag. See main.css's
+        // body.dragging-divider rule for the rationale.
+        document.body.classList.add("dragging-divider");
         e.preventDefault();
     });
 
@@ -186,6 +190,7 @@ export function installDivider(options) {
         divider.releasePointerCapture(dragPointerId);
         dragPointerId = null;
         divider.classList.remove("dragging");
+        document.body.classList.remove("dragging-divider");
     };
 
     divider.addEventListener("pointerup", endDrag);

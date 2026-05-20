@@ -28,20 +28,31 @@
  * for window.gxwGallery. The public API surface is
  * identical either way.
  *
- * Stable-position model. The gallery is ordered by
- * addedAt ascending — oldest entries at the front,
- * newest appended at the end. addedAt is immutable
- * after entry creation: gallery.add's match-and-promote
- * logic returns the matching entry's id without touching
- * its addedAt, and gallery.touch is a no-op for ordering.
- * The result is a curated-library feel where positions
- * stay stable across normal use (clicking thumbnails,
- * opening scores, importing duplicates), and only
- * explicit removes or eviction at cap can shift slots.
- * Eviction (when at cap) currently removes the oldest
- * entry by addedAt; the Stage 5 right-click Remove from
- * history surface will let users curate manually, and
- * the eviction policy can be revisited then.
+ * Recency-bump model for the shared section (Stage 5
+ * redesign). The gallery is ordered by addedAt descending
+ * — newest entries at the front. New imports take a
+ * fresh Date.now() addedAt and naturally land at the
+ * front. touch() bumps an existing entry's addedAt to
+ * Date.now(), promoting it to the front. add() also
+ * promotes when it matches an existing entry by content
+ * hash, so a re-import of the same image is equivalent
+ * to a touch. Manual reorder via drag (Stage 5 second
+ * commit) updates addedAt timestamps so display order
+ * tracks user intent. Eviction (first commit) still
+ * removes the oldest entry by addedAt; the third commit
+ * revisits eviction policy after drag-and-drop makes
+ * array order and addedAt potentially diverge.
+ *
+ * Pre-Stage-5 history. Stages 3 through 4 used a stable-
+ * position model where addedAt was immutable after entry
+ * creation: positions were curated and only explicit
+ * removes shifted slots. Stage 5's two-tier design moves
+ * positional memory into the per-score pinned section
+ * above the shared section, freeing the shared section
+ * to behave as a recency-bump working pool. touch()'s
+ * original bump-addedAt behaviour comes back in this
+ * stage; the docstring history below preserves the
+ * older context for reference.
  *
  * The Stage 2 scope is infrastructure only — no UI yet.
  * Stages 3 through 5 wire the gallery into the Canvas
@@ -177,22 +188,20 @@ export async function setMaxCount(n) {
 }
 
 /**
- * No-op for ordering as of the stable-position model.
- * Kept in the API for forward compatibility — future
- * features that track per-entry usage (last-used
- * indicators, LRU-based eviction policy) may repurpose
- * this hook to update a separate lastUsedAt field
- * without affecting display order. Returns the current
- * entries list unchanged.
+ * No-op stub matching the touch() public API. Reads the
+ * current entries and returns them unchanged.
  *
- * History. Originally added in Stage 3 to bump an
+ * History note. Originally added in Stage 3 to bump an
  * entry's addedAt and promote it to slot 1 on click.
- * The Stage 4 follow-up redesign settled on stable
- * positions — a clicked or score-opened entry stays at
- * its existing slot rather than shuffling to the top.
- * touch's bump-addedAt behaviour was retired then; the
- * method itself remained for callers that may want the
- * hook back later.
+ * Retired to a no-op in Stage 4's stable-position
+ * redesign. Brought back as a promote-to-front operation
+ * in Stage 5's recency-bump shared section: entry.addedAt
+ * gets stamped to Date.now() so the descending sort
+ * floats the entry to the front of the display. The
+ * comment here lags the implementation only on the
+ * Electron-backend branch, which is being updated
+ * alongside this docstring — see the gxw:gallery-touch
+ * handler in electron-main.js.
  * @param {string} id
  * @returns {Promise<{entries: GalleryEntry[]}>}
  */
@@ -294,7 +303,7 @@ async function listWeb() {
     db.close();
     const entries = records
         .map(toEntry)
-        .sort((a, b) => a.addedAt - b.addedAt);
+        .sort((a, b) => b.addedAt - a.addedAt);
     return { entries, maxCount: WEB_MAX_COUNT };
 }
 
@@ -311,15 +320,14 @@ async function addWeb(input) {
             : null;
 
         // Match-by-hash-or-sourcePath: when an entry
-        // already exists (by content hash, falling back to
-        // sourcePath for legacy entries that predate the
-        // hash), return its id without mutating addedAt. The
-        // stable-position model treats addedAt as immutable
-        // after creation, so re-importing the same image is
-        // a no-op for slot ordering. We do backfill
-        // contentHash on existing entries that lack one,
-        // since that's a metadata correction rather than a
-        // sort-affecting change.
+        // already exists (by content hash, falling back
+        // to sourcePath for legacy entries that predate
+        // the hash), promote it to the front by setting
+        // its addedAt to now — the Stage 5 recency-bump
+        // model. The contentHash backfill on existing
+        // entries that lack one still happens here as a
+        // metadata correction. Either change writes back
+        // through putRecord so the new addedAt persists.
         let existing = null;
         if (contentHash !== null) {
             existing = await findByContentHashInternalWeb(db, contentHash);
@@ -328,10 +336,11 @@ async function addWeb(input) {
             existing = await findBySourcePath(db, input.sourcePath);
         }
         if (existing !== null) {
+            existing.addedAt = Date.now();
             if (contentHash !== null && existing.contentHash !== contentHash) {
                 existing.contentHash = contentHash;
-                await putRecord(db, existing);
             }
+            await putRecord(db, existing);
             const entries = await listAllSorted(db);
             return { id: existing.id, entries };
         }
@@ -352,16 +361,17 @@ async function addWeb(input) {
             ),
         };
 
-        // Eviction if at cap. Sort ascending so the
-        // oldest entries are at the front; remove from
-        // there until we have room for the new entry.
-        // Note: evicting oldest contradicts the stable-
-        // position intent for entries that have been in
-        // the gallery a long time. Settled as a Stage 5
-        // design question — the Remove from history
-        // right-click surface and the max-count Setting
-        // will rework this together.
-        const all = await listAllSorted(db);
+        // Eviction if at cap. The Stage 5 recency-bump
+        // model means addedAt-ascending order corresponds
+        // to least-recently-used; the head of an
+        // ascending sort is the right eviction target.
+        // Note that the descending display sort and the
+        // ascending eviction sort are intentionally
+        // inverse: display shows newest first, eviction
+        // removes oldest first. Stage 5 third commit
+        // revisits eviction policy after drag-and-drop
+        // makes array order and addedAt diverge.
+        const all = await listAllSortedOldestFirst(db);
         if (all.length >= WEB_MAX_COUNT) {
             const overage = all.length - WEB_MAX_COUNT + 1;
             // all is sorted oldest-first, so the head is
@@ -405,9 +415,24 @@ async function removeWeb(id) {
 async function touchWeb(id) {
     const db = await openDb();
     try {
-        // id parameter is accepted for forward
-        // compatibility but unused in the no-op model.
-        void id;
+        // Bump the matching entry's addedAt to now so
+        // the descending sort floats it to the front.
+        // Unknown id is a no-op — callers may pass a
+        // stale id during a race between gallery refresh
+        // and click handler, and silently ignoring it
+        // is friendlier than throwing.
+        if (typeof id === "string" && id !== "") {
+            const record = await new Promise((resolve, reject) => {
+                const tx = db.transaction(GALLERY_STORE, "readonly");
+                const req = tx.objectStore(GALLERY_STORE).get(id);
+                req.onsuccess = () => resolve(req.result ?? null);
+                req.onerror = () => reject(req.error);
+            });
+            if (record !== null) {
+                record.addedAt = Date.now();
+                await putRecord(db, record);
+            }
+        }
         const entries = await listAllSorted(db);
         return { entries };
     } finally {
@@ -519,6 +544,23 @@ function findBySourcePath(db, sourcePath) {
  * @returns {Promise<GalleryEntry[]>}
  */
 async function listAllSorted(db) {
+    /** @type {any[]} */
+    const records = await new Promise((resolve, reject) => {
+        const tx = db.transaction(GALLERY_STORE, "readonly");
+        const req = tx.objectStore(GALLERY_STORE).getAll();
+        req.onsuccess = () => resolve(req.result ?? []);
+        req.onerror = () => reject(req.error);
+    });
+    return records
+        .map(toEntry)
+        .sort((a, b) => b.addedAt - a.addedAt);
+}
+
+/**
+ * @param {IDBDatabase} db
+ * @returns {Promise<GalleryEntry[]>}
+ */
+async function listAllSortedOldestFirst(db) {
     /** @type {any[]} */
     const records = await new Promise((resolve, reject) => {
         const tx = db.transaction(GALLERY_STORE, "readonly");

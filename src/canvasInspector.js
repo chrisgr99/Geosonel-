@@ -6,73 +6,92 @@
  * level canvas state regardless of canvas selection. Per
  * DESIGN.md Section 13.5 the tab is selection-independent:
  * it shows the background image controls, the canvas
- * dimensions, the image-transformation sliders (later
- * stages), and the recent-image gallery (Stage 3 onward).
+ * dimensions, the per-score pinned image section, the
+ * shared recent-image gallery, and (Stage 6) the image-
+ * transformation sliders.
  *
- * Stage 1 scope. Three pieces land here in the first
- * commit: the disabled placeholders for the Load Image
- * and Remove Image buttons (real wiring lands in Stage 4),
- * the Canvas W and Canvas H numeric fields migrated from
- * the canvas toolbar, and a horizontal separator below
- * the top row anticipating the gallery that Stage 3
- * lands on. The W/H fields are a verbatim port of the
- * toolbar's contenteditable implementation: scroll-wheel
- * scrubbing in 1.0-unit increments, Enter to commit,
- * Escape to revert, blur silently reverts on bad value,
- * Enter on a bad value squiggles red and keeps focus.
+ * Stage 5 layout. Top to bottom: top row with Load
+ * Image, Remove Image, Pin, W [field], H [field]; a
+ * horizontal separator; the per-score pinned section as
+ * a 2-row by 3-column grid of 6 fixed slots; a section
+ * divider; the shared recent-image gallery as a 3-column
+ * grid of however many entries the gallery currently
+ * holds, scrolling vertically when it overflows the
+ * pane.
  *
- * Stage 3 scope. The recent-image gallery renders below
- * the separator as a four-column grid of GALLERY_SLOT_COUNT
- * fixed slots. Populated slots come from gallery.list and
- * carry the entry's 96×96 thumbnail as a base64-decoded
- * inline image; empty slots render as a dim placeholder so
- * the grid's footprint is visible before any entries land.
- * Clicking a populated slot emits an intent through the
- * onSetBackgroundFromGallery channel; main.js handles the
- * orchestration (load bytes, swap the bundle's image,
- * apply to canvas, promote the entry via gallery.touch,
- * save the bundle, set the active id back through
- * setActiveGalleryId). The slot whose entry id matches
- * the active id carries a green active-frame using the
- * same accent the Properties tab uses for editable fields.
+ * Gallery width. Both grids size their thumbnails by
+ * dividing a fixed parent width (the CSS variable
+ * --canvas-insp-gallery-width) into three columns with
+ * a small inter-column gutter. The variable is set at
+ * mount time by measuring the Properties inspector's
+ * Starting State row (marked with the
+ * .insp-row-starting-state class) — the natural pane
+ * floor that main.js's body-divider already commits to —
+ * so the gallery aligns with the inspector's widest
+ * field. A fallback constant covers the brief window
+ * before the measurement can run.
  *
- * Wiring contract. setCanvasSize(w, h) is called by
- * main.js after every scene reload so the fields track
- * the scene's current canvasW / canvasH values without
- * disturbing a focused field. onSceneEdit(cb) lets
- * main.js subscribe to W/H commits as { kind: "setCanvasW"
- * | "setCanvasH", value: number } edits — the same shape
- * the toolbar's onSceneEdit used to emit — so main.js's
- * applySceneEdit dispatch table doesn't need to change.
- * onSetBackgroundFromGallery(cb) is the Stage 3 addition:
- * receives { id } when a thumbnail is clicked, and the
- * subscriber is expected to call setActiveGalleryId(id)
- * after committing the change so the active-frame moves.
- * refreshGallery() re-reads gallery.list and re-renders
- * the grid; called by main.js after the bundle's image
- * changes so a new entry from Stage 4's import pipeline
- * shows up immediately.
+ * Pinned section. Each slot is either populated
+ * (rendered from a JPEG data URL passed in the snapshot)
+ * or empty (placeholder with a dim background). Clicking
+ * a populated slot emits onSetBackgroundFromPinnedSlot
+ * with { slotIndex, hash }; main.js handles the
+ * orchestration (set as current background, then add-
+ * or-promote in the shared gallery so the recipient of
+ * a shared score builds up their own shared gallery
+ * only from images they actually use). The Pin button
+ * on the top row pins the current background via the
+ * onPinClick callback; main.js dispatches via
+ * bundle.pinCurrentImage and translates the outcome
+ * into a messages-area note.
+ *
+ * Shared section. Recency-bump (Stage 5): new imports
+ * prepend, clicks promote to front. Click on a shared
+ * slot emits onSetBackgroundFromGallery with { id };
+ * main.js handles the orchestration (set as current
+ * background, gallery.touch to bump addedAt). The green
+ * active-frame on the shared section is driven by
+ * setActiveGalleryId; on the pinned section it's
+ * encoded in the snapshot entries' active flag.
+ *
+ * Wiring contract. setCanvasSize and onSceneEdit mirror
+ * Stage 1's. Existing for shared section:
+ * onSetBackgroundFromGallery, setActiveGalleryId,
+ * refreshGallery. New for Stage 5: onPinClick,
+ * onSetBackgroundFromPinnedSlot, setPinnedSnapshot,
+ * setPinButtonState. The remeasureGalleryWidth hook lets
+ * main.js re-trigger the Starting State row measurement
+ * after events that might shift the inspector's natural
+ * width (tab switches into Canvas, scene reloads that
+ * rebuild the Properties tab).
  */
 
 // @ts-check
 
 import { list as galleryList } from "./gallery.js";
+import { PINNED_SLOTS_COUNT } from "./bundle.js";
 
 const CANVAS_DIMENSION_MIN = 1;
 const CANVAS_DIMENSION_MAX = 200;
 const CANVAS_DIMENSION_DEFAULT_W = 32;
 const CANVAS_DIMENSION_DEFAULT_H = 24;
 
-// Twenty fixed slots in the gallery grid — four columns by
-// five rows. The slot count is independent of how many
-// entries the backing gallery currently holds: fewer entries
-// means trailing slots render as empty placeholders, more
-// entries means the tail is hidden until older entries get
-// evicted or the gallery is paginated in a later stage.
-// Five rows at the default inspector width was the Section
-// 13.5 target; the slot count follows from four columns ×
-// five visible rows.
-const GALLERY_SLOT_COUNT = 20;
+// Fallback width for the gallery when the Starting State
+// row hasn't been measured yet (e.g. the Canvas tab
+// activates before the Properties inspector has rendered).
+// The CSS variable starts at this value; once
+// _measureGalleryWidth runs, the variable picks up the
+// real width. The fallback is close to the typical
+// measured value so the transition from fallback to
+// measured doesn't visibly shift the grid.
+const GALLERY_WIDTH_FALLBACK = 420;
+
+// Fallback thumb size, matching the gallery-width
+// fallback arithmetically: (420 - 2 * 6) / 3 = 136.
+// The thumb-size CSS variable starts here; once
+// _measureGalleryWidth runs, it picks up the real
+// value derived from the measured gallery width.
+const THUMB_SIZE_FALLBACK = 136;
 
 export class CanvasInspector {
     /**
@@ -84,9 +103,9 @@ export class CanvasInspector {
         // Canvas-size state. Mirrors the scene's canvasW
         // and canvasH whenever main.js calls setCanvasSize
         // after a scene reload. Defaults match the
-        // toolbar's previous behaviour so a freshly-
-        // mounted inspector with no scene yet displays the
-        // same numbers older versions implicitly used.
+        // toolbar's previous numbers so a freshly mounted
+        // inspector with no scene yet displays the same
+        // defaults older versions implicitly used.
         this._canvasW = CANVAS_DIMENSION_DEFAULT_W;
         this._canvasH = CANVAS_DIMENSION_DEFAULT_H;
 
@@ -98,39 +117,35 @@ export class CanvasInspector {
         /** @type {Array<(edit: any) => void>} */
         this._sceneEditListeners = [];
 
-        // --- Gallery state (Stage 3) ---
+        // --- Shared gallery state ---
 
         /**
          * Cached entries from the most recent gallery.list
-         * call, sorted most-recent-first. The grid renders
-         * the first GALLERY_SLOT_COUNT of these as
-         * populated slots; any beyond that are hidden
-         * (eviction in the gallery layer keeps the cap
-         * bounded). Empty array until the first
-         * _loadGallery resolves.
+         * call, ordered newest first under the Stage 5
+         * recency-bump display sort. The shared grid
+         * renders one slot per entry; there are no fixed
+         * placeholder slots in the shared section after
+         * Stage 5 (the positional memory that motivated
+         * placeholders has moved to the pinned section
+         * above).
          * @type {Array<{id: string, sourcePath: string, thumbnailBase64: string, addedAt: number}>}
          */
         this._galleryEntries = [];
 
         /**
-         * Id of the entry whose thumbnail should carry the
-         * green active-frame, or null when no entry is
-         * active. Set by main.js via setActiveGalleryId
-         * after a successful background-image swap.
+         * Id of the shared entry that should carry the
+         * green active-frame, or null when no shared
+         * entry is the current background. Set by main.js
+         * via setActiveGalleryId after a background swap.
          * @type {string | null}
          */
         this._activeGalleryId = null;
 
-        /**
-         * Reference to the gallery grid container, used by
-         * _renderGalleryGrid to repopulate without
-         * re-running the full _render. Null until _render
-         * runs and gone again on the next _render (the
-         * container's contents are rebuilt as a whole each
-         * time).
-         * @type {HTMLDivElement | null}
-         */
-        this._galleryGridEl = null;
+        /** @type {HTMLDivElement | null} */
+        this._sharedGridEl = null;
+
+        /** @type {HTMLDivElement | null} */
+        this._panelEl = null;
 
         /** @type {Array<(intent: {id: string}) => void>} */
         this._setBackgroundListeners = [];
@@ -141,26 +156,66 @@ export class CanvasInspector {
         /** @type {Array<() => void>} */
         this._removeImageListeners = [];
 
+        // --- Pinned section state (Stage 5) ---
+
+        /**
+         * Snapshot of the bundle's pinned section. Each
+         * entry is either null (empty slot) or
+         * { hash, dataUrl, active? } where dataUrl is a
+         * JPEG data URL the browser scales for display
+         * and active flags the slot whose image is the
+         * current background (drives the green active-
+         * frame). main.js builds this from
+         * bundle.pinnedSlots, bundle.pinnedBytes, and
+         * bundle.imageContentHash, then pushes via
+         * setPinnedSnapshot whenever any of those change.
+         * Defaults to PINNED_SLOTS_COUNT nulls so initial
+         * render shows the empty grid.
+         * @type {Array<{ hash: string, dataUrl: string, active?: boolean } | null>}
+         */
+        this._pinnedSnapshot = new Array(PINNED_SLOTS_COUNT).fill(null);
+
+        /**
+         * Pin button visual state. main.js updates this
+         * whenever the bundle changes in a way that
+         * affects pinnability (image set or removed,
+         * pinned slot filled or cleared, current image
+         * hash recomputed). The disabledReason becomes
+         * the button's tooltip when the button is
+         * disabled. The button always fires onPinClick
+         * when clicked regardless of state; main.js
+         * dispatches via bundle.pinCurrentImage and
+         * surfaces the authoritative outcome in the
+         * messages area.
+         * @type {{ enabled: boolean, disabledReason: string }}
+         */
+        this._pinButtonState = {
+            enabled: false,
+            disabledReason: "No current background to pin",
+        };
+
+        /** @type {HTMLDivElement | null} */
+        this._pinnedGridEl = null;
+        /** @type {HTMLButtonElement | null} */
+        this._pinButtonEl = null;
+
+        /** @type {Array<() => void>} */
+        this._pinClickListeners = [];
+
+        /** @type {Array<(intent: { slotIndex: number, hash: string }) => void>} */
+        this._setBackgroundFromPinnedListeners = [];
+
         this._render();
         // Kick off the initial gallery load. _render has
-        // already painted GALLERY_SLOT_COUNT empty slots so
-        // there's something visible until the async list
-        // resolves; _renderGalleryGrid then re-fills with
-        // the entries it returns. Errors are logged and
-        // leave the grid as empty placeholders — a degraded
-        // but readable state.
+        // already painted the empty-state shared grid
+        // and the empty pinned slots; the shared grid
+        // refills with entries once gallery.list resolves.
         void this._loadGallery();
     }
 
+    // --- Canvas-size API ---
+
     /**
-     * Subscribe to scene-edit emissions from the W and H
-     * fields. The callback receives an edit object shaped
-     * like the inspector's edits — { kind: "setCanvasW" |
-     * "setCanvasH", value: number }. main.js routes these
-     * through applySceneEdit so they share the dirty-state,
-     * auto-save, and re-run mechanics with inspector and
-     * canvas edits, on the same code path the toolbar used
-     * before the migration.
      * @param {(edit: any) => void} cb
      */
     onSceneEdit(cb) {
@@ -168,17 +223,6 @@ export class CanvasInspector {
     }
 
     /**
-     * Update the displayed canvas-size values. Called by
-     * main.js after each scene reload so the fields track
-     * whatever scene.json declares (or the migration
-     * default of 32 × 24 for scenes that predate the
-     * canvas-size feature). Doesn't touch a focused field
-     * — if the user is mid-edit on W or H, an unrelated
-     * scene reload shouldn't overwrite their typed value
-     * before they get a chance to commit. The internal
-     * mirror values are updated unconditionally so the
-     * diff check at commit time still reflects the latest
-     * scene state.
      * @param {number} w
      * @param {number} h
      */
@@ -195,62 +239,9 @@ export class CanvasInspector {
         }
     }
 
-    // --- Gallery public API (Stage 3) ---
+    // --- Top-row button callbacks ---
 
     /**
-     * Subscribe to background-set intents emitted by
-     * gallery thumbnail clicks. The callback receives
-     * { id } where id is the clicked entry's id. The
-     * subscriber owns the orchestration (load bytes,
-     * mutate bundle, apply to canvas, promote via
-     * gallery.touch, save) and is expected to call
-     * setActiveGalleryId(id) on success so the
-     * green active-frame moves to the clicked slot.
-     * Multiple listeners are supported, matching the
-     * onSceneEdit pattern, though only one is wired in
-     * practice.
-     * @param {(intent: {id: string}) => void} cb
-     */
-    onSetBackgroundFromGallery(cb) {
-        this._setBackgroundListeners.push(cb);
-    }
-
-    /**
-     * Set or clear the gallery id whose thumbnail should
-     * carry the green active-frame. Pass null to clear.
-     * The grid re-renders so the frame moves to the
-     * matching slot (or disappears, when null). Called
-     * by main.js after a successful background-image
-     * swap; the Stage 4 Open Score recency hook will
-     * also call this.
-     * @param {string | null} id
-     */
-    setActiveGalleryId(id) {
-        if (this._activeGalleryId === id) return;
-        this._activeGalleryId = id;
-        this._renderGalleryGrid();
-    }
-
-    /**
-     * Re-read the gallery and re-render the grid. Called
-     * by main.js after operations that change the entry
-     * list (Stage 3: after a click promotes an entry;
-     * Stage 4+: after import paths add entries, after
-     * right-click Remove from history). Cheap to call:
-     * gallery.list is a single IPC round-trip or IDB read.
-     * Errors are logged and the grid stays at its prior
-     * state.
-     * @returns {Promise<void>}
-     */
-    async refreshGallery() {
-        await this._loadGallery();
-    }
-
-    /**
-     * Subscribe to Load Image button clicks. main.js wires
-     * this to imageImporter.importViaFilePicker(), which
-     * opens the OS file picker. Stage 4 addition; before
-     * Stage 4 the button was a disabled placeholder.
      * @param {() => void} cb
      */
     onLoadImageClick(cb) {
@@ -258,15 +249,120 @@ export class CanvasInspector {
     }
 
     /**
-     * Subscribe to Remove Image button clicks. main.js
-     * wires this to imageImporter.removeCurrentImage() and
-     * clears the active gallery id after the await. Stage 4
-     * addition; before Stage 4 the button was a disabled
-     * placeholder.
      * @param {() => void} cb
      */
     onRemoveImageClick(cb) {
         this._removeImageListeners.push(cb);
+    }
+
+    // --- Shared gallery API ---
+
+    /**
+     * @param {(intent: {id: string}) => void} cb
+     */
+    onSetBackgroundFromGallery(cb) {
+        this._setBackgroundListeners.push(cb);
+    }
+
+    /**
+     * Set the shared section's active-frame id. Pass null
+     * to clear. Triggers a shared-grid re-render so the
+     * frame moves to the matching slot (or disappears,
+     * when null). The pinned section's active frame is
+     * driven separately by the active flag on snapshot
+     * entries (see setPinnedSnapshot).
+     * @param {string | null} id
+     */
+    setActiveGalleryId(id) {
+        if (this._activeGalleryId === id) return;
+        this._activeGalleryId = id;
+        this._renderSharedGrid();
+    }
+
+    /**
+     * Re-read the gallery and re-render the shared grid.
+     * Called by main.js after operations that change the
+     * shared gallery's contents (imports, click-promotes,
+     * removes).
+     * @returns {Promise<void>}
+     */
+    async refreshGallery() {
+        await this._loadGallery();
+    }
+
+    // --- Pinned section API (Stage 5) ---
+
+    /**
+     * Register a callback for Pin button clicks. The
+     * callback fires on every click regardless of the
+     * button's visual enabled state; main.js dispatches
+     * via bundle.pinCurrentImage and translates the
+     * outcome (ok or one of the disabled reasons) into
+     * the messages area.
+     * @param {() => void} cb
+     */
+    onPinClick(cb) {
+        this._pinClickListeners.push(cb);
+    }
+
+    /**
+     * Register a callback for clicks on populated pinned
+     * slots. Receives { slotIndex, hash } where slotIndex
+     * is the 0-indexed position and hash is the entry's
+     * content hash (key into bundle.pinnedBytes).
+     * @param {(intent: { slotIndex: number, hash: string }) => void} cb
+     */
+    onSetBackgroundFromPinnedSlot(cb) {
+        this._setBackgroundFromPinnedListeners.push(cb);
+    }
+
+    /**
+     * Update the pinned section's render snapshot. main.js
+     * builds the snapshot from bundle.pinnedSlots and
+     * bundle.pinnedBytes (encoding the bytes as JPEG data
+     * URLs for inline display) and calls this whenever
+     * the bundle's pinned section changes — typically
+     * after pin/unpin and on score open. Snapshot length
+     * should match PINNED_SLOTS_COUNT; missing entries
+     * are coerced to null.
+     * @param {Array<{ hash: string, dataUrl: string, active?: boolean } | null>} snapshot
+     */
+    setPinnedSnapshot(snapshot) {
+        for (let i = 0; i < PINNED_SLOTS_COUNT; i++) {
+            const s = snapshot[i];
+            this._pinnedSnapshot[i] = (s !== undefined && s !== null) ? s : null;
+        }
+        this._renderPinnedGrid();
+    }
+
+    /**
+     * Update the Pin button's visual enabled / disabled
+     * state. The button always fires onPinClick when
+     * clicked regardless of visual state; this update
+     * controls the .disabled class and the tooltip text.
+     * @param {{ enabled: boolean, disabledReason?: string }} state
+     */
+    setPinButtonState(state) {
+        this._pinButtonState = {
+            enabled: !!state.enabled,
+            disabledReason: state.disabledReason ?? "",
+        };
+        this._applyPinButtonState();
+    }
+
+    /**
+     * Re-measure the Starting State row and update the
+     * CSS variable that sizes both gallery grids. Called
+     * by main.js after events that might shift the
+     * inspector's natural width — most importantly tab
+     * activation, since the Canvas tab and the Properties
+     * tab can be activated in either order on first
+     * mount, and the initial measurement runs in a
+     * microtask which may execute before the Properties
+     * tab's DOM has fully settled.
+     */
+    remeasureGalleryWidth() {
+        this._measureGalleryWidth();
     }
 
     // --- Internals ---
@@ -275,25 +371,52 @@ export class CanvasInspector {
         this.container.innerHTML = "";
         this._canvasWField = null;
         this._canvasHField = null;
-        this._galleryGridEl = null;
+        this._panelEl = null;
+        this._sharedGridEl = null;
+        this._pinnedGridEl = null;
+        this._pinButtonEl = null;
 
         const panel = document.createElement("div");
         panel.className = "canvas-insp-panel";
+        // Default the gallery-width and thumb-size CSS
+        // variables to sensible fallbacks so the grids
+        // paint sensibly before _measureGalleryWidth
+        // runs. The fallbacks (420 px gallery, 136 px
+        // thumb) match each other arithmetically:
+        // 420 - 2 * 6 = 408, 408 / 3 = 136. _measureGalleryWidth
+        // overwrites both based on the Properties tab's
+        // Starting State row width.
+        panel.style.setProperty(
+            "--canvas-insp-gallery-width",
+            GALLERY_WIDTH_FALLBACK + "px",
+        );
+        panel.style.setProperty(
+            "--canvas-insp-thumb-size",
+            THUMB_SIZE_FALLBACK + "px",
+        );
+        this._panelEl = panel;
 
-        // Top row: Load Image, Remove Image, W field, H field.
-        // Both buttons went live in Stage 4; main.js's click
-        // handlers route them to imageImporter for the
-        // actual file-picker / removal flow. Click intents
-        // are emitted via onLoadImageClick / onRemoveImageClick
-        // so the inspector stays decoupled from the
-        // importer's dependencies.
+        // Top row: "Image:" section caption, Load,
+        // Clear, Pin, W [field], H [field]. The caption
+        // anchors the image-related controls; the
+        // tightened button labels (Load was "Load
+        // Image", Clear was "Remove Image") plus the
+        // reduced button padding in the .canvas-insp-
+        // button rule keep total row width close to the
+        // inspector floor so the row reads as one
+        // horizontal strip rather than wrapping.
         const topRow = document.createElement("div");
         topRow.className = "canvas-insp-top-row";
+
+        const imageCaption = document.createElement("span");
+        imageCaption.className = "canvas-insp-section-caption";
+        imageCaption.textContent = "Image:";
+        topRow.appendChild(imageCaption);
 
         const loadBtn = document.createElement("button");
         loadBtn.type = "button";
         loadBtn.className = "canvas-insp-button";
-        loadBtn.textContent = "Load Image";
+        loadBtn.textContent = "Load";
         loadBtn.title = "Open a file picker to choose a new background image.";
         loadBtn.addEventListener("click", () => {
             for (const cb of this._loadImageListeners) {
@@ -307,7 +430,7 @@ export class CanvasInspector {
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
         removeBtn.className = "canvas-insp-button";
-        removeBtn.textContent = "Remove Image";
+        removeBtn.textContent = "Clear";
         removeBtn.title = "Remove the current background image from this score.";
         removeBtn.addEventListener("click", () => {
             for (const cb of this._removeImageListeners) {
@@ -317,6 +440,31 @@ export class CanvasInspector {
             }
         });
         topRow.appendChild(removeBtn);
+
+        // Pin button (Stage 5). Always clickable; the
+        // visual disabled state is driven by
+        // setPinButtonState and surfaces via a CSS
+        // .disabled class plus a tooltip explaining why.
+        // The click handler always fires onPinClick;
+        // main.js dispatches via bundle.pinCurrentImage
+        // and translates the outcome into the messages
+        // area regardless of visual state, so a click on
+        // a disabled-looking button still tells the user
+        // why nothing happened.
+        const pinBtn = document.createElement("button");
+        pinBtn.type = "button";
+        pinBtn.className = "canvas-insp-button";
+        pinBtn.textContent = "Pin";
+        pinBtn.addEventListener("click", () => {
+            for (const cb of this._pinClickListeners) {
+                try { cb(); } catch (err) {
+                    console.error("GXW: canvas-inspector pin-click listener threw.", err);
+                }
+            }
+        });
+        this._pinButtonEl = pinBtn;
+        this._applyPinButtonState();
+        topRow.appendChild(pinBtn);
 
         const wLabel = document.createElement("span");
         wLabel.className = "canvas-insp-axis-label";
@@ -336,44 +484,112 @@ export class CanvasInspector {
 
         panel.appendChild(topRow);
 
-        // Horizontal separator anticipating the gallery
-        // Stage 3 lands below it. Rendered now so the
-        // top row's footprint is visually anchored
-        // against the rest of the tab from Stage 1
-        // onward.
-        const sep = document.createElement("div");
-        sep.className = "canvas-insp-separator";
-        panel.appendChild(sep);
+        // Horizontal separator below the top row.
+        const topSep = document.createElement("div");
+        topSep.className = "canvas-insp-separator";
+        panel.appendChild(topSep);
 
-        // Gallery grid (Stage 3). The container is created
-        // here so the empty placeholder slots paint in
-        // their final position as soon as the inspector
-        // mounts; the initial async _loadGallery from the
-        // constructor refills the populated slots once
-        // gallery.list resolves. Subsequent grid changes
-        // (setActiveGalleryId, refreshGallery) just call
-        // _renderGalleryGrid against the same element
-        // without re-running _render.
-        const galleryEl = document.createElement("div");
-        galleryEl.className = "canvas-insp-gallery";
-        this._galleryGridEl = galleryEl;
-        panel.appendChild(galleryEl);
-        this._renderGalleryGrid();
+        // Pinned section (Stage 5). Six fixed slots in a
+        // 2-row by 3-column grid. Explicit placeholders
+        // for empty slots so the grid's footprint is
+        // visible even when the score has no pins yet,
+        // which is the common case for a fresh score.
+        const pinnedEl = document.createElement("div");
+        pinnedEl.className = "canvas-insp-pinned";
+        this._pinnedGridEl = pinnedEl;
+        panel.appendChild(pinnedEl);
+        this._renderPinnedGrid();
+
+        // Divider between pinned and shared sections.
+        // Visually heavier than the top separator (which
+        // sits between control rows) so the section
+        // boundary reads at a glance.
+        const sectionDivider = document.createElement("div");
+        sectionDivider.className = "canvas-insp-section-divider";
+        panel.appendChild(sectionDivider);
+
+        // Shared gallery section. 3-column grid sized by
+        // the same CSS variable as the pinned section.
+        // Vertical scrolling falls through to the
+        // #canvas-inspector-area's overflow-y rule when
+        // entries push the grid past the viewport.
+        const sharedEl = document.createElement("div");
+        sharedEl.className = "canvas-insp-gallery";
+        this._sharedGridEl = sharedEl;
+        panel.appendChild(sharedEl);
+        this._renderSharedGrid();
 
         this.container.appendChild(panel);
+
+        // Measure the Starting State row in the Properties
+        // inspector and copy its offsetWidth into the
+        // gallery-width CSS variable. Deferred to a
+        // microtask so the Properties tab's DOM has
+        // settled if it just rendered. Falls back silently
+        // when the row isn't in the DOM yet — main.js's
+        // tab-activation hook calls remeasureGalleryWidth
+        // when the Canvas tab becomes active, which covers
+        // the case where Properties wasn't rendered until
+        // after the first measurement attempt.
+        queueMicrotask(() => this._measureGalleryWidth());
+    }
+
+    /**
+     * Find the Starting State row in the Properties
+     * inspector and copy its offsetWidth into the CSS
+     * variable that drives both grid widths. Silent
+     * fallback when the row isn't in the DOM (timing
+     * race) or measures zero (layout not flushed); the
+     * fallback width set in _render covers those cases
+     * until a later remeasure picks up the real value.
+     */
+    _measureGalleryWidth() {
+        const panel = this._panelEl;
+        if (panel === null) return;
+        const row = document.querySelector(".insp-row-starting-state");
+        if (!(row instanceof HTMLElement)) return;
+        const w = row.offsetWidth;
+        if (w > 0) {
+            panel.style.setProperty(
+                "--canvas-insp-gallery-width",
+                w + "px",
+            );
+            // Fixed pixel thumb dimensions computed once
+            // from the measured gallery width. The grids
+            // use these as fixed column widths and the
+            // thumb elements use them as fixed width and
+            // height. Stage 4 established this pattern
+            // (its fixed 72px columns) as the fix for a
+            // visible body-divider drag lag: with flex
+            // columns and aspect-ratio children the
+            // browser re-lays out every thumbnail on
+            // every drag frame, even when the gallery's
+            // own width is fixed, because parent reflow
+            // marks descendant layout dirty. Fixed pixel
+            // dimensions skip the per-frame recomputation
+            // entirely. The fallback in the CSS variable
+            // (136 px) corresponds to a 420 px gallery
+            // width minus 12 px of gap divided across
+            // three columns.
+            const gap = 6;
+            const thumbSize = Math.floor((w - 2 * gap) / 3);
+            if (thumbSize > 0) {
+                panel.style.setProperty(
+                    "--canvas-insp-thumb-size",
+                    thumbSize + "px",
+                );
+            }
+        }
     }
 
     /**
      * Build one canvas-dimension numeric field. Verbatim
-     * port of the toolbar's _buildCanvasField: editable by
-     * typing (Enter to commit, Escape to revert, blur to
-     * commit silently) and by scroll-wheel scrubbing in
-     * 1.0-unit increments. Hard-blocks values outside
+     * port of the toolbar's _buildCanvasField: editable
+     * by typing (Enter to commit, Escape to revert, blur
+     * to commit silently) and by scroll-wheel scrubbing
+     * in 1.0-unit increments. Hard-blocks values outside
      * 1..200 — Enter on a bad value squiggles red and
      * keeps focus; blur on a bad value silently reverts.
-     * Scroll-wheel scrubbing emits an edit on every notch
-     * so the canvas redraws live with the new size; typed
-     * commits emit on Enter or blur.
      *
      * @param {"w" | "h"} axis
      * @returns {HTMLDivElement}
@@ -390,16 +606,6 @@ export class CanvasInspector {
             : "Canvas height in canvas units. Scroll to scrub, type to set, Enter to commit.";
         field.textContent = String(axis === "w" ? this._canvasW : this._canvasH);
 
-        // Scroll-wheel scrubbing. 1.0-unit increments are
-        // coarser than the inspector's 0.3 (canvas size
-        // has a much wider range and integer-only values;
-        // small fractional steps would feel sluggish and
-        // would need rounding anyway). Wheel events on a
-        // field that currently has keyboard focus pass
-        // through to the browser so the user's text-cursor
-        // scrolling works as expected; on an unfocused
-        // field, wheel scrubs the value and emits an edit
-        // per notch.
         field.addEventListener("wheel", (e) => {
             if (document.activeElement === field) return;
             const current = parseInt(field.textContent ?? "", 10);
@@ -414,10 +620,6 @@ export class CanvasInspector {
             this._emitCanvasSizeEdit(axis, target);
         }, { passive: false });
 
-        // Select all on focus so the user's first keystroke
-        // replaces the existing value rather than inserting
-        // into it. Mirrors the inspector's editable-field
-        // convention.
         field.addEventListener("focus", () => {
             const sel = window.getSelection();
             if (sel === null) return;
@@ -438,8 +640,6 @@ export class CanvasInspector {
                 n <= CANVAS_DIMENSION_MAX;
             if (!valid) {
                 if (mode === "blur") {
-                    // Silently revert: an abandoned bad
-                    // value shouldn't carry forward.
                     field.textContent = String(stored);
                     field.classList.remove("error");
                     return;
@@ -468,9 +668,6 @@ export class CanvasInspector {
                 field.blur();
                 return;
             }
-            // Clear an error squiggle on any other
-            // keystroke so the user sees their corrections
-            // in step with their typing.
             if (field.classList.contains("error")) {
                 queueMicrotask(() => field.classList.remove("error"));
             }
@@ -483,11 +680,6 @@ export class CanvasInspector {
     }
 
     /**
-     * Emit a canvas-size edit to every registered
-     * scene-edit listener. The edit shape mirrors
-     * inspector edits: { kind, value }. main.js
-     * dispatches on kind to the matching sceneEditor
-     * mutator.
      * @param {"w" | "h"} axis
      * @param {number} value
      */
@@ -503,15 +695,9 @@ export class CanvasInspector {
         }
     }
 
-    // --- Gallery internals (Stage 3) ---
-
     /**
      * Read gallery.list and update the cached entries,
-     * then re-render the grid. The cache lets
-     * setActiveGalleryId re-render the grid synchronously
-     * (no IPC round-trip on every active-frame change)
-     * and lets a not-yet-mounted grid render correctly
-     * the first time _render runs. Errors are logged
+     * then re-render the shared grid. Errors are logged
      * and the cache stays at its prior value, so a
      * transient failure leaves the grid in its last
      * known state rather than collapsing to empty.
@@ -525,40 +711,81 @@ export class CanvasInspector {
             console.error("GXW: failed to read image gallery:", err);
             return;
         }
-        this._renderGalleryGrid();
+        this._renderSharedGrid();
     }
 
     /**
-     * Repopulate the gallery grid against the current
-     * cached entries and active id. No-op when the grid
-     * element hasn't been mounted yet (the constructor's
-     * initial _loadGallery may finish before _render
-     * runs; subsequent refreshes find the grid in place).
+     * Repopulate the shared gallery grid against the
+     * current cached entries and active id. Renders an
+     * empty-state message when the entry list is empty
+     * so the section's purpose stays visible even before
+     * any image has been imported. No-op when the grid
+     * element isn't mounted yet.
      */
-    _renderGalleryGrid() {
-        const grid = this._galleryGridEl;
+    _renderSharedGrid() {
+        const grid = this._sharedGridEl;
         if (grid === null) return;
         grid.innerHTML = "";
-        for (let i = 0; i < GALLERY_SLOT_COUNT; i++) {
+        if (this._galleryEntries.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "canvas-insp-gallery-empty";
+            empty.textContent = "Gallery is empty. Imported images will appear here.";
+            grid.appendChild(empty);
+            return;
+        }
+        for (const entry of this._galleryEntries) {
             const slot = document.createElement("div");
             slot.className = "canvas-insp-thumb";
-            const entry = this._galleryEntries[i];
-            if (entry === undefined) {
+            if (entry.id === this._activeGalleryId) {
+                slot.classList.add("active");
+            }
+            const img = document.createElement("img");
+            // Decorative; the user's mental model is the
+            // image itself, not an alt-text description.
+            img.alt = "";
+            img.draggable = false;
+            img.src = "data:image/png;base64," + entry.thumbnailBase64;
+            slot.appendChild(img);
+            const entryId = entry.id;
+            slot.addEventListener("click", () => {
+                this._emitSetBackground(entryId);
+            });
+            grid.appendChild(slot);
+        }
+    }
+
+    /**
+     * Repopulate the pinned grid against the current
+     * snapshot. Always PINNED_SLOTS_COUNT fixed slots;
+     * populated ones render the snapshot entry's dataUrl
+     * as an inline image, empty ones render as a dim
+     * placeholder. The active flag in the snapshot
+     * drives the green active-frame. No-op when the
+     * grid element isn't mounted yet.
+     */
+    _renderPinnedGrid() {
+        const grid = this._pinnedGridEl;
+        if (grid === null) return;
+        grid.innerHTML = "";
+        for (let i = 0; i < PINNED_SLOTS_COUNT; i++) {
+            const slot = document.createElement("div");
+            slot.className = "canvas-insp-thumb canvas-insp-pinned-slot";
+            const entry = this._pinnedSnapshot[i];
+            if (entry === null) {
                 slot.classList.add("empty");
             } else {
-                if (entry.id === this._activeGalleryId) {
+                if (entry.active === true) {
                     slot.classList.add("active");
                 }
                 const img = document.createElement("img");
-                // Decorative; the user's mental model is the
-                // image itself, not an alt-text description.
                 img.alt = "";
                 img.draggable = false;
-                img.src = "data:image/png;base64," + entry.thumbnailBase64;
+                img.src = entry.dataUrl;
                 slot.appendChild(img);
-                const entryId = entry.id;
+                const slotIndex = i;
+                const hash = entry.hash;
                 slot.addEventListener("click", () => {
-                    this._emitSetBackground(entryId);
+                    this._emitSetBackgroundFromPinnedSlot(slotIndex, hash);
                 });
             }
             grid.appendChild(slot);
@@ -566,15 +793,42 @@ export class CanvasInspector {
     }
 
     /**
-     * Emit a background-set intent to every registered
-     * listener. main.js does the orchestration; the
-     * inspector just signals what was clicked.
+     * Apply the Pin button's current visual state. Toggles
+     * the .disabled class and updates the tooltip text.
+     * The button stays click-handled in both states; the
+     * disabled visual is purely a hint.
+     */
+    _applyPinButtonState() {
+        const btn = this._pinButtonEl;
+        if (btn === null) return;
+        if (this._pinButtonState.enabled) {
+            btn.classList.remove("disabled");
+            btn.title = "Pin the current background image into the per-score pinned section.";
+        } else {
+            btn.classList.add("disabled");
+            btn.title = this._pinButtonState.disabledReason || "Pin is not available right now.";
+        }
+    }
+
+    /**
      * @param {string} id
      */
     _emitSetBackground(id) {
         for (const cb of this._setBackgroundListeners) {
             try { cb({ id }); } catch (err) {
                 console.error("GXW: canvas-inspector set-background listener threw.", err);
+            }
+        }
+    }
+
+    /**
+     * @param {number} slotIndex
+     * @param {string} hash
+     */
+    _emitSetBackgroundFromPinnedSlot(slotIndex, hash) {
+        for (const cb of this._setBackgroundFromPinnedListeners) {
+            try { cb({ slotIndex, hash }); } catch (err) {
+                console.error("GXW: canvas-inspector pinned-set-background listener threw.", err);
             }
         }
     }

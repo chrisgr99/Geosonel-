@@ -72,6 +72,19 @@ const SCORE_FOLDER_EXTENSION = ".gxs";
  * @property {string} name                   Display name (no extension).
  * @property {Object<string, BundleFileRecord>} files
  * @property {string | null} imageName
+ * @property {string | null} [imageContentHash]  SHA-256 hex of the current
+ *   image's normalized bytes. Added in Stage 4 of the Canvas inspector
+ *   work; optional for backward compatibility with older records.
+ * @property {Array<string | null>} [pinnedSlots]  Per-score pinned slots
+ *   (Stage 5 of Canvas inspector work). Each entry is either a content
+ *   hash referencing a key in pinnedFiles, or null for an empty slot.
+ *   Length matches PINNED_SLOTS_COUNT in bundle.js. Optional for backward
+ *   compatibility with older records.
+ * @property {Object<string, ArrayBuffer>} [pinnedFiles]  Pinned image
+ *   bytes keyed by content hash. On the disk backend these live in the
+ *   .gxs folder's pinned/ subfolder; on IDB they're inline in the
+ *   record. Optional; absent or empty when the score has no pinned
+ *   images.
  * @property {number} updatedAt              Epoch milliseconds of last save.
  */
 

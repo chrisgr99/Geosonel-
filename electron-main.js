@@ -203,6 +203,7 @@ function applyDockIcon() {
 
 const SETTINGS_FILENAME = 'settings.json';
 const SCORE_META_FILENAME = '.gxw-meta.json';
+const PINNED_DIRNAME = 'pinned';
 
 // Image gallery storage (Stage 2 of Canvas inspector tab work).
 //
@@ -318,15 +319,33 @@ async function writeGalleryState(state) {
   await writeSettings(settings);
 }
 
-// Sort entries for display: oldest first, newest last.
-// Stable-position model (Stage 4 redesign): addedAt is
-// immutable after creation, so this ordering also
-// represents the insertion order across the gallery's
-// lifetime. The name predates the redesign — the
-// gallery used to be a recency list — and stays under
-// the historical name to minimise renaming churn; the
-// behaviour is now stable-position.
+// Sort entries for display: newest first. Stage 5
+// recency-bump model. touch() and add()-on-match both
+// stamp addedAt to Date.now() so the most recently
+// touched or imported entry naturally sits at the head
+// of this sort.
+//
+// Pre-Stage-5 history. Stages 3 through 4 sorted
+// ascending (oldest first) under the stable-position
+// model where addedAt was immutable after creation;
+// Stage 5 flips to descending alongside reinstating
+// touch's bump-addedAt behaviour. The function name
+// reads naturally now — "by recency" meaning newest
+// first — where pre-Stage-5 it was misleading.
 function sortedByRecency(entries) {
+  return [...entries].sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
+}
+
+// Sort entries oldest-first for eviction purposes. The
+// head of this sort is the least-recently-used entry,
+// the natural eviction target under the recency-bump
+// model. Display calls go through sortedByRecency
+// (descending) instead; the two are intentionally
+// inverse. Stage 5 third commit revisits eviction
+// policy after drag-and-drop makes array order and
+// addedAt diverge; for now "least recently touched"
+// matches user expectations cleanly.
+function sortedOldestFirst(entries) {
   return [...entries].sort((a, b) => (a.addedAt ?? 0) - (b.addedAt ?? 0));
 }
 
@@ -427,6 +446,7 @@ async function readRecordFromFolder(folder, name) {
   // Read the metadata sidecar, if present.
   let imageName = null;
   let imageContentHash = null;
+  let pinnedSlots = [];
   try {
     const metaText = await fsp.readFile(
       path.join(folder, SCORE_META_FILENAME),
@@ -443,6 +463,18 @@ async function readRecordFromFolder(folder, name) {
     // renderer side recomputes on demand.
     if (typeof meta.imageContentHash === 'string') {
       imageContentHash = meta.imageContentHash;
+    }
+    // Stage 5 extension: per-score pinned slots. Each
+    // entry is either a content hash (key into the
+    // pinned/ subfolder) or null for an empty slot.
+    // Older sidecars predate this field and pinnedSlots
+    // stays an empty array, which fromRecord on the
+    // renderer side normalises to PINNED_SLOTS_COUNT
+    // null entries.
+    if (Array.isArray(meta.pinnedSlots)) {
+      pinnedSlots = meta.pinnedSlots.map((v) =>
+        typeof v === 'string' ? v : null
+      );
     }
   } catch (err) {
     if (err.code !== 'ENOENT') {
@@ -475,11 +507,37 @@ async function readRecordFromFolder(folder, name) {
     }
   }
 
+  // Pinned subfolder (Stage 5 of Canvas inspector work).
+  // Read each file in pinned/ and key it in pinnedFiles
+  // by file stem, which is the SHA-256 content hash the
+  // bundle's pinnedSlots references. The subfolder is
+  // optional — older scores have none and pinnedFiles
+  // stays an empty object.
+  const pinnedFiles = {};
+  const pinnedFolder = path.join(folder, PINNED_DIRNAME);
+  if (await pathExists(pinnedFolder)) {
+    const pinnedEntries = await fsp.readdir(pinnedFolder, { withFileTypes: true });
+    for (const e of pinnedEntries) {
+      if (!e.isFile()) continue;
+      if (e.name === '.DS_Store') continue;
+      const dot = e.name.lastIndexOf('.');
+      const stem = dot === -1 ? e.name : e.name.slice(0, dot);
+      const buffer = await fsp.readFile(path.join(pinnedFolder, e.name));
+      const ab = buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength
+      );
+      pinnedFiles[stem] = ab;
+    }
+  }
+
   return {
     name,
     files,
     imageName,
     imageContentHash,
+    pinnedSlots,
+    pinnedFiles,
     updatedAt: stat.mtimeMs,
   };
 }
@@ -511,10 +569,18 @@ async function writeScoreRecord(scorePath, record) {
   const keepFiles = new Set(Object.keys(record.files));
   keepFiles.add(SCORE_META_FILENAME);
 
-  // Write the metadata sidecar.
+  // Write the metadata sidecar. pinnedSlots travels here
+  // alongside imageName and imageContentHash so the per-
+  // score pinned section survives saves and shared
+  // scores carry their pins. Missing or invalid entries
+  // normalise to null so the on-disk array always has the
+  // hash-or-null shape the renderer expects.
   const meta = {
     imageName: record.imageName ?? null,
     imageContentHash: record.imageContentHash ?? null,
+    pinnedSlots: Array.isArray(record.pinnedSlots)
+      ? record.pinnedSlots.map((v) => (typeof v === 'string' ? v : null))
+      : [],
   };
   await fsp.writeFile(
     path.join(scoreFolder, SCORE_META_FILENAME),
@@ -522,8 +588,10 @@ async function writeScoreRecord(scorePath, record) {
     'utf8'
   );
 
-  // Delete files in the folder that are no longer in the record (e.g. an
+  // Delete top-level files that are no longer in the record (e.g. an
   // image that was removed). Don't touch the metadata sidecar or .DS_Store.
+  // The !entry.isFile() check naturally skips subdirectories like
+  // .backups/ and pinned/, which have their own cleanup paths.
   const existing = await fsp.readdir(scoreFolder, { withFileTypes: true });
   for (const entry of existing) {
     if (!entry.isFile()) continue;
@@ -541,6 +609,49 @@ async function writeScoreRecord(scorePath, record) {
       // ArrayBuffer arriving from the renderer.
       const buffer = Buffer.from(file.content);
       await fsp.writeFile(filePath, buffer);
+    }
+  }
+
+  // Pinned subfolder (Stage 5 of Canvas inspector work).
+  // record.pinnedFiles is a hash-keyed object of
+  // ArrayBuffer; each entry writes to pinned/<hash>.jpg.
+  // Files in pinned/ that aren't in the record are
+  // removed so the subfolder stays in sync with the
+  // bundle's pinnedBytes map. When the record has no
+  // pinned files and the subfolder doesn't yet exist we
+  // skip everything — a no-pinned-images score never
+  // creates the subfolder. When the record has no
+  // pinned files but the subfolder exists from an
+  // earlier save with pins, we walk the subfolder and
+  // unlink stale entries (rmdir of the now-empty
+  // subfolder is left to a future commit; an empty
+  // pinned/ folder is harmless).
+  const pinnedFolder = path.join(scoreFolder, PINNED_DIRNAME);
+  const recordPinned = record.pinnedFiles ?? {};
+  const recordPinnedHashes = new Set(Object.keys(recordPinned));
+  const pinnedFolderExists = await pathExists(pinnedFolder);
+  if (recordPinnedHashes.size > 0 || pinnedFolderExists) {
+    if (recordPinnedHashes.size > 0) {
+      await fsp.mkdir(pinnedFolder, { recursive: true });
+    }
+    if (pinnedFolderExists) {
+      const pinnedEntries = await fsp.readdir(pinnedFolder, { withFileTypes: true });
+      for (const e of pinnedEntries) {
+        if (!e.isFile()) continue;
+        if (e.name === '.DS_Store') continue;
+        const dot = e.name.lastIndexOf('.');
+        const stem = dot === -1 ? e.name : e.name.slice(0, dot);
+        if (!recordPinnedHashes.has(stem)) {
+          await fsp.unlink(path.join(pinnedFolder, e.name));
+        }
+      }
+    }
+    for (const [hash, bytes] of Object.entries(recordPinned)) {
+      const buffer = Buffer.from(bytes);
+      await fsp.writeFile(
+        path.join(pinnedFolder, hash + '.jpg'),
+        buffer,
+      );
     }
   }
 }
@@ -879,13 +990,12 @@ function registerStorageHandlers() {
 
     // Match-by-hash-or-sourcePath: when an entry already
     // exists (by content hash, falling back to sourcePath
-    // for legacy entries that predate the hash), return
-    // its id without mutating addedAt. The stable-position
-    // model treats addedAt as immutable after creation, so
-    // re-importing the same image is a no-op for slot
-    // ordering. We do backfill contentHash on existing
-    // entries that lack one, since that's a metadata
-    // correction rather than a sort-affecting change.
+    // for legacy entries that predate the hash), promote
+    // it to the front by setting its addedAt to now —
+    // the Stage 5 recency-bump model. The contentHash
+    // backfill on existing entries that lack one still
+    // happens here as a metadata correction. Either
+    // change writes back so the new addedAt persists.
     let existing = null;
     if (contentHash !== null) {
       existing = state.entries.find((e) => e.contentHash === contentHash);
@@ -896,13 +1006,14 @@ function registerStorageHandlers() {
       existing = m === undefined ? null : m;
     }
     if (existing !== null) {
+      existing.addedAt = Date.now();
       if (contentHash !== null && existing.contentHash !== contentHash) {
         existing.contentHash = contentHash;
-        await writeGalleryState({
-          entries: state.entries,
-          maxCount: state.maxCount,
-        });
       }
+      await writeGalleryState({
+        entries: state.entries,
+        maxCount: state.maxCount,
+      });
       return {
         id: existing.id,
         entries: sortedByRecency(state.entries),
@@ -925,17 +1036,15 @@ function registerStorageHandlers() {
       contentHash,
     });
 
-    // Eviction. If the gallery is now over cap, drop the
-    // oldest entries by addedAt until it fits, unlinking
-    // their cache files. Sort ascending so the head is the
-    // eviction candidates; keep the tail. Note: evicting
-    // the oldest contradicts the stable-position intent
-    // for long-standing entries. Settled as a Stage 5
-    // design question — the Remove from history right-
-    // click surface and the max-count Setting will rework
-    // this together.
+    // Eviction. If the gallery is now over cap, drop
+    // the oldest entries by addedAt until it fits,
+    // unlinking their cache files. sortedOldestFirst
+    // puts the eviction candidates at the head; the
+    // remaining tail is what's kept. Stage 5 third
+    // commit revisits eviction policy after drag-and-
+    // drop makes array order and addedAt diverge.
     if (state.entries.length > state.maxCount) {
-      const sorted = sortedByRecency(state.entries);
+      const sorted = sortedOldestFirst(state.entries);
       const overage = state.entries.length - state.maxCount;
       const evict = sorted.slice(0, overage);
       const keep = sorted.slice(overage);
@@ -979,12 +1088,11 @@ function registerStorageHandlers() {
 
     // Reducing the cap below the current entry count
     // triggers immediate eviction of the oldest entries
-    // by addedAt down to the new cap. Same caveat as the
-    // add-path eviction above: evicting oldest is at odds
-    // with the stable-position intent and Stage 5 will
-    // settle the policy properly.
+    // by addedAt down to the new cap. Uses oldest-first
+    // sort to find the eviction targets; the kept tail
+    // becomes the new entry list.
     if (entries.length > clamped) {
-      const sorted = sortedByRecency(entries);
+      const sorted = sortedOldestFirst(entries);
       const overage = entries.length - clamped;
       const evict = sorted.slice(0, overage);
       const keep = sorted.slice(overage);
@@ -998,16 +1106,24 @@ function registerStorageHandlers() {
     return { entries: sortedByRecency(entries), maxCount: clamped };
   });
 
-  // No-op for ordering as of the stable-position model
-  // (Stage 4 redesign). Kept in the API for forward
-  // compatibility — future per-entry usage tracking can
-  // repurpose this hook — but reads-and-returns without
-  // mutating anything. The IPC round-trip is harmless
-  // even if call sites are removed from the renderer;
-  // it's just an extra cheap query.
+  // Bump the matching entry's addedAt to now so the
+  // descending display sort floats it to the front
+  // (Stage 5 recency-bump model). Unknown id is a
+  // no-op — callers may pass a stale id during a race
+  // between gallery refresh and click handler, and
+  // silently ignoring is friendlier than throwing.
   ipcMain.handle('gxw:gallery-touch', async (_event, id) => {
-    void id;
     const state = await readGalleryState();
+    if (typeof id === 'string' && id !== '') {
+      const entry = state.entries.find((e) => e.id === id);
+      if (entry !== undefined) {
+        entry.addedAt = Date.now();
+        await writeGalleryState({
+          entries: state.entries,
+          maxCount: state.maxCount,
+        });
+      }
+    }
     return { entries: sortedByRecency(state.entries) };
   });
 

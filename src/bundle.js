@@ -29,6 +29,16 @@ import {
 import { getPreference } from "./preferences.js";
 
 /**
+ * Maximum number of slots in the per-score pinned image
+ * section. The Stage 5 pinned section is a 2-row by 3-
+ * column grid; this constant is the single source of
+ * truth for the cap and is exported for use by
+ * canvasInspector.js and electron-main.js so the number
+ * doesn't drift between layers.
+ */
+export const PINNED_SLOTS_COUNT = 6;
+
+/**
  * @typedef {Object} TextFile
  * @property {"text"} kind
  * @property {string} name
@@ -99,6 +109,42 @@ export class Bundle {
          * @type {string | null}
          */
         this.imageContentHash = null;
+
+        /**
+         * Per-score pinned image slots. Stage 5 of the
+         * Canvas inspector work introduces this fixed-
+         * length array as the per-score pinned section
+         * model: each entry is either a content hash (a
+         * key into pinnedBytes for the slot's image bytes)
+         * or null for an empty slot. Populated by
+         * pinCurrentImage and cleared by unpinSlot;
+         * round-trips through toRecord / fromRecord and
+         * the .gxw-meta.json sidecar so pinned slots
+         * survive score saves, and shared scores carry
+         * their pins with them.
+         * @type {Array<string | null>}
+         */
+        this.pinnedSlots = new Array(PINNED_SLOTS_COUNT).fill(null);
+
+        /**
+         * Image bytes for every hash referenced in
+         * pinnedSlots. Stored as a Map keyed by the same
+         * content hash that pinnedSlots holds, with the
+         * normalised 1000×1000 JPEG@70 bytes as values.
+         * Bundle invariant: every non-null entry in
+         * pinnedSlots has a matching entry in
+         * pinnedBytes, and pinnedBytes contains no orphan
+         * keys (unpinSlot garbage-collects when the last
+         * slot referencing a hash is cleared). On disk
+         * the bytes live in the .gxs bundle's pinned/
+         * subfolder as <hash>.jpg files; the storage
+         * layer reads and writes them outside the
+         * top-level files map so the pinned/ subfolder
+         * stays a first-class storage concept rather
+         * than a name-prefix convention.
+         * @type {Map<string, ArrayBuffer>}
+         */
+        this.pinnedBytes = new Map();
 
         /**
          * Has this bundle been mutated since its last save?
@@ -356,6 +402,131 @@ export class Bundle {
         return this.getBinaryFile(this.imageName);
     }
 
+    // --- Pinned image operations (Stage 5) ---
+
+    /**
+     * Find the first empty pinned slot index, or null when
+     * every slot is occupied. Used by pinCurrentImage to
+     * decide where a new pin lands, and by the Canvas
+     * inspector's Pin-button enable logic.
+     * @returns {number | null}
+     */
+    findFirstEmptyPinnedSlot() {
+        for (let i = 0; i < PINNED_SLOTS_COUNT; i++) {
+            if (this.pinnedSlots[i] === null) return i;
+        }
+        return null;
+    }
+
+    /**
+     * Find the slot index holding a particular content
+     * hash, or null when the hash isn't pinned. Used for
+     * the Pin-button "already pinned to slot N" disabled
+     * message and for the active-frame logic on score
+     * open.
+     * @param {string} hash
+     * @returns {number | null}
+     */
+    findPinnedSlotForHash(hash) {
+        for (let i = 0; i < PINNED_SLOTS_COUNT; i++) {
+            if (this.pinnedSlots[i] === hash) return i;
+        }
+        return null;
+    }
+
+    /**
+     * Whether a given content hash currently occupies any
+     * pinned slot. Thin wrapper around findPinnedSlotForHash
+     * for callers that only need the boolean.
+     * @param {string} hash
+     * @returns {boolean}
+     */
+    isImagePinned(hash) {
+        return this.findPinnedSlotForHash(hash) !== null;
+    }
+
+    /**
+     * Pin the current background image into the first
+     * empty pinned slot. Copies the bytes into
+     * pinnedBytes under the current image's content hash
+     * and writes the hash into the slot; the bundle is
+     * marked dirty on success.
+     *
+     * Returns an outcome object describing what happened:
+     *   { ok: true, slot: N }              pinned into 0-indexed slot N
+     *   { ok: false, reason: "no-image" }  no current background to pin
+     *   { ok: false, reason: "no-hash" }   current image carries no content hash
+     *                                       (shouldn't normally happen — the
+     *                                       score-open syncGalleryFromBundle
+     *                                       backfills the hash; surfaced so
+     *                                       the Pin button can disable rather
+     *                                       than silently fail in the corner
+     *                                       case)
+     *   { ok: false, reason: "already-pinned", slot: N }
+     *                                       the current image's hash is
+     *                                       already pinned in slot N
+     *   { ok: false, reason: "full" }      every pinned slot is occupied
+     *
+     * Callers (canvasInspector, main.js wiring) translate
+     * the outcome into the appropriate UI feedback.
+     *
+     * @returns {{ ok: true, slot: number }
+     *   | { ok: false, reason: "no-image" | "no-hash" | "full" }
+     *   | { ok: false, reason: "already-pinned", slot: number }}
+     */
+    pinCurrentImage() {
+        if (this.imageName === null) {
+            return { ok: false, reason: "no-image" };
+        }
+        if (this.imageContentHash === null) {
+            return { ok: false, reason: "no-hash" };
+        }
+        const existingSlot = this.findPinnedSlotForHash(this.imageContentHash);
+        if (existingSlot !== null) {
+            return { ok: false, reason: "already-pinned", slot: existingSlot };
+        }
+        const emptySlot = this.findFirstEmptyPinnedSlot();
+        if (emptySlot === null) {
+            return { ok: false, reason: "full" };
+        }
+        const currentImage = this.getCurrentImage();
+        if (currentImage === null) {
+            // Defensive: imageName was set but the binary
+            // file isn't actually in the files array. Treat
+            // as no-image rather than crashing.
+            return { ok: false, reason: "no-image" };
+        }
+        this.pinnedBytes.set(this.imageContentHash, currentImage.content);
+        this.pinnedSlots[emptySlot] = this.imageContentHash;
+        this.markDirty();
+        return { ok: true, slot: emptySlot };
+    }
+
+    /**
+     * Unpin the image at the given slot index. Clears the
+     * slot, then garbage-collects the slot's bytes from
+     * pinnedBytes when no other slot still references the
+     * same hash. No-op for an already-empty slot or an
+     * out-of-range index. Marks the bundle dirty on
+     * actual change. Used by the Stage 5 second commit's
+     * drag-off-edge interaction; surfaced here in the
+     * first commit so the storage round-trip can be
+     * exercised end-to-end.
+     *
+     * @param {number} slotIndex
+     */
+    unpinSlot(slotIndex) {
+        if (slotIndex < 0 || slotIndex >= PINNED_SLOTS_COUNT) return;
+        const hash = this.pinnedSlots[slotIndex];
+        if (hash === null) return;
+        this.pinnedSlots[slotIndex] = null;
+        const stillReferenced = this.pinnedSlots.some((h) => h === hash);
+        if (!stillReferenced) {
+            this.pinnedBytes.delete(hash);
+        }
+        this.markDirty();
+    }
+
     // --- Persistence ---
 
     /**
@@ -368,11 +539,23 @@ export class Bundle {
         for (const f of this.files) {
             files[f.name] = { mimeType: f.mimeType, content: f.content };
         }
+        // Pinned files travel alongside the regular files
+        // map but in their own keyed-by-hash object so the
+        // storage layer can place them in the pinned/
+        // subfolder rather than at the top level of the
+        // .gxs bundle.
+        /** @type {Object<string, ArrayBuffer>} */
+        const pinnedFiles = {};
+        for (const [hash, bytes] of this.pinnedBytes) {
+            pinnedFiles[hash] = bytes;
+        }
         return {
             name: this.name,
             files,
             imageName: this.imageName,
             imageContentHash: this.imageContentHash,
+            pinnedSlots: this.pinnedSlots.slice(),
+            pinnedFiles,
             updatedAt: Date.now(),
         };
     }
@@ -406,6 +589,28 @@ export class Bundle {
         bundle.imageContentHash = typeof record.imageContentHash === "string"
             ? record.imageContentHash
             : null;
+        // Pinned slots and pinned bytes. Older records
+        // predate these fields and load as the empty
+        // defaults — six null slots, empty bytes map.
+        // Both are normalised here so downstream consumers
+        // (canvasInspector render, electron-main writes)
+        // see the same shape regardless of source.
+        if (Array.isArray(record.pinnedSlots)) {
+            for (let i = 0; i < PINNED_SLOTS_COUNT; i++) {
+                const v = record.pinnedSlots[i];
+                bundle.pinnedSlots[i] = typeof v === "string" ? v : null;
+            }
+        }
+        if (record.pinnedFiles !== null
+            && record.pinnedFiles !== undefined
+            && typeof record.pinnedFiles === "object") {
+            for (const hash of Object.keys(record.pinnedFiles)) {
+                const bytes = record.pinnedFiles[hash];
+                if (bytes instanceof ArrayBuffer) {
+                    bundle.pinnedBytes.set(hash, bytes);
+                }
+            }
+        }
         bundle._captureSavedSnapshot();
         bundle.markClean();
         return bundle;

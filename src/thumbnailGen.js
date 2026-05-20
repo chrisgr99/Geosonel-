@@ -6,20 +6,37 @@
  * embedding inline in settings.json (Electron) or an
  * IndexedDB record (web) as a gallery entry's preview.
  *
- * Sizing per DESIGN.md Section 13.5: 96×96 with letterbox
- * padding to preserve the source's aspect ratio. Unlike
- * the normalization step in imageNormalize.js (which
- * stretches to fill, since the image is a signal source
- * not a faithful representation), the thumbnail is purely
- * a visual recognition cue in the gallery grid, so the
- * aspect-ratio preservation matters here.
+ * Sizing per DESIGN.md Section 13.5: 360×240 (3:2,
+ * wider than tall). The 3:2 aspect matches the typical
+ * canvas aspect ratio (the default 32×24 = 4:3 is close;
+ * many custom canvases land near 3:2 or 16:9 which 3:2
+ * splits between) and the typical landscape imported
+ * image.
  *
- * PNG encoding rather than JPEG. Thumbnails at 96×96 are
- * small enough (typically 3–8 KB as PNG) that the JPEG
- * compression win wouldn't materially shrink storage, and
- * PNG handles the sharp letterbox padding edges cleanly
- * without ringing artifacts that JPEG would introduce at
- * the boundary between the image and the black bars.
+ * Hard-stretch fill, no letterboxing. The source bitmap
+ * is drawn at full 360×240 with whatever distortion that
+ * involves, never letterboxed inside the frame. This
+ * matches what the rest of GeoSonel already does with
+ * images — imageNormalize.js hard-stretches every
+ * imported image into a 1000×1000 JPEG before storage
+ * because the image is a signal source rather than a
+ * faithful representation, and the canvas paints those
+ * square bytes stretched again to canvasW × canvasH on
+ * display. The thumbnail follows the same rule so it
+ * shows the user a faithful preview of what the canvas
+ * will actually render. Design principle: GeoSonel does
+ * not letterbox images anywhere — not in thumbnails,
+ * not on the canvas. Aspect distortion is the expected
+ * and documented behaviour throughout the image
+ * pipeline.
+ *
+ * PNG encoding rather than JPEG. Thumbnails at 360×240
+ * are small enough (typically 15–40 KB as PNG) that the
+ * JPEG compression win wouldn't materially shrink storage
+ * for a gallery capped at 48 entries (under 2 MB total),
+ * and PNG handles fine detail at this size without the
+ * blocking artifacts JPEG would introduce at the lower
+ * quality settings storage size would demand.
  *
  * The returned string is the base64 payload only — no
  * `data:image/png;base64,` prefix. Callers that want a
@@ -30,7 +47,8 @@
 
 // @ts-check
 
-const THUMBNAIL_SIZE = 96;
+const THUMBNAIL_W = 360;
+const THUMBNAIL_H = 240;
 
 /**
  * Generate a thumbnail from image bytes. Returns the
@@ -45,38 +63,20 @@ export async function generateThumbnail(bytes, mimeType) {
     const bitmap = await createImageBitmap(blob);
     try {
         const canvas = document.createElement("canvas");
-        canvas.width = THUMBNAIL_SIZE;
-        canvas.height = THUMBNAIL_SIZE;
+        canvas.width = THUMBNAIL_W;
+        canvas.height = THUMBNAIL_H;
         const ctx = canvas.getContext("2d");
         if (ctx === null) {
             throw new Error("Cannot acquire 2D canvas context for thumbnail generation.");
         }
-        // Black letterbox padding for any portion of the
-        // 96×96 box not covered by the aspect-preserving
-        // draw below.
-        ctx.fillStyle = "#000000";
-        ctx.fillRect(0, 0, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
-
-        // Letterbox math. Compute the largest scaled
-        // rectangle that fits inside the target box while
-        // preserving the source's aspect ratio, centred.
-        const sourceAspect = bitmap.width / bitmap.height;
-        let drawW;
-        let drawH;
-        if (sourceAspect >= 1) {
-            // Landscape or square: full width, height
-            // letterboxed top and bottom.
-            drawW = THUMBNAIL_SIZE;
-            drawH = THUMBNAIL_SIZE / sourceAspect;
-        } else {
-            // Portrait: full height, width letterboxed
-            // left and right.
-            drawH = THUMBNAIL_SIZE;
-            drawW = THUMBNAIL_SIZE * sourceAspect;
-        }
-        const drawX = (THUMBNAIL_SIZE - drawW) / 2;
-        const drawY = (THUMBNAIL_SIZE - drawH) / 2;
-        ctx.drawImage(bitmap, drawX, drawY, drawW, drawH);
+        // Hard-stretch the source to fill the entire
+        // 360×240 frame, distorting aspect as needed.
+        // See module docstring for the rationale (matches
+        // imageNormalize.js's stretch-to-fill, gives a
+        // faithful preview of what the canvas will paint,
+        // honours the design rule that GeoSonel never
+        // letterboxes images).
+        ctx.drawImage(bitmap, 0, 0, THUMBNAIL_W, THUMBNAIL_H);
 
         const dataUrl = canvas.toDataURL("image/png");
         // Strip the "data:image/png;base64," prefix so the

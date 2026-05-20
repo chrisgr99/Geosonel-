@@ -1117,6 +1117,13 @@ export class Inspector {
         const velocityYAgg = aggregateVelocity(objs, "y");
 
         const r1 = mkRow();
+        // Marker class for the Stage 5 Canvas inspector's
+        // gallery-width measurement. This is the widest
+        // row in the Properties tab, and canvasInspector
+        // queries it via this class at mount time to size
+        // the pinned and shared gallery sections to
+        // match the inspector's natural floor width.
+        r1.classList.add("insp-row-starting-state");
         r1.appendChild(mkLabel("State\nat Start", {
             width: W.leftLabel,
             disabled: !positionActive,
