@@ -28,17 +28,20 @@
  * for window.gxwGallery. The public API surface is
  * identical either way.
  *
- * Recency model. The gallery is ordered by addedAt
- * descending — most recent at slot 1. The add() method
- * implements the "match-and-promote" rule from Section
- * 13.5: when called with a sourcePath that matches an
- * existing entry, that entry's addedAt is updated to now
- * and no new entry is created. A non-matching sourcePath
- * (or an empty sourcePath, typical of pasted images)
- * always creates a new entry. When the gallery is at its
- * cap and a new entry needs to be created, the oldest
- * entry (by addedAt) is evicted in the same operation so
- * the cap is never exceeded.
+ * Stable-position model. The gallery is ordered by
+ * addedAt ascending — oldest entries at the front,
+ * newest appended at the end. addedAt is immutable
+ * after entry creation: gallery.add's match-and-promote
+ * logic returns the matching entry's id without touching
+ * its addedAt, and gallery.touch is a no-op for ordering.
+ * The result is a curated-library feel where positions
+ * stay stable across normal use (clicking thumbnails,
+ * opening scores, importing duplicates), and only
+ * explicit removes or eviction at cap can shift slots.
+ * Eviction (when at cap) currently removes the oldest
+ * entry by addedAt; the Stage 5 right-click Remove from
+ * history surface will let users curate manually, and
+ * the eviction policy can be revisited then.
  *
  * The Stage 2 scope is infrastructure only — no UI yet.
  * Stages 3 through 5 wire the gallery into the Canvas
@@ -76,13 +79,21 @@ const ELECTRON_MAX_COUNT_FLOOR = 5;
  *   path under Electron, may be empty for pasted/in-memory sources).
  * @property {string} thumbnailBase64 96×96 PNG payload, no data-URL prefix.
  * @property {number} addedAt         Epoch milliseconds; recency key.
+ * @property {string | null} contentHash  SHA-256 hex of the normalized
+ *   image bytes, or null on entries that predate Stage 4. Used by
+ *   gallery.add for content-addressable match-and-promote and by
+ *   gallery.findByContentHash for direct lookup.
  */
 
 /**
  * @typedef {Object} GalleryAddInput
- * @property {string} sourcePath      Identity for match-and-promote.
+ * @property {string} sourcePath      Identity for match-and-promote
+ *   (legacy fallback; new code paths supply contentHash instead).
  * @property {ArrayBuffer} normalizedBytes  1000×1000 JPEG@70 bytes.
  * @property {string} thumbnailBase64 96×96 PNG payload.
+ * @property {string} [contentHash]   SHA-256 hex of the normalized
+ *   bytes; takes precedence over sourcePath in match-and-promote and
+ *   gets stored on new entries.
  */
 
 // --- Backend detection ---
@@ -101,7 +112,7 @@ const isElectron = electronBackend !== null;
 /**
  * Return the gallery's current entries (metadata only, no
  * image bytes) plus the active max-count. Entries are
- * sorted most-recent-first.
+ * sorted by addedAt ascending — oldest first, newest last.
  * @returns {Promise<{entries: GalleryEntry[], maxCount: number}>}
  */
 export async function list() {
@@ -166,6 +177,53 @@ export async function setMaxCount(n) {
 }
 
 /**
+ * No-op for ordering as of the stable-position model.
+ * Kept in the API for forward compatibility — future
+ * features that track per-entry usage (last-used
+ * indicators, LRU-based eviction policy) may repurpose
+ * this hook to update a separate lastUsedAt field
+ * without affecting display order. Returns the current
+ * entries list unchanged.
+ *
+ * History. Originally added in Stage 3 to bump an
+ * entry's addedAt and promote it to slot 1 on click.
+ * The Stage 4 follow-up redesign settled on stable
+ * positions — a clicked or score-opened entry stays at
+ * its existing slot rather than shuffling to the top.
+ * touch's bump-addedAt behaviour was retired then; the
+ * method itself remained for callers that may want the
+ * hook back later.
+ * @param {string} id
+ * @returns {Promise<{entries: GalleryEntry[]}>}
+ */
+export async function touch(id) {
+    if (isElectron) {
+        return await electronBackend.touch(id);
+    }
+    return await touchWeb(id);
+}
+
+/**
+ * Look up an entry by its content hash. Returns the
+ * matching entry or null when no entry has that hash.
+ * Added in Stage 4 of the Canvas inspector work as the
+ * direct path for score-open recency: given the bundle's
+ * imageContentHash, the open hook calls findByContentHash
+ * first and either touches the existing entry or falls
+ * back to gallery.add when no match is found. This avoids
+ * computing a thumbnail in the common case (the entry
+ * already exists from a prior import).
+ * @param {string} contentHash
+ * @returns {Promise<GalleryEntry | null>}
+ */
+export async function findByContentHash(contentHash) {
+    if (isElectron) {
+        return await electronBackend.findByContentHash(contentHash);
+    }
+    return await findByContentHashWeb(contentHash);
+}
+
+/**
  * Load the full-resolution image bytes for a gallery entry.
  * Returns {bytes, mimeType} suitable for handing to
  * canvas.setImage. Throws if the entry doesn't exist or
@@ -221,7 +279,7 @@ function openDb() {
 
 /**
  * Read all gallery records, strip image Blobs, sort by
- * addedAt descending.
+ * addedAt ascending (oldest first).
  * @returns {Promise<{entries: GalleryEntry[], maxCount: number}>}
  */
 async function listWeb() {
@@ -236,7 +294,7 @@ async function listWeb() {
     db.close();
     const entries = records
         .map(toEntry)
-        .sort((a, b) => b.addedAt - a.addedAt);
+        .sort((a, b) => a.addedAt - b.addedAt);
     return { entries, maxCount: WEB_MAX_COUNT };
 }
 
@@ -248,17 +306,32 @@ async function listWeb() {
 async function addWeb(input) {
     const db = await openDb();
     try {
-        // Match-and-promote: if any existing entry has a
-        // matching sourcePath, update its addedAt to now
-        // and return that entry's id without creating a
-        // new one. An empty sourcePath disables the match
-        // (paste-and-similar always create new entries).
-        const existing = input.sourcePath !== ""
-            ? await findBySourcePath(db, input.sourcePath)
+        const contentHash = typeof input.contentHash === "string" && input.contentHash !== ""
+            ? input.contentHash
             : null;
+
+        // Match-by-hash-or-sourcePath: when an entry
+        // already exists (by content hash, falling back to
+        // sourcePath for legacy entries that predate the
+        // hash), return its id without mutating addedAt. The
+        // stable-position model treats addedAt as immutable
+        // after creation, so re-importing the same image is
+        // a no-op for slot ordering. We do backfill
+        // contentHash on existing entries that lack one,
+        // since that's a metadata correction rather than a
+        // sort-affecting change.
+        let existing = null;
+        if (contentHash !== null) {
+            existing = await findByContentHashInternalWeb(db, contentHash);
+        }
+        if (existing === null && input.sourcePath !== "") {
+            existing = await findBySourcePath(db, input.sourcePath);
+        }
         if (existing !== null) {
-            existing.addedAt = Date.now();
-            await putRecord(db, existing);
+            if (contentHash !== null && existing.contentHash !== contentHash) {
+                existing.contentHash = contentHash;
+                await putRecord(db, existing);
+            }
             const entries = await listAllSorted(db);
             return { id: existing.id, entries };
         }
@@ -272,22 +345,28 @@ async function addWeb(input) {
             sourcePath: input.sourcePath,
             thumbnailBase64: input.thumbnailBase64,
             addedAt: Date.now(),
+            contentHash,
             imageBlob: new Blob(
                 [input.normalizedBytes],
                 { type: "image/jpeg" },
             ),
         };
 
-        // Eviction if at cap. List, sort, find the oldest,
-        // delete it before adding the new one so we never
-        // exceed WEB_MAX_COUNT.
+        // Eviction if at cap. Sort ascending so the
+        // oldest entries are at the front; remove from
+        // there until we have room for the new entry.
+        // Note: evicting oldest contradicts the stable-
+        // position intent for entries that have been in
+        // the gallery a long time. Settled as a Stage 5
+        // design question — the Remove from history
+        // right-click surface and the max-count Setting
+        // will rework this together.
         const all = await listAllSorted(db);
         if (all.length >= WEB_MAX_COUNT) {
             const overage = all.length - WEB_MAX_COUNT + 1;
-            // Delete the `overage` oldest entries. all is
-            // sorted newest-first so the last `overage`
-            // are oldest.
-            const toEvict = all.slice(all.length - overage);
+            // all is sorted oldest-first, so the head is
+            // the eviction candidates.
+            const toEvict = all.slice(0, overage);
             for (const e of toEvict) {
                 await deleteRecord(db, e.id);
             }
@@ -314,6 +393,73 @@ async function removeWeb(id) {
     } finally {
         db.close();
     }
+}
+
+/**
+ * No-op stub matching the touch() public API. Reads the
+ * current entries and returns them unchanged. See the
+ * touch() docblock for why this is intentional.
+ * @param {string} id
+ * @returns {Promise<{entries: GalleryEntry[]}>}
+ */
+async function touchWeb(id) {
+    const db = await openDb();
+    try {
+        // id parameter is accepted for forward
+        // compatibility but unused in the no-op model.
+        void id;
+        const entries = await listAllSorted(db);
+        return { entries };
+    } finally {
+        db.close();
+    }
+}
+
+/**
+ * Find an entry by content hash in the web backend.
+ * Returns the entry shape (no inline imageBlob) or null
+ * when no match. Public wrapper around the db-bound
+ * helper below.
+ * @param {string} contentHash
+ * @returns {Promise<GalleryEntry | null>}
+ */
+async function findByContentHashWeb(contentHash) {
+    const db = await openDb();
+    try {
+        const record = await findByContentHashInternalWeb(db, contentHash);
+        if (record === null) return null;
+        return toEntry(record);
+    } finally {
+        db.close();
+    }
+}
+
+/**
+ * Internal helper: find the first entry whose contentHash
+ * equals the given hash. Returns the raw record (with
+ * inline imageBlob) so callers inside an open transaction
+ * can mutate and putRecord it back without a second read.
+ * Returns null when no entry matches.
+ * @param {IDBDatabase} db
+ * @param {string} contentHash
+ * @returns {Promise<any | null>}
+ */
+function findByContentHashInternalWeb(db, contentHash) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(GALLERY_STORE, "readonly");
+        const req = tx.objectStore(GALLERY_STORE).getAll();
+        req.onsuccess = () => {
+            const records = /** @type {any[]} */ (req.result ?? []);
+            for (const r of records) {
+                if (typeof r.contentHash === "string" && r.contentHash === contentHash) {
+                    resolve(r);
+                    return;
+                }
+            }
+            resolve(null);
+        };
+        req.onerror = () => reject(req.error);
+    });
 }
 
 /**
@@ -382,7 +528,7 @@ async function listAllSorted(db) {
     });
     return records
         .map(toEntry)
-        .sort((a, b) => b.addedAt - a.addedAt);
+        .sort((a, b) => a.addedAt - b.addedAt);
 }
 
 /**
@@ -423,6 +569,7 @@ function toEntry(record) {
         sourcePath: record.sourcePath ?? "",
         thumbnailBase64: record.thumbnailBase64 ?? "",
         addedAt: typeof record.addedAt === "number" ? record.addedAt : 0,
+        contentHash: typeof record.contentHash === "string" ? record.contentHash : null,
     };
 }
 

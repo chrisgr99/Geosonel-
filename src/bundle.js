@@ -82,6 +82,25 @@ export class Bundle {
         this.imageName = null;
 
         /**
+         * SHA-256 hex digest of the current image's
+         * normalized bytes, or null when the bundle has no
+         * image. Added in Stage 4 of the Canvas inspector
+         * work as the stable identity that links a score's
+         * background to a gallery entry. Computed once at
+         * import time by imageImporter and round-tripped
+         * through storage; see src/imageHash.js for the
+         * compute path and DESIGN.md Section 13.5 for the
+         * design rationale. Older scores predate this
+         * field and load with null; the score-open hook
+         * in main.js fills it on demand when syncing the
+         * gallery, without forcing a save — the migrated
+         * value is recomputed each open until the next
+         * natural save persists it.
+         * @type {string | null}
+         */
+        this.imageContentHash = null;
+
+        /**
          * Has this bundle been mutated since its last save?
          * The canonical dirty signal for the score; subscribers
          * (title bar, saved indicator, close-with-unsaved-changes
@@ -291,17 +310,29 @@ export class Bundle {
     /**
      * Replace the bundle's current image with fresh bytes.
      * Removes any prior image file, then adds the new one and
-     * marks it as current.
+     * marks it as current. The contentHash argument is the
+     * SHA-256 hex of the normalized bytes computed by the
+     * caller (typically imageImporter via src/imageHash.js);
+     * pass null when the caller has no hash to supply, and
+     * the imageContentHash field is cleared so a downstream
+     * gallery-sync pass can recompute on demand.
      * @param {string} name
      * @param {ArrayBuffer} content
      * @param {string} mimeType
+     * @param {string | null} [contentHash]
      */
-    replaceImage(name, content, mimeType) {
+    replaceImage(name, content, mimeType, contentHash = null) {
         if (this.imageName !== null && this.imageName !== name) {
             this.removeFile(this.imageName);
         }
         this.setBinaryFile(name, content, mimeType);
         this.imageName = name;
+        // Track the hash alongside the imageName. A null
+        // value here forces gallery-sync to recompute next
+        // open; we don't recompute internally because the
+        // bundle stays a pure data structure (no
+        // dependency on Web Crypto from here).
+        this.imageContentHash = contentHash;
     }
 
     /**
@@ -311,6 +342,10 @@ export class Bundle {
         if (this.imageName !== null) {
             this.removeFile(this.imageName);
         }
+        // Clear the hash too. removeFile clears imageName
+        // via its own logic, but the hash is an independent
+        // field that needs explicit clearing.
+        this.imageContentHash = null;
     }
 
     /**
@@ -337,6 +372,7 @@ export class Bundle {
             name: this.name,
             files,
             imageName: this.imageName,
+            imageContentHash: this.imageContentHash,
             updatedAt: Date.now(),
         };
     }
@@ -362,6 +398,14 @@ export class Bundle {
             }
         }
         bundle.imageName = record.imageName;
+        // Older records predate imageContentHash and load
+        // with undefined here; coerce to null so the field's
+        // type stays string | null at runtime. The score-
+        // open hook in main.js handles the migration by
+        // recomputing on demand.
+        bundle.imageContentHash = typeof record.imageContentHash === "string"
+            ? record.imageContentHash
+            : null;
         bundle._captureSavedSnapshot();
         bundle.markClean();
         return bundle;

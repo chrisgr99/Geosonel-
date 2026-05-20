@@ -318,8 +318,16 @@ async function writeGalleryState(state) {
   await writeSettings(settings);
 }
 
+// Sort entries for display: oldest first, newest last.
+// Stable-position model (Stage 4 redesign): addedAt is
+// immutable after creation, so this ordering also
+// represents the insertion order across the gallery's
+// lifetime. The name predates the redesign — the
+// gallery used to be a recency list — and stays under
+// the historical name to minimise renaming churn; the
+// behaviour is now stable-position.
 function sortedByRecency(entries) {
-  return [...entries].sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
+  return [...entries].sort((a, b) => (a.addedAt ?? 0) - (b.addedAt ?? 0));
 }
 
 // 12-hex-char id with the "img_" prefix; matches the renderer-
@@ -418,6 +426,7 @@ async function readRecordFromFolder(folder, name) {
 
   // Read the metadata sidecar, if present.
   let imageName = null;
+  let imageContentHash = null;
   try {
     const metaText = await fsp.readFile(
       path.join(folder, SCORE_META_FILENAME),
@@ -426,6 +435,14 @@ async function readRecordFromFolder(folder, name) {
     const meta = JSON.parse(metaText);
     if (typeof meta.imageName === 'string' || meta.imageName === null) {
       imageName = meta.imageName;
+    }
+    // Stage 4 extension: the sidecar also carries the
+    // SHA-256 hex of the current image's normalized bytes
+    // when set. Older sidecars predate this field and the
+    // value stays null — the score-open hook on the
+    // renderer side recomputes on demand.
+    if (typeof meta.imageContentHash === 'string') {
+      imageContentHash = meta.imageContentHash;
     }
   } catch (err) {
     if (err.code !== 'ENOENT') {
@@ -462,6 +479,7 @@ async function readRecordFromFolder(folder, name) {
     name,
     files,
     imageName,
+    imageContentHash,
     updatedAt: stat.mtimeMs,
   };
 }
@@ -494,7 +512,10 @@ async function writeScoreRecord(scorePath, record) {
   keepFiles.add(SCORE_META_FILENAME);
 
   // Write the metadata sidecar.
-  const meta = { imageName: record.imageName ?? null };
+  const meta = {
+    imageName: record.imageName ?? null,
+    imageContentHash: record.imageContentHash ?? null,
+  };
   await fsp.writeFile(
     path.join(scoreFolder, SCORE_META_FILENAME),
     JSON.stringify(meta, null, 2),
@@ -852,24 +873,40 @@ function registerStorageHandlers() {
     const thumbnailBase64 = typeof input?.thumbnailBase64 === 'string'
       ? input.thumbnailBase64
       : '';
+    const contentHash = typeof input?.contentHash === 'string' && input.contentHash !== ''
+      ? input.contentHash
+      : null;
 
-    // Match-and-promote: if any existing entry shares this
-    // sourcePath, update its addedAt to now and return that
-    // entry's id. Empty sourcePath disables the match
-    // (paste-and-similar always create new entries).
-    if (sourcePath !== '') {
-      const existing = state.entries.find((e) => e.sourcePath === sourcePath);
-      if (existing !== undefined) {
-        existing.addedAt = Date.now();
+    // Match-by-hash-or-sourcePath: when an entry already
+    // exists (by content hash, falling back to sourcePath
+    // for legacy entries that predate the hash), return
+    // its id without mutating addedAt. The stable-position
+    // model treats addedAt as immutable after creation, so
+    // re-importing the same image is a no-op for slot
+    // ordering. We do backfill contentHash on existing
+    // entries that lack one, since that's a metadata
+    // correction rather than a sort-affecting change.
+    let existing = null;
+    if (contentHash !== null) {
+      existing = state.entries.find((e) => e.contentHash === contentHash);
+      if (existing === undefined) existing = null;
+    }
+    if (existing === null && sourcePath !== '') {
+      const m = state.entries.find((e) => e.sourcePath === sourcePath);
+      existing = m === undefined ? null : m;
+    }
+    if (existing !== null) {
+      if (contentHash !== null && existing.contentHash !== contentHash) {
+        existing.contentHash = contentHash;
         await writeGalleryState({
           entries: state.entries,
           maxCount: state.maxCount,
         });
-        return {
-          id: existing.id,
-          entries: sortedByRecency(state.entries),
-        };
       }
+      return {
+        id: existing.id,
+        entries: sortedByRecency(state.entries),
+      };
     }
 
     // New entry. Write the cache file before updating
@@ -885,14 +922,23 @@ function registerStorageHandlers() {
       sourcePath,
       thumbnailBase64,
       addedAt: Date.now(),
+      contentHash,
     });
 
-    // Eviction. If the gallery is now over cap, drop oldest
-    // entries until it fits, unlinking their cache files.
+    // Eviction. If the gallery is now over cap, drop the
+    // oldest entries by addedAt until it fits, unlinking
+    // their cache files. Sort ascending so the head is the
+    // eviction candidates; keep the tail. Note: evicting
+    // the oldest contradicts the stable-position intent
+    // for long-standing entries. Settled as a Stage 5
+    // design question — the Remove from history right-
+    // click surface and the max-count Setting will rework
+    // this together.
     if (state.entries.length > state.maxCount) {
       const sorted = sortedByRecency(state.entries);
-      const keep = sorted.slice(0, state.maxCount);
-      const evict = sorted.slice(state.maxCount);
+      const overage = state.entries.length - state.maxCount;
+      const evict = sorted.slice(0, overage);
+      const keep = sorted.slice(overage);
       for (const e of evict) {
         await tryUnlinkGalleryCacheFile(e.id);
       }
@@ -931,12 +977,17 @@ function registerStorageHandlers() {
     const state = await readGalleryState();
     let entries = state.entries;
 
-    // Reducing the cap below the current entry count triggers
-    // eviction down to the new cap, oldest-first.
+    // Reducing the cap below the current entry count
+    // triggers immediate eviction of the oldest entries
+    // by addedAt down to the new cap. Same caveat as the
+    // add-path eviction above: evicting oldest is at odds
+    // with the stable-position intent and Stage 5 will
+    // settle the policy properly.
     if (entries.length > clamped) {
       const sorted = sortedByRecency(entries);
-      const keep = sorted.slice(0, clamped);
-      const evict = sorted.slice(clamped);
+      const overage = entries.length - clamped;
+      const evict = sorted.slice(0, overage);
+      const keep = sorted.slice(overage);
       for (const e of evict) {
         await tryUnlinkGalleryCacheFile(e.id);
       }
@@ -945,6 +996,32 @@ function registerStorageHandlers() {
 
     await writeGalleryState({ entries, maxCount: clamped });
     return { entries: sortedByRecency(entries), maxCount: clamped };
+  });
+
+  // No-op for ordering as of the stable-position model
+  // (Stage 4 redesign). Kept in the API for forward
+  // compatibility — future per-entry usage tracking can
+  // repurpose this hook — but reads-and-returns without
+  // mutating anything. The IPC round-trip is harmless
+  // even if call sites are removed from the renderer;
+  // it's just an extra cheap query.
+  ipcMain.handle('gxw:gallery-touch', async (_event, id) => {
+    void id;
+    const state = await readGalleryState();
+    return { entries: sortedByRecency(state.entries) };
+  });
+
+  // Look up an entry by content hash. Returns the matching
+  // entry's full metadata (no image bytes) or null. Added in
+  // Stage 4 of the Canvas inspector work; the score-open
+  // hook uses this to decide between touch (entry exists) and
+  // gallery-add (entry doesn't, needs creating with a freshly
+  // generated thumbnail).
+  ipcMain.handle('gxw:gallery-find-by-content-hash', async (_event, contentHash) => {
+    if (typeof contentHash !== 'string' || contentHash === '') return null;
+    const state = await readGalleryState();
+    const match = state.entries.find((e) => e.contentHash === contentHash);
+    return match === undefined ? null : match;
   });
 
   ipcMain.handle('gxw:gallery-load-image', async (_event, id) => {

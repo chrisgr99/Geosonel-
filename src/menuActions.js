@@ -163,9 +163,6 @@ export function installMenuActions(ctx) {
             case "delete-score":
                 void actionDeleteScore(actionCtx);
                 break;
-            case "remove-image":
-                ctx.imageImporter.removeCurrentImage();
-                break;
             case "reload-from-disk":
                 void actionReloadFromDisk(actionCtx);
                 break;

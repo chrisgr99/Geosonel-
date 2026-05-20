@@ -140,6 +140,9 @@ contextBridge.exposeInMainWorld('gxwGallery', {
   remove: (id) => ipcRenderer.invoke('gxw:gallery-remove', id),
   setMaxCount: (n) =>
     ipcRenderer.invoke('gxw:gallery-set-max-count', n),
+  touch: (id) => ipcRenderer.invoke('gxw:gallery-touch', id),
+  findByContentHash: (hash) =>
+    ipcRenderer.invoke('gxw:gallery-find-by-content-hash', hash),
   loadImage: (id) =>
     ipcRenderer.invoke('gxw:gallery-load-image', id),
 });

@@ -76,6 +76,13 @@ import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
 import { MessageArea } from "./src/messages.js";
 import { ImageImporter } from "./src/imageImporter.js";
+import {
+    loadImage as galleryLoadImage,
+    findByContentHash as galleryFindByContentHash,
+    add as galleryAdd,
+} from "./src/gallery.js";
+import { computeContentHash } from "./src/imageHash.js";
+import { generateThumbnail } from "./src/thumbnailGen.js";
 import { installViewMenu } from "./src/viewMenu.js";
 import { installFileMenu } from "./src/fileMenu.js";
 import { installRunMenu } from "./src/runMenu.js";
@@ -649,6 +656,22 @@ async function main() {
     const imageImporter = new ImageImporter({ bundle, canvas, messages });
     imageImporter.installGlobalListeners();
 
+    // Wire the import-complete callback (Stage 4 of the
+    // Canvas inspector work). When an import finishes
+    // successfully and the gallery push lands, refresh the
+    // grid and move the green active-frame to the new entry.
+    // The callback fires once per import; failed imports or
+    // imports where the gallery push couldn't run leave the
+    // active frame at its prior position rather than
+    // clearing it, which matches what the user is staring
+    // at on the canvas (the prior image is still visible if
+    // the new one didn't make it through).
+    imageImporter.setOnImportComplete(async ({ galleryId }) => {
+        if (!editor.canvasInspector) return;
+        await editor.canvasInspector.refreshGallery();
+        editor.canvasInspector.setActiveGalleryId(galleryId);
+    });
+
     // --- Disk mirror ---
     // Restored from IndexedDB if previously configured. The
     // folder handle persists across page reloads but the
@@ -901,6 +924,118 @@ async function main() {
     };
 
     /**
+     * Reconcile the gallery's active-frame state with the
+     * bundle's current background image (Stage 4 of the
+     * Canvas inspector work). Three cases.
+     *
+     * The bundle has no image. Clear the active gallery id
+     * so no slot carries the green frame. The gallery's
+     * entry list itself is unchanged.
+     *
+     * The bundle has an image with an imageContentHash. Look
+     * up the matching gallery entry by hash. When found,
+     * promote it to slot 1 via gallery.touch and set the
+     * active id so the green frame moves there. When not
+     * found (the user imported on a different machine, or
+     * cleared their gallery, or this score predates the
+     * gallery), add a fresh entry from the bundle's bytes
+     * with a generated thumbnail; the resulting entry id
+     * becomes the active one.
+     *
+     * The bundle has an image but no hash (a score saved
+     * before Stage 4 lands). Compute the hash from the
+     * bytes silently — the field is recomputable, so no
+     * forced save is needed. Set the field on the in-memory
+     * bundle so the next natural save picks it up. From
+     * there, fall through to the hash-present path above.
+     *
+     * The function never throws to its caller. Hash compute
+     * failures or gallery IPC failures leave the active id
+     * cleared and log to the console rather than disrupting
+     * the calling code path (which is usually mid-score-
+     * open and shouldn't be derailed by a gallery hiccup).
+     */
+    const syncGalleryFromBundle = async () => {
+        if (!editor.canvasInspector) return;
+
+        if (session.bundle.imageName === null) {
+            editor.canvasInspector.setActiveGalleryId(null);
+            return;
+        }
+
+        const img = session.bundle.getCurrentImage();
+        if (img === null) {
+            editor.canvasInspector.setActiveGalleryId(null);
+            return;
+        }
+
+        // Legacy bundles (saved before Stage 4) have no
+        // imageContentHash. Recompute from the bytes; assign
+        // back to the bundle in memory so subsequent saves
+        // pick it up, but don't force a save here — the
+        // dirty flag belongs to the user's edits, not
+        // background migrations.
+        let hash = session.bundle.imageContentHash;
+        if (hash === null) {
+            try {
+                hash = await computeContentHash(img.content);
+                session.bundle.imageContentHash = hash;
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.error(
+                    "GXW: failed to compute image hash during gallery sync; active frame cleared.",
+                    err,
+                );
+                messages.write(
+                    `Gallery sync skipped: hash compute failed (${msg}).`,
+                    "error",
+                );
+                editor.canvasInspector.setActiveGalleryId(null);
+                return;
+            }
+        }
+
+        try {
+            const existing = await galleryFindByContentHash(hash);
+            if (existing !== null) {
+                // Match found. The stable-position model
+                // keeps the existing slot put; just point
+                // the green active-frame at it. No
+                // gallery-state changes, so no
+                // refreshGallery needed.
+                editor.canvasInspector.setActiveGalleryId(existing.id);
+                return;
+            }
+            // No matching entry. Generate a thumbnail from
+            // the bundle's bytes and create a new entry.
+            // sourcePath gets the bundle's image filename;
+            // it's the best identity we have for legacy
+            // imports, though the content hash is what
+            // future syncs will key on.
+            const thumb = await generateThumbnail(img.content, img.mimeType);
+            const result = await galleryAdd({
+                sourcePath: session.bundle.imageName ?? "",
+                normalizedBytes: img.content,
+                thumbnailBase64: thumb,
+                contentHash: hash,
+            });
+            await editor.canvasInspector.refreshGallery();
+            editor.canvasInspector.setActiveGalleryId(result.id);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(
+                "GXW: gallery sync failed; active frame cleared.",
+                err,
+            );
+            messages.write(
+                `Gallery sync failed: ${msg}`,
+                "error",
+            );
+            editor.canvasInspector.setActiveGalleryId(null);
+        }
+    };
+
+    /**
      * Called by DiskMirror when external file changes are
      * detected on disk for the watched score. The mirror has
      * already persisted the new bundle to IndexedDB (using
@@ -941,6 +1076,12 @@ async function main() {
             await canvas.setImage(null);
         }
         await runScene();
+        // Refresh the Canvas inspector's gallery active-frame
+        // for the externally-loaded bundle (Stage 4). Runs
+        // after runScene so any error messages from the
+        // gallery sync land below the "Reloaded from disk."
+        // line for chronological clarity.
+        await syncGalleryFromBundle();
         messages.write("Reloaded from disk.");
     };
 
@@ -1028,6 +1169,11 @@ async function main() {
             session.rewatch();
 
             await runScene();
+            // Stage 4: refresh the gallery active-frame for
+            // the score we just switched to. Runs after
+            // runScene so the canvas paint and gallery
+            // sync land roughly together.
+            await syncGalleryFromBundle();
         },
         refreshScoreNameDisplay,
     };
@@ -1060,6 +1206,17 @@ async function main() {
             messages.write("Loaded latest version from disk.");
         }
     }
+
+    // Stage 4: initial gallery sync against the resolved
+    // starting bundle. Sets the green active-frame on the
+    // matching slot when the score's background image is
+    // already a gallery entry, or registers it as a new
+    // entry otherwise. Runs after the reconcile block so
+    // session.bundle is settled; runs before the canvas-
+    // toolbar wiring and the initial runScene so the grid
+    // paints in its final state from the user's first
+    // glance at the Canvas tab.
+    await syncGalleryFromBundle();
 
     // --- Canvas toolbar and direct-manipulation editing ---
     //
@@ -1133,6 +1290,81 @@ async function main() {
             } else if (edit.kind === "setCanvasH") {
                 await applySceneEdit((data) => setCanvasH(data, edit.value));
             }
+        });
+
+        // Gallery thumbnail-click handler (Stage 3 of the
+        // Canvas inspector tab). The inspector emits an
+        // intent with the clicked entry's id; main.js owns
+        // the orchestration. Steps: load the full-resolution
+        // bytes via gallery.loadImage, swap them into the
+        // bundle's current image via replaceImage with a
+        // filename derived from the entry id (gallery
+        // entries are standalone now, so the id is the most
+        // stable name we have), apply to the canvas, promote
+        // the entry to slot 1 via gallery.touch, save the
+        // bundle, refresh the gallery grid so the new
+        // ordering paints, and call setActiveGalleryId so
+        // the green active-frame moves to the clicked slot.
+        // Errors at any step surface in the messages area;
+        // partial-progress states are tolerated (e.g. canvas
+        // updated but save failed leaves the bundle dirty,
+        // which is the same behaviour the import pipeline
+        // already has).
+        editor.canvasInspector.onSetBackgroundFromGallery(async ({ id }) => {
+            try {
+                const { bytes, mimeType } = await galleryLoadImage(id);
+                // Compute the hash from the loaded bytes so
+                // the bundle's imageContentHash field stays in
+                // sync with what gallery-sync will look for on
+                // the next score open. We could read the hash
+                // off the gallery entry instead, but that's an
+                // extra IPC round-trip; SHA-256 on a 1000×1000
+                // JPEG is microseconds, simpler to just
+                // recompute.
+                const contentHash = await computeContentHash(bytes);
+                const name = id + ".jpg";
+                session.bundle.replaceImage(name, bytes, mimeType, contentHash);
+                await canvas.setImage({ bytes, mimeType });
+                try {
+                    await session.bundle.save();
+                } catch (err) {
+                    console.error("GXW: failed to persist bundle after gallery set:", err);
+                    messages.write(
+                        "Image applied but could not be saved to storage.",
+                        "error",
+                    );
+                }
+                // No refreshGallery here: the stable-position
+                // model means the gallery's entries and order
+                // are unchanged by a click. Just move the
+                // green active-frame to the clicked slot.
+                editor.canvasInspector.setActiveGalleryId(id);
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                messages.write(`Could not load gallery image: ${msg}`, "error");
+            }
+        });
+
+        // Canvas tab Load Image button (Stage 4). Routes to
+        // the same file-picker entry point the canvas-
+        // toolbar's Image button uses, so the two surfaces
+        // share their behaviour and the gallery-push happens
+        // automatically via imageImporter._storeAndRender.
+        editor.canvasInspector.onLoadImageClick(() => {
+            imageImporter.importViaFilePicker();
+        });
+
+        // Canvas tab Remove Image button (Stage 4). Removes
+        // the current background and clears the active
+        // gallery id so the green frame disappears from
+        // whichever slot had it. The gallery entry itself
+        // stays in place — removing the score's reference
+        // doesn't evict the entry from the gallery, which
+        // matches the user's mental model of the gallery
+        // as a recent-images history.
+        editor.canvasInspector.onRemoveImageClick(async () => {
+            await imageImporter.removeCurrentImage();
+            editor.canvasInspector.setActiveGalleryId(null);
         });
     }
 

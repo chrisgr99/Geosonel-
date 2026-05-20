@@ -196,11 +196,6 @@ function buildTemplate() {
         },
         { type: 'separator' },
         {
-          label: 'Remove Image',
-          click: () => send('remove-image'),
-        },
-        { type: 'separator' },
-        {
           label: 'Reload from Disk',
           // Greyed out for Untitled bundles since there's
           // no on-disk version to pull. Becomes available

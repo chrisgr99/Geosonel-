@@ -646,6 +646,104 @@ html, body {
     margin: 14px 0;
 }
 
+/* Recent-image gallery grid (Stage 3 of Canvas inspector
+ * tab work, DESIGN.md Section 13.5). Four columns at
+ * a fixed 72×72 pixel thumbnail size, left-aligned
+ * within the panel. The fixed pixel sizing is a Stage 4
+ * UX redesign — the gallery used to use repeat(4, 1fr)
+ * which scaled each thumbnail with the inspector pane's
+ * width, and the per-frame image-resize during a body-
+ * divider drag made the drag visibly slow. With fixed
+ * dimensions the browser doesn't re-lay out thumbnails
+ * on every drag frame, so the drag feels responsive
+ * again; and the gallery's footprint becomes predictable
+ * regardless of pane width.
+ *
+ * Grid total width: 4 × 72 + 3 × 8 = 312 px. The
+ * inspector floor (computed in main.js from the
+ * Properties tab's natural content width) is wider than
+ * this, so the gallery fits comfortably with empty space
+ * to its right when the pane is at any reasonable width.
+ * justify-content: start pins the grid to the left so
+ * the empty space lives consistently on the right edge.
+ *
+ * Square slots so the 96×96 PNG thumbnails sit uncropped
+ * via object-fit: contain. The grid lives inside
+ * .canvas-insp-panel which itself lives inside
+ * #canvas-inspector-area, whose overflow-y: auto rule
+ * handles vertical scrolling when the gallery grows past
+ * the viewport. */
+.canvas-insp-gallery {
+    display: grid;
+    grid-template-columns: repeat(4, 72px);
+    gap: 8px;
+    justify-content: start;
+}
+
+/* Thumbnail slot. Three states share this base: empty
+ * (dim placeholder, no pointer), populated (an inline
+ * img element fills the slot, click sets the background),
+ * and populated + active (carries the green frame matching
+ * the Properties tab's editable-field accent). The slot's
+ * 2-pixel transparent border in the base state reserves
+ * space for the active frame so adding the active class
+ * doesn't push neighbouring slots around.
+ *
+ * Fixed 72×72 px size matches the gallery grid's column
+ * width. box-sizing: border-box keeps the total
+ * dimensions including the 2 px border at exactly 72 px,
+ * so the slot's outer footprint matches what the grid
+ * reserves for it. Stage 4 UX redesign replaced the
+ * earlier aspect-ratio sizing here — the old grid scaled
+ * slots with the pane width via repeat(4, 1fr) and used
+ * aspect-ratio to keep them square; with fixed-width
+ * columns the explicit width and height read more
+ * directly. */
+.canvas-insp-thumb {
+    width: 72px;
+    height: 72px;
+    box-sizing: border-box;
+    background-color: #3a3a3a;
+    border: 2px solid transparent;
+    border-radius: 3px;
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.canvas-insp-thumb.empty {
+    cursor: default;
+}
+
+.canvas-insp-thumb.active {
+    border-color: #46b03e;
+}
+
+/* Subtle hover affordance on populated slots only. The
+ * brighter outline reads as "clickable" without using the
+ * green frame (which is reserved for the active-state
+ * signal). Empty slots get no hover effect since they're
+ * not clickable. */
+.canvas-insp-thumb:not(.empty):not(.active):hover {
+    border-color: #777777;
+}
+
+.canvas-insp-thumb.active:hover {
+    border-color: #5fc858;
+}
+
+.canvas-insp-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    pointer-events: none;
+}
+
 #editor-area .cm-editor {
     height: 100%;
     background-color: #141414;

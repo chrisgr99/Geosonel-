@@ -29,6 +29,9 @@
 // @ts-check
 
 import { normalizeForCanvas } from "./imageNormalize.js";
+import { computeContentHash } from "./imageHash.js";
+import { generateThumbnail } from "./thumbnailGen.js";
+import { add as galleryAdd } from "./gallery.js";
 
 /** @typedef {import("./bundle.js").Bundle} Bundle */
 /** @typedef {import("./canvas.js").Canvas} Canvas */
@@ -57,6 +60,31 @@ export class ImageImporter {
         this.bundle = ctx.bundle;
         this.canvas = ctx.canvas;
         this.messages = ctx.messages;
+
+        /**
+         * Callback fired after a successful import once the
+         * gallery has been populated and the bundle saved.
+         * Carries the gallery entry id for the now-current
+         * background so main.js can refresh the Canvas
+         * inspector's grid and call setActiveGalleryId.
+         * Stage 4 of the Canvas inspector work; null while
+         * unwired (no listener registered) and after an
+         * import where the gallery push failed.
+         * @type {((info: {galleryId: string}) => void) | null}
+         */
+        this._onImportComplete = null;
+    }
+
+    /**
+     * Register a callback fired after each successful
+     * import with the resulting gallery entry id. Only
+     * the most recent callback survives — a single wiring
+     * point in main.js is the expected usage. Pass null
+     * to clear.
+     * @param {((info: {galleryId: string}) => void) | null} cb
+     */
+    setOnImportComplete(cb) {
+        this._onImportComplete = cb;
     }
 
     /**
@@ -208,6 +236,19 @@ export class ImageImporter {
      * is the post-normalization version so pattern signals
      * see uniform geometry regardless of how the image
      * arrived.
+     *
+     * Stage 4 of the Canvas inspector work added two parallel
+     * post-normalize steps: a SHA-256 hash of the normalized
+     * bytes (stored on the bundle as imageContentHash and
+     * used as the gallery's match-and-promote key) and a
+     * 96×96 thumbnail (passed to gallery.add for the new
+     * entry's display in the Canvas tab). The two are
+     * computed in parallel via Promise.all; both run against
+     * the same normalized bytes so neither depends on the
+     * other's completion. Failure of either step degrades
+     * gracefully — the import still completes, the bundle
+     * still gets the image, only the gallery integration is
+     * skipped with a console-logged error.
      * @param {string} name
      * @param {ArrayBuffer} bytes
      * @param {string} mimeType
@@ -231,8 +272,80 @@ export class ImageImporter {
         // misleading filename downstream (export, disk
         // mirror, AI-edit tooling all read the extension).
         const normalizedName = forceJpgExtension(name);
-        this.bundle.replaceImage(normalizedName, normalized.bytes, normalized.mimeType);
-        await this.canvas.setImage({ bytes: normalized.bytes, mimeType: normalized.mimeType });
+
+        // Parallel hash + thumbnail computation against the
+        // normalized bytes. Both are required for the
+        // gallery push; if either fails we still complete
+        // the import (bundle gets the image, canvas paints)
+        // but skip the gallery integration with a logged
+        // error. The bundle's imageContentHash stays null
+        // in that case and a future open will recompute.
+        /** @type {string | null} */
+        let contentHash = null;
+        /** @type {string} */
+        let thumbnailBase64 = "";
+        try {
+            const [h, t] = await Promise.all([
+                computeContentHash(normalized.bytes),
+                generateThumbnail(normalized.bytes, normalized.mimeType),
+            ]);
+            contentHash = h;
+            thumbnailBase64 = t;
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(
+                "GXW: failed to compute image hash or thumbnail; gallery push skipped.",
+                err,
+            );
+            this.messages.write(
+                `Gallery push skipped: hash or thumbnail compute failed (${msg}).`,
+                "error",
+            );
+        }
+
+        this.bundle.replaceImage(
+            normalizedName,
+            normalized.bytes,
+            normalized.mimeType,
+            contentHash,
+        );
+        await this.canvas.setImage({
+            bytes: normalized.bytes,
+            mimeType: normalized.mimeType,
+        });
+
+        // Populate the gallery. Match-and-promote inside
+        // gallery.add handles the case where this image (by
+        // content hash) is already a gallery entry — the
+        // existing entry is promoted to slot 1 rather than
+        // duplicated. galleryId is null when the hash compute
+        // failed (above) or the add call itself threw; both
+        // suppress the onImportComplete fire below so main.js
+        // doesn't try to highlight a nonexistent entry.
+        /** @type {string | null} */
+        let galleryId = null;
+        if (contentHash !== null) {
+            try {
+                const result = await galleryAdd({
+                    sourcePath: normalizedName,
+                    normalizedBytes: normalized.bytes,
+                    thumbnailBase64,
+                    contentHash,
+                });
+                galleryId = result.id;
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.error(
+                    "GXW: failed to add image to gallery; gallery view will not show this entry.",
+                    err,
+                );
+                this.messages.write(
+                    `Gallery add failed: ${msg}`,
+                    "error",
+                );
+            }
+        }
+
         try {
             await this.bundle.save();
         } catch (err) {
@@ -244,6 +357,19 @@ export class ImageImporter {
             return;
         }
         this.messages.write(`Imported image "${normalizedName}".`);
+
+        // Fire the import-complete callback so main.js can
+        // refresh the Canvas inspector's gallery grid and
+        // move the green active-frame to the new entry. Only
+        // fired when galleryId is known; otherwise main.js
+        // would have nothing to highlight.
+        if (this._onImportComplete !== null && galleryId !== null) {
+            try {
+                this._onImportComplete({ galleryId });
+            } catch (err) {
+                console.error("GXW: import-complete listener threw:", err);
+            }
+        }
     }
 }
 

@@ -7,7 +7,7 @@
  * DESIGN.md Section 13.5 the tab is selection-independent:
  * it shows the background image controls, the canvas
  * dimensions, the image-transformation sliders (later
- * stages), and the recent-image gallery (later stages).
+ * stages), and the recent-image gallery (Stage 3 onward).
  *
  * Stage 1 scope. Three pieces land here in the first
  * commit: the disabled placeholders for the Load Image
@@ -21,6 +21,21 @@
  * Escape to revert, blur silently reverts on bad value,
  * Enter on a bad value squiggles red and keeps focus.
  *
+ * Stage 3 scope. The recent-image gallery renders below
+ * the separator as a four-column grid of GALLERY_SLOT_COUNT
+ * fixed slots. Populated slots come from gallery.list and
+ * carry the entry's 96×96 thumbnail as a base64-decoded
+ * inline image; empty slots render as a dim placeholder so
+ * the grid's footprint is visible before any entries land.
+ * Clicking a populated slot emits an intent through the
+ * onSetBackgroundFromGallery channel; main.js handles the
+ * orchestration (load bytes, swap the bundle's image,
+ * apply to canvas, promote the entry via gallery.touch,
+ * save the bundle, set the active id back through
+ * setActiveGalleryId). The slot whose entry id matches
+ * the active id carries a green active-frame using the
+ * same accent the Properties tab uses for editable fields.
+ *
  * Wiring contract. setCanvasSize(w, h) is called by
  * main.js after every scene reload so the fields track
  * the scene's current canvasW / canvasH values without
@@ -29,14 +44,35 @@
  * | "setCanvasH", value: number } edits — the same shape
  * the toolbar's onSceneEdit used to emit — so main.js's
  * applySceneEdit dispatch table doesn't need to change.
+ * onSetBackgroundFromGallery(cb) is the Stage 3 addition:
+ * receives { id } when a thumbnail is clicked, and the
+ * subscriber is expected to call setActiveGalleryId(id)
+ * after committing the change so the active-frame moves.
+ * refreshGallery() re-reads gallery.list and re-renders
+ * the grid; called by main.js after the bundle's image
+ * changes so a new entry from Stage 4's import pipeline
+ * shows up immediately.
  */
 
 // @ts-check
+
+import { list as galleryList } from "./gallery.js";
 
 const CANVAS_DIMENSION_MIN = 1;
 const CANVAS_DIMENSION_MAX = 200;
 const CANVAS_DIMENSION_DEFAULT_W = 32;
 const CANVAS_DIMENSION_DEFAULT_H = 24;
+
+// Twenty fixed slots in the gallery grid — four columns by
+// five rows. The slot count is independent of how many
+// entries the backing gallery currently holds: fewer entries
+// means trailing slots render as empty placeholders, more
+// entries means the tail is hidden until older entries get
+// evicted or the gallery is paginated in a later stage.
+// Five rows at the default inspector width was the Section
+// 13.5 target; the slot count follows from four columns ×
+// five visible rows.
+const GALLERY_SLOT_COUNT = 20;
 
 export class CanvasInspector {
     /**
@@ -62,7 +98,58 @@ export class CanvasInspector {
         /** @type {Array<(edit: any) => void>} */
         this._sceneEditListeners = [];
 
+        // --- Gallery state (Stage 3) ---
+
+        /**
+         * Cached entries from the most recent gallery.list
+         * call, sorted most-recent-first. The grid renders
+         * the first GALLERY_SLOT_COUNT of these as
+         * populated slots; any beyond that are hidden
+         * (eviction in the gallery layer keeps the cap
+         * bounded). Empty array until the first
+         * _loadGallery resolves.
+         * @type {Array<{id: string, sourcePath: string, thumbnailBase64: string, addedAt: number}>}
+         */
+        this._galleryEntries = [];
+
+        /**
+         * Id of the entry whose thumbnail should carry the
+         * green active-frame, or null when no entry is
+         * active. Set by main.js via setActiveGalleryId
+         * after a successful background-image swap.
+         * @type {string | null}
+         */
+        this._activeGalleryId = null;
+
+        /**
+         * Reference to the gallery grid container, used by
+         * _renderGalleryGrid to repopulate without
+         * re-running the full _render. Null until _render
+         * runs and gone again on the next _render (the
+         * container's contents are rebuilt as a whole each
+         * time).
+         * @type {HTMLDivElement | null}
+         */
+        this._galleryGridEl = null;
+
+        /** @type {Array<(intent: {id: string}) => void>} */
+        this._setBackgroundListeners = [];
+
+        /** @type {Array<() => void>} */
+        this._loadImageListeners = [];
+
+        /** @type {Array<() => void>} */
+        this._removeImageListeners = [];
+
         this._render();
+        // Kick off the initial gallery load. _render has
+        // already painted GALLERY_SLOT_COUNT empty slots so
+        // there's something visible until the async list
+        // resolves; _renderGalleryGrid then re-fills with
+        // the entries it returns. Errors are logged and
+        // leave the grid as empty placeholders — a degraded
+        // but readable state.
+        void this._loadGallery();
     }
 
     /**
@@ -108,20 +195,98 @@ export class CanvasInspector {
         }
     }
 
+    // --- Gallery public API (Stage 3) ---
+
+    /**
+     * Subscribe to background-set intents emitted by
+     * gallery thumbnail clicks. The callback receives
+     * { id } where id is the clicked entry's id. The
+     * subscriber owns the orchestration (load bytes,
+     * mutate bundle, apply to canvas, promote via
+     * gallery.touch, save) and is expected to call
+     * setActiveGalleryId(id) on success so the
+     * green active-frame moves to the clicked slot.
+     * Multiple listeners are supported, matching the
+     * onSceneEdit pattern, though only one is wired in
+     * practice.
+     * @param {(intent: {id: string}) => void} cb
+     */
+    onSetBackgroundFromGallery(cb) {
+        this._setBackgroundListeners.push(cb);
+    }
+
+    /**
+     * Set or clear the gallery id whose thumbnail should
+     * carry the green active-frame. Pass null to clear.
+     * The grid re-renders so the frame moves to the
+     * matching slot (or disappears, when null). Called
+     * by main.js after a successful background-image
+     * swap; the Stage 4 Open Score recency hook will
+     * also call this.
+     * @param {string | null} id
+     */
+    setActiveGalleryId(id) {
+        if (this._activeGalleryId === id) return;
+        this._activeGalleryId = id;
+        this._renderGalleryGrid();
+    }
+
+    /**
+     * Re-read the gallery and re-render the grid. Called
+     * by main.js after operations that change the entry
+     * list (Stage 3: after a click promotes an entry;
+     * Stage 4+: after import paths add entries, after
+     * right-click Remove from history). Cheap to call:
+     * gallery.list is a single IPC round-trip or IDB read.
+     * Errors are logged and the grid stays at its prior
+     * state.
+     * @returns {Promise<void>}
+     */
+    async refreshGallery() {
+        await this._loadGallery();
+    }
+
+    /**
+     * Subscribe to Load Image button clicks. main.js wires
+     * this to imageImporter.importViaFilePicker(), which
+     * opens the OS file picker. Stage 4 addition; before
+     * Stage 4 the button was a disabled placeholder.
+     * @param {() => void} cb
+     */
+    onLoadImageClick(cb) {
+        this._loadImageListeners.push(cb);
+    }
+
+    /**
+     * Subscribe to Remove Image button clicks. main.js
+     * wires this to imageImporter.removeCurrentImage() and
+     * clears the active gallery id after the await. Stage 4
+     * addition; before Stage 4 the button was a disabled
+     * placeholder.
+     * @param {() => void} cb
+     */
+    onRemoveImageClick(cb) {
+        this._removeImageListeners.push(cb);
+    }
+
     // --- Internals ---
 
     _render() {
         this.container.innerHTML = "";
         this._canvasWField = null;
         this._canvasHField = null;
+        this._galleryGridEl = null;
 
         const panel = document.createElement("div");
         panel.className = "canvas-insp-panel";
 
         // Top row: Load Image, Remove Image, W field, H field.
-        // The two buttons are disabled placeholders in Stage 1;
-        // Stage 4 wires them to the file picker and the
-        // background-clear path respectively.
+        // Both buttons went live in Stage 4; main.js's click
+        // handlers route them to imageImporter for the
+        // actual file-picker / removal flow. Click intents
+        // are emitted via onLoadImageClick / onRemoveImageClick
+        // so the inspector stays decoupled from the
+        // importer's dependencies.
         const topRow = document.createElement("div");
         topRow.className = "canvas-insp-top-row";
 
@@ -129,16 +294,28 @@ export class CanvasInspector {
         loadBtn.type = "button";
         loadBtn.className = "canvas-insp-button";
         loadBtn.textContent = "Load Image";
-        loadBtn.disabled = true;
-        loadBtn.title = "Load Image (coming in a later stage)";
+        loadBtn.title = "Open a file picker to choose a new background image.";
+        loadBtn.addEventListener("click", () => {
+            for (const cb of this._loadImageListeners) {
+                try { cb(); } catch (err) {
+                    console.error("GXW: canvas-inspector load-image listener threw.", err);
+                }
+            }
+        });
         topRow.appendChild(loadBtn);
 
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
         removeBtn.className = "canvas-insp-button";
         removeBtn.textContent = "Remove Image";
-        removeBtn.disabled = true;
-        removeBtn.title = "Remove Image (coming in a later stage)";
+        removeBtn.title = "Remove the current background image from this score.";
+        removeBtn.addEventListener("click", () => {
+            for (const cb of this._removeImageListeners) {
+                try { cb(); } catch (err) {
+                    console.error("GXW: canvas-inspector remove-image listener threw.", err);
+                }
+            }
+        });
         topRow.appendChild(removeBtn);
 
         const wLabel = document.createElement("span");
@@ -167,6 +344,21 @@ export class CanvasInspector {
         const sep = document.createElement("div");
         sep.className = "canvas-insp-separator";
         panel.appendChild(sep);
+
+        // Gallery grid (Stage 3). The container is created
+        // here so the empty placeholder slots paint in
+        // their final position as soon as the inspector
+        // mounts; the initial async _loadGallery from the
+        // constructor refills the populated slots once
+        // gallery.list resolves. Subsequent grid changes
+        // (setActiveGalleryId, refreshGallery) just call
+        // _renderGalleryGrid against the same element
+        // without re-running _render.
+        const galleryEl = document.createElement("div");
+        galleryEl.className = "canvas-insp-gallery";
+        this._galleryGridEl = galleryEl;
+        panel.appendChild(galleryEl);
+        this._renderGalleryGrid();
 
         this.container.appendChild(panel);
     }
@@ -307,6 +499,82 @@ export class CanvasInspector {
         for (const cb of this._sceneEditListeners) {
             try { cb(edit); } catch (err) {
                 console.error("GXW: canvas-inspector scene-edit listener threw.", err);
+            }
+        }
+    }
+
+    // --- Gallery internals (Stage 3) ---
+
+    /**
+     * Read gallery.list and update the cached entries,
+     * then re-render the grid. The cache lets
+     * setActiveGalleryId re-render the grid synchronously
+     * (no IPC round-trip on every active-frame change)
+     * and lets a not-yet-mounted grid render correctly
+     * the first time _render runs. Errors are logged
+     * and the cache stays at its prior value, so a
+     * transient failure leaves the grid in its last
+     * known state rather than collapsing to empty.
+     * @returns {Promise<void>}
+     */
+    async _loadGallery() {
+        try {
+            const result = await galleryList();
+            this._galleryEntries = result.entries;
+        } catch (err) {
+            console.error("GXW: failed to read image gallery:", err);
+            return;
+        }
+        this._renderGalleryGrid();
+    }
+
+    /**
+     * Repopulate the gallery grid against the current
+     * cached entries and active id. No-op when the grid
+     * element hasn't been mounted yet (the constructor's
+     * initial _loadGallery may finish before _render
+     * runs; subsequent refreshes find the grid in place).
+     */
+    _renderGalleryGrid() {
+        const grid = this._galleryGridEl;
+        if (grid === null) return;
+        grid.innerHTML = "";
+        for (let i = 0; i < GALLERY_SLOT_COUNT; i++) {
+            const slot = document.createElement("div");
+            slot.className = "canvas-insp-thumb";
+            const entry = this._galleryEntries[i];
+            if (entry === undefined) {
+                slot.classList.add("empty");
+            } else {
+                if (entry.id === this._activeGalleryId) {
+                    slot.classList.add("active");
+                }
+                const img = document.createElement("img");
+                // Decorative; the user's mental model is the
+                // image itself, not an alt-text description.
+                img.alt = "";
+                img.draggable = false;
+                img.src = "data:image/png;base64," + entry.thumbnailBase64;
+                slot.appendChild(img);
+                const entryId = entry.id;
+                slot.addEventListener("click", () => {
+                    this._emitSetBackground(entryId);
+                });
+            }
+            grid.appendChild(slot);
+        }
+    }
+
+    /**
+     * Emit a background-set intent to every registered
+     * listener. main.js does the orchestration; the
+     * inspector just signals what was clicked.
+     * @param {string} id
+     */
+    _emitSetBackground(id) {
+        for (const cb of this._setBackgroundListeners) {
+            try { cb({ id }); } catch (err) {
+                console.error("GXW: canvas-inspector set-background listener threw.", err);
             }
         }
     }

@@ -123,11 +123,6 @@ export function installFileMenu(ctx) {
             label: "Delete\u2026",
             action: () => actionDeleteScore(actionCtx),
         },
-        { separator: true },
-        {
-            label: "Remove Image",
-            action: () => ctx.imageImporter.removeCurrentImage(),
-        },
     ]);
 
     // The data-portability cluster (Export, Import, Back Up
