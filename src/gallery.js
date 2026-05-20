@@ -18,7 +18,7 @@
  *     using the gallery object store added at DB_VERSION 3
  *     in storage.js. Each entry record carries both the
  *     metadata and the full-resolution image Blob inline.
- *     Cap is hardcoded at 12 entries — the small fixed
+ *     Cap is hardcoded at 24 entries — the small fixed
  *     value matches the web build's general "good enough
  *     for casual use, get the desktop app for serious
  *     work" stance, and keeps the IndexedDB footprint
@@ -72,8 +72,8 @@ const DB_VERSION = 3;
 // number keeps IndexedDB usage bounded and matches the
 // design decision that the web build offers a curated
 // taste of the desktop's full gallery rather than feature
-// parity.
-const WEB_MAX_COUNT = 12;
+// parity. Bumped from 12 to 24 in Stage 5 third commit.
+const WEB_MAX_COUNT = 24;
 
 // Electron-build defaults. These match what gets persisted
 // in settings.json under the imageGallery.maxCount field
