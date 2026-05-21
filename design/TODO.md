@@ -204,10 +204,10 @@ The score's authoring surface for callbacks and labelled cyclePattern blocks.
 - CodeMirror-based editor with JavaScript syntax highlighting, error squiggles, undo, explicit-save.
 - Edits trigger a scene reload through the same pipeline that reloads on scene.json edits.
 - Stage A3 of the pattern-authoring pivot: pattern row at the bottom of Band 1 with Create / Go-to button that scaffolds or navigates to labelled blocks.
+- Stage A4: Cmd-Enter routing that promotes a labelled block's expression body to the named object's cyclePattern field in scene.json.
 
 ### Pending
 
-- Stage A4: Cmd-Enter routing that promotes a labelled block's expression body to the named object's cyclePattern field in scene.json.
 - Live parse validation for labelled pattern blocks in the Code tab; parse errors as squiggles as the user types.
 - Edit-time pattern preview: a "play this pattern once" affordance on labelled blocks, using a one-shot invocation of the firing primitive.
 - Strudel code completion and popup keyword help in the Code tab editor: autocomplete for sound, note, gain, legato, and the rest of the strudel vocabulary; popup help on cursor over a keyword.
@@ -298,16 +298,48 @@ End-to-end flow for authoring a score: object creation, property editing, callba
 
 ## AI handoff
 
-Mechanisms for AI assistants (Claude and similar) to read, edit, and reason about scores.
+Mechanisms for AI assistants (Claude and similar) to read, edit, and reason about scores. Implemented as a disk mirror at `~/Library/Application Support/GeoSonel/Active/`; see Section 15 for full design.
 
 ### Shipped
 
-- Design doc (DESIGN.md and section files) plus the live HANDOFF.md and CLAUDE.md system bootstrap.
+- Design doc (Section 15 modernized) plus the live HANDOFF.md and CLAUDE.md system bootstrap.
 - behaviors.js as a regular text file readable and editable through the standard file tools.
 
-### Pending
+### Pending (Phase 1 — composition mirror)
 
-- Revisit when the AI-handoff section of the design doc is modernized; no specific items captured at present.
+- Main-process mirror module managing the Active/ folder lifecycle: creation on startup, content refresh on bundle change, clear and refill on score switch, cleanup of leftover *.tmp files on startup.
+- Debounced push pipeline: bundle dirty change → ~500ms timer → write scene.json, behaviours.js, image, snapshot.png, snapshot-annotated.png, snapshot-description.md, active-score.json to Active/ via temp-and-rename atomic-write pattern.
+- snapshot.png and snapshot-annotated.png canvas capture from the renderer: full canvas pixel rendering, with id-label overlay for the annotated variant.
+- snapshot-description.md generation: structured text rendering of canvas state (per-object id, kind, position, key properties).
+- active-score.json writer: protocolVersion, score (displayName, path, dirty), sync block, transport snapshot, files lists (roundTrip and observationOnly), atomicWrites convention block, isLive flag, lastApplyResult.
+- fs.watch on Active/ in the main process with *.tmp filter, quiescence-based debouncer (500ms reset on each event), and .pending sentinel detection with 60-second default timeout for orphan handling.
+- IPC channel for forwarding AI-originated batch events to the renderer's bundle.updateContent pipeline.
+- Validation and rollback: AI-write batches validated (JSON parse, sceneSchema, Acorn syntax check); any failure rejects entire batch, re-pushes last-known-good content to mirror, populates lastApplyResult with rich per-file error info (object reference, field path, invalid value, expected shape, valid values, near-match suggestion, human-readable message).
+- Score-switch handling: cancel any pending watcher batch with user notification.
+- App quit handling: set isLive:false in active-score.json.
+- Message-area integration for AI-edit notifications and rejection summaries.
+- AGENTS.md drafting: AI-facing orientation doc covering GXW concepts (paths, cursors, sprites, triggers, cyclePattern, simulation tick model), the mirror protocol, editing patterns for scene.json and behaviours.js, workflow conventions, and (when Phase 2 lands) log interpretation.
+- sceneSchema.md drafting: reference describing scene.json structure for AI grounding. Likely hand-written; could be partially auto-generated from sceneSchema.js if precedent emerges.
+
+### Pending (Phase 2 — event logging)
+
+- Hook at the central note-emission function in the simulation layer to capture noteOn, noteOff, suppressed, controlChange events with full context (source object, cursor, pattern step, cause / trigger reason).
+- noteOff reason field: natural, voiceStolen, transportStop, overriddenByNoteOn; stealing source named when applicable.
+- Suppressed reason field: patternEmittedRest, objectMuted, voiceLimit.
+- Async-buffered append-only write to run-log.ndjson with header line declaring schema, type codes, cause codes, and object/cursor legend at run start.
+- Hybrid string-or-index encoding for the object field (numeric legend index for run-start objects, full string ID for mid-run additions).
+- Transport-start clearing and transport-stop finalization lifecycle.
+- run-summary.json aggregator: per-object stats, per-pitch stats, per-time-bucket stats, totals.
+- run-log-schema.md drafting: reference describing the wire format and code tables.
+
+### Deferred (Phase 3 and beyond)
+
+- On-demand motion-query mechanism (AI writes motion-query.json, bundle responds with motion-result.json).
+- Continuous motion sampling (per-object position and velocity at ~1Hz) and motion-summary.json aggregate.
+- Per-run persistence in a motion-history/ subfolder.
+- SQLite database layer for long-term analysis.
+- History-as-compositional-substrate API for behaviour callbacks (in-memory history buffer, narrow query API).
+- Phrase extraction to MIDI / Strudel patterns / bundle-native clips.
 
 ## Accessibility
 
