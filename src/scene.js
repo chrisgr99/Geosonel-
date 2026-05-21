@@ -436,6 +436,28 @@ export class Curve {
          */
         this.cursorThickness = opts.cursorThickness ?? 2;
 
+        /**
+         * Number of times the cyclePattern is laid out around
+         * the curve in one cursor traversal (one GXW cycle).
+         * Independent of cycle duration: beatsPerCycle and
+         * beatInterval control how long the cursor takes to
+         * traverse once, patternRepeats controls how many
+         * copies of the strudel pattern fit along the curve
+         * during that traversal. The strudel cycle counter
+         * still advances once per GXW cycle, so cross-cycle
+         * pattern operators (every, iter, alternation) keep
+         * their natural cadence across GXW cycles rather
+         * than across repeats; each repeat replays the same
+         * strudel cycle's events at successively later
+         * audioTimes. Curve-only: only curves have a visible
+         * cursor sweeping along a path where "how many copies
+         * fit" is a meaningful question. Default 1 reproduces
+         * the pre-patternRepeats one-pattern-per-cycle
+         * behaviour, so legacy scenes load unchanged.
+         * @type {number}
+         */
+        this.patternRepeats = opts.patternRepeats ?? 1;
+
         // --- Callback slots ---
         // Section-27 four-slot model: hasHit / beenHit /
         // onTick are Code-tab slots, each guarded by a

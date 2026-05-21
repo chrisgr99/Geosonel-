@@ -613,6 +613,24 @@ export class PatternFiringEngine {
             const cycleDuration =
                 (beatsPerCycle * beatIntervalQuarters * 60) / bpm;
 
+            // patternRepeats: curve-only field controlling
+            // how many copies of the strudel cycle's events
+            // get laid out across one GXW cycle. Sprites
+            // don't carry the field; missing or non-numeric
+            // values fall back to 1. Defensive clamp to
+            // integer >= 1 against hand-edited or AI-edited
+            // scenes that might store a zero, negative, or
+            // non-integer value. Pass into _populatePending
+            // so the populate loop can multiply events
+            // accordingly; cycleDuration itself is
+            // unaffected (patternRepeats compresses N copies
+            // of the pattern into the same wall-clock cycle
+            // rather than extending it).
+            const patternRepeats = (typeof source.patternRepeats === "number"
+                && Number.isFinite(source.patternRepeats))
+                ? Math.max(1, Math.round(source.patternRepeats))
+                : 1;
+
             const cycleState = state.kind === "curve"
                 ? this._simulation.getCurveCycleState(source.id)
                 : this._simulation.getSpriteCycleState(source.id);
@@ -666,7 +684,7 @@ export class PatternFiringEngine {
                 const cycleAudioStart =
                     audioNow - cycleState.cycleProgress * cycleDuration;
                 state.populatedCycles.set(C, cycleAudioStart);
-                this._populatePending(state, C, cycleAudioStart, cycleDuration);
+                this._populatePending(state, C, cycleAudioStart, cycleDuration, patternRepeats);
             }
 
             // Pre-populate the next cycle if not yet done.
@@ -691,6 +709,7 @@ export class PatternFiringEngine {
                         C + 1,
                         cycleAudioStartNext,
                         cycleDuration,
+                        patternRepeats,
                     );
                 }
             }
@@ -760,12 +779,24 @@ export class PatternFiringEngine {
      * strudel's internal hash over cycle counter and tag,
      * so the events for cycle N are deterministic.
      *
+     * patternRepeats > 1 lays out N copies of the strudel
+     * cycle's events across the GXW cycle. Each repeat
+     * occupies cycleDuration/N of wall-clock time and plays
+     * the same events. The stored `fractional` on each
+     * event is the strudel-cycle position (not the GXW-cycle
+     * position), so Pass 2 queryArc lands on the correct
+     * event within the strudel pattern; only the audioTime
+     * differs between repeats. Default 1 reproduces the
+     * pre-patternRepeats one-pass-through-the-pattern
+     * behaviour exactly.
+     *
      * @param {SourceFiringState} state
      * @param {number} cycleIndex
      * @param {number} cycleAudioStart
      * @param {number} cycleDuration
+     * @param {number} patternRepeats
      */
-    _populatePending(state, cycleIndex, cycleAudioStart, cycleDuration) {
+    _populatePending(state, cycleIndex, cycleAudioStart, cycleDuration, patternRepeats) {
         let haps;
         try {
             haps = state.compiled.queryArc(cycleIndex, cycleIndex + 1);
@@ -774,6 +805,15 @@ export class PatternFiringEngine {
             return;
         }
         if (!Array.isArray(haps)) return;
+
+        // Segment duration: each of the patternRepeats copies
+        // occupies cycleDuration/N of wall-clock time within
+        // the GXW cycle. Event duration also scales with the
+        // segment so a quarter-note within the strudel cycle
+        // stays proportionally a quarter of one repeat
+        // segment in wall-clock terms.
+        const repeats = Math.max(1, Math.round(patternRepeats || 1));
+        const segmentDuration = cycleDuration / repeats;
 
         for (const hap of haps) {
             const begin = hapBegin(hap);
@@ -786,15 +826,26 @@ export class PatternFiringEngine {
             const fractional = begin - cycleIndex;
             const fractionalEnd = end - cycleIndex;
             if (fractional < 0 || fractional >= 1) continue;
-            const audioTime = cycleAudioStart + fractional * cycleDuration;
-            const duration = Math.max(0, (fractionalEnd - fractional) * cycleDuration);
-            state.pendingEvents.push({
-                audioTime,
-                value: hap.value,
-                duration,
-                cycleIndex,
-                fractional,
-            });
+            const duration = Math.max(0, (fractionalEnd - fractional) * segmentDuration);
+            // Lay out one event per repeat. The stored
+            // fractional stays at the strudel-cycle position
+            // so Pass 2's queryArc(cycleIndex + fractional,
+            // ...) lands on the same hap regardless of which
+            // copy is firing; only audioTime varies between
+            // repeats. cycleIndex also stays the same: the
+            // strudel cycle counter advances once per GXW
+            // cycle (not once per repeat), so cross-cycle
+            // operators keep their natural cadence.
+            for (let i = 0; i < repeats; i++) {
+                const audioTime = cycleAudioStart + (i + fractional) * segmentDuration;
+                state.pendingEvents.push({
+                    audioTime,
+                    value: hap.value,
+                    duration,
+                    cycleIndex,
+                    fractional,
+                });
+            }
         }
         // Keep pendingEvents sorted by audioTime so the
         // commit walker sees events in time order. With

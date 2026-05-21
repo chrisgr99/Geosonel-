@@ -155,6 +155,7 @@ export const CURVE_FIELDS = [
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
     { key: "cursorThickness", label: "Cursor Thickness", type: "number", default: 2 },
+    { key: "patternRepeats", label: "Repeats", type: "integer", default: 1, min: 1 },
     ...CALLBACK_SLOT_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];

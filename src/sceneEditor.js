@@ -1289,6 +1289,46 @@ export function setCanvasH(data, value) {
 }
 
 /**
+ * Set the bpm field at the top level of scene.json. Used by
+ * the transport bar's BPM input commit so user-typed BPM
+ * changes survive subsequent applySceneEdit round-trips.
+ * Without this persistence, every inspector edit would
+ * trigger runScene which calls transport.setBpm(scene.bpm)
+ * and stomps the user's typed BPM back to whatever is in
+ * the file. The clamp range mirrors transport.setBpm's own
+ * [1, 1000] clamp so the persisted value matches what the
+ * transport would have accepted from the same input. Non-
+ * numeric input is treated as a no-op rather than wiping
+ * the field, which matches how the BPM input handler
+ * already guards against parseInt returning NaN.
+ * @param {any} data
+ * @param {string | number} value
+ */
+export function setSceneBpm(data, value) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    const n = clampBpm(value);
+    if (n === null) return;
+    data.bpm = n;
+}
+
+/**
+ * Parse and clamp a BPM value to the documented [1, 1000]
+ * range. Returns null on values that can't be coerced to a
+ * finite number, which the call site treats as a no-op.
+ * Non-integer numeric input rounds to the nearest integer,
+ * matching Transport.setBpm's own rounding.
+ * @param {string | number} value
+ * @returns {number | null}
+ */
+function clampBpm(value) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return null;
+    if (n < 1) return 1;
+    if (n > 1000) return 1000;
+    return n;
+}
+
+/**
  * Parse and clamp a canvas-dimension value to the documented
  * 1..200 range. Returns null on values that can't be
  * coerced to a finite number, which the call site treats as
@@ -1343,6 +1383,24 @@ export function setBeatsPerCycleOnSelection(data, selection, value) {
     const n = Math.max(1, Math.round(Number(value)));
     if (!Number.isFinite(n)) return;
     setFieldOnSelection(data, selection, "beatsPerCycle", n);
+}
+
+/**
+ * Set the patternRepeats field across the curve selection.
+ * Sprites and triggers in the selection are ignored —
+ * patternRepeats is curve-only, since only curves have a
+ * visible cursor sweeping along a path where "how many
+ * copies of the pattern fit" is meaningful. Stored as an
+ * integer clamped to a minimum of 1. Sister to
+ * setBeatsPerCycleOnSelection but scoped to curves only.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setPatternRepeatsOnCurves(data, selection, value) {
+    const n = Math.max(1, Math.round(Number(value)));
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, { curves: selection.curves }, "patternRepeats", n);
 }
 
 /**
