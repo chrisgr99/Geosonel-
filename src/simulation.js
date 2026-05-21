@@ -40,13 +40,20 @@
  *
  * Master clock and cycle phase. Section 27's master clock
  * model: every source has a wall-clock cycle period derived
- * from the transport's BPM and the source's beatsPerCycle
- * field, where cycleDuration in seconds is beatsPerCycle * 60
- * / BPM. Each source's cycle phase advances at rate
- * 1/cycleDuration per second, wrapping at 1.0 to start the
- * next cycle. Cycle phase advances unconditionally,
- * regardless of canCycle — canCycle gates pattern firing in
- * a later stage, not phase tracking now.
+ * from the transport's BPM, the source's beatsPerCycle
+ * field (the count of `beatInterval` units that make up one
+ * cycle), and the source's beatInterval field (the unit
+ * each count refers to). cycleDuration in seconds is
+ * beatsPerCycle × beatIntervalQuarters × 60 / BPM, where
+ * beatIntervalQuarters is the interval's duration expressed
+ * in quarter notes (looked up via getBeatIntervalEntry).
+ * With beatInterval defaulting to "Qtr" the formula reduces
+ * to beatsPerCycle × 60 / BPM, preserving the pre-v2.3
+ * implicit assumption. Each source's cycle phase advances
+ * at rate 1/cycleDuration per second, wrapping at 1.0 to
+ * start the next cycle. Cycle phase advances
+ * unconditionally, regardless of canCycle — canCycle gates
+ * pattern firing in a later stage, not phase tracking now.
  *
  * Per-cycle home snap. When a source's cycle phase wraps,
  * the source returns to its home position. For curves the
@@ -158,6 +165,8 @@
 
 // @ts-check
 
+import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
+
 /**
  * Simulation step in seconds. Determinism requires this to
  * be a constant; the value is chosen for sub-perceptual
@@ -188,20 +197,33 @@ const LOG_CURVE_BOUNCES = false;
 
 /**
  * Compute the wall-clock cycle duration in seconds for a
- * source with the given beatsPerCycle, under the master
- * BPM. Returns 0 (a sentinel for "no valid cycle") when
- * either input is missing or non-positive; the caller
- * treats 0 as a skip and the source's cycle phase doesn't
- * advance that step.
+ * source with the given beatsPerCycle and beatInterval,
+ * under the master BPM. Returns 0 (a sentinel for "no
+ * valid cycle") when bpm or beatsPerCycle is missing or
+ * non-positive; the caller treats 0 as a skip and the
+ * source's cycle phase doesn't advance that step.
+ *
+ * The beatInterval is resolved via getBeatIntervalEntry; an
+ * unrecognised or missing token falls back to "Qtr"
+ * (quarterNotes = 1), so a hand-edited scene.json with a
+ * typo'd or absent beatInterval still plays at the count's
+ * face-value duration in quarter notes rather than
+ * silently halting cycle advancement.
  *
  * @param {number | null} bpm
  * @param {any} beatsPerCycle
+ * @param {any} [beatInterval]
  * @returns {number}
  */
-function cycleDurationSeconds(bpm, beatsPerCycle) {
+function cycleDurationSeconds(bpm, beatsPerCycle, beatInterval) {
     if (bpm === null || typeof bpm !== "number" || bpm <= 0) return 0;
     if (typeof beatsPerCycle !== "number" || beatsPerCycle <= 0) return 0;
-    return (beatsPerCycle * 60) / bpm;
+    const token = (typeof beatInterval === "string" && beatInterval !== "")
+        ? beatInterval
+        : DEFAULT_BEAT_INTERVAL;
+    const entry = getBeatIntervalEntry(token);
+    const quarters = entry !== null ? entry.quarterNotes : 1;
+    return (beatsPerCycle * quarters * 60) / bpm;
 }
 
 /**
@@ -647,14 +669,14 @@ export class Simulation {
             const state = this._curveState.get(curve.id);
             if (state === undefined) continue;
             if (state.halted) continue;
-            const cd = cycleDurationSeconds(bpm, curve.beatsPerCycle);
+            const cd = cycleDurationSeconds(bpm, curve.beatsPerCycle, curve.beatInterval);
             this._stepCurve(curve, state, cd, dt);
         }
         for (const trigger of this._scene.triggers) {
             if (typeof trigger.id !== "string") continue;
             const state = this._triggerState.get(trigger.id);
             if (state === undefined) continue;
-            const cd = cycleDurationSeconds(bpm, trigger.beatsPerCycle);
+            const cd = cycleDurationSeconds(bpm, trigger.beatsPerCycle, trigger.beatInterval);
             this._stepTrigger(trigger, state, cd, dt);
         }
         // Sprite physics doesn't read BPM, but the cycle
@@ -1221,7 +1243,7 @@ export class Simulation {
             //    duration is 0 (missing/zero BPM, missing/zero
             //    beatsPerCycle) — physics still runs but the
             //    sprite never wraps.
-            const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle);
+            const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle, sprite.beatInterval);
             if (cd <= 0) continue;
             state.cycleProgress += dt / cd;
             // 5. On wrap, snap the sprite home and advance

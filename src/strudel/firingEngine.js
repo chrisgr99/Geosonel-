@@ -124,6 +124,7 @@
 
 import { parsePatternToPositions } from "./patternParse.js";
 import { withFiringContext } from "./firingContext.js";
+import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "../beatIntervals.js";
 
 /** @typedef {import("./runtime.js").StrudelRuntime} StrudelRuntime */
 /** @typedef {import("./midiSender.js").MIDISender} MIDISender */
@@ -594,7 +595,23 @@ export class PatternFiringEngine {
                 ? source.beatsPerCycle
                 : 0;
             if (beatsPerCycle <= 0) continue;
-            const cycleDuration = (beatsPerCycle * 60) / bpm;
+            // Match simulation.js's cycleDurationSeconds:
+            // resolve beatInterval to a quarter-note multiplier
+            // so the audio clock and the cursor clock stay in
+            // lockstep across any interval setting. An
+            // unrecognised or missing token falls back to
+            // "Qtr" (quarterNotes = 1), preserving the
+            // pre-beatInterval formula for legacy/hand-edited
+            // scenes that omit the field.
+            const beatIntervalToken =
+                (typeof source.beatInterval === "string" && source.beatInterval !== "")
+                    ? source.beatInterval
+                    : DEFAULT_BEAT_INTERVAL;
+            const beatIntervalEntry = getBeatIntervalEntry(beatIntervalToken);
+            const beatIntervalQuarters =
+                beatIntervalEntry !== null ? beatIntervalEntry.quarterNotes : 1;
+            const cycleDuration =
+                (beatsPerCycle * beatIntervalQuarters * 60) / bpm;
 
             const cycleState = state.kind === "curve"
                 ? this._simulation.getCurveCycleState(source.id)

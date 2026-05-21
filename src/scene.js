@@ -58,6 +58,7 @@
 // @ts-check
 
 import { generateId, ensureIdCounters } from "./idGen.js";
+import { DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
 
 /**
  * One $objectId: expression labelled statement extracted from
@@ -452,12 +453,30 @@ export class Curve {
          */
         this.cyclePattern = opts.cyclePattern ?? "";
         /**
-         * Cycle length in master beats. Wall-clock cycle
-         * duration is beatsPerCycle * 60 / BPM. Default 4
-         * (one master bar in 4/4).
+         * Cycle length in `beatInterval` units. Wall-clock
+         * cycle duration is beatsPerCycle ×
+         * beatIntervalQuarters × 60 / BPM, where
+         * beatIntervalQuarters is the duration of one
+         * beatInterval expressed in quarter notes (looked up
+         * via getBeatIntervalEntry). Default 4 with
+         * beatInterval defaulting to "Qtr" reproduces the
+         * pre-v2.3 implicit assumption of one master bar in
+         * 4/4.
          * @type {number}
          */
         this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+        /**
+         * Beat-interval token naming the unit each
+         * beatsPerCycle count refers to. Valid tokens are
+         * the entries of TOKENS in beatIntervals.js ("16th",
+         * "Qtr", "Dot 8th", "Qtr Tr", "4 x Wh", etc.). Pre-
+         * v2.3 scenes omit the field; they read as Qtr so
+         * the cycle-duration formula reduces to
+         * beatsPerCycle × 60 / BPM and existing playback is
+         * preserved.
+         * @type {string}
+         */
+        this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
 
         /** @type {boolean} */
         this.canHit = opts.canHit ?? false;
@@ -556,6 +575,8 @@ export class Trigger {
         this.cyclePattern = opts.cyclePattern ?? "";
         /** @type {number} */
         this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+        /** @type {string} */
+        this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
 
         /** @type {boolean} */
         this.canHit = opts.canHit ?? false;
@@ -666,6 +687,8 @@ export class Sprite {
         this.cyclePattern = opts.cyclePattern ?? "";
         /** @type {number} */
         this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+        /** @type {string} */
+        this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
 
         /** @type {boolean} */
         this.canHit = opts.canHit ?? false;

@@ -11,13 +11,13 @@
  *
  * Tick rate. Ticks are integer counts at 960 ticks per
  * quarter-note, the rate documented in DESIGN.md Section 7.
- * 960 was chosen as the smallest rate that makes every entry
- * in TOKENS land on an integer count: 384th-notes need 96
- * ticks per quarter, triplets need divisibility by 3, dotted
- * variants need divisibility by 2, and the lcm of those
- * factors is 960. 960 is also MIDI's standard PPQ rate, so
- * any future MIDI-related code inherits the same arithmetic
- * without conversion.
+ * 960 is MIDI's standard PPQ rate, so any future MIDI-
+ * related code inherits the same arithmetic without
+ * conversion. It also makes every entry in TOKENS land on
+ * an integer tick count, since 960 = 2^6 × 3 × 5 covers
+ * the divisibility needs of 128th-notes (factor of 32),
+ * triplets (factor of 3), and dotted variants (factor of
+ * 2).
  *
  * Triplet semantics. The "Tr" suffix names the duration of
  * one note in a triplet that occupies one of the named
@@ -62,7 +62,6 @@
  * @type {BeatIntervalEntry[]}
  */
 export const TOKENS = [
-    { token: "384th",    label: "384th",    ticks: 10,    quarterNotes: 1 / 96 },
     { token: "128th",    label: "128th",    ticks: 30,    quarterNotes: 1 / 32 },
     { token: "64th",     label: "64th",     ticks: 60,    quarterNotes: 1 / 16 },
     { token: "32nd",     label: "32nd",     ticks: 120,   quarterNotes: 1 / 8 },

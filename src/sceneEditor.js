@@ -449,7 +449,7 @@ export function fillMissingCanvasSize(data) {
  * (hitBeat, hitTrigger, collision, motionUpdate, auto),
  * the auto-message-interval mechanism is eliminated, and
  * the beat-points-era per-curve timing fields
- * (cycleDuration, beatInterval, beatsPerBar, beatOffset,
+ * (cycleDuration, beatsPerBar, beatOffset,
  * cycleSpeeds, beatPointsMode, the Euclidean trio,
  * activeBeats, strength, beatsAreTriggers) all go away.
  *
@@ -481,7 +481,7 @@ export function stripObsoleteFields(data) {
     /** @type {Record<string, string[]>} */
     const obsoletePerKind = {
         curves: [
-            "cycleDuration", "cycleBeats", "beatInterval",
+            "cycleDuration", "cycleBeats",
             "beatsPerBar", "beatOffset", "cycleSpeeds",
             "beatPointsMode", "activeBeatsCount", "beatShift",
             "repeats", "activeBeats", "strength",

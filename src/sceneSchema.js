@@ -41,6 +41,8 @@
 
 // @ts-check
 
+import { DEFAULT_BEAT_INTERVAL, allBeatIntervalTokens } from "./beatIntervals.js";
+
 /**
  * @typedef {Object} FieldDef
  * @property {string} key
@@ -94,6 +96,13 @@ const HARMONY_OVERRIDE_FIELDS = [
 const CALLBACK_SLOT_FIELDS = [
     { key: "cyclePattern", label: "Cycle Pattern", type: "string", default: "" },
     { key: "beatsPerCycle", label: "Beats/Cycle", type: "number", default: 4, min: 0 },
+    {
+        key: "beatInterval",
+        label: "Beat Interval",
+        type: "enum",
+        default: DEFAULT_BEAT_INTERVAL,
+        enumValues: allBeatIntervalTokens(),
+    },
     { key: "canHit", label: "Can Hit", type: "boolean", default: false },
     { key: "hasHitFunction", label: "Has Hit Function", type: "functionRef", default: "" },
     { key: "canBeHit", label: "Can Be Hit", type: "boolean", default: false },
