@@ -45,6 +45,25 @@ export class TransportBarView {
     constructor(transport) {
         this.transport = transport;
 
+        /**
+         * Optional scene-edit callback. Wired from main.js
+         * after construction via setEditCallback. When set,
+         * BPM input commits fire { kind: "setBpm", value }
+         * through it in addition to the direct
+         * transport.setBpm call. The direct call keeps the
+         * UI responsive without waiting for the
+         * applySceneEdit round trip; the emitted edit
+         * persists the value into scene.json so the next
+         * runScene's applySceneParamsToTransport doesn't
+         * stomp it back to whatever the file said before.
+         * Null when not wired — main.js may construct the
+         * view before the edit pipeline is ready, and BPM
+         * input still works in that window (just without
+         * persistence).
+         * @type {((edit: any) => void) | null}
+         */
+        this._editCallback = null;
+
         // Gather DOM references. If any of these are missing,
         // the transport bar is malformed and we log and bail.
         this.playBtn = /** @type {HTMLButtonElement | null} */ (
@@ -76,6 +95,21 @@ export class TransportBarView {
 
     // --- Wiring ---
 
+    /**
+     * Register the callback that handles scene-edit emits
+     * from this view. Currently only the BPM input commit
+     * fires through here; the play and rewind buttons go
+     * straight to transport methods because they don't
+     * mutate scene state. main.js installs this once during
+     * setup; the callback is invoked synchronously from the
+     * BPM input change handler and is expected to be
+     * async-safe.
+     * @param {(edit: any) => void} callback
+     */
+    setEditCallback(callback) {
+        this._editCallback = callback;
+    }
+
     _wireEvents() {
         if (!this.playBtn || !this.rewindBtn || !this.bpmInput) return;
 
@@ -90,7 +124,21 @@ export class TransportBarView {
             if (!this.bpmInput) return;
             const value = parseInt(this.bpmInput.value, 10);
             if (Number.isFinite(value)) {
+                // Direct call keeps the transport responsive
+                // (UI shows the new BPM immediately without
+                // waiting for the applySceneEdit round trip).
+                // The emitted edit then persists the value
+                // into scene.json so subsequent inspector
+                // edits don't stomp it via
+                // applySceneParamsToTransport. Both calls
+                // are idempotent: if the edit's runScene
+                // re-applies the same BPM via setBpm, the
+                // clamped-equals-current early return makes
+                // it a no-op.
                 this.transport.setBpm(value, "user");
+                if (this._editCallback !== null) {
+                    this._editCallback({ kind: "setBpm", value });
+                }
             }
         });
 

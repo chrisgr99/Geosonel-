@@ -181,6 +181,7 @@ import {
     validateNumber,
     validateHexColor,
 } from "./curveFieldValidation.js";
+import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 
 // Width constants. Centralised so layout adjustments touch
 // one set of numbers, not scattered inline styles.
@@ -220,6 +221,26 @@ const W = {
     // since the value is typically a single-digit master-
     // beat count (4 by default).
     beatsPerCycle: 50,
+
+    // Band 1 cycle duration row's Beat Interval label and
+    // dropdown. The label sits between the beatsPerCycle
+    // field and the dropdown; the dropdown shows the
+    // current token ("Qtr", "8th", "Dot 16th", etc.) drawn
+    // from the 17-entry TOKENS table in beatIntervals.js.
+    // Dropdown width fits the longest token text plus the
+    // custom arrow chrome at 11pt; the label width matches
+    // the typical "Beat Interval" header at the same size.
+    beatInterval: 84,
+    beatIntervalLabel: 78,
+
+    // Band 1 pattern row's Repeats field. Single-digit
+    // integer field for the curve-only patternRepeats
+    // value. Default value 1 fits in a narrow box; values
+    // greater than ~10 are unusual in practice so the
+    // field stays small even at the upper end of typical
+    // use.
+    patternRepeats: 36,
+    patternRepeatsLabel: 50,
 
     // Band 3 Create / Go-to button. Wide enough for the
     // longer "Go to" label (and "Create") at 10pt.
@@ -452,7 +473,15 @@ export class Inspector {
         const objs = selectedObjects(this._scene, this._selection);
         const idEditable = ctx.isSingle;
         const hideCursorActive = ctx.total > 0;
-        const cycleDurationActive = ctx.hasSprites || ctx.hasCurves;
+        // Cycle duration row gate. The row is universal
+        // across kinds: curves, sprites, and triggers all
+        // carry beatsPerCycle and beatInterval on the
+        // schema, and a trigger's beat-interval field is
+        // editable from the inspector for future Tier 5
+        // collision-firing work. Greying applies only when
+        // the selection is empty, mirroring the Hide Cursor
+        // gate above.
+        const cycleDurationActive = ctx.total > 0;
 
         // ID comes from the single selected object on
         // single-select. On multi-select the field is greyed
@@ -480,12 +509,25 @@ export class Inspector {
 
         // beatsPerCycle aggregates across the whole selection
         // since the schema field is universal. The row greys
-        // for trigger-only selections via cycleDurationActive,
-        // but the aggregate still reads from objs.all so a
-        // mixed selection containing a trigger plus a sprite
-        // shows the common value (or varies) rather than
-        // ignoring the trigger.
+        // only when the selection is empty (cycleDurationActive
+        // gate above), so any non-empty selection — including
+        // trigger-only — keeps the row editable. The aggregate
+        // reads from objs.all so mixed selections show the
+        // common value (or varies) across every kind.
         const beatsPerCycleAgg = aggregateString(objs.all, "beatsPerCycle");
+        // beatInterval aggregates the same way. Stored as a
+        // token string from beatIntervals.js's TOKENS table
+        // (e.g. "Qtr", "8th", "Dot 16th"). Missing / null /
+        // undefined values fall through to empty string and
+        // render as a blank dropdown trigger; the dropdown's
+        // change handler commits a valid token via
+        // setBeatInterval, and the underlying field then
+        // shows up.
+        const beatIntervalAgg = aggregateString(objs.all, "beatInterval");
+        const beatIntervalValue =
+            (beatIntervalAgg === "varies" || beatIntervalAgg === "")
+                ? ""
+                : beatIntervalAgg;
 
         const r1 = mkRow();
         r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !idEditable }));
@@ -507,7 +549,7 @@ export class Inspector {
         band.appendChild(r1);
 
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Cycles In", {
+        r2.appendChild(mkLabel("Beats / Cycle", {
             width: W.leftLabel,
             disabled: !cycleDurationActive,
         }));
@@ -519,7 +561,23 @@ export class Inspector {
             validator: (c) => validateNumber(c, { min: 1 }),
             editKind: "setBeatsPerCycle",
         }));
-        r2.appendChild(mkUnits("beats", { disabled: !cycleDurationActive }));
+        // Inline label between the count field and the
+        // dropdown. The .insp-label class already right-
+        // aligns text within its width box, so "Beat
+        // Interval" sits flush against the dropdown that
+        // follows.
+        r2.appendChild(mkLabel("Beat Interval", {
+            width: W.beatIntervalLabel,
+            disabled: !cycleDurationActive,
+        }));
+        r2.appendChild(this._buildDropdownField({
+            options: BEAT_INTERVAL_TOKENS.map((t) => ({ value: t.token, label: t.label })),
+            value: beatIntervalValue,
+            width: W.beatInterval,
+            editable: cycleDurationActive,
+            editKind: "setBeatInterval",
+        }));
+        r2.appendChild(mkUnits("notes", { disabled: !cycleDurationActive }));
         band.appendChild(r2);
 
         // Row 3: pattern row. Active only for single-
@@ -581,6 +639,38 @@ export class Inspector {
             });
         }
         r3.appendChild(patternButton);
+
+        // Repeats field. Curve-only: only curves have a
+        // visible cursor sweeping along a path where "how
+        // many copies of the pattern fit" is meaningful.
+        // Active when the single-selected object is a curve;
+        // greyed for any other selection (multi-select,
+        // sprite-only, trigger-only, empty). The setter in
+        // sceneEditor silently ignores sprites and triggers
+        // in the selection, so a stray emit from a mixed
+        // selection would be a no-op, but the inspector
+        // grey gate is what the user sees first. Aggregates
+        // across the curve slice only — sprites and
+        // triggers don't carry patternRepeats so including
+        // them in the aggregate would always read undefined
+        // and clutter the "varies" check.
+        const patternRepeatsActive = ctx.isSingle
+            && ctx.singleKind === "curve"
+            && objs.curves.length === 1;
+        const patternRepeatsAgg = aggregateString(objs.curves, "patternRepeats");
+        r3.appendChild(mkLabel("Repeats", {
+            width: W.patternRepeatsLabel,
+            disabled: !patternRepeatsActive,
+        }));
+        r3.appendChild(this._buildEditableField({
+            value: patternRepeatsAgg === "varies" ? "" : patternRepeatsAgg,
+            numeric: true,
+            width: W.patternRepeats,
+            editable: patternRepeatsActive,
+            validator: (c) => validateNumber(c, { min: 1 }),
+            editKind: "setPatternRepeats",
+        }));
+
         band.appendChild(r3);
 
         return band;
@@ -910,6 +1000,69 @@ export class Inspector {
             tryCommit("blur");
         });
 
+        return el;
+    }
+
+    /**
+     * Build a native <select> dropdown field. Used by Band
+     * 1's Beat Interval control. Native <select> rather
+     * than a custom popover gives OS-level keyboard
+     * navigation (arrow keys, type-ahead), VoiceOver
+     * compatibility, and a popup menu that escapes the
+     * inspector pane's clipping without extra code. The
+     * .insp-dropdown CSS suppresses the native arrow
+     * chrome and paints a custom green chevron so the
+     * field reads as a sibling of the inspector's other
+     * editable controls.
+     *
+     * Varies / empty state: pass value = "" to render the
+     * dropdown trigger blank. Native <select> leaves the
+     * trigger empty when the assigned value doesn't match
+     * any <option>, so the empty / divergent case needs
+     * no special option in the list; selecting any token
+     * from the dropdown then fires the change handler with
+     * a real value and the field becomes uniform across
+     * the selection.
+     *
+     * Disabled state: the .disabled class plus the native
+     * disabled attribute together suppress the green frame
+     * (via CSS), mute the text, and block interaction. The
+     * field's footprint stays visible so the row layout
+     * doesn't shift when the gate flips.
+     *
+     * @param {{
+     *   options: Array<{value: string, label: string}>,
+     *   value: string,
+     *   width: number,
+     *   editable: boolean,
+     *   editKind: string,
+     * }} opts
+     * @returns {HTMLSelectElement}
+     */
+    _buildDropdownField(opts) {
+        const el = document.createElement("select");
+        el.className = "insp-dropdown";
+        el.style.width = `${opts.width}px`;
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.disabled = true;
+        }
+        for (const tok of opts.options) {
+            const option = document.createElement("option");
+            option.value = tok.value;
+            option.textContent = tok.label;
+            el.appendChild(option);
+        }
+        // Assignment after children are attached so the
+        // browser can match value against a real <option>.
+        // An unmatched value leaves the trigger blank, which
+        // is the varies / empty-state look.
+        el.value = opts.value;
+        if (opts.editable) {
+            el.addEventListener("change", () => {
+                this._emitEdit({ kind: opts.editKind, value: el.value });
+            });
+        }
         return el;
     }
 

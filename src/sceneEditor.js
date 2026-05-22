@@ -31,6 +31,7 @@
 // @ts-check
 
 import { generateId, ensureIdCounters } from "./idGen.js";
+import { isValidBeatInterval } from "./beatIntervals.js";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
 const MULTILINE_ARRAY_KEYS = new Set(["curves"]);
@@ -1383,6 +1384,26 @@ export function setBeatsPerCycleOnSelection(data, selection, value) {
     const n = Math.max(1, Math.round(Number(value)));
     if (!Number.isFinite(n)) return;
     setFieldOnSelection(data, selection, "beatsPerCycle", n);
+}
+
+/**
+ * Set the beatInterval field across the selection. Stored as
+ * a token string from beatIntervals.js's TOKENS table (e.g.
+ * "Qtr", "8th", "Dot 16th"). Invalid tokens silently no-op,
+ * so a hand-edited scene.json that injects a bogus value
+ * doesn't propagate to other selected objects via this
+ * setter. The field is universal across kinds since curves,
+ * sprites, and triggers all carry beatInterval (triggers'
+ * cycle counter is currently internal-only, but the field
+ * is on the schema and stays editable from the inspector
+ * for future Tier 5 collision-firing work).
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeatIntervalOnSelection(data, selection, value) {
+    if (typeof value !== "string" || !isValidBeatInterval(value)) return;
+    setFieldOnSelection(data, selection, "beatInterval", value);
 }
 
 /**

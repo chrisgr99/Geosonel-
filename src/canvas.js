@@ -1331,16 +1331,19 @@ export class Canvas {
      * Refresh the cached pattern-event marker positions for
      * every curve in the current scene. Walks the scene's
      * curves, parses each curve's cyclePattern via
-     * parsePatternToPositions, and stores the resulting
-     * positions in _curveMarkerPositions keyed by curve id.
-     * Curves whose cyclePattern is empty, fails to parse
-     * (e.g. strudel engine not loaded yet), or otherwise
-     * produces no positions are absent from the map after
-     * the refresh — absent entries render no markers, so
-     * the visual outcome is a curve with no diamonds. The
-     * map is cleared on every refresh so a curve that was
-     * removed from the scene since the last refresh loses
-     * its entry naturally.
+     * parsePatternToPositions, multiplies the resulting
+     * positions by the curve's patternRepeats to lay out N
+     * copies of the pattern around the curve (each repeat
+     * occupies 1/N of the curve's parameter range), and
+     * stores the result in _curveMarkerPositions keyed by
+     * curve id. Curves whose cyclePattern is empty, fails to
+     * parse (e.g. strudel engine not loaded yet), or
+     * otherwise produces no positions are absent from the
+     * map after the refresh — absent entries render no
+     * markers, so the visual outcome is a curve with no
+     * diamonds. The map is cleared on every refresh so a
+     * curve that was removed from the scene since the last
+     * refresh loses its entry naturally.
      *
      * Cheap to call: parsing is fast (small patterns) and
      * runs only on setScene and on strudel-runtime status
@@ -1354,7 +1357,25 @@ export class Canvas {
             if (typeof curve.cyclePattern !== "string" || curve.cyclePattern.length === 0) continue;
             const result = parsePatternToPositions(curve.cyclePattern);
             if (!result.ok || result.positions.length === 0) continue;
-            this._curveMarkerPositions.set(curve.id, result.positions);
+            // Lay out patternRepeats copies of the pattern
+            // around the curve. Each repeat occupies 1/N of
+            // the curve's parameter range; within a repeat,
+            // pattern positions map proportionally. Default
+            // 1 reproduces the pre-patternRepeats single-
+            // pattern layout. Defensive Math.max + Math.round
+            // against hand-edited or AI-edited scenes that
+            // store a non-integer or zero/negative value.
+            const repeats = Math.max(1, Math.round(
+                typeof curve.patternRepeats === "number" ? curve.patternRepeats : 1,
+            ));
+            /** @type {number[]} */
+            const positions = [];
+            for (let i = 0; i < repeats; i++) {
+                for (const p of result.positions) {
+                    positions.push((i + p) / repeats);
+                }
+            }
+            this._curveMarkerPositions.set(curve.id, positions);
         }
     }
 

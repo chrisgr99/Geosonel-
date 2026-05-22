@@ -1340,6 +1340,70 @@ body.dragging-canvas-insp-thumb * {
     background-color: #767676;
 }
 
+/* Native <select> dropdown styled to fit the inspector.
+ * Suppresses the browser's default arrow chrome and paints
+ * a custom green triangle on the right, matching the
+ * .insp-combo aesthetic so the dropdown reads as a sibling
+ * of the inspector's other editable controls. Native
+ * <select> gives OS-level keyboard navigation (arrow keys,
+ * type-ahead), VoiceOver compatibility, and a popup menu
+ * that escapes the inspector pane's clipping for free —
+ * advantages over a custom popover that justify the slight
+ * visual mismatch with the rest of the contenteditable
+ * fields. Used by Band 1's Beat Interval control.
+ *
+ * Disabled state: the .disabled class drops the green
+ * frame and mutes the text, mirroring .insp-field.disabled.
+ * The native :disabled selector covers the same case for
+ * the browser's own disabled-attribute behaviour. Both
+ * are kept in lockstep because inspector.js sets both. */
+.insp-dropdown {
+    background-color: #6b6b6b;
+    border: 2px solid #46b03e;
+    border-radius: 3px;
+    padding: 0 22px 0 8px;
+    color: #ffffff;
+    height: 24px;
+    font-size: 11pt;
+    font-family: inherit;
+    line-height: 1;
+    box-sizing: border-box;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%235fc858' d='M0 0h8L4 5z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    background-size: 8px 5px;
+}
+
+.insp-dropdown:focus {
+    outline: none;
+    border-color: #5fc858;
+}
+
+.insp-dropdown.disabled,
+.insp-dropdown:disabled {
+    border-color: transparent;
+    color: #a8a8a8;
+    cursor: default;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%23707070' d='M0 0h8L4 5z'/></svg>");
+}
+
+/* Native <option> elements inherit the OS dropdown menu
+ * styling once the popup is open. Browsers vary widely in
+ * whether they respect <option> backgrounds and colours;
+ * setting them here covers Chrome and Edge (which honour
+ * them) while leaving Safari and Firefox at their native
+ * menu look. The chosen values keep the menu legible
+ * against either rendering path. */
+.insp-dropdown option {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+}
+
 /* --- Popover dropdown --- */
 
 /* Floats over the page in fixed positioning, set by the

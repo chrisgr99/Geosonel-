@@ -134,6 +134,8 @@ import {
     setColorOnSelection,
     setCyclePatternOnSelection,
     setBeatsPerCycleOnSelection,
+    setBeatIntervalOnSelection,
+    setPatternRepeatsOnCurves,
     setCanHitOnSelection,
     setHasHitFunctionOnSelection,
     setCanBeHitOnSelection,
@@ -144,6 +146,7 @@ import {
     scaffoldPatternBlock,
     setCanvasW,
     setCanvasH,
+    setSceneBpm,
 } from "./src/sceneEditor.js";
 
 main();
@@ -1413,7 +1416,7 @@ async function main() {
     // those elements now live inside the toolbar rather
     // than in the top row and don't exist in the DOM until
     // Toolbar.render runs.
-    new TransportBarView(transport);
+    const transportBarView = new TransportBarView(transport);
     wireMidiIndicator(midiSender);
 
     canvas.setToolbar(toolbar);
@@ -2378,6 +2381,25 @@ async function main() {
         }
     });
 
+    // --- Transport bar edit callback ---
+    //
+    // The BPM input commit fires here. The view has already
+    // called transport.setBpm for immediate UI feedback;
+    // this path persists the value into scene.json so
+    // subsequent inspector edits don't trigger an
+    // applySceneParamsToTransport that reverts the user's
+    // typed BPM. Wired alongside the canvas and inspector
+    // edit callbacks because applySceneEdit must be in
+    // scope when the callback fires — it is, since user
+    // input only happens after main() finishes wiring.
+    transportBarView.setEditCallback(async (edit) => {
+        if (edit.kind === "setBpm") {
+            await applySceneEdit((data) =>
+                setSceneBpm(data, edit.value),
+            );
+        }
+    });
+
     // --- Inspector edit callback ---
     //
     // The inspector emits edits when the user toggles Mute or
@@ -2460,6 +2482,14 @@ async function main() {
             } else if (edit.kind === "setBeatsPerCycle") {
                 await applySceneEdit((data) =>
                     setBeatsPerCycleOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatInterval") {
+                await applySceneEdit((data) =>
+                    setBeatIntervalOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setPatternRepeats") {
+                await applySceneEdit((data) =>
+                    setPatternRepeatsOnCurves(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCanHit") {
                 await applySceneEdit((data) =>

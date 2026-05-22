@@ -337,6 +337,28 @@ class CurveRuntimeState {
         this._authShapeSig = shapeSignature(curve.shape);
         /** @type {{x1: number, y1: number, x2: number, y2: number} | null} */
         this._shapeBbox = shapeBbox(curve.shape);
+        // Last cycleDuration seen by _stepCurve. Compared
+        // against the cycleDuration computed from the
+        // current authored fields on each step; a difference
+        // means the user edited beatsPerCycle, beatInterval,
+        // or master BPM since the previous step, and the
+        // simulation snaps this curve's cycleCount, cycle-
+        // Progress, and t to values derived directly from
+        // transport.elapsedSeconds / new cycleDuration
+        // (rather than continuing the accumulator across
+        // the D change, which would leave the curve in a
+        // phase relative to score t=0 that no longer matches
+        // any other curve's phase). The snap produces a
+        // visible cursor jump on the timing edit —
+        // accepted as the cost of preserving cross-curve
+        // rhythmic alignment, since the alternative is
+        // requiring a rewind after every timing edit to
+        // resync. Initialised to 0; the first step on a
+        // fresh state treats _lastCycleDuration === 0 as
+        // "no previous value" rather than "previous was 0",
+        // so play from rewind doesn't false-trigger a snap.
+        /** @type {number} */
+        this._lastCycleDuration = 0;
     }
 }
 
@@ -354,6 +376,14 @@ class TriggerRuntimeState {
         this.cycleProgress = 0;
         /** @type {number} */
         this.cycleCount = 0;
+        /**
+         * Last cycleDuration seen by _stepTrigger. See
+         * CurveRuntimeState._lastCycleDuration for the
+         * full reasoning; the trigger version is identical
+         * minus the cursor (triggers have no t).
+         * @type {number}
+         */
+        this._lastCycleDuration = 0;
     }
 }
 
@@ -406,6 +436,14 @@ class SpriteRuntimeState {
         this.cycleProgress = 0;
         /** @type {number} */
         this.cycleCount = 0;
+        /**
+         * Last cycleDuration seen by _stepSprites. See
+         * CurveRuntimeState._lastCycleDuration for the
+         * full reasoning; the sprite version is identical
+         * minus the cursor (sprites have no t).
+         * @type {number}
+         */
+        this._lastCycleDuration = 0;
     }
 }
 
@@ -430,6 +468,31 @@ export class Simulation {
          * @type {number}
          */
         this._lastElapsed = 0;
+        /**
+         * Simulation time advanced through so far, in
+         * seconds since the most recent rewind. Increments
+         * by SIM_DT after each fixed substep in tick(); the
+         * value during a substep call is the time at the
+         * START of that substep (the moment the simulation
+         * is transitioning from). Used by the timing-edit
+         * snap in _stepCurve / _stepTrigger / _stepSprites
+         * to derive grid-aligned cycleCount and cycle-
+         * Progress values from a precise reference frame:
+         * transport.elapsedSeconds (and the _lastElapsed
+         * mirror) is the START-OF-TICK transport time, which
+         * can be up to one frame's delta ahead of the actual
+         * substep moment when a tick processes multiple
+         * substeps. Using _simTime instead aligns the
+         * snapped curve's cycleProgress with the
+         * accumulator-based cycleProgress of unedited
+         * curves, since both end up referencing the same
+         * substep-precise sim time, preserving cross-curve
+         * rhythmic alignment to within the SIM_DT step
+         * granularity (~4 ms) rather than the per-frame
+         * granularity (~16 ms) of _lastElapsed.
+         * @type {number}
+         */
+        this._simTime = 0;
         /**
          * Sub-step accumulator. Holds time that has elapsed
          * since the last fixed step but isn't yet enough to
@@ -470,6 +533,19 @@ export class Simulation {
             this._spriteState.clear();
             return;
         }
+        // Master BPM read once for the new-state grid-snap
+        // path below. A freshly-created state (duplicate,
+        // paste, or fresh-add mid-play) needs its cycle
+        // phase aligned to the score-global grid for the
+        // source's cycleDuration so it plays in sync with
+        // any other source already running at that rate.
+        // Without this snap, the new state would start at
+        // cycleProgress=0 / cycleCount=0 — the constructor
+        // defaults, which correspond to score t=0, not to
+        // the actual current sim moment — and its beats
+        // would land off-grid until the next rewind. See
+        // _snapNewStateToGrid for the formula.
+        const bpm = this._transport.bpm;
         // Curves: reconcile by id. Existing state preserved
         // unless an authored shape or velocity field changed
         // since last seen, in which case the runtime offset
@@ -488,7 +564,13 @@ export class Simulation {
             seenCurveIds.add(c.id);
             const existing = this._curveState.get(c.id);
             if (existing === undefined) {
-                this._curveState.set(c.id, new CurveRuntimeState(c));
+                const newState = new CurveRuntimeState(c);
+                this._snapNewStateToGrid(
+                    newState,
+                    cycleDurationSeconds(bpm, c.beatsPerCycle, c.beatInterval),
+                    true,
+                );
+                this._curveState.set(c.id, newState);
                 continue;
             }
             const newSig = shapeSignature(c.shape);
@@ -521,7 +603,13 @@ export class Simulation {
             if (typeof t.id !== "string") continue;
             seenTriggerIds.add(t.id);
             if (!this._triggerState.has(t.id)) {
-                this._triggerState.set(t.id, new TriggerRuntimeState());
+                const newState = new TriggerRuntimeState();
+                this._snapNewStateToGrid(
+                    newState,
+                    cycleDurationSeconds(bpm, t.beatsPerCycle, t.beatInterval),
+                    false,
+                );
+                this._triggerState.set(t.id, newState);
             }
         }
         for (const id of [...this._triggerState.keys()]) {
@@ -537,7 +625,13 @@ export class Simulation {
             seenSpriteIds.add(s.id);
             const existing = this._spriteState.get(s.id);
             if (existing === undefined) {
-                this._spriteState.set(s.id, new SpriteRuntimeState(s));
+                const newState = new SpriteRuntimeState(s);
+                this._snapNewStateToGrid(
+                    newState,
+                    cycleDurationSeconds(bpm, s.beatsPerCycle, s.beatInterval),
+                    false,
+                );
+                this._spriteState.set(s.id, newState);
                 continue;
             }
             const authX = numberOrZero(s.x);
@@ -588,6 +682,7 @@ export class Simulation {
         if (elapsed < this._lastElapsed) {
             this._rewind();
             this._lastElapsed = 0;
+            this._simTime = 0;
             this._accumulator = 0;
             // Fall through so any positive elapsed time after
             // a rewind-and-resume still advances normally.
@@ -598,8 +693,69 @@ export class Simulation {
         this._accumulator += delta;
         while (this._accumulator >= SIM_DT) {
             this._step(SIM_DT);
+            this._simTime += SIM_DT;
             this._accumulator -= SIM_DT;
         }
+    }
+
+    /**
+     * Snap a freshly-created per-source runtime state to
+     * its grid-aligned cycle position for the score's
+     * current sim time. Called from setScene's three
+     * new-state-creation paths (curve, trigger, sprite)
+     * so a duplicate, paste, or fresh-add mid-play starts
+     * in sync with any other source running at the same
+     * cycleDuration, rather than at the constructor's
+     * default cycleProgress=0 / cycleCount=0 (which
+     * corresponds to score t=0, not the actual current
+     * sim moment).
+     *
+     * The formula mirrors the timing-edit snap in
+     * _stepCurve / _stepTrigger / _stepSprites: cycleCount
+     * = floor(simTime / D), cycleProgress = fractional
+     * part, treating the new source as if it had been
+     * playing at this cycleDuration since the most recent
+     * rewind. The cursor t snaps to match cycleProgress
+     * for curves (the setCursor flag), since curves are
+     * the only kind that have a visible cursor along a
+     * path. Triggers have no cursor; sprites have a
+     * position that they move under physics, but a
+     * freshly-created sprite starts at its authored x, y
+     * via the constructor and the grid-snap doesn't
+     * disturb that — cycle phase advances independently
+     * of physics state.
+     *
+     * `_lastCycleDuration` is also set on the new state so
+     * the next _step (and subsequent steps until a timing
+     * edit) doesn't false-trigger the timing-edit snap.
+     * The check there only fires when _lastCycleDuration
+     * differs from the step's cycleDuration; setting it
+     * here marks the new state as "already aligned for
+     * this D".
+     *
+     * Guards: a non-positive cycleDuration (missing or
+     * zero BPM, missing or zero beatsPerCycle) leaves the
+     * state at its constructor defaults — nothing to align
+     * to since the source can't cycle. A non-finite or
+     * negative simTime (impossible under normal operation,
+     * but defensive) also leaves the state alone.
+     *
+     * @param {CurveRuntimeState | TriggerRuntimeState | SpriteRuntimeState} state
+     * @param {number} cycleDuration  Wall-clock seconds per cycle.
+     * @param {boolean} setCursor  If true, also set state.t = cycleProgress.
+     */
+    _snapNewStateToGrid(state, cycleDuration, setCursor) {
+        if (!(cycleDuration > 0)) return;
+        const simTime = this._simTime;
+        if (!Number.isFinite(simTime) || simTime < 0) return;
+        const raw = simTime / cycleDuration;
+        const newCount = Math.floor(raw);
+        state.cycleCount = newCount;
+        state.cycleProgress = raw - newCount;
+        if (setCursor && "t" in state) {
+            /** @type {any} */ (state).t = state.cycleProgress;
+        }
+        state._lastCycleDuration = cycleDuration;
     }
 
     /**
@@ -627,10 +783,19 @@ export class Simulation {
             state.dy = 0;
             state.vx = state._authVx;
             state.vy = state._authVy;
+            // Clearing _lastCycleDuration so the first step
+            // after the rewind treats this curve as fresh
+            // and doesn't snap on the first observed
+            // cycleDuration (which would be a no-op anyway
+            // since elapsed=0 gives newCycleProgress=0 and
+            // newCycleCount=0, matching the rewind state,
+            // but skipping the formula entirely is cleaner).
+            state._lastCycleDuration = 0;
         }
         for (const state of this._triggerState.values()) {
             state.cycleProgress = 0;
             state.cycleCount = 0;
+            state._lastCycleDuration = 0;
         }
         // Sprite rewind copies the per-state record of
         // last-seen authored values back into the live
@@ -646,6 +811,7 @@ export class Simulation {
             state.vy = state._authVy;
             state.cycleProgress = 0;
             state.cycleCount = 0;
+            state._lastCycleDuration = 0;
         }
     }
 
@@ -716,6 +882,57 @@ export class Simulation {
      */
     _stepCurve(curve, state, cycleDuration, dt) {
         if (cycleDuration <= 0) return;
+        // Timing-edit snap. When the user changes
+        // beatsPerCycle, beatInterval, or master BPM
+        // mid-play, cycleDuration changes since the last
+        // step. Continuing the accumulator across that
+        // change would leave the curve at a phase relative
+        // to score t=0 that no longer matches the score-
+        // global grid, so other curves running at different
+        // cycleDurations would no longer share rhythmic
+        // alignment with this one. Snap cycleCount and
+        // cycleProgress to values derived directly from
+        // _simTime / new cycleDuration so this curve picks
+        // up exactly where it would be if the new
+        // cycleDuration had been in effect since t=0. The
+        // cursor t snaps to match cycleProgress; visually
+        // the cursor jumps to its grid-aligned position,
+        // which is the accepted cost of preserving cross-
+        // curve rhythmic alignment.
+        //
+        // Using _simTime (start of the current substep)
+        // rather than _lastElapsed (start of the current
+        // tick) matters for precision: a single tick can
+        // process multiple SIM_DT substeps, and inside the
+        // snap substep the actual sim position is at
+        // _simTime, not at the tick's start-of-frame
+        // transport.elapsedSeconds. Using _lastElapsed
+        // would put the snapped cycleProgress up to one
+        // frame's worth of D ahead of where unedited curves'
+        // accumulator-based cycleProgress sits at the same
+        // sim moment, producing an audible cross-curve lag
+        // after the edit. _simTime aligns the snap to the
+        // same substep-precise reference frame the
+        // accumulator-based path uses for other curves.
+        //
+        // _lastCycleDuration === 0 is the fresh-state
+        // marker; treat it as "no previous value" so the
+        // first step after construction or rewind doesn't
+        // false-trigger a snap (the formula would produce
+        // a no-op snap at simTime=0 anyway, but skipping
+        // the formula entirely is cleaner).
+        if (state._lastCycleDuration > 0
+            && state._lastCycleDuration !== cycleDuration) {
+            const simTime = this._simTime;
+            if (Number.isFinite(simTime) && simTime >= 0) {
+                const raw = simTime / cycleDuration;
+                const newCount = Math.floor(raw);
+                state.cycleCount = newCount;
+                state.cycleProgress = raw - newCount;
+                state.t = state.cycleProgress;
+            }
+        }
+        state._lastCycleDuration = cycleDuration;
         const tDelta = dt / cycleDuration;
         // Advance t with wrap. The wrap is a coordinate-
         // system convenience for the cursor display; the
@@ -869,6 +1086,22 @@ export class Simulation {
      */
     _stepTrigger(trigger, state, cycleDuration, dt) {
         if (cycleDuration <= 0) return;
+        // Timing-edit snap. Mirrors _stepCurve's snap with
+        // the cursor branch removed since triggers have no
+        // t. See _stepCurve for the full reasoning,
+        // including why _simTime is used rather than
+        // _lastElapsed.
+        if (state._lastCycleDuration > 0
+            && state._lastCycleDuration !== cycleDuration) {
+            const simTime = this._simTime;
+            if (Number.isFinite(simTime) && simTime >= 0) {
+                const raw = simTime / cycleDuration;
+                const newCount = Math.floor(raw);
+                state.cycleCount = newCount;
+                state.cycleProgress = raw - newCount;
+            }
+        }
+        state._lastCycleDuration = cycleDuration;
         state.cycleProgress += dt / cycleDuration;
         while (state.cycleProgress >= 1) {
             state.cycleProgress -= 1;
@@ -1245,6 +1478,29 @@ export class Simulation {
             //    sprite never wraps.
             const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle, sprite.beatInterval);
             if (cd <= 0) continue;
+            // Timing-edit snap. Mirrors _stepCurve's snap
+            // with the cursor branch removed since sprites
+            // have no t. Physics state (x/y/vx/vy) is
+            // intentionally left alone here: a timing edit
+            // is about cycle phase, not about position;
+            // resetting physics on every timing change
+            // would be more disruptive than the cursor
+            // jump on curves, and the next regular cycle
+            // wrap snaps physics home anyway under the
+            // per-cycle home-return semantics. See
+            // _stepCurve for the full reasoning, including
+            // why _simTime is used rather than _lastElapsed.
+            if (state._lastCycleDuration > 0
+                && state._lastCycleDuration !== cd) {
+                const simTime = this._simTime;
+                if (Number.isFinite(simTime) && simTime >= 0) {
+                    const raw = simTime / cd;
+                    const newCount = Math.floor(raw);
+                    state.cycleCount = newCount;
+                    state.cycleProgress = raw - newCount;
+                }
+            }
+            state._lastCycleDuration = cd;
             state.cycleProgress += dt / cd;
             // 5. On wrap, snap the sprite home and advance
             //    the counter. Multiple wraps in one step are

@@ -185,6 +185,29 @@ const LOG_PASS2 = true;
  * @property {string} cyclePatternText  Raw cyclePattern source string; compared
  *                                       on each setScene to decide whether to
  *                                       set patternDirty.
+ * @property {number} patternRepeats  Last-seen patternRepeats value for this
+ *                                     source (curve-only field; sprites store
+ *                                     1). Compared on each setScene as part
+ *                                     of the timing-trio (with beatsPerCycle
+ *                                     and beatInterval); a change to any of
+ *                                     the three sets timingDirty, which the
+ *                                     next tick handles by dropping the
+ *                                     entire pending queue — not just
+ *                                     future cycles — so the next bootstrap
+ *                                     re-derives event audioTimes against
+ *                                     simulation's current cycleProgress and
+ *                                     the new cycleDuration. See timingDirty.
+ * @property {any} beatsPerCycle  Last-seen beatsPerCycle value (raw from
+ *                                 source; may be missing or non-numeric in
+ *                                 hand-edited scenes, in which case the
+ *                                 tick() gate skips this source). Tracked
+ *                                 here so the reconciliation can detect a
+ *                                 change and set timingDirty; the actual
+ *                                 cycleDuration arithmetic happens in tick().
+ * @property {any} beatInterval  Last-seen beatInterval token (e.g. "Qtr",
+ *                                "8th", "Dot 16th"; raw from source). Same
+ *                                role as beatsPerCycle for the timing-change
+ *                                detection.
  * @property {any} compiled  Compiled strudel Pattern object (carries queryArc),
  *                            or null when the text was empty or failed to parse.
  * @property {Map<number, number>} populatedCycles  Map from cycleIndex to the
@@ -197,7 +220,31 @@ const LOG_PASS2 = true;
  *                                    text changes; cleared by the next tick
  *                                    after it has filtered future-cycle events
  *                                    and dropped future-cycle entries from
- *                                    populatedCycles.
+ *                                    populatedCycles. Preserves current-cycle
+ *                                    events for the musical clean-boundary
+ *                                    takeover — the current cycle finishes
+ *                                    out on the old pattern, the new pattern
+ *                                    takes effect at the next cycle wrap.
+ * @property {boolean} timingDirty  Set by _reconcileSource when any
+ *                                   cycleDuration-affecting field changes
+ *                                   (beatsPerCycle, beatInterval,
+ *                                   patternRepeats). Distinct from
+ *                                   patternDirty because timing changes
+ *                                   need the CURRENT cycle's events dropped
+ *                                   too: they were laid out at the old
+ *                                   timing's audioTimes, but the simulation
+ *                                   cursor advances at the new timing from
+ *                                   the moment of edit, so keeping the old
+ *                                   events would let audio drift past the
+ *                                   visual cursor for the rest of the cycle.
+ *                                   Cleared by the next tick after dropping
+ *                                   the entire pendingEvents queue and
+ *                                   clearing populatedCycles; the bootstrap
+ *                                   then re-derives a virtual startC from
+ *                                   simulation's current cycleProgress and
+ *                                   the new cycleDuration, producing event
+ *                                   audioTimes consistent with where the
+ *                                   simulation will actually wrap.
  * @property {Array<{audioTime: number, value: any, duration: number, cycleIndex: number, fractional: number}>} pendingEvents
  *                            Events awaiting commit, tagged with the cycle
  *                            they belong to so pattern edits can preserve
@@ -277,6 +324,27 @@ export class PatternFiringEngine {
         this._playSelectedIds = new Set();
 
         /**
+         * Last-seen transport elapsedSeconds. Compared on
+         * each tick to detect rewind — a backward jump
+         * in transport time, the same signal simulation.js
+         * uses internally to reset per-source cycleCount
+         * and cycleProgress. Without this detection here,
+         * firingEngine would keep its pre-rewind
+         * populatedCycles entries and pendingEvents while
+         * the simulation restarted from cycle 0, and the
+         * MIDI sender's already-scheduled noteOns from the
+         * pre-rewind session would fire alongside the new
+         * play session's events. Detection triggers a full
+         * per-source state clear plus a MIDI panic, so the
+         * next tick bootstraps cleanly from cycle 0 with
+         * nothing residual on the wire. Initialised to 0
+         * so the first tick (when elapsedSeconds is also
+         * 0) doesn't false-positive.
+         * @type {number}
+         */
+        this._lastElapsedSeconds = 0;
+
+        /**
          * Late-refresh window in seconds. Public property so
          * callers can adjust without recompiling the engine.
          * See DEFAULT_LATE_REFRESH_WINDOW_SECONDS at module
@@ -304,6 +372,7 @@ export class PatternFiringEngine {
                     state.pendingEvents = [];
                     state.populatedCycles.clear();
                     state.patternDirty = false;
+                    state.timingDirty = false;
                 }
                 this._midiSender.panic();
             }
@@ -422,14 +491,43 @@ export class PatternFiringEngine {
 
     /**
      * Internal: reconcile one source against the cache.
-     * Adds an entry if missing; flags the entry as
-     * patternDirty when its cyclePattern text changes so
-     * the next tick can filter future-cycle events from
-     * pendingEvents and drop future cycles from
-     * populatedCycles, preparing the source for the new
-     * pattern's events to be populated at the next tick.
-     * The current cycle's already-queued events stay in
-     * pendingEvents for Version B clean-takeover behaviour.
+     * Adds an entry if missing; sets one or both of the
+     * dirty flags when authored fields change so the next
+     * tick can apply the right kind of cleanup before the
+     * populate path runs.
+     *
+     * Two dirty flags are tracked separately because they
+     * mean different things audibly:
+     *
+     *   - patternDirty (set on cyclePatternText change):
+     *     drop FUTURE-cycle events only. The current cycle
+     *     finishes on the old pattern; the new pattern
+     *     takes effect at the next cycle wrap. This is the
+     *     musical clean-boundary takeover — mid-cycle
+     *     pattern swaps sound jarring, so the engine
+     *     deliberately defers them.
+     *
+     *   - timingDirty (set on beatsPerCycle / beatInterval
+     *     / patternRepeats change): drop EVERYTHING. The
+     *     current cycle's queued events were laid out at
+     *     the old cycleDuration / segmentDuration, but the
+     *     simulation cursor switches to the new timing the
+     *     moment the edit lands and advances at the new
+     *     rate for the rest of the cycle. Keeping the old
+     *     events would let the audio drift past the visual
+     *     cursor (events fire when the cursor was supposed
+     *     to reach them under old timing, not when the
+     *     cursor actually reaches them under new timing).
+     *     Dropping everything lets the next bootstrap
+     *     re-derive startC from simulation's current
+     *     cycleProgress and the new cycleDuration, which
+     *     gives a virtual cycle anchor consistent with
+     *     simulation's hybrid wrap timing (the wrap
+     *     happens at T_edit + (1 - P_edit) * D_new because
+     *     simulation's cycleProgress accumulates dt /
+     *     cycleDuration step-by-step, so progress accrued
+     *     before the edit stays at old rate and progress
+     *     after the edit advances at new rate).
      *
      * @param {string} id
      * @param {"curve" | "sprite"} kind
@@ -439,19 +537,51 @@ export class PatternFiringEngine {
         const cyclePatternText = typeof source.cyclePattern === "string"
             ? source.cyclePattern
             : "";
+        // Mirror the defensive clamp used in tick(): missing,
+        // non-numeric, zero, negative, or non-integer values
+        // normalise to a positive integer >= 1 so comparison
+        // is stable across hand-edited scenes and the
+        // runtime read.
+        const patternRepeats = (typeof source.patternRepeats === "number"
+            && Number.isFinite(source.patternRepeats))
+            ? Math.max(1, Math.round(source.patternRepeats))
+            : 1;
+        // beatsPerCycle and beatInterval stored as raw
+        // values for comparison stability; tick() handles
+        // the validation and the cycleDuration formula.
+        // Strict-equality comparison on the raw values
+        // catches all changes the user can make through
+        // the inspector or through hand-edited scenes.
+        const beatsPerCycle = source.beatsPerCycle;
+        const beatInterval = source.beatInterval;
         const existing = this._sources.get(id);
         if (existing !== undefined) {
-            if (existing.cyclePatternText !== cyclePatternText) {
+            const textChanged = existing.cyclePatternText !== cyclePatternText;
+            const repeatsChanged = existing.patternRepeats !== patternRepeats;
+            const beatsPerCycleChanged = existing.beatsPerCycle !== beatsPerCycle;
+            const beatIntervalChanged = existing.beatInterval !== beatInterval;
+            const timingChanged =
+                repeatsChanged || beatsPerCycleChanged || beatIntervalChanged;
+            if (textChanged) {
                 existing.cyclePatternText = cyclePatternText;
                 existing.compiled = this._compile(cyclePatternText);
-                // patternDirty: next tick handles the cleanup
-                // (drop future-cycle events, drop future
-                // cycles from populatedCycles). Current-cycle
-                // events stay queued for the rest of the
-                // cycle so the user hears the old pattern
-                // finish out before the new pattern takes
-                // effect on the next cycle boundary.
+                // patternDirty: next tick drops future-cycle
+                // events and future cycles from
+                // populatedCycles, preserving the current
+                // cycle's events for the musical clean-
+                // boundary takeover.
                 existing.patternDirty = true;
+            }
+            if (timingChanged) {
+                if (repeatsChanged) existing.patternRepeats = patternRepeats;
+                if (beatsPerCycleChanged) existing.beatsPerCycle = beatsPerCycle;
+                if (beatIntervalChanged) existing.beatInterval = beatInterval;
+                // timingDirty: next tick drops EVERYTHING
+                // (current cycle included) so the bootstrap
+                // re-derives a virtual startC matching
+                // simulation's hybrid wrap timing under
+                // the new cycleDuration.
+                existing.timingDirty = true;
             }
             existing.kind = kind;
             return;
@@ -460,9 +590,13 @@ export class PatternFiringEngine {
             id,
             kind,
             cyclePatternText,
+            patternRepeats,
+            beatsPerCycle,
+            beatInterval,
             compiled: this._compile(cyclePatternText),
             populatedCycles: new Map(),
             patternDirty: false,
+            timingDirty: false,
             pendingEvents: [],
         });
     }
@@ -545,10 +679,44 @@ export class PatternFiringEngine {
                 state.pendingEvents = [];
                 state.populatedCycles.clear();
                 state.patternDirty = false;
+                state.timingDirty = false;
             }
             this._midiSender.panic();
             return;
         }
+
+        // Rewind detection. simulation.js detects a
+        // backward jump in transport.elapsedSeconds and
+        // resets each source's cycleCount and cycleProgress
+        // to 0. firingEngine needs the same signal: without
+        // a matching reset, populatedCycles entries and
+        // pendingEvents from before the rewind would
+        // persist, and the MIDI sender's already-scheduled
+        // noteOns from the pre-rewind session would fire
+        // alongside the new play session's events,
+        // producing extra notes layered on top of the
+        // post-rewind playback. Clear all per-source state
+        // and panic the MIDI sender so the next tick
+        // bootstraps cleanly from cycle 0. The lastSeen
+        // value is updated unconditionally below so a
+        // single backward jump triggers detection exactly
+        // once.
+        const elapsedNow = this._transport.elapsedSeconds;
+        if (typeof elapsedNow === "number"
+            && Number.isFinite(elapsedNow)
+            && elapsedNow < this._lastElapsedSeconds) {
+            for (const state of this._sources.values()) {
+                state.pendingEvents = [];
+                state.populatedCycles.clear();
+                state.patternDirty = false;
+                state.timingDirty = false;
+            }
+            this._midiSender.panic();
+        }
+        this._lastElapsedSeconds =
+            (typeof elapsedNow === "number" && Number.isFinite(elapsedNow))
+                ? elapsedNow
+                : this._lastElapsedSeconds;
 
         const ctx = this._runtime.audioContext;
         if (ctx === null) return;
@@ -637,6 +805,37 @@ export class PatternFiringEngine {
             if (cycleState === null) continue;
 
             const C = cycleState.cycleCount;
+
+            // Timing-edit cleanup. _reconcileSource set
+            // timingDirty when beatsPerCycle, beatInterval,
+            // or patternRepeats changed — any of the three
+            // fields that affect cycleDuration or within-
+            // cycle event spacing. Unlike patternDirty
+            // (which preserves the current cycle's events
+            // for a musical clean-boundary takeover), a
+            // timing change requires dropping the CURRENT
+            // cycle's events too: they were laid out at
+            // the old timing's audioTimes, but the
+            // simulation cursor advances at the new timing
+            // from the moment of edit, so keeping them
+            // would let the audio drift past the visual
+            // cursor for the rest of the cycle. Drop
+            // everything; let the bootstrap below
+            // re-derive a virtual startC from
+            // simulation's current cycleProgress and the
+            // new cycleDuration. The re-derived anchor
+            // matches simulation's hybrid wrap timing
+            // (progress accrued before the edit at the
+            // old rate, plus progress after at the new
+            // rate), so both the current cycle's
+            // re-populated remainder and the pre-populated
+            // C+1 audioStart line up with where the cursor
+            // will actually be.
+            if (state.timingDirty) {
+                state.pendingEvents = [];
+                state.populatedCycles.clear();
+                state.timingDirty = false;
+            }
 
             // Pattern-edit cleanup. _reconcileSource set
             // patternDirty when the cyclePattern text
