@@ -136,6 +136,7 @@ import {
     setBeatsPerCycleOnSelection,
     setBeatIntervalOnSelection,
     setPatternRepeatsOnCurves,
+    setCycleSpeedsOnCurves,
     setCanHitOnSelection,
     setHasHitFunctionOnSelection,
     setCanBeHitOnSelection,
@@ -2490,6 +2491,10 @@ async function main() {
             } else if (edit.kind === "setPatternRepeats") {
                 await applySceneEdit((data) =>
                     setPatternRepeatsOnCurves(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCycleSpeeds") {
+                await applySceneEdit((data) =>
+                    setCycleSpeedsOnCurves(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCanHit") {
                 await applySceneEdit((data) =>

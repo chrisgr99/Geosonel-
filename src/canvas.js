@@ -236,6 +236,22 @@ const HANDLE_HIT_PADDING_PX = 2;
 const HANDLE_FILL_COLOUR = "#ffd24a";
 const HANDLE_STROKE_COLOUR = "#1a1a1a";
 
+// Identification tooltip parameters. Pointer that rests
+// on a canvas object (sprite, trigger, curve, curve
+// cursor, or curve beat-point marker) for longer than
+// TOOLTIP_DELAY_MS produces an inline tooltip below-and-
+// right of the pointer showing the object's kind and id.
+// Hit thresholds for the small overlay targets (the
+// perpendicular cursor segment and the beat-point
+// diamonds) are kept tight so an adjacent hit on the
+// larger underlying curve geometry doesn't preempt them.
+// Top-level objects (sprites, triggers, curves) fall
+// through to the existing _hitTestSprite /
+// _hitTestTrigger / _hitTestCurve thresholds.
+const TOOLTIP_DELAY_MS = 450;
+const TOOLTIP_CURSOR_HIT_PX = 6;
+const TOOLTIP_MARKER_HIT_PX = 7;
+
 export class Canvas {
     /**
      * @param {HTMLElement} container  The element the canvas mounts into.
@@ -535,6 +551,67 @@ export class Canvas {
          * @type {string | null}
          */
         this._hoverHandle = null;
+
+        /**
+         * Identification tooltip's DOM element, created
+         * lazily on first show. Lives as a child of
+         * document.body with fixed positioning so it
+         * floats above the entire viewport regardless of
+         * canvas-pane clipping. pointer-events: none in
+         * CSS keeps it out of the elementFromPoint hit-
+         * tests that drive the canvas pointer handling.
+         * @type {HTMLDivElement | null}
+         */
+        this._tooltipEl = null;
+
+        /**
+         * Key (kind + ":" + id) of the tooltip target
+         * currently displayed, or null when no tooltip is
+         * shown. Compared against the live hit-test
+         * result to decide whether to follow the pointer
+         * with the existing tooltip (same key) or start a
+         * fresh debounce (different key).
+         * @type {string | null}
+         */
+        this._tooltipShownKey = null;
+
+        /**
+         * Key of the tooltip target the debounce timer is
+         * counting down for, or null when no debounce is
+         * pending. Promoted to _tooltipShownKey when the
+         * timer fires.
+         * @type {string | null}
+         */
+        this._tooltipPendingKey = null;
+
+        /**
+         * The full hit result associated with
+         * _tooltipPendingKey, kept so the eventual show
+         * can resolve text without re-running the hit-
+         * test.
+         * @type {{kind: string, id: string} | null}
+         */
+        this._tooltipPendingHit = null;
+
+        /**
+         * Latest pointer client-X / client-Y observed
+         * while the pending tooltip was being debounced.
+         * The timer's fire callback reads these to
+         * position the tooltip below-and-right of the
+         * pointer's current location at show time, rather
+         * than at the start of the debounce.
+         * @type {number | null}
+         */
+        this._tooltipPendingClientX = null;
+        /** @type {number | null} */
+        this._tooltipPendingClientY = null;
+
+        /**
+         * setTimeout handle for the tooltip's debounce,
+         * or null when no debounce is pending.
+         * @type {ReturnType<typeof setTimeout> | null}
+         */
+        this._tooltipTimer = null;
 
         /**
          * Active mouse gesture, or null when nothing is in
@@ -2225,6 +2302,18 @@ export class Canvas {
             this.canvasEl.style.cursor = "default";
         }
         if (hadHover || hadHandle) this.scheduleDraw();
+        // The identification tooltip clears alongside the
+        // hover-brighten and handle-hover state: every
+        // external caller of _clearHover (mouseleave,
+        // scene reload, gesture start, tool arm) is also a
+        // context where the tooltip should not remain
+        // visible. The in-function call inside
+        // _onCanvasHoverMove's no-hit branch was replaced
+        // with an inline hover-only clear so the tooltip's
+        // independent hit-test (which covers more targets
+        // than the object hover-brighten path) isn't
+        // stomped by this method.
+        this._hideTooltipAndCancel();
     }
 
     /**
@@ -2261,7 +2350,10 @@ export class Canvas {
             this._clearHover();
             return;
         }
-        if (this._scene === null) return;
+        if (this._scene === null) {
+            this._hideTooltipAndCancel();
+            return;
+        }
 
         const pos = this._eventToCanvas(e);
 
@@ -2288,6 +2380,11 @@ export class Canvas {
                     this._hoverDebounceTimer = null;
                 }
             }
+            // Identification tooltip hides under a hovered
+            // handle: the handle's role is gesture-grab,
+            // and a tooltip identifying the object beneath
+            // would compete with that read.
+            this._hideTooltipAndCancel();
             if (this._hoverHandle !== handleId) {
                 this._hoverHandle = handleId;
                 this.canvasEl.style.cursor = this._cursorForHandle(handleId);
@@ -2306,15 +2403,36 @@ export class Canvas {
             this.scheduleDraw();
         }
 
+        // Identification tooltip. Independent of the
+        // hover-brighten path below since it covers more
+        // targets — curve cursors and beat-point markers
+        // get a tooltip but no brighten, top-level objects
+        // get both. Runs before the object hit-test so the
+        // no-hit branch can finish its own inline cleanup
+        // without touching the tooltip state.
+        this._updateTooltipForPosition(pos, e.clientX, e.clientY);
+
         const hit = this._hitTestObject(pos.x, pos.y);
 
         if (hit === null) {
-            // Pointer over empty canvas. No debounce on the
-            // exit transition: any current bright target
-            // drops immediately, matching the "only stay
-            // bright while pointer is actually on the
-            // object" expectation.
-            this._clearHover();
+            // Pointer over empty canvas as far as the
+            // hover-brighten hit-test is concerned. The
+            // identification tooltip's hit-test has
+            // already decided independently above whether
+            // to keep itself visible (e.g. for a hovered
+            // curve cursor or beat marker on a curve that
+            // _hitTestObject's curve-geometry check
+            // missed). Inline hover-only cleanup here
+            // rather than _clearHover, which would also
+            // hide the tooltip.
+            const hadHover = this._hover !== null;
+            this._hover = null;
+            this._hoverPending = null;
+            if (this._hoverDebounceTimer !== null) {
+                clearTimeout(this._hoverDebounceTimer);
+                this._hoverDebounceTimer = null;
+            }
+            if (hadHover) this.scheduleDraw();
             return;
         }
 
@@ -2375,6 +2493,296 @@ export class Canvas {
             this.scheduleDraw();
         }, HOVER_DEBOUNCE_MS);
         if (hadHover) this.scheduleDraw();
+    }
+
+    // --- Identification tooltip ---
+
+    /**
+     * Refresh the identification tooltip's pending and
+     * shown state against the current pointer position.
+     * Runs a tooltip-specific hit-test that covers more
+     * targets than the object hover-brighten path: top-
+     * level sprites, triggers, and curves, plus each
+     * curve's visible cursor and its beat-point markers.
+     * Targets resolve to a stable key (kind + id) so the
+     * state machine mirrors the hover-brighten pattern:
+     * same target — follow the pointer if shown, no-op
+     * if pending; different target — start a fresh
+     * debounce; no target — hide and cancel any pending.
+     *
+     * Position updates while the tooltip is shown so the
+     * tooltip follows the pointer. New-target transitions
+     * remember the latest pointer position so the
+     * eventual show paints below-right of where the
+     * pointer was when the debounce expired.
+     *
+     * @param {{px: number, py: number, x: number, y: number}} pos
+     * @param {number} clientX
+     * @param {number} clientY
+     */
+    _updateTooltipForPosition(pos, clientX, clientY) {
+        const hit = this._hitTestForTooltip(pos.x, pos.y, pos.px, pos.py);
+        if (hit === null) {
+            this._hideTooltipAndCancel();
+            return;
+        }
+        const key = hit.kind + ":" + hit.id;
+        if (this._tooltipShownKey === key) {
+            // Same target shown — follow the cursor on
+            // every move.
+            this._showTooltip(this._tooltipText(hit), clientX, clientY);
+            return;
+        }
+        if (this._tooltipPendingKey === key) {
+            // Same pending candidate — let the timer
+            // continue. Update the saved position so the
+            // eventual show lands at the latest pointer.
+            this._tooltipPendingClientX = clientX;
+            this._tooltipPendingClientY = clientY;
+            return;
+        }
+        // New target. Hide any current tooltip and
+        // restart the debounce against the new key.
+        if (this._tooltipEl !== null) {
+            this._tooltipEl.style.display = "none";
+        }
+        this._tooltipShownKey = null;
+        this._tooltipPendingKey = key;
+        this._tooltipPendingHit = hit;
+        this._tooltipPendingClientX = clientX;
+        this._tooltipPendingClientY = clientY;
+        if (this._tooltipTimer !== null) clearTimeout(this._tooltipTimer);
+        this._tooltipTimer = setTimeout(() => {
+            this._tooltipTimer = null;
+            // Guard against state having moved on between
+            // schedule and fire (gesture started, tool
+            // armed, scene reloaded, etc).
+            if (this._tooltipPendingKey === null) return;
+            if (this._tooltipPendingHit === null) return;
+            const text = this._tooltipText(this._tooltipPendingHit);
+            if (text === null) return;
+            this._showTooltip(
+                text,
+                this._tooltipPendingClientX,
+                this._tooltipPendingClientY,
+            );
+            this._tooltipShownKey = this._tooltipPendingKey;
+            this._tooltipPendingKey = null;
+            this._tooltipPendingHit = null;
+        }, TOOLTIP_DELAY_MS);
+    }
+
+    /**
+     * Build the tooltip text for an identification hit.
+     * Top-level objects render as "Kind ID" matching the
+     * inspector's title-bar convention. Child elements
+     * (cursor of a curve, beat marker on a curve) render
+     * as "... of Curve ID" since they are not first-class
+     * schema objects with their own id — the id is the
+     * parent curve's. The diamond marker is called
+     * "Trigger/Beat Point" because the same visual
+     * element serves dual roles: it can be hit by an
+     * external cursor (acting as a trigger) or played by
+     * the curve's own cursor (acting as a beat point).
+     *
+     * @param {{kind: string, id: string} | null} hit
+     * @returns {string | null}
+     */
+    _tooltipText(hit) {
+        if (hit === null) return null;
+        switch (hit.kind) {
+            case "spriteBody":  return `Sprite ${hit.id}`;
+            case "triggerBody": return `Trigger ${hit.id}`;
+            case "curveBody":   return `Curve ${hit.id}`;
+            case "curveCursor": return `Cursor of\nCurve ${hit.id}`;
+            case "curveMarker": return `Trigger/Beat Point of\nCurve ${hit.id}`;
+            default: return null;
+        }
+    }
+
+    /**
+     * Lazily create the tooltip DOM element on first use.
+     * Appended to document.body with fixed positioning so
+     * it can paint over the entire viewport regardless of
+     * canvas-pane clipping. pointer-events: none (in CSS)
+     * keeps it from interfering with the pointer's hit-
+     * tests on objects beneath it.
+     */
+    _ensureTooltipEl() {
+        if (this._tooltipEl !== null) return;
+        const el = document.createElement("div");
+        el.className = "canvas-tooltip";
+        el.style.display = "none";
+        document.body.appendChild(el);
+        this._tooltipEl = el;
+    }
+
+    /**
+     * Show the tooltip at a client-space position
+     * (typically the pointer's clientX/Y, offset slightly
+     * down and right so it doesn't sit directly under the
+     * cursor). Idempotent and safe to call repeatedly
+     * with the same or new text.
+     *
+     * @param {string | null} text
+     * @param {number | null} clientX
+     * @param {number | null} clientY
+     */
+    _showTooltip(text, clientX, clientY) {
+        if (text === null) return;
+        if (clientX === null || clientY === null) return;
+        this._ensureTooltipEl();
+        if (this._tooltipEl === null) return;
+        this._tooltipEl.textContent = text;
+        this._tooltipEl.style.left = `${clientX + 14}px`;
+        this._tooltipEl.style.top = `${clientY + 18}px`;
+        this._tooltipEl.style.display = "block";
+    }
+
+    /**
+     * Hide the tooltip and cancel any pending debounce.
+     * Called by _clearHover (catching every external
+     * "stop hovering" path: mouseleave, scene reload,
+     * gesture start, tool arm) and by
+     * _onCanvasHoverMove's handle-hit branch and scene-
+     * null gate. Safe to call when no tooltip is showing.
+     */
+    _hideTooltipAndCancel() {
+        if (this._tooltipTimer !== null) {
+            clearTimeout(this._tooltipTimer);
+            this._tooltipTimer = null;
+        }
+        this._tooltipShownKey = null;
+        this._tooltipPendingKey = null;
+        this._tooltipPendingHit = null;
+        this._tooltipPendingClientX = null;
+        this._tooltipPendingClientY = null;
+        if (this._tooltipEl !== null) {
+            this._tooltipEl.style.display = "none";
+        }
+    }
+
+    /**
+     * Run the tooltip-specific hit-test at a canvas /
+     * pixel position. Returns the topmost hit's kind and
+     * id, or null if nothing is under the pointer. The
+     * hit-test follows visual z-order: sprites (drawn
+     * last, on top) beat triggers, which beat curve
+     * cursors, which beat curve markers, which beat
+     * curve geometry (drawn first, on bottom). Within
+     * each kind iteration is back-to-front so the
+     * visually-topmost object wins ties.
+     *
+     * Returned kinds:
+     *   - "spriteBody"   — a top-level sprite
+     *   - "triggerBody"  — a top-level trigger
+     *   - "curveCursor"  — a curve's visible cursor
+     *   - "curveMarker"  — a curve's pattern-event marker
+     *   - "curveBody"    — a curve's geometry
+     *
+     * Curve cursors and markers don't carry their own
+     * id; the returned id is the parent curve's. The
+     * tooltip text builder phrases this as "Cursor of
+     * Curve cv_x" or "Trigger/Beat Point of Curve cv_x".
+     *
+     * Sprite cursor visualisation is deferred at this
+     * milestone, so sprites have no cursor element to
+     * hit-test (covered by the same gate _drawCurveCursor
+     * uses for curves: non-zero extent and not muted).
+     *
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @param {number} pixelX
+     * @param {number} pixelY
+     * @returns {{kind: string, id: string} | null}
+     */
+    _hitTestForTooltip(canvasX, canvasY, pixelX, pixelY) {
+        if (this._scene === null) return null;
+
+        // 1. Sprite body (topmost in z-order).
+        const sIdx = this._hitTestSprite(canvasX, canvasY);
+        if (sIdx !== null) {
+            const s = this._scene.sprites[sIdx];
+            if (s !== undefined && typeof s.id === "string") {
+                return { kind: "spriteBody", id: s.id };
+            }
+        }
+
+        // 2. Trigger body.
+        const tIdx = this._hitTestTrigger(canvasX, canvasY);
+        if (tIdx !== null) {
+            const tr = this._scene.triggers[tIdx];
+            if (tr !== undefined && typeof tr.id === "string") {
+                return { kind: "triggerBody", id: tr.id };
+            }
+        }
+
+        // 3. Curve cursors — the perpendicular segment
+        // plus the small filled centre dot at the
+        // curve's current sweep position. Gated by the
+        // same cursor-as-collider checks _drawCurveCursor
+        // uses (non-zero extent and not muted) so
+        // unrendered cursors don't produce hover hits.
+        const ppu = this.pixelsPerUnit;
+        for (let i = this._scene.curves.length - 1; i >= 0; i--) {
+            const c = this._scene.curves[i];
+            if (typeof c.id !== "string") continue;
+            if (c.cursorR === 0 && c.cursorL === 0) continue;
+            if (c.mute) continue;
+            const t = this._simulation === null
+                ? 0
+                : this._simulation.getCurveCursorT(c.id);
+            const sample = sampleCurve(c.shape, t);
+            if (sample === null) continue;
+            const offset = this._curveOffset(c.id);
+            const cpx = this.toPixelX(sample.x + offset.dx);
+            const cpy = this.toPixelY(sample.y + offset.dy);
+            if (Math.hypot(pixelX - cpx, pixelY - cpy) <= TOOLTIP_CURSOR_HIT_PX) {
+                return { kind: "curveCursor", id: c.id };
+            }
+            const perp = pixelPerpendicularUnit(sample.tx, sample.ty);
+            const xR = cpx + perp.x * c.cursorR * ppu;
+            const yR = cpy + perp.y * c.cursorR * ppu;
+            const xL = cpx - perp.x * c.cursorL * ppu;
+            const yL = cpy - perp.y * c.cursorL * ppu;
+            if (distanceToSegment(pixelX, pixelY, xL, yL, xR, yR) <= TOOLTIP_CURSOR_HIT_PX) {
+                return { kind: "curveCursor", id: c.id };
+            }
+        }
+
+        // 4. Curve beat markers. Tested as circular hit
+        // areas around each cached marker position. The
+        // visible markers are 5 px half-size diamonds,
+        // so a slightly-larger 7 px radius gives a
+        // forgiving target without overlapping much
+        // with neighbours.
+        for (let i = this._scene.curves.length - 1; i >= 0; i--) {
+            const c = this._scene.curves[i];
+            if (typeof c.id !== "string") continue;
+            const positions = this._curveMarkerPositions.get(c.id);
+            if (positions === undefined) continue;
+            const offset = this._curveOffset(c.id);
+            for (const t of positions) {
+                const sample = sampleCurve(c.shape, t);
+                if (sample === null) continue;
+                const mx = this.toPixelX(sample.x + offset.dx);
+                const my = this.toPixelY(sample.y + offset.dy);
+                if (Math.hypot(pixelX - mx, pixelY - my) <= TOOLTIP_MARKER_HIT_PX) {
+                    return { kind: "curveMarker", id: c.id };
+                }
+            }
+        }
+
+        // 5. Curve geometry (bottommost in z-order).
+        const cIdx = this._hitTestCurve(canvasX, canvasY);
+        if (cIdx !== null) {
+            const c = this._scene.curves[cIdx];
+            if (c !== undefined && typeof c.id === "string") {
+                return { kind: "curveBody", id: c.id };
+            }
+        }
+
+        return null;
     }
 
     /** @param {MouseEvent} e */
@@ -3734,6 +4142,34 @@ function pixelPerpendicularUnit(tx, ty) {
     const len = Math.hypot(tx, ty);
     if (len === 0) return { x: 0, y: 0 };
     return { x: ty / len, y: tx / len };
+}
+
+/**
+ * Distance from a point to a finite line segment in any
+ * coordinate space. Used by the canvas's identification
+ * tooltip hit-test against curve-cursor segments. Returns
+ * the Euclidean distance; the helper does its own zero-
+ * length-segment guard so callers don't need to.
+ *
+ * @param {number} px
+ * @param {number} py
+ * @param {number} x1
+ * @param {number} y1
+ * @param {number} x2
+ * @param {number} y2
+ * @returns {number}
+ */
+function distanceToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return Math.hypot(px - x1, py - y1);
+    let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    const cx = x1 + t * dx;
+    const cy = y1 + t * dy;
+    return Math.hypot(px - cx, py - cy);
 }
 
 /**

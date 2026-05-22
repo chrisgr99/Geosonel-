@@ -153,14 +153,35 @@
  * Live velocity stays untouched across all gesture
  * paths so the object's motion continues uninterrupted.
  *
- * Pre-section-27 cycleSpeeds. The per-curve cycleSpeeds
- * field (whitespace-separated multipliers cycling through
- * themselves for forward/reverse/freeze cursor motion) was
- * the pre-section-27 mechanism for cycle-rate manipulation.
- * Section 27 replaces it with mini-notation modifiers
- * (.fast, .slow, .rev) at the pattern layer, so the field
- * is gone from the schema and the simulation runs all
- * cursors at multiplier 1 — uniform forward pacing only.
+ * cycleSpeeds (curves only). Each curve carries a whitespace-
+ * separated list of numeric per-cycle speed multipliers in
+ * the authored cycleSpeeds field (integers or decimals
+ * accepted; e.g. "1 0.5 -2"). The simulation walks the list
+ * in order, wrapping the index back to 0 after the last
+ * entry. A positive value N compresses that cycle's wall-
+ * clock duration to baseCycleDuration / N with the cursor
+ * advancing from t=0 to t=1; a negative N also compresses
+ * by |N| but reverses the cursor (t goes from 1 to 0); a
+ * zero halts the curve permanently until the next rewind,
+ * and entries after the first zero are unreachable so the
+ * runtime parser silently drops them. The simulation's
+ * per-curve speedList is cached on the runtime state at
+ * construction and re-parsed by the setScene reconciliation
+ * when the authored cycleSpeeds string changes. speedIndex
+ * isn't tracked directly — it derives from cycleCount
+ * modulo speedList.length, so a paste / duplicate / fresh-
+ * add mid-play that snaps cycleCount to the score grid
+ * lands at the correct speed entry automatically.
+ *
+ * Direction reversal across the boundary between two adjacent
+ * cycles preserves the cursor's position rather than snapping
+ * it home: a positive cycle followed by a negative one leaves
+ * the cursor at t=1 (where the positive cycle ended, and
+ * equivalently the home for the incoming negative cycle), and
+ * the cursor starts moving back toward t=0. Same-direction
+ * adjacent cycles snap to the direction's home at the
+ * boundary (t=0 for positive, t=1 for negative), the standard
+ * cycle-restart behaviour preserved from pre-cycleSpeeds.
  */
 
 // @ts-check
@@ -224,6 +245,47 @@ function cycleDurationSeconds(bpm, beatsPerCycle, beatInterval) {
     const entry = getBeatIntervalEntry(token);
     const quarters = entry !== null ? entry.quarterNotes : 1;
     return (beatsPerCycle * quarters * 60) / bpm;
+}
+
+/**
+ * Parse a cycleSpeeds string into an array of numbers.
+ * Permissive runtime parser: any malformed input falls back
+ * to [1] (the default single-positive-speed list) so a hand-
+ * edited scene.json with a typo doesn't silently halt the
+ * curve. Entries after the first zero are dropped because a
+ * zero halts the curve permanently until rewind, making
+ * anything past it unreachable.
+ *
+ * Speeds can be any finite real number. Positive values
+ * advance the cursor forward at that multiplier (so 2 is
+ * double speed, 0.5 is half speed); negatives reverse with
+ * the same magnitude rule; an exact zero halts. The
+ * inspector's validateCycleSpeeds at the edit edge enforces
+ * a slightly stricter syntactic check (rejects exponential
+ * notation for legibility), so values reaching this parser
+ * through a user-driven commit are already clean; the
+ * permissive fallback here only catches hand-edited or
+ * AI-edited scene.json that bypasses the inspector.
+ *
+ * @param {any} str
+ * @returns {number[]}
+ */
+function parseCycleSpeeds(str) {
+    if (typeof str !== "string") return [1];
+    const trimmed = str.trim();
+    if (trimmed === "") return [1];
+    const tokens = trimmed.split(/\s+/);
+    /** @type {number[]} */
+    const result = [];
+    for (const tok of tokens) {
+        if (!/^-?(\d+\.?\d*|\.\d+)$/.test(tok)) return [1];
+        const n = Number(tok);
+        if (!Number.isFinite(n)) return [1];
+        result.push(n);
+        if (n === 0) break;
+    }
+    if (result.length === 0) return [1];
+    return result;
 }
 
 /**
@@ -357,8 +419,46 @@ class CurveRuntimeState {
         // fresh state treats _lastCycleDuration === 0 as
         // "no previous value" rather than "previous was 0",
         // so play from rewind doesn't false-trigger a snap.
+        //
+        // This compares against BASE cycleDuration (before
+        // any cycleSpeeds speed factor) so cycleSpeeds-driven
+        // per-cycle effective-duration variation doesn't
+        // false-trigger the snap on every cycle wrap. The
+        // BASE duration is what _stepCurve receives as its
+        // cycleDuration parameter; the speed factor is
+        // applied inside _stepCurve and never makes it into
+        // this comparison.
         /** @type {number} */
         this._lastCycleDuration = 0;
+
+        // Per-cycle speed multiplier list parsed from the
+        // authored cycleSpeeds string. The runtime parser
+        // (parseCycleSpeeds) drops entries after a first
+        // zero since they are unreachable, and falls back
+        // to [1] on any malformed input. Walked by
+        // _stepCurve via speedList[cycleCount %
+        // speedList.length] each step — speedIndex isn't
+        // a separate field because it derives directly
+        // from cycleCount, so a paste / duplicate / fresh-
+        // add mid-play that snaps cycleCount to the score
+        // grid lands at the correct speed entry without
+        // any extra bookkeeping.
+        /** @type {number[]} */
+        this.speedList = parseCycleSpeeds(curve.cycleSpeeds);
+
+        // Last-seen authored cycleSpeeds string. The set-
+        // Scene reconciliation compares the current Curve's
+        // authored cycleSpeeds against this; on change, the
+        // speedList is re-parsed in place. cycleCount stays
+        // put (the new list takes effect against the current
+        // cycle position via the modulo), which means an
+        // edit that introduces a new direction or halt may
+        // take visible effect immediately or at the next
+        // wrap depending on whether the change touches the
+        // current cycle's entry or a later one.
+        /** @type {string} */
+        this._lastCycleSpeedsString =
+            typeof curve.cycleSpeeds === "string" ? curve.cycleSpeeds : "1";
     }
 }
 
@@ -590,6 +690,39 @@ export class Simulation {
                 existing.vy = authVy;
                 existing._authVy = authVy;
             }
+            // cycleSpeeds reconciliation. When the authored
+            // string changes, re-parse the speedList in
+            // place. cycleCount stays put (the new list
+            // takes effect against the current cycle index
+            // via the modulo speedList.length read in
+            // _stepCurve), so an edit that touches the
+            // current cycle's entry takes effect immediately
+            // on the next step while edits to other entries
+            // take effect at the next wrap that lands on
+            // them. _stepCurve also clears state.halted
+            // before any zero-speed check, so an edit that
+            // removes a halt entry from the active position
+            // resumes play without requiring rewind.
+            const newCycleSpeedsStr =
+                typeof c.cycleSpeeds === "string" ? c.cycleSpeeds : "1";
+            if (newCycleSpeedsStr !== existing._lastCycleSpeedsString) {
+                existing._lastCycleSpeedsString = newCycleSpeedsStr;
+                existing.speedList = parseCycleSpeeds(newCycleSpeedsStr);
+                // If the previously-halted curve's current
+                // speed entry is no longer zero, clear
+                // halted so the curve resumes on the next
+                // step. The user editing cycleSpeeds away
+                // from a halt state shouldn't require
+                // rewind to take effect.
+                if (existing.halted && existing.speedList.length > 0) {
+                    const currentSpeed = existing.speedList[
+                        existing.cycleCount % existing.speedList.length
+                    ];
+                    if (currentSpeed !== 0) {
+                        existing.halted = false;
+                    }
+                }
+            }
         }
         for (const id of [...this._curveState.keys()]) {
             if (!seenCurveIds.has(id)) this._curveState.delete(id);
@@ -753,7 +886,25 @@ export class Simulation {
         state.cycleCount = newCount;
         state.cycleProgress = raw - newCount;
         if (setCursor && "t" in state) {
-            /** @type {any} */ (state).t = state.cycleProgress;
+            // Direction-aware t for curves with cycleSpeeds.
+            // The snapped cycleCount selects a speed entry
+            // via modulo; a negative speed inverts t to
+            // 1 - cycleProgress so the freshly-created
+            // curve lands on the reverse-direction grid
+            // alongside any other negative-speed curves
+            // already running. Empty or missing speedList
+            // falls back to the positive default.
+            /** @type {any} */
+            const curveState = state;
+            const speedList = curveState.speedList;
+            if (Array.isArray(speedList) && speedList.length > 0) {
+                const speed = speedList[newCount % speedList.length];
+                curveState.t = speed < 0
+                    ? 1 - state.cycleProgress
+                    : state.cycleProgress;
+            } else {
+                curveState.t = state.cycleProgress;
+            }
         }
         state._lastCycleDuration = cycleDuration;
     }
@@ -791,6 +942,18 @@ export class Simulation {
             // newCycleCount=0, matching the rewind state,
             // but skipping the formula entirely is cleaner).
             state._lastCycleDuration = 0;
+            // cycleSpeeds direction-aware initial cursor.
+            // A speedList starting with a negative entry
+            // places the cursor at t=1 on play so the
+            // reverse traversal visibly starts from the
+            // right end; positive-leading lists keep t=0
+            // (the standard home). Zero-leading is a
+            // permanent halt, but state.halted stays false
+            // here — the first _stepCurve call detects the
+            // zero entry and sets halted on the spot.
+            if (state.speedList.length > 0 && state.speedList[0] < 0) {
+                state.t = 1;
+            }
         }
         for (const state of this._triggerState.values()) {
             state.cycleProgress = 0;
@@ -859,68 +1022,82 @@ export class Simulation {
      * Advance one curve's cursor and cycle phase by dt
      * seconds.
      *
-     * Cursor: state.t advances by dt/cycleDuration each
-     * step and wraps to [0, 1). On cycle completion, t
-     * snaps to 0 explicitly — the visible home return at
-     * each cycle boundary. The wrap-on-add above handles
-     * mid-cycle wraparound when t exceeds 1; the explicit
-     * snap inside the cycle-completion loop handles the
-     * boundary case independently of floating-point drift.
+     * Cycle pacing is governed by the curve's authored
+     * cycleSpeeds list, parsed into state.speedList at
+     * construction and re-parsed by setScene when the
+     * authored string changes. The current cycle's speed
+     * is speedList[cycleCount mod length]: positive N
+     * compresses the cycle to baseCycleDuration / N
+     * wall-clock seconds with the cursor advancing forward
+     * (t from 0 toward 1), negative N also compresses by
+     * |N| but reverses the cursor (t from 1 toward 0),
+     * zero halts the curve permanently until rewind clears
+     * state.halted (or until a cycleSpeeds edit moves the
+     * active entry away from zero, which setScene
+     * reconciliation detects and clears halted for).
+     *
+     * Cursor: state.t is derived from state.cycleProgress
+     * and the current cycle's direction. For positive
+     * speeds t = cycleProgress; for negative speeds
+     * t = 1 - cycleProgress. cycleProgress is a magnitude-
+     * only accumulator in [0, 1) advancing by
+     * dt / effectiveDuration each step regardless of
+     * direction. The direction-aware derivation of t means
+     * a same-direction cycle wrap naturally lands t at the
+     * direction's home (0 for positive, 1 for negative)
+     * because cycleProgress is small immediately after a
+     * wrap; a direction-reversal at a cycle boundary
+     * leaves the cursor near the boundary position
+     * (outgoing positive ended near t=1, incoming negative
+     * starts at t = 1 - small ≈ 1) and the cursor begins
+     * moving in the new direction. No explicit snap
+     * branching needed: the same formula produces both
+     * behaviours.
      *
      * Cycle progress: cycleProgress accumulates absolute
      * progress through the current cycle. When it crosses
-     * 1, the cycle completes, the count advances, and the
-     * small overshoot carries into the next cycle so timing
-     * stays accurate across boundaries — t loses the
-     * overshoot to the snap-to-home, but cycleProgress
-     * preserves it.
+     * 1, the cycle completes, the count advances, the
+     * small overshoot carries into the next cycle so
+     * timing stays accurate across boundaries, and the
+     * physics state (dx, dy, vx, vy) snaps back to authored
+     * for the per-cycle home return that parallels sprite
+     * behaviour. If the next cycle's speed is zero, halted
+     * is set and the simulation stops advancing this curve.
      *
      * @param {any} curve
      * @param {CurveRuntimeState} state
-     * @param {number} cycleDuration  Wall-clock seconds per cycle.
+     * @param {number} cycleDuration  Base wall-clock seconds per cycle (before cycleSpeeds factor).
      * @param {number} dt  Elapsed seconds in this step.
      */
     _stepCurve(curve, state, cycleDuration, dt) {
         if (cycleDuration <= 0) return;
-        // Timing-edit snap. When the user changes
-        // beatsPerCycle, beatInterval, or master BPM
-        // mid-play, cycleDuration changes since the last
-        // step. Continuing the accumulator across that
-        // change would leave the curve at a phase relative
-        // to score t=0 that no longer matches the score-
-        // global grid, so other curves running at different
-        // cycleDurations would no longer share rhythmic
-        // alignment with this one. Snap cycleCount and
-        // cycleProgress to values derived directly from
-        // _simTime / new cycleDuration so this curve picks
-        // up exactly where it would be if the new
-        // cycleDuration had been in effect since t=0. The
-        // cursor t snaps to match cycleProgress; visually
-        // the cursor jumps to its grid-aligned position,
-        // which is the accepted cost of preserving cross-
-        // curve rhythmic alignment.
-        //
-        // Using _simTime (start of the current substep)
-        // rather than _lastElapsed (start of the current
-        // tick) matters for precision: a single tick can
-        // process multiple SIM_DT substeps, and inside the
-        // snap substep the actual sim position is at
-        // _simTime, not at the tick's start-of-frame
-        // transport.elapsedSeconds. Using _lastElapsed
-        // would put the snapped cycleProgress up to one
-        // frame's worth of D ahead of where unedited curves'
-        // accumulator-based cycleProgress sits at the same
-        // sim moment, producing an audible cross-curve lag
-        // after the edit. _simTime aligns the snap to the
-        // same substep-precise reference frame the
-        // accumulator-based path uses for other curves.
-        //
-        // _lastCycleDuration === 0 is the fresh-state
-        // marker; treat it as "no previous value" so the
-        // first step after construction or rewind doesn't
-        // false-trigger a snap (the formula would produce
-        // a no-op snap at simTime=0 anyway, but skipping
-        // the formula entirely is cleaner).
+        const speedList = state.speedList;
+        if (speedList.length === 0) return;
+        // Resolve current cycle's speed. Halt on zero;
+        // the curve stops advancing until rewind clears
+        // halted or a cycleSpeeds edit moves the active
+        // entry away from zero. parseCycleSpeeds already
+        // dropped trailing entries after the first zero,
+        // so a zero here is always the user's intended
+        // halt point.
+        let currentSpeed = speedList[state.cycleCount % speedList.length];
+        if (currentSpeed === 0) {
+            state.halted = true;
+            return;
+        }
+        const speedMagnitude = Math.abs(currentSpeed);
+        const effectiveDuration = cycleDuration / speedMagnitude;
+        // Timing-edit snap. Compared against BASE cycle
+        // duration (excluding the cycleSpeeds factor), so
+        // per-cycle effective-duration variation under
+        // cycleSpeeds doesn't false-trigger the snap on
+        // every wrap. The snap re-anchors cycleCount and
+        // cycleProgress to the score-global grid for the
+        // new base duration, then re-resolves the current
+        // speed since cycleCount may have changed, and
+        // derives t direction-aware from the new speed.
+        // See the JSDoc header for why _simTime is used
+        // rather than _lastElapsed.
         if (state._lastCycleDuration > 0
             && state._lastCycleDuration !== cycleDuration) {
             const simTime = this._simTime;
@@ -929,44 +1106,39 @@ export class Simulation {
                 const newCount = Math.floor(raw);
                 state.cycleCount = newCount;
                 state.cycleProgress = raw - newCount;
-                state.t = state.cycleProgress;
+                currentSpeed = speedList[newCount % speedList.length];
+                if (currentSpeed === 0) {
+                    state.halted = true;
+                    state._lastCycleDuration = cycleDuration;
+                    return;
+                }
+                state.t = currentSpeed < 0
+                    ? 1 - state.cycleProgress
+                    : state.cycleProgress;
             }
         }
         state._lastCycleDuration = cycleDuration;
-        const tDelta = dt / cycleDuration;
-        // Advance t with wrap. The wrap is a coordinate-
-        // system convenience for the cursor display; the
-        // semantically meaningful cycle wrap happens via
-        // cycleProgress below.
-        let newT = state.t + tDelta;
-        while (newT >= 1) newT -= 1;
-        state.t = newT;
-        state.cycleProgress += tDelta;
-        // Physics. Translates the curve's runtime offset by
-        // (vx*dt, vy*dt) and reflects velocity on contact
-        // with canvas edges under the same inside-only rule
-        // _stepSprites uses. A curve with vx=vy=0 falls
-        // through immediately; the cost is one branch per
-        // static curve per step.
+        // Magnitude-only progress accumulator. cycleSpeeds
+        // direction shows up in the t derivation below,
+        // not here; cycleProgress always advances toward 1
+        // regardless of cursor direction.
+        state.cycleProgress += dt / effectiveDuration;
+        // Physics. Independent of cycleSpeeds direction —
+        // the curve's velocity continues uninterrupted
+        // through wraps and reversals; only the cursor's
+        // direction along the geometry changes.
         this._stepCurvePhysics(curve, state, dt);
         const stopAt = (typeof curve.stopAtCycle === "number") ? curve.stopAtCycle : -1;
-        // Detect cycle completion. Multiple completions in
-        // one step are possible at very short cycle
-        // durations; the loop handles that.
+        // Detect cycle completion. Multiple wraps in one
+        // step are possible at very large |speed|; the
+        // loop handles that. Each wrap snaps physics home
+        // and re-checks for halt on the incoming cycle's
+        // speed. The cursor t is derived from the post-
+        // wrap speed below the loop, so the loop body
+        // doesn't update t.
         while (state.cycleProgress >= 1) {
             state.cycleProgress -= 1;
             state.cycleCount++;
-            // Snap t to home. The accumulated overshoot
-            // already lives in cycleProgress for timing
-            // accuracy, so losing it from t here is fine —
-            // the cursor visibly returns to the start of
-            // the curve at every cycle boundary.
-            state.t = 0;
-            // Snap the physics state home: runtime offset
-            // returns to zero and velocity resets to
-            // authored. The curve's trajectory loops in
-            // lockstep with its cycle, paralleling sprite
-            // behaviour.
             state.dx = 0;
             state.dy = 0;
             state.vx = state._authVx;
@@ -976,7 +1148,31 @@ export class Simulation {
                 state.halted = true;
                 return;
             }
+            const nextSpeed = speedList[state.cycleCount % speedList.length];
+            if (nextSpeed === 0) {
+                state.halted = true;
+                // Leave t where it was; the curve halts
+                // visibly at the boundary where the last
+                // advancing cycle's cursor ended.
+                return;
+            }
         }
+        // Direction-aware t. cycleProgress is in [0, 1)
+        // after the wrap loop; the current cycle's speed
+        // (which may differ from the speed before the
+        // first wrap above) determines whether t maps
+        // directly (positive) or inverts (negative). After
+        // a same-direction wrap this lands t near the new
+        // cycle's home because cycleProgress is small;
+        // after an opposite-direction wrap this leaves t
+        // near the boundary (1 - small ≈ 1 for incoming
+        // negative; small ≈ 0 for incoming positive),
+        // which is the direction-reversal-preserves-position
+        // behaviour.
+        const finalSpeed = speedList[state.cycleCount % speedList.length];
+        state.t = finalSpeed < 0
+            ? 1 - state.cycleProgress
+            : state.cycleProgress;
     }
 
     /**
@@ -1269,6 +1465,67 @@ export class Simulation {
         const state = this._curveState.get(curveId);
         if (state === undefined) return null;
         return { cycleCount: state.cycleCount, cycleProgress: state.cycleProgress };
+    }
+
+    /**
+     * Look up the integer speed for a curve at a given
+     * cycle index, drawn from the curve's parsed speedList
+     * via cycleIndex modulo length. Returns null when no
+     * runtime state exists for this id (briefly possible
+     * during a scene reload before setScene runs). A
+     * positive return means forward direction at that
+     * speed magnitude, negative means reverse, zero means
+     * the curve will halt at that cycle. The firing engine
+     * uses this for current-cycle gating (skip if zero),
+     * effective-duration calculation
+     * (baseCycleDuration / Math.abs(speed)), and for the
+     * one-cycle-ahead pre-population (cycle C+1's speed
+     * may differ from cycle C's under a multi-entry
+     * cycleSpeeds list).
+     *
+     * cycleIndex may be any integer; the modulo handles
+     * wrapping naturally, and a positive-modulo correction
+     * keeps the lookup safe against negative cycleIndex
+     * arguments (defensive — not expected under normal
+     * operation since cycleCount never goes negative).
+     *
+     * Returns 1 (the default forward-at-unit-speed) for a
+     * curve whose speedList is empty after parse, which
+     * shouldn't happen since parseCycleSpeeds returns [1]
+     * on any unparseable input, but defensive against
+     * future schema changes.
+     *
+     * @param {string} curveId
+     * @param {number} cycleIndex
+     * @returns {number | null}
+     */
+    getCurveSpeedAt(curveId, cycleIndex) {
+        const state = this._curveState.get(curveId);
+        if (state === undefined) return null;
+        const list = state.speedList;
+        if (!Array.isArray(list) || list.length === 0) return 1;
+        const len = list.length;
+        const idx = ((cycleIndex % len) + len) % len;
+        return list[idx];
+    }
+
+    /**
+     * Look up whether a curve is currently halted — the
+     * state.halted flag set by _stepCurve when it lands on
+     * a zero entry in speedList or when cycleCount reaches
+     * stopAtCycle. Returns false when no runtime state
+     * exists for this id (briefly possible during a scene
+     * reload). The firing engine uses this to drop pending
+     * events and skip population for a halted source, the
+     * same way it does for muted sources.
+     *
+     * @param {string} curveId
+     * @returns {boolean}
+     */
+    isCurveHalted(curveId) {
+        const state = this._curveState.get(curveId);
+        if (state === undefined) return false;
+        return state.halted === true;
     }
 
     /**

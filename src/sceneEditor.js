@@ -483,7 +483,7 @@ export function stripObsoleteFields(data) {
     const obsoletePerKind = {
         curves: [
             "cycleDuration", "cycleBeats",
-            "beatsPerBar", "beatOffset", "cycleSpeeds",
+            "beatsPerBar", "beatOffset",
             "beatPointsMode", "activeBeatsCount", "beatShift",
             "repeats", "activeBeats", "strength",
             "beatsAreTriggers", "hitBeat", "hitTrigger",
@@ -1422,6 +1422,32 @@ export function setPatternRepeatsOnCurves(data, selection, value) {
     const n = Math.max(1, Math.round(Number(value)));
     if (!Number.isFinite(n)) return;
     setFieldOnSelection(data, { curves: selection.curves }, "patternRepeats", n);
+}
+
+/**
+ * Set the cycleSpeeds field across the curve selection.
+ * Sprites and triggers in the selection are ignored —
+ * cycleSpeeds is curve-only, since the direction-reversal
+ * effect of negative entries only has visible meaning where
+ * a cursor moves along a path. Stored verbatim as the
+ * whitespace-separated string the user typed; the runtime
+ * parser in simulation.js is responsible for converting to
+ * an integer list and dropping entries after a first zero.
+ *
+ * Validation lives at the inspector edge
+ * (validateCycleSpeeds in curveFieldValidation.js): a hard
+ * error there refuses the commit, so by the time this
+ * setter runs the value has been syntactically vetted as a
+ * non-empty whitespace-separated integer list. Hand-edited
+ * scenes that get here with malformed strings stay
+ * malformed in scene.json and the runtime parser falls
+ * back to [1] on load.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setCycleSpeedsOnCurves(data, selection, value) {
+    setFieldOnSelection(data, { curves: selection.curves }, "cycleSpeeds", String(value));
 }
 
 /**

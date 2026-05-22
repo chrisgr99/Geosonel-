@@ -1500,6 +1500,40 @@ body.dragging-canvas-insp-thumb * {
     pointer-events: none;
 }
 
+/* Identification tooltip floated next to the pointer when
+ * it rests on a canvas object (sprite, trigger, curve,
+ * curve cursor, or curve beat-point marker) for longer
+ * than the canvas's tooltip delay. Same visual vocabulary
+ * as .insp-readonly-hint (fixed-positioned dark pill with
+ * a thin mid-grey border) so identification surfaces in
+ * the inspector and on the canvas read as siblings. Text
+ * sits a touch larger here than in the inspector hint
+ * because the canvas tooltip is identification
+ * (kind + id) rather than a wordy how-to, so a single
+ * short line at the inspector's primary-text size is
+ * more readable than the hint's smaller copy. The
+ * canvas's _showTooltip sets left/top inline from the
+ * pointer's clientX/Y; white-space:nowrap keeps the
+ * tooltip on one line so the id stays whole even when
+ * the pointer is near a viewport edge.
+ * pointer-events:none lets the tooltip float over
+ * canvas objects without intercepting the canvas's own
+ * mousemove and click hit-tests. */
+.canvas-tooltip {
+    position: fixed;
+    z-index: 3000;
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 3px;
+    padding: 4px 10px;
+    color: #f0f0f0;
+    font-size: 11pt;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+    white-space: pre-line;
+}
+
 /* Slot field (Band 3 message-function bindings):
  * placeholder-hint display when the field is empty. The
  * placeholder text itself is in the field's textContent so

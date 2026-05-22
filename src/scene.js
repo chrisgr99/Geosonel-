@@ -458,6 +458,48 @@ export class Curve {
          */
         this.patternRepeats = opts.patternRepeats ?? 1;
 
+        /**
+         * Per-cycle speed multiplier list, as a whitespace-
+         * separated string of numbers (integers or decimals,
+         * e.g. "1 0.5 -2"). Each entry is a multiplier for
+         * one cycle, applied in order with the index wrapping
+         * back to 0 after the last entry. A positive value N
+         * compresses that cycle's wall-clock duration to
+         * baseCycleDuration / N with the cursor advancing
+         * from t=0 to t=1 as usual; a negative value
+         * compresses by |N| but reverses the cursor (t goes
+         * from 1 to 0); a zero halts the curve permanently
+         * until the next rewind (entries after the first zero
+         * are unreachable and silently dropped at runtime
+         * parse).
+         *
+         * Direction reversal across the boundary between two
+         * adjacent cycles preserves the cursor's position
+         * rather than snapping it home: a positive cycle
+         * followed by a negative one leaves the cursor at
+         * t=1 (where the positive cycle ended, and equivalently
+         * the home for the incoming negative cycle), and it
+         * starts moving back toward t=0. Same-direction
+         * adjacent cycles snap to the direction's home at the
+         * boundary (t=0 for positive, t=1 for negative), the
+         * standard cycle-restart behaviour.
+         *
+         * stopAtCycle counts wraps regardless of speed sign or
+         * magnitude, and patternRepeats is independent (the
+         * pattern copies compress in proportion with the
+         * cycle).
+         *
+         * Curve-only because the direction-reversal effect
+         * only has visible meaning where a cursor moves along
+         * a path. Default "1" preserves pre-cycleSpeeds
+         * behaviour exactly. Stored verbatim; the runtime
+         * parser is permissive (falls back to [1] on any
+         * unparseable input) so a hand-edited scene with a
+         * typo doesn't silently halt the curve.
+         * @type {string}
+         */
+        this.cycleSpeeds = opts.cycleSpeeds ?? "1";
+
         // --- Callback slots ---
         // Section-27 four-slot model: hasHit / beenHit /
         // onTick are Code-tab slots, each guarded by a

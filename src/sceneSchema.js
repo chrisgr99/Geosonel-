@@ -156,6 +156,7 @@ export const CURVE_FIELDS = [
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
     { key: "cursorThickness", label: "Cursor Thickness", type: "number", default: 2 },
     { key: "patternRepeats", label: "Repeats", type: "integer", default: 1, min: 1 },
+    { key: "cycleSpeeds", label: "Speeds", type: "string", default: "1" },
     ...CALLBACK_SLOT_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];

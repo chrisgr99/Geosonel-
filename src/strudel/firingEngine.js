@@ -188,11 +188,11 @@ const LOG_PASS2 = true;
  * @property {number} patternRepeats  Last-seen patternRepeats value for this
  *                                     source (curve-only field; sprites store
  *                                     1). Compared on each setScene as part
- *                                     of the timing-trio (with beatsPerCycle
- *                                     and beatInterval); a change to any of
- *                                     the three sets timingDirty, which the
- *                                     next tick handles by dropping the
- *                                     entire pending queue — not just
+ *                                     of the timing-quartet (with beatsPerCycle,
+ *                                     beatInterval, and cycleSpeeds); a change
+ *                                     to any of the four sets timingDirty,
+ *                                     which the next tick handles by dropping
+ *                                     the entire pending queue — not just
  *                                     future cycles — so the next bootstrap
  *                                     re-derives event audioTimes against
  *                                     simulation's current cycleProgress and
@@ -208,6 +208,16 @@ const LOG_PASS2 = true;
  *                                "8th", "Dot 16th"; raw from source). Same
  *                                role as beatsPerCycle for the timing-change
  *                                detection.
+ * @property {string} cycleSpeeds  Last-seen cycleSpeeds string (curve-only;
+ *                                  sprites store "1"). Compared on each
+ *                                  setScene as the fourth timing-quartet
+ *                                  field; a change sets timingDirty so the
+ *                                  next tick re-derives event audioTimes
+ *                                  against the new speed list. The per-cycle
+ *                                  speed itself is consulted at firing time
+ *                                  via simulation.getCurveSpeedAt; this raw
+ *                                  string exists here only for change
+ *                                  detection.
  * @property {any} compiled  Compiled strudel Pattern object (carries queryArc),
  *                            or null when the text was empty or failed to parse.
  * @property {Map<number, number>} populatedCycles  Map from cycleIndex to the
@@ -228,8 +238,8 @@ const LOG_PASS2 = true;
  * @property {boolean} timingDirty  Set by _reconcileSource when any
  *                                   cycleDuration-affecting field changes
  *                                   (beatsPerCycle, beatInterval,
- *                                   patternRepeats). Distinct from
- *                                   patternDirty because timing changes
+ *                                   patternRepeats, cycleSpeeds). Distinct
+ *                                   from patternDirty because timing changes
  *                                   need the CURRENT cycle's events dropped
  *                                   too: they were laid out at the old
  *                                   timing's audioTimes, but the simulation
@@ -546,22 +556,30 @@ export class PatternFiringEngine {
             && Number.isFinite(source.patternRepeats))
             ? Math.max(1, Math.round(source.patternRepeats))
             : 1;
-        // beatsPerCycle and beatInterval stored as raw
-        // values for comparison stability; tick() handles
-        // the validation and the cycleDuration formula.
-        // Strict-equality comparison on the raw values
-        // catches all changes the user can make through
-        // the inspector or through hand-edited scenes.
+        // beatsPerCycle, beatInterval, and cycleSpeeds
+        // stored as raw values for comparison stability;
+        // tick() handles validation and the cycleDuration
+        // formula, and Pass 1 / Pass 2 consult per-cycle
+        // speed via simulation.getCurveSpeedAt. Strict-
+        // equality on the raw values catches every change
+        // through the inspector or hand-edited scenes.
         const beatsPerCycle = source.beatsPerCycle;
         const beatInterval = source.beatInterval;
+        const cycleSpeeds = typeof source.cycleSpeeds === "string"
+            ? source.cycleSpeeds
+            : "1";
         const existing = this._sources.get(id);
         if (existing !== undefined) {
             const textChanged = existing.cyclePatternText !== cyclePatternText;
             const repeatsChanged = existing.patternRepeats !== patternRepeats;
             const beatsPerCycleChanged = existing.beatsPerCycle !== beatsPerCycle;
             const beatIntervalChanged = existing.beatInterval !== beatInterval;
+            const cycleSpeedsChanged = existing.cycleSpeeds !== cycleSpeeds;
             const timingChanged =
-                repeatsChanged || beatsPerCycleChanged || beatIntervalChanged;
+                repeatsChanged ||
+                beatsPerCycleChanged ||
+                beatIntervalChanged ||
+                cycleSpeedsChanged;
             if (textChanged) {
                 existing.cyclePatternText = cyclePatternText;
                 existing.compiled = this._compile(cyclePatternText);
@@ -576,11 +594,14 @@ export class PatternFiringEngine {
                 if (repeatsChanged) existing.patternRepeats = patternRepeats;
                 if (beatsPerCycleChanged) existing.beatsPerCycle = beatsPerCycle;
                 if (beatIntervalChanged) existing.beatInterval = beatInterval;
+                if (cycleSpeedsChanged) existing.cycleSpeeds = cycleSpeeds;
                 // timingDirty: next tick drops EVERYTHING
                 // (current cycle included) so the bootstrap
                 // re-derives a virtual startC matching
                 // simulation's hybrid wrap timing under
-                // the new cycleDuration.
+                // the new cycleDuration (and the new per-
+                // cycle effective duration when cycleSpeeds
+                // was what changed).
                 existing.timingDirty = true;
             }
             existing.kind = kind;
@@ -593,6 +614,7 @@ export class PatternFiringEngine {
             patternRepeats,
             beatsPerCycle,
             beatInterval,
+            cycleSpeeds,
             compiled: this._compile(cyclePatternText),
             populatedCycles: new Map(),
             patternDirty: false,
@@ -806,6 +828,40 @@ export class PatternFiringEngine {
 
             const C = cycleState.cycleCount;
 
+            // cycleSpeeds lookup. Curves carry per-cycle
+            // speed via simulation.getCurveSpeedAt;
+            // sprites use a fixed positive-unity speed. A
+            // zero speed at the current cycle means the
+            // curve halts on this cycle — drop pending
+            // events and skip population, mirroring the
+            // muted-source path. A zero speed at C+1
+            // means we shouldn't pre-populate C+1 but the
+            // current cycle still fires; nextHalts tracks
+            // that case separately. Sprites never halt
+            // here since cycleSpeeds is curve-only.
+            let speedC = 1;
+            let speedNext = 1;
+            let nextHalts = false;
+            if (state.kind === "curve") {
+                const sC = this._simulation.getCurveSpeedAt(source.id, C);
+                if (sC === 0) {
+                    state.pendingEvents = [];
+                    state.populatedCycles.clear();
+                    continue;
+                }
+                if (typeof sC === "number" && sC !== 0) speedC = sC;
+                const sN = this._simulation.getCurveSpeedAt(source.id, C + 1);
+                if (sN === 0) {
+                    nextHalts = true;
+                } else if (typeof sN === "number") {
+                    speedNext = sN;
+                }
+            }
+            const effectiveDurationCurrent = cycleDuration / Math.abs(speedC);
+            const effectiveDurationNext = cycleDuration / Math.abs(speedNext);
+            const isReverseCurrent = speedC < 0;
+            const isReverseNext = speedNext < 0;
+
             // Timing-edit cleanup. _reconcileSource set
             // timingDirty when beatsPerCycle, beatInterval,
             // or patternRepeats changed — any of the three
@@ -879,11 +935,24 @@ export class PatternFiringEngine {
             // drops only cycles > C, so C stays in the map.
             // The bootstrap path is specifically for fresh
             // start / resume from pause).
+            //
+            // cycleAudioStart uses the current cycle's
+            // effective duration (base / |speedC|) so the
+            // virtual cycle anchor matches where the cursor
+            // will actually wrap, even when cycleSpeeds
+            // compresses or expands wall-clock duration.
             if (!state.populatedCycles.has(C)) {
                 const cycleAudioStart =
-                    audioNow - cycleState.cycleProgress * cycleDuration;
+                    audioNow - cycleState.cycleProgress * effectiveDurationCurrent;
                 state.populatedCycles.set(C, cycleAudioStart);
-                this._populatePending(state, C, cycleAudioStart, cycleDuration, patternRepeats);
+                this._populatePending(
+                    state,
+                    C,
+                    cycleAudioStart,
+                    effectiveDurationCurrent,
+                    patternRepeats,
+                    isReverseCurrent,
+                );
             }
 
             // Pre-populate the next cycle if not yet done.
@@ -898,17 +967,28 @@ export class PatternFiringEngine {
             // at wrap-detection time and fire late (about
             // 25ms of detection lag), producing an audible
             // stutter at every cycle boundary.
-            if (!state.populatedCycles.has(C + 1)) {
+            //
+            // C+1's start time uses the CURRENT cycle's
+            // effective duration (the current cycle
+            // determines when the next begins); C+1's own
+            // event layout uses its own effective duration
+            // (cycle C+1's speed may differ from C's under
+            // a multi-entry cycleSpeeds list). Skipped
+            // entirely when nextHalts is true: a zero at
+            // C+1 means the curve halts after the current
+            // cycle, so there are no C+1 events to schedule.
+            if (!state.populatedCycles.has(C + 1) && !nextHalts) {
                 const startC = state.populatedCycles.get(C);
                 if (typeof startC === "number") {
-                    const cycleAudioStartNext = startC + cycleDuration;
+                    const cycleAudioStartNext = startC + effectiveDurationCurrent;
                     state.populatedCycles.set(C + 1, cycleAudioStartNext);
                     this._populatePending(
                         state,
                         C + 1,
                         cycleAudioStartNext,
-                        cycleDuration,
+                        effectiveDurationNext,
                         patternRepeats,
+                        isReverseNext,
                     );
                 }
             }
@@ -980,8 +1060,8 @@ export class PatternFiringEngine {
      *
      * patternRepeats > 1 lays out N copies of the strudel
      * cycle's events across the GXW cycle. Each repeat
-     * occupies cycleDuration/N of wall-clock time and plays
-     * the same events. The stored `fractional` on each
+     * occupies effectiveDuration/N of wall-clock time and
+     * plays the same events. The stored `fractional` on each
      * event is the strudel-cycle position (not the GXW-cycle
      * position), so Pass 2 queryArc lands on the correct
      * event within the strudel pattern; only the audioTime
@@ -989,16 +1069,36 @@ export class PatternFiringEngine {
      * pre-patternRepeats one-pass-through-the-pattern
      * behaviour exactly.
      *
+     * cycleSpeeds (curves) shows up here in two ways. The
+     * effectiveDuration parameter is baseCycleDuration /
+     * |speed|, so a speed of 2 compresses the cycle's
+     * events into half the wall-clock time with no pattern
+     * modification needed. The isReverse parameter, true
+     * when speed is negative, applies strudel's .rev()
+     * operator to the compiled pattern before queryArc:
+     * .rev() rewrites event positions within the cycle so
+     * a hap originally at fractional f with duration d ends
+     * up at (1 - f - d, 1 - f), which is exactly when the
+     * reverse-moving cursor reaches that marker's span on
+     * the curve. The fractional stored on each event is the
+     * REVERSED-pattern position, which Pass 2 also queries
+     * against the .rev()'d pattern so the same hap is
+     * retrieved at refresh time.
+     *
      * @param {SourceFiringState} state
      * @param {number} cycleIndex
      * @param {number} cycleAudioStart
-     * @param {number} cycleDuration
+     * @param {number} effectiveDuration  Wall-clock seconds for this cycle
+     *                                     (baseCycleDuration / |speed|).
      * @param {number} patternRepeats
+     * @param {boolean} isReverse  True if this cycle's cycleSpeeds entry is
+     *                              negative; applies .rev() to the pattern.
      */
-    _populatePending(state, cycleIndex, cycleAudioStart, cycleDuration, patternRepeats) {
+    _populatePending(state, cycleIndex, cycleAudioStart, effectiveDuration, patternRepeats, isReverse) {
         let haps;
         try {
-            haps = state.compiled.queryArc(cycleIndex, cycleIndex + 1);
+            const queryPattern = isReverse ? state.compiled.rev() : state.compiled;
+            haps = queryPattern.queryArc(cycleIndex, cycleIndex + 1);
         } catch (err) {
             console.warn(`[firing] queryArc failed for ${state.id}:`, err);
             return;
@@ -1006,13 +1106,13 @@ export class PatternFiringEngine {
         if (!Array.isArray(haps)) return;
 
         // Segment duration: each of the patternRepeats copies
-        // occupies cycleDuration/N of wall-clock time within
-        // the GXW cycle. Event duration also scales with the
-        // segment so a quarter-note within the strudel cycle
-        // stays proportionally a quarter of one repeat
-        // segment in wall-clock terms.
+        // occupies effectiveDuration/N of wall-clock time
+        // within the GXW cycle. Event duration also scales
+        // with the segment so a quarter-note within the
+        // strudel cycle stays proportionally a quarter of
+        // one repeat segment in wall-clock terms.
         const repeats = Math.max(1, Math.round(patternRepeats || 1));
-        const segmentDuration = cycleDuration / repeats;
+        const segmentDuration = effectiveDuration / repeats;
 
         for (const hap of haps) {
             const begin = hapBegin(hap);
@@ -1221,6 +1321,19 @@ export class PatternFiringEngine {
         const begin = ev.cycleIndex + ev.fractional;
         const PASS2_EPSILON = 1e-6;
         const end = begin + PASS2_EPSILON;
+        // Reverse-direction cycles use the .rev()'d pattern
+        // for the re-query so the same hap Pass 1 saw is
+        // retrieved. The stored fractional is already the
+        // reversed-pattern position; querying the .rev()'d
+        // pattern at the same range lands on it. Curve-only;
+        // sprites never reverse.
+        let isReverse = false;
+        if (state.kind === "curve") {
+            const speed = this._simulation.getCurveSpeedAt(state.id, ev.cycleIndex);
+            if (typeof speed === "number" && speed < 0) {
+                isReverse = true;
+            }
+        }
         /** @type {import("./firingContext.js").FiringContext} */
         const ctx = {
             sourceId: state.id,
@@ -1230,7 +1343,8 @@ export class PatternFiringEngine {
         };
         let haps;
         try {
-            haps = withFiringContext(ctx, () => state.compiled.queryArc(begin, end));
+            const queryPattern = isReverse ? state.compiled.rev() : state.compiled;
+            haps = withFiringContext(ctx, () => queryPattern.queryArc(begin, end));
         } catch (err) {
             console.warn(
                 "[pass2] queryArc threw for " + state.id +

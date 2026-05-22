@@ -180,6 +180,7 @@ import {
 import {
     validateNumber,
     validateHexColor,
+    validateCycleSpeeds,
 } from "./curveFieldValidation.js";
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 
@@ -228,10 +229,32 @@ const W = {
     // current token ("Qtr", "8th", "Dot 16th", etc.) drawn
     // from the 17-entry TOKENS table in beatIntervals.js.
     // Dropdown width fits the longest token text plus the
-    // custom arrow chrome at 11pt; the label width matches
-    // the typical "Beat Interval" header at the same size.
+    // custom arrow chrome at 11pt. The label wraps to two
+    // lines ("Beat" / "Interval") so its column is narrower
+    // than the single-line text would need, making room for
+    // the Speeds field that follows in the same row.
     beatInterval: 84,
-    beatIntervalLabel: 78,
+    beatIntervalLabel: 60,
+
+    // Band 1 cycle duration row's cycleSpeeds field and
+    // label. The Speeds field carries a whitespace-
+    // separated number list (integers or decimals, e.g.
+    // "1", "1 -1", "0.5 2 -1.5"). Wider than the
+    // original integer-only sizing now that decimals are
+    // accepted — multi-entry decimal lists stretch
+    // across more characters than a typical integer list,
+    // so the field is enlarged to fit them comfortably.
+    // The row's leftLabel column stays at the standard
+    // 78px width matching every other row above and
+    // below; the wider Speeds field grows the row past
+    // its pre-decimal footprint, which is acceptable
+    // since the Starting State row in Band 2 is similarly
+    // wide. The label sits to the left of the field on
+    // a single line. Curve-only since the direction-
+    // reversal effect of negative entries only has
+    // visible meaning where a cursor moves along a path.
+    cycleSpeeds: 80,
+    cycleSpeedsLabel: 50,
 
     // Band 1 pattern row's Repeats field. Single-digit
     // integer field for the curve-only patternRepeats
@@ -529,6 +552,18 @@ export class Inspector {
                 ? ""
                 : beatIntervalAgg;
 
+        // cycleSpeeds aggregates across the curve slice
+        // only — sprites and triggers don't carry the
+        // field, so including them in the aggregate would
+        // always read undefined and clutter the "varies"
+        // check. The Speeds field gate (cycleSpeedsActive
+        // below) keeps the field greyed for selections
+        // with no curves; multi-curve selections show
+        // "varies" as a blank field, and a typed value
+        // applies uniformly across every selected curve.
+        const cycleSpeedsActive = ctx.hasCurves;
+        const cycleSpeedsAgg = aggregateString(objs.curves, "cycleSpeeds");
+
         const r1 = mkRow();
         r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !idEditable }));
         r1.appendChild(mkField({
@@ -549,9 +584,19 @@ export class Inspector {
         band.appendChild(r1);
 
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Beats / Cycle", {
+        // "Beats /\nCycle" wraps to two lines so the
+        // label fits the standard leftLabel column width,
+        // matching the multiline pattern used by
+        // "State\nat Start" in Band 2 and "Beat\nInterval"
+        // later in this same row. The 78px column width
+        // keeps the row's label column aligned vertically
+        // with every other row in the band above and
+        // below; text right-aligns within the column via
+        // the .insp-label CSS default.
+        r2.appendChild(mkLabel("Beats /\nCycle", {
             width: W.leftLabel,
             disabled: !cycleDurationActive,
+            multiline: true,
         }));
         r2.appendChild(this._buildEditableField({
             value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
@@ -560,15 +605,18 @@ export class Inspector {
             editable: cycleDurationActive,
             validator: (c) => validateNumber(c, { min: 1 }),
             editKind: "setBeatsPerCycle",
+            selectOnFocus: false,
         }));
         // Inline label between the count field and the
-        // dropdown. The .insp-label class already right-
-        // aligns text within its width box, so "Beat
-        // Interval" sits flush against the dropdown that
-        // follows.
-        r2.appendChild(mkLabel("Beat Interval", {
+        // dropdown. Wraps to two lines ("Beat" / "Interval")
+        // so the label column is narrower than the single-
+        // line text would need, leaving room for the Speeds
+        // field that follows. The .insp-label class right-
+        // aligns text within its width box.
+        r2.appendChild(mkLabel("Beat\nInterval", {
             width: W.beatIntervalLabel,
             disabled: !cycleDurationActive,
+            multiline: true,
         }));
         r2.appendChild(this._buildDropdownField({
             options: BEAT_INTERVAL_TOKENS.map((t) => ({ value: t.token, label: t.label })),
@@ -577,7 +625,26 @@ export class Inspector {
             editable: cycleDurationActive,
             editKind: "setBeatInterval",
         }));
-        r2.appendChild(mkUnits("notes", { disabled: !cycleDurationActive }));
+        // Speeds label and field. Curve-only: greyed when
+        // the selection has no curves. The field is a
+        // whitespace-separated integer list with validation
+        // through validateCycleSpeeds (hard error on non-
+        // integer entries). Multi-curve selections aggregate
+        // through objs.curves, so "varies" renders as blank
+        // and a typed value commits uniformly across every
+        // selected curve.
+        r2.appendChild(mkLabel("Speeds", {
+            width: W.cycleSpeedsLabel,
+            disabled: !cycleSpeedsActive,
+        }));
+        r2.appendChild(this._buildEditableField({
+            value: cycleSpeedsAgg === "varies" ? "" : cycleSpeedsAgg,
+            width: W.cycleSpeeds,
+            editable: cycleSpeedsActive,
+            validator: validateCycleSpeeds,
+            editKind: "setCycleSpeeds",
+            selectOnFocus: false,
+        }));
         band.appendChild(r2);
 
         // Row 3: pattern row. Active only for single-
@@ -857,6 +924,7 @@ export class Inspector {
      *   validator: (candidate: string) => { kind: "ok" | "soft" | "hard", value: string, message?: string },
      *   editKind?: string,
      *   onCommit?: (value: string) => void,
+     *   selectOnFocus?: boolean,
      * }} opts
      * @returns {HTMLDivElement}
      */
@@ -928,9 +996,17 @@ export class Inspector {
         // Select all on focus so the user's first keystroke
         // replaces the existing value rather than inserting
         // into it. See _buildNameField for the full rationale.
-        el.addEventListener("focus", () => {
-            selectAllInElement(el);
-        });
+        // Pass selectOnFocus: false to suppress — used by
+        // multi-token fields like cycleSpeeds where editing
+        // one entry in place is the normal case, and by
+        // small numeric fields on rows where consistency
+        // with such neighbours matters more than the
+        // replace-on-type convenience.
+        if (opts.selectOnFocus !== false) {
+            el.addEventListener("focus", () => {
+                selectAllInElement(el);
+            });
+        }
 
         // See _buildNameField for the rationale behind this
         // flag. The destruction-blur double-commit problem

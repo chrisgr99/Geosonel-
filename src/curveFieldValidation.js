@@ -131,13 +131,25 @@ export function validateStopAtCycle(candidate) {
 
 /**
  * Validate Cycle Speeds. Runtime value is a string of
- * whitespace-separated floats, each a multiplier applied to
- * cycleDuration on its respective cycle (cycling through
- * the list cycle by cycle). Negative values reverse
- * direction; zero would freeze the cursor for that cycle
- * and soft-warns. Empty input and non-numeric tokens are
- * hard-blocked. Internal whitespace is canonicalised to
- * single spaces in the returned value.
+ * whitespace-separated numbers, each a per-cycle speed
+ * multiplier applied in order with the index wrapping back
+ * to 0 after the last entry. A positive value N compresses
+ * that cycle's wall-clock duration to baseCycleDuration / N
+ * (so 2 doubles speed, 0.5 halves it); a negative value
+ * compresses by |N| but reverses the cursor (t goes from 1
+ * to 0); a zero halts the curve permanently until the next
+ * rewind, and entries after the first zero are unreachable
+ * but pass validation here (they're silently dropped at
+ * runtime parse).
+ *
+ * Empty input is hard-blocked since the field is required
+ * (default "1" applies earlier in the load pipeline). Non-
+ * numeric tokens are hard-blocked. Accepted forms: signed
+ * integers ("3", "-7"), decimals ("1.5", "-0.5", "0.25"),
+ * and the leading- and trailing-dot variants (".5", "1.")
+ * that JavaScript's Number() accepts. Exponential notation
+ * ("1e5") is rejected for legibility. Internal whitespace
+ * is canonicalised to single spaces in the returned value.
  *
  * @param {string} candidate
  * @returns {ValidationResult}
@@ -151,25 +163,15 @@ export function validateCycleSpeeds(candidate) {
         };
     }
     const tokens = trimmed.split(/\s+/);
-    /** @type {number[]} */
-    const parsed = [];
     for (const tok of tokens) {
-        const n = Number(tok);
-        if (!Number.isFinite(n)) {
+        if (!/^-?(\d+\.?\d*|\.\d+)$/.test(tok)) {
             return {
                 kind: "hard", value: "",
-                message: `"${tok}" is not a number.`,
+                message: `"${tok}" is not a number; Cycle Speeds entries must be positive, negative, or zero numbers (decimals OK).`,
             };
         }
-        parsed.push(n);
     }
     const canonical = tokens.join(" ");
-    if (parsed.some((n) => n === 0)) {
-        return {
-            kind: "soft", value: canonical,
-            message: "A zero in Cycle Speeds freezes the cursor for that cycle.",
-        };
-    }
     return { kind: "ok", value: canonical };
 }
 
