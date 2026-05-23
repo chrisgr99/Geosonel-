@@ -605,6 +605,7 @@ export class Inspector {
             editable: cycleDurationActive,
             validator: (c) => validateNumber(c, { min: 1 }),
             editKind: "setBeatsPerCycle",
+            spinStep: 1,
             selectOnFocus: false,
         }));
         // Inline label between the count field and the
@@ -736,6 +737,7 @@ export class Inspector {
             editable: patternRepeatsActive,
             validator: (c) => validateNumber(c, { min: 1 }),
             editKind: "setPatternRepeats",
+            spinStep: 1,
         }));
 
         band.appendChild(r3);
@@ -801,15 +803,12 @@ export class Inspector {
         el.textContent = opts.value;
         if (opts.conflict) el.classList.add("error-soft");
 
-        // Select all on focus so the user's first keystroke
-        // replaces the existing value, the way a standard
-        // <input> works. Without this, typing into a
-        // contenteditable inserts characters at the cursor
-        // position, so a click-and-type on a field showing
-        // "4" produces "48" or "84" depending on where the
-        // cursor landed — which then validates as a
-        // different number than the user intended to enter.
-        el.addEventListener("focus", () => selectAllInElement(el));
+        // Mouse-aware focus selection: mouse-origin focus
+        // leaves the caret at the click position, tab-origin
+        // focus selects-all so the first keystroke replaces
+        // the value the way a standard input element does
+        // on tab.
+        wireFocusSelect(el);
 
         // Track whether this field has already emitted its
         // edit. After an Enter or successful blur commit,
@@ -932,10 +931,10 @@ export class Inspector {
         const el = document.createElement("div");
         el.className = "insp-field";
         if (opts.numeric) el.classList.add("insp-field-numeric");
-        el.style.width = `${opts.width}px`;
 
         if (!opts.editable) {
             el.classList.add("disabled");
+            el.style.width = `${opts.width}px`;
             el.textContent = opts.value;
             return el;
         }
@@ -944,68 +943,19 @@ export class Inspector {
         el.setAttribute("spellcheck", "false");
         el.textContent = opts.value;
 
-        // Numeric fields support scroll-wheel adjustment.
-        // Hovering over the field and rotating the wheel
-        // updates the displayed value in 0.3 increments and
-        // emits an edit on every wheel event so the canvas
-        // and JSON tab track the value continually as the
-        // user scrolls. The validator clamps during
-        // scrolling so bounds (e.g. min: 0 for sizes) act as
-        // soft walls. Wheel-over-field is suppressed while
-        // the field is focused for text edit — normal page-
-        // scrolling and text-cursor behaviour take over.
-        //
-        // Wheel emits go directly through opts.onCommit /
-        // opts.editKind rather than through tryCommit. The
-        // committed flag in tryCommit prevents destruction-
-        // blur double-emit on focused fields after Enter,
-        // and would also block successive wheel commits if
-        // the wheel went through that path. Wheel scrolling
-        // doesn't focus the field, so destruction-blur
-        // doesn't fire, so the guard isn't needed and would
-        // be actively harmful here.
-        if (opts.numeric) {
-            el.addEventListener("wheel", (e) => {
-                if (document.activeElement === el) return;
-                const currentText = el.textContent ?? "";
-                const currentValue = parseFloat(currentText);
-                if (!Number.isFinite(currentValue)) return;
-                e.preventDefault();
-                const direction = e.deltaY < 0 ? 1 : -1;
-                const newValue = currentValue + direction * 0.3;
-                const rounded = Math.round(newValue * 10) / 10;
-                const result = opts.validator(String(rounded));
-                if (result.kind === "hard") return;
-                el.textContent = result.value;
-                // Update opts.value so a subsequent click-blur on
-                // the field doesn't fire a redundant tryCommit
-                // emit — the keyboard path's diff check compares
-                // textContent against opts.value to decide whether
-                // to commit, and without this update the wheel-
-                // modified textContent would always look new
-                // relative to the render-time original.
-                opts.value = result.value;
-                if (typeof opts.onCommit === "function") {
-                    opts.onCommit(result.value);
-                } else if (typeof opts.editKind === "string") {
-                    this._emitEdit({ kind: opts.editKind, value: result.value });
-                }
-            }, { passive: false });
-        }
-
-        // Select all on focus so the user's first keystroke
-        // replaces the existing value rather than inserting
-        // into it. See _buildNameField for the full rationale.
-        // Pass selectOnFocus: false to suppress — used by
+        // Focus selection. Mouse focus leaves the caret at
+        // the click position so a single click positions
+        // the caret where the user clicked and the user can
+        // edit in place; tab focus still selects-all so the
+        // first keystroke replaces the existing value, the
+        // way a standard input element does on tab. Double-
+        // click selects the word under the pointer via
+        // browser default; triple-click selects the full
+        // field. selectOnFocus: false skips both — used by
         // multi-token fields like cycleSpeeds where editing
-        // one entry in place is the normal case, and by
-        // small numeric fields on rows where consistency
-        // with such neighbours matters more than the
-        // replace-on-type convenience.
+        // one entry in place is the normal case.
         if (opts.selectOnFocus !== false) {
-            el.addEventListener("focus", () => {
-                selectAllInElement(el);
-            });
+            wireFocusSelect(el);
         }
 
         // See _buildNameField for the rationale behind this
@@ -1076,6 +1026,16 @@ export class Inspector {
             tryCommit("blur");
         });
 
+        // Numeric editable fields wrap in a container with
+        // a two-button spinner band on the right edge. The
+        // wrapper takes opts.width; the field shrinks
+        // inside to make room for the spinner. Non-numeric
+        // editable fields take the width on the field
+        // itself, since there's no surrounding chrome.
+        if (opts.numeric) {
+            return wrapNumericFieldWithSpinner(el, opts, this);
+        }
+        el.style.width = `${opts.width}px`;
         return el;
     }
 
@@ -1193,11 +1153,8 @@ export class Inspector {
         text.setAttribute("spellcheck", "false");
         text.textContent = initialHex.toUpperCase();
 
-        // Select all on focus so the user's first keystroke
-        // replaces the existing hex string rather than
-        // inserting into it. See _buildNameField for the
-        // full rationale.
-        text.addEventListener("focus", () => selectAllInElement(text));
+        // Mouse-aware focus selection: see _buildNameField.
+        wireFocusSelect(text);
 
         // See _buildNameField for the rationale.
         let committed = false;
@@ -1353,7 +1310,7 @@ export class Inspector {
         // the pinned and shared gallery sections to
         // match the inspector's natural floor width.
         r1.classList.add("insp-row-starting-state");
-        r1.appendChild(mkLabel("State\nat Start", {
+        r1.appendChild(mkLabel("Initial\nConditions", {
             width: W.leftLabel,
             disabled: !positionActive,
             multiline: true,
@@ -1364,6 +1321,7 @@ export class Inspector {
             numeric: true,
             width: W.startState,
             editable: positionActive,
+            spinLive: true,
             validator: (c) => validateNumber(c, {}),
             onCommit: (newValue) => {
                 const value = Number(newValue);
@@ -1378,6 +1336,7 @@ export class Inspector {
             numeric: true,
             width: W.startState,
             editable: positionActive,
+            spinLive: true,
             validator: (c) => validateNumber(c, {}),
             onCommit: (newValue) => {
                 const value = Number(newValue);
@@ -1449,6 +1408,7 @@ export class Inspector {
             numeric: true,
             width: W.sizeWH,
             editable: sizeWEditable,
+            spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             onCommit: (newValue) => {
                 const value = Number(newValue);
@@ -1462,6 +1422,7 @@ export class Inspector {
             numeric: true,
             width: W.sizeWH,
             editable: sizeHEditable,
+            spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             onCommit: (newValue) => {
                 const value = Number(newValue);
@@ -1477,6 +1438,7 @@ export class Inspector {
             numeric: true,
             width: W.thickness,
             editable: !curveDisabled,
+            spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCurveThickness",
         }));
@@ -1509,6 +1471,7 @@ export class Inspector {
             numeric: true,
             width: W.cursorRL,
             editable: !cursorExtentDisabled,
+            spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorR",
         }));
@@ -1518,6 +1481,7 @@ export class Inspector {
             numeric: true,
             width: W.cursorRL,
             editable: !cursorExtentDisabled,
+            spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorL",
         }));
@@ -1527,6 +1491,7 @@ export class Inspector {
             numeric: true,
             width: W.thickness,
             editable: !curveDisabled,
+            spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorThickness",
         }));
@@ -1550,6 +1515,7 @@ export class Inspector {
             numeric: true,
             width: W.spriteTriggerSize,
             editable: sizeActive,
+            spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: sizeEditKind,
         }));
@@ -1770,12 +1736,19 @@ export class Inspector {
             showPlaceholder();
         }
 
-        el.addEventListener("focus", () => {
-            if (el.classList.contains("placeholder-shown")) {
-                clearPlaceholder();
-            } else {
-                selectAllInElement(el);
-            }
+        // Mouse-aware focus selection with placeholder-clear
+        // hook. The onFocus callback runs first on every
+        // focus regardless of origin and clears the
+        // placeholder if one is shown, after which the tab-
+        // vs-mouse branching applies (tab selects-all on
+        // the now-empty field — a harmless no-op; mouse
+        // leaves the caret at the click position).
+        wireFocusSelect(el, {
+            onFocus: () => {
+                if (el.classList.contains("placeholder-shown")) {
+                    clearPlaceholder();
+                }
+            },
         });
 
         let committed = false;
@@ -2314,15 +2287,13 @@ function pluralCount(n, singular) {
 
 /**
  * Programmatically select every character inside a
- * contenteditable element. Used by the inspector's three
- * editable field builders (Name, generic editable field,
- * Color text) on focus, so that the user's first keystroke
- * replaces the existing value the way a standard <input>
- * behaves. Without this, contenteditable elements receive
- * caret-positioned focus and the user's typing inserts
- * into the existing text — producing surprises like
- * "4" becoming "48" when the user thought they were typing
- * a fresh "8".
+ * contenteditable element. Used by wireFocusSelect's tab-
+ * focus path so a tabbed-into field's first keystroke
+ * replaces the existing value the way a standard input
+ * element behaves on tab. Mouse-origin focus skips this
+ * via wireFocusSelect's mousedown-flag mechanism, so a
+ * single click positions the caret precisely where the
+ * user clicked and they can edit in place.
  *
  * @param {HTMLElement} el
  */
@@ -2333,6 +2304,248 @@ function selectAllInElement(el) {
     range.selectNodeContents(el);
     sel.removeAllRanges();
     sel.addRange(range);
+}
+
+/**
+ * Wire mouse-aware focus-and-select behaviour on a
+ * contenteditable field. Focus arriving via mouse leaves
+ * the caret at the click position (browser default on
+ * mouseup) and skips the select-all, so a single click
+ * positions the caret where the user clicked. Focus
+ * arriving via keyboard tab still selects-all so the
+ * first keystroke replaces the existing value, matching
+ * standard <input> tab behaviour. Double-click selects
+ * the word under the pointer via browser default; triple-
+ * click selects the full field.
+ *
+ * Detects mouse-origin focus via a mousedown listener
+ * that sets a flag when the element isn't yet the
+ * active element. The focus listener checks the flag,
+ * skips select-all and clears the flag when set, and
+ * otherwise selects all. A blur listener clears the flag
+ * for safety in case a drag-off ever loses the mouseup.
+ *
+ * The optional onFocus callback runs first on every focus
+ * regardless of origin, used by the Slot field to clear
+ * its placeholder text before any select-all decision.
+ *
+ * @param {HTMLElement} el
+ * @param {{ onFocus?: () => void }} [opts]
+ */
+function wireFocusSelect(el, opts = {}) {
+    let mouseFocusing = false;
+    el.addEventListener("mousedown", () => {
+        if (document.activeElement !== el) mouseFocusing = true;
+    });
+    el.addEventListener("focus", () => {
+        if (opts.onFocus !== undefined) opts.onFocus();
+        if (mouseFocusing) {
+            mouseFocusing = false;
+            return;
+        }
+        selectAllInElement(el);
+    });
+    el.addEventListener("blur", () => { mouseFocusing = false; });
+}
+
+/**
+ * Wrap a numeric editable field in a container that holds
+ * the field plus a two-button spinner band on the right.
+ * The wrapper carries the green border and lighter-grey
+ * fill that the standalone field would have had; the
+ * field inside has its border and fill suppressed so the
+ * field + spinner read visually as one bordered control.
+ * The wrapper exists as a sibling of the spinner so the
+ * spinner's pointer events don't sit inside the
+ * contenteditable, which would risk the browser placing
+ * the caret at the spinner on click.
+ *
+ * Spinner behaviour. Each half (upper for increment,
+ * lower for decrement) is the full click target; the
+ * visible green button graphics are CSS pseudo-elements
+ * centred in each half, so the hit area extends well
+ * beyond the visible button. pointerdown steps once
+ * immediately, then after 500 ms starts auto-repeating at
+ * 60 ms intervals until pointerup. The field's textContent
+ * updates live on every step so the user sees the value
+ * scrubbing; the emit to the scene fires only on
+ * pointerup (default) or on every step (spinLive: true,
+ * used by Position so the canvas tracks the object's
+ * location live during a scrub).
+ *
+ * Step size is controlled by opts.spinStep, defaulting to
+ * 0.1 for floats. Integer-typed fields override to
+ * opts.spinStep = 1, which stepOnce detects via
+ * Number.isInteger and rounds accordingly so successive
+ * increments don't drift off integer values — the
+ * mechanism that made the previous wheel-handler's 0.3 /
+ * 0.1 precision incompatible with integer fields.
+ * Out-of-bounds candidates (validator returns "hard")
+ * silently no-op rather than dimming the button — adding
+ * dim-the-button UX would require each numeric field to
+ * declare its min/max to the field builder, deferred to a
+ * follow-up.
+ *
+ * Window-level pointerup listeners ensure the press
+ * cleanly ends even if a mid-press re-render destroys the
+ * spinner half element (which can happen for spinLive
+ * fields, since each step emits and triggers
+ * applySceneEdit → setScene → _render). The press state
+ * lives in closure variables that survive the DOM swap;
+ * the destroyed half's textContent reference stays
+ * usable because detached elements keep their textContent
+ * and the value continues marching from the same base on
+ * each tick, while the visible field in the rebuilt panel
+ * shows the latest scene-state value.
+ *
+ * @param {HTMLDivElement} fieldEl  The contenteditable field, already wired.
+ * @param {any} opts                 The field's full opts (passed through to stepOnce).
+ * @param {Inspector} inspector
+ * @returns {HTMLDivElement}
+ */
+function wrapNumericFieldWithSpinner(fieldEl, opts, inspector) {
+    const wrap = document.createElement("div");
+    wrap.className = "insp-field-num-wrap";
+    wrap.style.width = `${opts.width}px`;
+    wrap.appendChild(fieldEl);
+
+    const spinner = document.createElement("div");
+    spinner.className = "insp-spinner";
+
+    const upHalf = document.createElement("div");
+    upHalf.className = "insp-spinner-up";
+    spinner.appendChild(upHalf);
+
+    const downHalf = document.createElement("div");
+    downHalf.className = "insp-spinner-down";
+    spinner.appendChild(downHalf);
+
+    wrap.appendChild(spinner);
+
+    const step = typeof opts.spinStep === "number" ? opts.spinStep : 0.1;
+    const live = opts.spinLive === true;
+
+    wireSpinnerHalf(upHalf, +1, step, live, fieldEl, opts, inspector);
+    wireSpinnerHalf(downHalf, -1, step, live, fieldEl, opts, inspector);
+
+    return wrap;
+}
+
+/**
+ * Wire one half of a spinner (upper or lower) to drive
+ * incremental edits on a numeric field. Handles the
+ * pointerdown / pointerup lifecycle, the 500 ms initial
+ * delay plus 60 ms repeat interval auto-repeat (no
+ * acceleration), and the emit policy (release-only by
+ * default, every-step when live is true).
+ *
+ * preventDefault on pointerdown stops the click from
+ * stealing focus away from whatever the user was editing
+ * before — clicking a spinner never interrupts text-edit
+ * state in a different field. Window-level pointerup and
+ * pointercancel listeners ensure the press ends cleanly
+ * even if the spinner DOM gets destroyed mid-press by a
+ * spinLive emit's re-render.
+ *
+ * @param {HTMLDivElement} halfEl
+ * @param {1 | -1} direction
+ * @param {number} step
+ * @param {boolean} live
+ * @param {HTMLDivElement} fieldEl
+ * @param {any} opts
+ * @param {Inspector} inspector
+ */
+function wireSpinnerHalf(halfEl, direction, step, live, fieldEl, opts, inspector) {
+    let pressing = false;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let initialDelayTimer = null;
+    /** @type {ReturnType<typeof setInterval> | null} */
+    let repeatInterval = null;
+
+    const emit = (/** @type {string} */ value) => {
+        if (typeof opts.onCommit === "function") {
+            opts.onCommit(value);
+        } else if (typeof opts.editKind === "string") {
+            inspector._emitEdit({ kind: opts.editKind, value });
+        }
+    };
+
+    const stepOnce = () => {
+        const currentText = fieldEl.textContent ?? "";
+        const currentValue = parseFloat(currentText);
+        if (!Number.isFinite(currentValue)) return;
+        let candidate = currentValue + direction * step;
+        if (Number.isInteger(step)) {
+            candidate = Math.round(candidate);
+        } else {
+            // Round to the step's precision so floating-point
+            // drift doesn't accumulate across many ticks. For
+            // step 0.1 this rounds to one decimal place.
+            const precision = 1 / step;
+            candidate = Math.round(candidate * precision) / precision;
+        }
+        const result = opts.validator(String(candidate));
+        if (result.kind === "hard") return;
+        fieldEl.textContent = result.value;
+        if (live) {
+            opts.value = result.value;
+            emit(result.value);
+        }
+    };
+
+    const finishPress = () => {
+        if (!pressing) return;
+        pressing = false;
+        if (initialDelayTimer !== null) {
+            clearTimeout(initialDelayTimer);
+            initialDelayTimer = null;
+        }
+        if (repeatInterval !== null) {
+            clearInterval(repeatInterval);
+            repeatInterval = null;
+        }
+        halfEl.classList.remove("pressing");
+        window.removeEventListener("pointerup", finishPress);
+        window.removeEventListener("pointercancel", finishPress);
+        // Release-only emit for the non-live path. If the
+        // value changed during the press, emit once with
+        // the final value and update opts.value so a
+        // subsequent blur tryCommit doesn't fire a redundant
+        // edit. The live path has already emitted per-step
+        // so there's nothing left to commit here.
+        if (!live) {
+            const finalText = fieldEl.textContent ?? "";
+            if (finalText !== opts.value) {
+                opts.value = finalText;
+                emit(finalText);
+            }
+        }
+    };
+
+    halfEl.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        if (pressing) return;
+        // preventDefault stops the contenteditable field
+        // beside us from gaining focus on this click, so a
+        // spin doesn't interrupt the user's text-editing
+        // state in a different field.
+        e.preventDefault();
+        pressing = true;
+        halfEl.classList.add("pressing");
+        // Window-level listeners survive mid-press re-renders
+        // that destroy the spinner DOM. For spinLive fields
+        // each step triggers applySceneEdit → setScene →
+        // _render which clears and rebuilds the whole
+        // panel; a half-element-scoped listener would never
+        // fire on release.
+        window.addEventListener("pointerup", finishPress);
+        window.addEventListener("pointercancel", finishPress);
+        stepOnce();
+        initialDelayTimer = setTimeout(() => {
+            initialDelayTimer = null;
+            repeatInterval = setInterval(stepOnce, 60);
+        }, 500);
+    });
 }
 
 /**

@@ -1169,7 +1169,7 @@ body.dragging-canvas-insp-thumb * {
  * context field. */
 .insp-field {
     background-color: #6b6b6b;
-    border: 2px solid #46b03e;
+    border: 2px solid #d8d4cc;
     border-radius: 3px;
     padding: 0 8px;
     color: #ffffff;
@@ -1292,7 +1292,7 @@ body.dragging-canvas-insp-thumb * {
  * visible. */
 .insp-combo {
     background-color: #6b6b6b;
-    border: 2px solid #46b03e;
+    border: 2px solid #d8d4cc;
     border-radius: 3px;
     padding: 0 24px 0 8px;
     color: #ffffff;
@@ -1322,7 +1322,7 @@ body.dragging-canvas-insp-thumb * {
     height: 0;
     border-left: 4px solid transparent;
     border-right: 4px solid transparent;
-    border-top: 5px solid #5fc858;
+    border-top: 5px solid #d8d4cc;
 }
 
 .insp-combo.disabled::after {
@@ -1336,7 +1336,7 @@ body.dragging-canvas-insp-thumb * {
  * on the combo itself. Pure styling — the popover element
  * exists separately and handles its own positioning. */
 .insp-combo.insp-combo-open {
-    border-color: #5fc858;
+    border-color: #ffffff;
     background-color: #767676;
 }
 
@@ -1359,7 +1359,7 @@ body.dragging-canvas-insp-thumb * {
  * are kept in lockstep because inspector.js sets both. */
 .insp-dropdown {
     background-color: #6b6b6b;
-    border: 2px solid #46b03e;
+    border: 2px solid #d8d4cc;
     border-radius: 3px;
     padding: 0 22px 0 8px;
     color: #ffffff;
@@ -1373,7 +1373,7 @@ body.dragging-canvas-insp-thumb * {
     -moz-appearance: none;
     cursor: pointer;
     flex-shrink: 0;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%235fc858' d='M0 0h8L4 5z'/></svg>");
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%23d8d4cc' d='M0 0h8L4 5z'/></svg>");
     background-repeat: no-repeat;
     background-position: right 6px center;
     background-size: 8px 5px;
@@ -1381,7 +1381,7 @@ body.dragging-canvas-insp-thumb * {
 
 .insp-dropdown:focus {
     outline: none;
-    border-color: #5fc858;
+    border-color: #ffffff;
 }
 
 .insp-dropdown.disabled,
@@ -1417,7 +1417,7 @@ body.dragging-canvas-insp-thumb * {
     position: fixed;
     z-index: 3000;
     background-color: #6b6b6b;
-    border: 2px solid #5fc858;
+    border: 2px solid #ffffff;
     border-radius: 3px;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
     padding: 2px 0;
@@ -1583,7 +1583,7 @@ body.dragging-canvas-insp-thumb * {
  * field's footprint via the lighter-grey fill. */
 .insp-color {
     background-color: #6b6b6b;
-    border: 2px solid #46b03e;
+    border: 2px solid #d8d4cc;
     border-radius: 3px;
     padding: 0 6px;
     height: 24px;
@@ -1645,6 +1645,142 @@ body.dragging-canvas-insp-thumb * {
 
 .insp-inline-letter.disabled {
     color: #a8a8a8;
+}
+
+/* Numeric field wrapper: holds an editable contenteditable
+ * field plus a two-button spinner band on the right. The
+ * wrapper takes the width that opts.width sets via inline
+ * style; the field inside flex-fills the remaining space
+ * after the spinner band's fixed width. Visually the field
+ * + spinner read as one bordered control because the
+ * wrapper carries the green border and the lighter-grey
+ * fill, and the field inside has its border and fill
+ * suppressed so it inherits the wrapper's chrome.
+ *
+ * The wrapper exists so the spinner's pointer events sit
+ * on a sibling element rather than inside the
+ * contenteditable field, which would risk the browser
+ * placing the caret at the spinner's position on click. */
+.insp-field-num-wrap {
+    display: inline-flex;
+    align-items: stretch;
+    flex-shrink: 0;
+    height: 24px;
+    border: 2px solid #d8d4cc;
+    border-radius: 3px;
+    background-color: #6b6b6b;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+/* Field inside the wrapper: drop its own border, fill, and
+ * radius (the wrapper provides them) and flex-fill the
+ * remaining horizontal space. min-width: 0 lets the field
+ * shrink below its content width so the surrounding
+ * overflow / ellipsis behaviour kicks in on long values
+ * rather than pushing the spinner off the right edge.
+ * height: auto so the field doesn't fight the wrapper's
+ * height. The 4px right padding keeps the value from
+ * touching the spinner band without taking enough space
+ * to feel cramped. */
+.insp-field-num-wrap > .insp-field {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    border: none;
+    border-radius: 0;
+    background-color: transparent;
+    padding-right: 4px;
+    height: auto;
+}
+
+/* Spinner band: a fixed-width column to the right of the
+ * field, split into upper (increment) and lower
+ * (decrement) halves. The whole half is the click target;
+ * the visible green button graphics are CSS pseudo-
+ * elements centred in each half so the hit area extends
+ * well beyond the visible button — important for the
+ * eyesight-friendly hit-target sizing GeoSonix used
+ * implicitly via the same trick. user-select: none
+ * prevents accidental text selection if the user drags
+ * during a long press. */
+.insp-spinner {
+    flex: 0 0 14px;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+}
+
+.insp-spinner-up,
+.insp-spinner-down {
+    flex: 1;
+    position: relative;
+    cursor: pointer;
+    touch-action: none;
+}
+
+/* Upper half slightly larger than the lower half so the
+ * up direction reads as the dominant of the two buttons,
+ * matching the GeoSonix visual signature. The two halves
+ * together fill the wrapper's inner height. The taller-
+ * on-top quirk is purely stylistic — the increment size
+ * is the same in both directions. */
+.insp-spinner-up {
+    flex: 1.25;
+}
+
+.insp-spinner-up::after,
+.insp-spinner-down::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #5fc858;
+    border-radius: 1px;
+}
+
+.insp-spinner-up::after {
+    width: 8px;
+    height: 6px;
+}
+
+.insp-spinner-down::after {
+    width: 8px;
+    height: 4px;
+}
+
+/* Pressing state: brighter lime green on the active half
+ * so the user sees the press landing, particularly
+ * helpful during a long auto-repeat hold where the only
+ * other feedback is the value changing. The class is
+ * toggled by inspector.js's wireSpinnerHalf on
+ * pointerdown / pointerup / pointercancel. */
+.insp-spinner-up.pressing::after,
+.insp-spinner-down.pressing::after {
+    background-color: #a0f098;
+}
+
+/* Disabled state on the wrapper: drop the green border to
+ * match .insp-field.disabled, and mute the spinner
+ * graphics so the inactive direction reads as part of
+ * the disabled control. The pointer cursor goes back to
+ * default since clicks are no-ops. In practice the
+ * disabled path doesn't reach the wrapper today — non-
+ * editable fields short-circuit before wrap construction
+ * — but the rules cover any future change that does. */
+.insp-field-num-wrap.disabled {
+    border-color: transparent;
+}
+
+.insp-field-num-wrap.disabled .insp-spinner-up,
+.insp-field-num-wrap.disabled .insp-spinner-down {
+    cursor: default;
+}
+
+.insp-field-num-wrap.disabled .insp-spinner-up::after,
+.insp-field-num-wrap.disabled .insp-spinner-down::after {
+    background-color: #707070;
 }
 
 /* Bottom spacer at the end of the inspector content. Pushes
