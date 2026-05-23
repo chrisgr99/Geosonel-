@@ -643,6 +643,20 @@ export class Canvas {
             subscribePreference(key, () => this._recomputeDisplayBitmap());
         }
 
+        // Identification-tooltip preference: when the user
+        // flips it from on to off in Settings, collapse any
+        // currently-shown tooltip and cancel any pending
+        // debounce so the canvas immediately reflects the
+        // new state. The next pointer move runs through
+        // _updateTooltipForPosition, which honours the
+        // preference and stays silent. Flips from off to
+        // on don't need any action here — the next pointer
+        // move will pick up the new state through the same
+        // gate.
+        subscribePreference("enableCanvasObjectTooltips", (enabled) => {
+            if (!enabled) this._hideTooltipAndCancel();
+        });
+
         // Watch the container for size changes. ResizeObserver
         // catches pane drags, window resize, and focus-mode
         // toggling \u2014 all with one API.
@@ -2521,6 +2535,19 @@ export class Canvas {
      * @param {number} clientY
      */
     _updateTooltipForPosition(pos, clientX, clientY) {
+        // Gated on the user's identification-tooltip
+        // preference. Off — immediately hide whatever may
+        // currently be showing and skip the hit-test. The
+        // constructor also subscribes to this preference so
+        // a flip from on to off mid-session collapses any
+        // active tooltip without waiting for the next
+        // pointer move; this guard exists for the steady-
+        // state case where the preference starts the
+        // session off.
+        if (!getPreference("enableCanvasObjectTooltips")) {
+            this._hideTooltipAndCancel();
+            return;
+        }
         const hit = this._hitTestForTooltip(pos.x, pos.y, pos.px, pos.py);
         if (hit === null) {
             this._hideTooltipAndCancel();

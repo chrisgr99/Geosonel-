@@ -26,11 +26,15 @@ import { indentOnInput, indentUnit, bracketMatching } from "https://esm.sh/@code
 import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6?deps=@codemirror/state@6.5.2";
 import { json } from "https://esm.sh/@codemirror/lang-json@6?deps=@codemirror/state@6.5.2";
 import { linter, lintGutter } from "https://esm.sh/@codemirror/lint@6?deps=@codemirror/state@6.5.2";
+import { completionKeymap } from "https://esm.sh/@codemirror/autocomplete@6?deps=@codemirror/state@6.5.2";
 import * as acorn from "https://esm.sh/acorn@8";
 import { Inspector } from "./inspector.js";
 import { CanvasInspector } from "./canvasInspector.js";
 import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect } from "./patternHighlight.js";
+import { isAutoCompletionEnabled } from "./strudel/codemirror/autocomplete.mjs";
+import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
+import { getPreference, subscribePreference } from "./preferences.js";
 
 /**
  * Sentinel name for the virtual Properties tab. The
@@ -307,11 +311,30 @@ export class TabbedEditor {
         this._langCompartment = new Compartment();
         this._linterCompartment = new Compartment();
 
+        /**
+         * Compartment holding the Strudel autocomplete and
+         * Ctrl-hover tooltip extensions. Reconfigured to an
+         * empty array on every non-Code tab so the popup
+         * and tooltip stay silent on scene.json and the
+         * virtual Properties / Canvas tabs, and reconfigured
+         * to the live extension list when the Code tab
+         * (behaviors.js or behaviours.js) is active. The
+         * extension list inside is itself gated on the user's
+         * Enable Autocompletion and Function Documentation
+         * Tooltips preferences, so a flip of either control
+         * in the Settings dialog immediately removes or
+         * restores the corresponding behaviour without
+         * needing a tab switch. See _strudelExtensionsForActiveTab.
+         * @type {Compartment}
+         */
+        this._strudelCompartment = new Compartment();
+
         this._mountEditor();
         this._mountInspector();
         this._mountCanvasInspector();
         this._renderTabs();
         this._subscribeBundleDirty();
+        this._subscribeStrudelPreferences();
 
         // The form-based Properties inspector is the default
         // landing tab — for most editing the form is what the
@@ -354,6 +377,77 @@ export class TabbedEditor {
             this._renderTabs();
             this.onDirtyChange(dirty);
         });
+    }
+
+    /**
+     * Compute the Strudel extension list for the currently
+     * active tab, gated by the user's two preferences. Returns
+     * an empty array for any tab that isn't the Code tab
+     * (behaviors.js / behaviours.js), so the autocomplete
+     * popup and the Ctrl-hover tooltip stay silent on
+     * scene.json and on the virtual Properties / Canvas
+     * tabs. When the Code tab is active, returns the live
+     * extensions for whichever of autocompletion and tooltip
+     * the user has enabled — either preference being off
+     * folds that extension out of the array without affecting
+     * the other.
+     *
+     * Read from the same compartment under selectTab,
+     * selectTabAndScrollToFunction, and the preference
+     * subscriptions so all three reconfigure paths derive
+     * the same answer from the current state.
+     * @returns {any[]}
+     */
+    _strudelExtensionsForActiveTab() {
+        const isCodeTab =
+            this.activeName === "behaviors.js" ||
+            this.activeName === "behaviours.js";
+        if (!isCodeTab) return [];
+        return [
+            isAutoCompletionEnabled(getPreference("enableStrudelAutocomplete")),
+            isTooltipEnabled(getPreference("enableStrudelTooltips")),
+        ];
+    }
+
+    /**
+     * Dispatch a Strudel-compartment reconfigure based on
+     * the current active tab and preference state. Used by
+     * the virtual-tab branches of selectTab (which don't
+     * carry a CodeMirror document-replace dispatch of their
+     * own to fold the reconfigure into) and by the
+     * preference subscriber. The file-tab branches of
+     * selectTab and selectTabAndScrollToFunction inline the
+     * reconfigure effect into their existing dispatch
+     * instead, so the language swap, linter swap, and
+     * Strudel-extension swap all land in one transaction.
+     */
+    _reconfigureStrudelCompartment() {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: this._strudelCompartment.reconfigure(
+                this._strudelExtensionsForActiveTab(),
+            ),
+        });
+    }
+
+    /**
+     * Subscribe to the two Strudel-related preferences
+     * (enableStrudelAutocomplete and enableStrudelTooltips)
+     * so a flip of either control in the Settings dialog
+     * immediately reconfigures the editor's Strudel
+     * compartment. The reconfigure honours the active-tab
+     * gate, so flipping a preference on while a non-Code
+     * tab is active leaves the compartment empty (the next
+     * selectTab into the Code tab picks up the new state).
+     *
+     * Called once at construction; no unsubscribe is wired
+     * because the editor lives for the duration of the
+     * app session.
+     */
+    _subscribeStrudelPreferences() {
+        const onChange = () => this._reconfigureStrudelCompartment();
+        subscribePreference("enableStrudelAutocomplete", onChange);
+        subscribePreference("enableStrudelTooltips", onChange);
     }
 
     // --- Bundle lifecycle ---
@@ -743,7 +837,32 @@ export class TabbedEditor {
                 bracketMatching(),
                 this._linterCompartment.of(jsSyntaxLinter),
                 lintGutter(),
+                this._strudelCompartment.of([]),
                 keymap.of([
+                    // completionKeymap sits ahead of
+                    // appKeymap so its Enter binding
+                    // accepts the highlighted completion
+                    // when the popup is open. When the
+                    // popup is closed, the binding returns
+                    // false and the keypress falls through
+                    // to appKeymap's preserve-indent Enter
+                    // handler. The autocompletion()
+                    // extension that lives inside
+                    // _strudelCompartment also registers
+                    // completionKeymap internally, but that
+                    // registration sits after our explicit
+                    // appKeymap in extension order at the
+                    // same precedence level, so without this
+                    // explicit-first placement our Enter
+                    // would consume the keypress before the
+                    // popup got to accept. completionKeymap
+                    // bindings beyond Enter (arrow keys for
+                    // navigation, Escape to close, etc.)
+                    // are inactive when no completion is
+                    // open and so don't conflict with
+                    // anything else when the popup is
+                    // silent or the Code tab isn't active.
+                    ...completionKeymap,
                     ...appKeymap,
                     indentWithTab,
                     ...defaultKeymap,
@@ -856,6 +975,7 @@ export class TabbedEditor {
         if (name === VIRTUAL_TAB_INSPECTOR) {
             this.activeName = name;
             this._showArea("inspector");
+            this._reconfigureStrudelCompartment();
             this._renderTabs();
             return;
         }
@@ -865,6 +985,7 @@ export class TabbedEditor {
         if (name === VIRTUAL_TAB_CANVAS) {
             this.activeName = name;
             this._showArea("canvas-inspector");
+            this._reconfigureStrudelCompartment();
             this._renderTabs();
             return;
         }
@@ -887,6 +1008,9 @@ export class TabbedEditor {
             effects: [
                 this._langCompartment.reconfigure(exts.language),
                 this._linterCompartment.reconfigure(exts.linter),
+                this._strudelCompartment.reconfigure(
+                    this._strudelExtensionsForActiveTab(),
+                ),
             ],
         });
         this._suppressDirty = false;
@@ -982,6 +1106,9 @@ export class TabbedEditor {
             effects: [
                 this._langCompartment.reconfigure(exts.language),
                 this._linterCompartment.reconfigure(exts.linter),
+                this._strudelCompartment.reconfigure(
+                    this._strudelExtensionsForActiveTab(),
+                ),
                 EditorView.scrollIntoView(targetPos, { y: "start", yMargin: 0 }),
             ],
         });
