@@ -133,7 +133,7 @@ export function buildEditableField(inspector, opts) {
         }, { passive: false });
     }
 
-    el.addEventListener("focus", () => selectAllInElement(el));
+    wireFocusSelect(el);
 
     let committed = false;
 
@@ -214,7 +214,7 @@ export function buildNameField(inspector, opts) {
     el.textContent = opts.value;
     if (opts.conflict) el.classList.add("error-soft");
 
-    el.addEventListener("focus", () => selectAllInElement(el));
+    wireFocusSelect(el);
 
     let committed = false;
 
@@ -305,7 +305,7 @@ export function buildColorField(inspector, opts) {
     text.setAttribute("contenteditable", "plaintext-only");
     text.setAttribute("spellcheck", "false");
     text.textContent = initialHex.toUpperCase();
-    text.addEventListener("focus", () => selectAllInElement(text));
+    wireFocusSelect(text);
 
     let committed = false;
 
@@ -413,9 +413,10 @@ export function buildSlotField(inspector, opts) {
         showPlaceholder();
     }
 
-    el.addEventListener("focus", () => {
-        if (el.classList.contains("placeholder-shown")) clearPlaceholder();
-        else selectAllInElement(el);
+    wireFocusSelect(el, {
+        onFocus: () => {
+            if (el.classList.contains("placeholder-shown")) clearPlaceholder();
+        },
     });
 
     let committed = false;
@@ -646,9 +647,9 @@ export function mkInlineLetter(letter, opts = {}) {
 /**
  * Programmatically select every character inside a
  * contenteditable element. Used by the editable field
- * builders on focus, so that the user's first keystroke
- * replaces the existing value the way a standard <input>
- * behaves.
+ * builders' tab-focus path (via wireFocusSelect) so that a
+ * tabbed-into field's first keystroke replaces the existing
+ * value the way a standard <input> behaves on tab focus.
  *
  * @param {HTMLElement} el
  */
@@ -659,4 +660,39 @@ export function selectAllInElement(el) {
     range.selectNodeContents(el);
     sel.removeAllRanges();
     sel.addRange(range);
+}
+
+/**
+ * Wire mouse-aware focus-and-select behaviour on a
+ * contenteditable field. Focus arriving via mouse leaves the
+ * caret at the click position (browser default on mouseup)
+ * and does not select-all, so a single click positions the
+ * caret precisely where the user clicked and they can edit in
+ * place. Focus arriving via keyboard tab still selects-all so
+ * the first keystroke replaces the existing value, matching
+ * standard <input> tab behaviour. Double-click selects the
+ * word under the pointer via browser default; triple-click
+ * selects the full field content.
+ *
+ * The optional onFocus callback runs first on every focus
+ * regardless of origin, used by the Slot field to clear its
+ * placeholder text before any select-all decision.
+ *
+ * @param {HTMLElement} el
+ * @param {{ onFocus?: () => void }} [opts]
+ */
+export function wireFocusSelect(el, opts = {}) {
+    let mouseFocusing = false;
+    el.addEventListener("mousedown", () => {
+        if (document.activeElement !== el) mouseFocusing = true;
+    });
+    el.addEventListener("focus", () => {
+        if (opts.onFocus !== undefined) opts.onFocus();
+        if (mouseFocusing) {
+            mouseFocusing = false;
+            return;
+        }
+        selectAllInElement(el);
+    });
+    el.addEventListener("blur", () => { mouseFocusing = false; });
 }
