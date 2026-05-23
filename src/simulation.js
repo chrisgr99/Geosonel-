@@ -289,6 +289,123 @@ function parseCycleSpeeds(str) {
 }
 
 /**
+ * Closed-form computation of a source's cycle phase at a
+ * given global time. Given the global elapsed time T, the
+ * source's base cycleDuration D (in seconds, before any
+ * cycleSpeeds factor), and its parsed speedList, returns the
+ * cycle index, fractional progress within that cycle, the
+ * direction-adjusted cursor parameter t, and a halted flag.
+ *
+ * Algorithm. Walk through speedList accumulating each cycle's
+ * wall-clock duration D / |speed| until the running total
+ * passes T; the cycle landed in is the current cycle, the
+ * leftover time divided by that cycle's duration is
+ * cycleProgress, and the sign of the current cycle's speed
+ * determines t (positive: t = progress; negative: t =
+ * 1 - progress). The sign only affects the final cursor
+ * orientation — time accumulation uses |speed| throughout,
+ * since a negative-speed cycle takes the same wall-clock
+ * duration as its positive twin (the cursor just traverses
+ * the curve in the opposite direction).
+ *
+ * Since speedList repeats, summing one full rotation worth of
+ * durations and dividing T by it lets the walk skip whole
+ * rotations in O(1) before walking the remainder through
+ * speedList once in O(L). Total cost per call is O(L)
+ * regardless of how long the session has been running.
+ *
+ * Zero-speed entries halt the source at that cycle's start
+ * with progress = 0 and halted = true. The presence of a zero
+ * anywhere in speedList makes the rotation infinitely long,
+ * so the rotation-skip shortcut is disabled and the walk runs
+ * linearly from cycle 0; in practice this is fine because
+ * parseCycleSpeeds drops everything after the first zero, so
+ * speedList is at most a handful of entries up to and
+ * including the halt.
+ *
+ * Triggers and sprites carry no cycleSpeeds field; the caller
+ * passes [1], which reduces this function to cycleCount =
+ * floor(T / D), cycleProgress = (T / D) - cycleCount, t =
+ * cycleProgress.
+ *
+ * Used by _stepCurve / _stepTrigger / _stepSprites for the
+ * per-step timing-edit snap, and by forceTimingSnapAll which
+ * the firing engine calls so simulation state is consistent
+ * with the new cycleDuration before the bootstrap reads
+ * cycleState for audio anchoring. Replaces an earlier
+ * accumulator-based snap that used base cycleDuration in
+ * places where effective cycleDuration was needed; that
+ * older snap miscomputed phases for any source with
+ * cycleSpeeds != "1" and caused cross-source desync on every
+ * BPM or per-source timing edit mid-playback.
+ *
+ * @param {number} T  Global elapsed time in seconds (typically _simTime).
+ * @param {number} D  Base cycleDuration in seconds.
+ * @param {number[]} speedList  Array of cycle speeds; non-empty.
+ * @returns {{cycleCount: number, cycleProgress: number, t: number, halted: boolean}}
+ */
+function computeCyclePhaseFromGlobalTime(T, D, speedList) {
+    if (!Number.isFinite(T) || T < 0) {
+        return { cycleCount: 0, cycleProgress: 0, t: 0, halted: false };
+    }
+    if (!(D > 0) || !Array.isArray(speedList) || speedList.length === 0) {
+        return { cycleCount: 0, cycleProgress: 0, t: 0, halted: false };
+    }
+    // Sum of one full rotation through speedList. A zero entry
+    // makes the rotation infinite, so the rotation-skip
+    // shortcut is disabled when one is present and the walk
+    // runs linearly from cycle 0.
+    let sumPerRotation = 0;
+    let hasZero = false;
+    for (const s of speedList) {
+        if (s === 0) { hasZero = true; break; }
+        sumPerRotation += D / Math.abs(s);
+    }
+    let remainingTime;
+    let baseCycleCount;
+    if (hasZero || sumPerRotation <= 0) {
+        remainingTime = T;
+        baseCycleCount = 0;
+    } else {
+        const fullRotations = Math.floor(T / sumPerRotation);
+        remainingTime = T - fullRotations * sumPerRotation;
+        baseCycleCount = fullRotations * speedList.length;
+    }
+    for (let i = 0; i < speedList.length; i++) {
+        const speed = speedList[i];
+        if (speed === 0) {
+            return {
+                cycleCount: baseCycleCount + i,
+                cycleProgress: 0,
+                t: 0,
+                halted: true,
+            };
+        }
+        const cycleDuration = D / Math.abs(speed);
+        if (remainingTime < cycleDuration) {
+            const cycleProgress = remainingTime / cycleDuration;
+            const t = speed < 0 ? 1 - cycleProgress : cycleProgress;
+            return {
+                cycleCount: baseCycleCount + i,
+                cycleProgress,
+                t,
+                halted: false,
+            };
+        }
+        remainingTime -= cycleDuration;
+    }
+    // Defensive: should be unreachable since remainingTime was
+    // reduced modulo sumPerRotation. Fall back to start of
+    // next rotation.
+    return {
+        cycleCount: baseCycleCount + speedList.length,
+        cycleProgress: 0,
+        t: 0,
+        halted: false,
+    };
+}
+
+/**
  * Per-curve runtime state. Holds the cursor's position
  * along the curve, the cycle-tracking bookkeeping, and the
  * per-tick physics state (position offset from the
@@ -832,6 +949,94 @@ export class Simulation {
     }
 
     /**
+     * Force the per-source timing-edit snap to run for every
+     * curve, trigger, and sprite whose cached _lastCycleDuration
+     * differs from what the current authored fields and master
+     * BPM imply. Called by the firing engine at the top of its
+     * own tick so the bootstrap below reads a fully snapped
+     * cycleState even on a tick where the simulation's per-step
+     * accumulator hasn't reached SIM_DT yet (no _step has run
+     * this frame). Without this, a no-step tick after a BPM
+     * change or per-source timing edit would leave the firing
+     * engine bootstrapping audio anchors against the previous
+     * tick's cycleCount and cycleProgress — stale values
+     * relative to the new cycleDuration — producing audioTimes
+     * that don't lie on the new score grid. Those stale
+     * pendingEvents then persist into subsequent ticks
+     * alongside the eventually-correct ones from the snap-tick
+     * bootstrap, and the resulting double-grid audio survives
+     * until the next rewind.
+     *
+     * The snap logic mirrors what _stepCurve, _stepTrigger,
+     * and _stepSprites do at the top of each step (closed-form
+     * computeCyclePhaseFromGlobalTime against _simTime), without
+     * the subsequent dt advancement. Idempotent: sources whose
+     * _lastCycleDuration already matches the current
+     * cycleDuration are skipped, and sources at rewind defaults
+     * (_lastCycleDuration === 0) are also skipped since their
+     * cycleCount = 0 / cycleProgress = 0 is correct for any
+     * cycleDuration at simTime = 0. Already-halted curves are
+     * left alone — a halted curve doesn't need re-anchoring
+     * since it isn't advancing.
+     *
+     * Catches both the BPM-edit and per-source-timing-edit
+     * cases. The firing engine's BPM-change detection block
+     * complements this by clearing every source's
+     * pendingEvents and populatedCycles on a BPM change; the
+     * per-source timingDirty path in the firing engine's tick
+     * does the same per-source clear for per-source field
+     * edits. forceTimingSnapAll handles the simulation side;
+     * the firing engine handles the dispatch side.
+     */
+    forceTimingSnapAll() {
+        if (this._scene === null) return;
+        const bpm = this._transport.bpm;
+        const simTime = this._simTime;
+        for (const curve of this._scene.curves) {
+            if (typeof curve.id !== "string") continue;
+            const state = this._curveState.get(curve.id);
+            if (state === undefined) continue;
+            if (state.halted) continue;
+            const cd = cycleDurationSeconds(bpm, curve.beatsPerCycle, curve.beatInterval);
+            if (cd <= 0) continue;
+            if (state._lastCycleDuration <= 0) continue;
+            if (state._lastCycleDuration === cd) continue;
+            const phase = computeCyclePhaseFromGlobalTime(simTime, cd, state.speedList);
+            state.cycleCount = phase.cycleCount;
+            state.cycleProgress = phase.cycleProgress;
+            state.t = phase.t;
+            if (phase.halted) state.halted = true;
+            state._lastCycleDuration = cd;
+        }
+        for (const trigger of this._scene.triggers) {
+            if (typeof trigger.id !== "string") continue;
+            const state = this._triggerState.get(trigger.id);
+            if (state === undefined) continue;
+            const cd = cycleDurationSeconds(bpm, trigger.beatsPerCycle, trigger.beatInterval);
+            if (cd <= 0) continue;
+            if (state._lastCycleDuration <= 0) continue;
+            if (state._lastCycleDuration === cd) continue;
+            const phase = computeCyclePhaseFromGlobalTime(simTime, cd, [1]);
+            state.cycleCount = phase.cycleCount;
+            state.cycleProgress = phase.cycleProgress;
+            state._lastCycleDuration = cd;
+        }
+        for (const sprite of this._scene.sprites) {
+            if (typeof sprite.id !== "string") continue;
+            const state = this._spriteState.get(sprite.id);
+            if (state === undefined) continue;
+            const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle, sprite.beatInterval);
+            if (cd <= 0) continue;
+            if (state._lastCycleDuration <= 0) continue;
+            if (state._lastCycleDuration === cd) continue;
+            const phase = computeCyclePhaseFromGlobalTime(simTime, cd, [1]);
+            state.cycleCount = phase.cycleCount;
+            state.cycleProgress = phase.cycleProgress;
+            state._lastCycleDuration = cd;
+        }
+    }
+
+    /**
      * Snap a freshly-created per-source runtime state to
      * its grid-aligned cycle position for the score's
      * current sim time. Called from setScene's three
@@ -1073,51 +1278,58 @@ export class Simulation {
         if (cycleDuration <= 0) return;
         const speedList = state.speedList;
         if (speedList.length === 0) return;
-        // Resolve current cycle's speed. Halt on zero;
-        // the curve stops advancing until rewind clears
-        // halted or a cycleSpeeds edit moves the active
-        // entry away from zero. parseCycleSpeeds already
-        // dropped trailing entries after the first zero,
-        // so a zero here is always the user's intended
-        // halt point.
-        let currentSpeed = speedList[state.cycleCount % speedList.length];
+        // Timing-edit snap. When the authored cycleDuration
+        // has changed since the previous step (because BPM,
+        // beatsPerCycle, beatInterval, patternRepeats, or
+        // cycleSpeeds changed), re-derive cycleCount and
+        // cycleProgress from the global simTime via the
+        // closed-form walk through speedList. The closed-form
+        // correctly accounts for per-cycle speed variation —
+        // each cycle's wall-clock duration is D / |speed|, so
+        // accumulating durations through speedList until the
+        // total passes simTime yields the cycle the curve
+        // would currently be in if it had been playing at
+        // the new cycleDuration since simTime = 0. Halts on
+        // zero-speed entries and direction-adjusts t for
+        // negative-speed cycles, both handled inside the
+        // helper. Replaces an earlier accumulator-based snap
+        // that used base cycleDuration where effective
+        // cycleDuration was needed; that older snap
+        // miscomputed phases for any curve with cycleSpeeds
+        // != "1" and caused cross-source desync on every BPM
+        // or per-source timing edit mid-playback.
+        if (state._lastCycleDuration > 0
+            && state._lastCycleDuration !== cycleDuration) {
+            const phase = computeCyclePhaseFromGlobalTime(
+                this._simTime, cycleDuration, speedList,
+            );
+            state.cycleCount = phase.cycleCount;
+            state.cycleProgress = phase.cycleProgress;
+            state.t = phase.t;
+            if (phase.halted) {
+                state.halted = true;
+                state._lastCycleDuration = cycleDuration;
+                return;
+            }
+        }
+        state._lastCycleDuration = cycleDuration;
+        // Resolve current cycle's speed at the (possibly
+        // snapped) cycleCount. Halt on zero; the curve stops
+        // advancing until rewind clears halted or a cycleSpeeds
+        // edit moves the active entry away from zero.
+        // parseCycleSpeeds already dropped trailing entries
+        // after the first zero, so a zero here is always the
+        // user's intended halt point. effectiveDuration is
+        // computed after the snap so a snap-triggered
+        // cycleCount change picks up the new cycle's effective
+        // rate for this step's cycleProgress accumulation.
+        const currentSpeed = speedList[state.cycleCount % speedList.length];
         if (currentSpeed === 0) {
             state.halted = true;
             return;
         }
         const speedMagnitude = Math.abs(currentSpeed);
         const effectiveDuration = cycleDuration / speedMagnitude;
-        // Timing-edit snap. Compared against BASE cycle
-        // duration (excluding the cycleSpeeds factor), so
-        // per-cycle effective-duration variation under
-        // cycleSpeeds doesn't false-trigger the snap on
-        // every wrap. The snap re-anchors cycleCount and
-        // cycleProgress to the score-global grid for the
-        // new base duration, then re-resolves the current
-        // speed since cycleCount may have changed, and
-        // derives t direction-aware from the new speed.
-        // See the JSDoc header for why _simTime is used
-        // rather than _lastElapsed.
-        if (state._lastCycleDuration > 0
-            && state._lastCycleDuration !== cycleDuration) {
-            const simTime = this._simTime;
-            if (Number.isFinite(simTime) && simTime >= 0) {
-                const raw = simTime / cycleDuration;
-                const newCount = Math.floor(raw);
-                state.cycleCount = newCount;
-                state.cycleProgress = raw - newCount;
-                currentSpeed = speedList[newCount % speedList.length];
-                if (currentSpeed === 0) {
-                    state.halted = true;
-                    state._lastCycleDuration = cycleDuration;
-                    return;
-                }
-                state.t = currentSpeed < 0
-                    ? 1 - state.cycleProgress
-                    : state.cycleProgress;
-            }
-        }
-        state._lastCycleDuration = cycleDuration;
         // Magnitude-only progress accumulator. cycleSpeeds
         // direction shows up in the t derivation below,
         // not here; cycleProgress always advances toward 1
@@ -1283,19 +1495,19 @@ export class Simulation {
     _stepTrigger(trigger, state, cycleDuration, dt) {
         if (cycleDuration <= 0) return;
         // Timing-edit snap. Mirrors _stepCurve's snap with
-        // the cursor branch removed since triggers have no
-        // t. See _stepCurve for the full reasoning,
-        // including why _simTime is used rather than
-        // _lastElapsed.
+        // the cursor and direction branches removed since
+        // triggers have no t and no cycleSpeeds; passing [1]
+        // as the speedList reduces the closed-form walk to a
+        // single division. See _stepCurve for the full
+        // reasoning, including why _simTime is used rather
+        // than _lastElapsed.
         if (state._lastCycleDuration > 0
             && state._lastCycleDuration !== cycleDuration) {
-            const simTime = this._simTime;
-            if (Number.isFinite(simTime) && simTime >= 0) {
-                const raw = simTime / cycleDuration;
-                const newCount = Math.floor(raw);
-                state.cycleCount = newCount;
-                state.cycleProgress = raw - newCount;
-            }
+            const phase = computeCyclePhaseFromGlobalTime(
+                this._simTime, cycleDuration, [1],
+            );
+            state.cycleCount = phase.cycleCount;
+            state.cycleProgress = phase.cycleProgress;
         }
         state._lastCycleDuration = cycleDuration;
         state.cycleProgress += dt / cycleDuration;
@@ -1736,26 +1948,24 @@ export class Simulation {
             const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle, sprite.beatInterval);
             if (cd <= 0) continue;
             // Timing-edit snap. Mirrors _stepCurve's snap
-            // with the cursor branch removed since sprites
-            // have no t. Physics state (x/y/vx/vy) is
-            // intentionally left alone here: a timing edit
-            // is about cycle phase, not about position;
-            // resetting physics on every timing change
-            // would be more disruptive than the cursor
-            // jump on curves, and the next regular cycle
-            // wrap snaps physics home anyway under the
-            // per-cycle home-return semantics. See
-            // _stepCurve for the full reasoning, including
-            // why _simTime is used rather than _lastElapsed.
+            // with the cursor and direction branches removed
+            // since sprites have no t and no cycleSpeeds.
+            // Physics state (x/y/vx/vy) is intentionally
+            // left alone here: a timing edit is about cycle
+            // phase, not about position; resetting physics
+            // on every timing change would be more
+            // disruptive than the cursor jump on curves, and
+            // the next regular cycle wrap snaps physics
+            // home anyway under the per-cycle home-return
+            // semantics. Passing [1] as speedList reduces
+            // the closed-form walk to a single division.
             if (state._lastCycleDuration > 0
                 && state._lastCycleDuration !== cd) {
-                const simTime = this._simTime;
-                if (Number.isFinite(simTime) && simTime >= 0) {
-                    const raw = simTime / cd;
-                    const newCount = Math.floor(raw);
-                    state.cycleCount = newCount;
-                    state.cycleProgress = raw - newCount;
-                }
+                const phase = computeCyclePhaseFromGlobalTime(
+                    this._simTime, cd, [1],
+                );
+                state.cycleCount = phase.cycleCount;
+                state.cycleProgress = phase.cycleProgress;
             }
             state._lastCycleDuration = cd;
             state.cycleProgress += dt / cd;

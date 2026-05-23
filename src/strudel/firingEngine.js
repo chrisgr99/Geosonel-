@@ -355,6 +355,38 @@ export class PatternFiringEngine {
         this._lastElapsedSeconds = 0;
 
         /**
+         * Last-seen transport BPM. Compared on each tick to
+         * detect a master-tempo change. Unlike per-source
+         * timing fields (beatsPerCycle, beatInterval,
+         * patternRepeats, cycleSpeeds), BPM lives on the
+         * transport and does not go through _reconcileSource,
+         * so a BPM edit reaches no source's timingDirty flag
+         * and the existing per-source timing-dirty path
+         * leaves stale old-BPM audioTimes in pendingEvents
+         * alongside the new-BPM events the bootstrap is
+         * about to lay down. The late-refresh dispatch then
+         * fires both sets, producing the audible desync
+         * between the visual cursor and the heard notes
+         * (most dramatically on large BPM jumps, e.g. 40 to
+         * 120). When a change is detected at the top of
+         * tick(), every source's pendingEvents and
+         * populatedCycles are cleared so the bootstrap below
+         * re-derives audioTimes against the new cycleDuration.
+         * The companion simulation.forceTimingSnapAll call
+         * (below the detection block) ensures simulation has
+         * snapped to the new grid before the bootstrap reads
+         * cycleState; without it, a no-step tick would let
+         * the bootstrap compute audioTimes against stale
+         * cycleCount and cycleProgress. Initialised to null
+         * so the first tick has nothing to compare against
+         * and does not false-trigger; preserved across pause
+         * so a BPM edit while paused naturally fires the
+         * detection on the first post-resume tick.
+         * @type {number | null}
+         */
+        this._lastBpm = null;
+
+        /**
          * Late-refresh window in seconds. Public property so
          * callers can adjust without recompiling the engine.
          * See DEFAULT_LATE_REFRESH_WINDOW_SECONDS at module
@@ -746,6 +778,49 @@ export class PatternFiringEngine {
 
         const bpm = this._transport.bpm;
         if (bpm === null || !Number.isFinite(bpm) || bpm <= 0) return;
+
+        // BPM-change detection. The transport's master tempo
+        // lives outside _reconcileSource (which only tracks
+        // per-source timing fields), so a BPM edit otherwise
+        // reaches no source's timingDirty flag and stale
+        // events with old-BPM audioTimes remain in
+        // pendingEvents alongside the new-BPM events the
+        // bootstrap below is about to lay down. Clear every
+        // source's pendingEvents and populatedCycles here so
+        // the bootstrap re-derives event audioTimes against
+        // the new cycleDuration. Match the per-source
+        // timingDirty semantics: drop EVERYTHING (current
+        // cycle's events included), since the new
+        // cycleDuration shifts even the in-flight cycle's
+        // intended audioTimes and keeping them would let the
+        // audio drift past the visual cursor. _lastBpm = null
+        // on the first tick after construction skips the
+        // clear so play does not false-trigger.
+        if (this._lastBpm !== null && this._lastBpm !== bpm) {
+            for (const state of this._sources.values()) {
+                state.pendingEvents = [];
+                state.populatedCycles.clear();
+            }
+        }
+        this._lastBpm = bpm;
+
+        // Force simulation's timing-edit snap on every tick.
+        // Idempotent for sources whose cycleDuration hasn't
+        // changed since the last step. Catches two cases
+        // that would otherwise leave the bootstrap below
+        // reading stale cycleCount and cycleProgress: a BPM
+        // edit where simulation's per-step snap hasn't fired
+        // yet (no _step ran because accumulator < SIM_DT),
+        // and per-source timing edits (beatsPerCycle,
+        // beatInterval, patternRepeats, cycleSpeeds) where
+        // the same no-step case applies. Without this, a
+        // single tick of stale cycleState produces bootstrap
+        // audioTimes anchored at the wrong place, and those
+        // stale entries persist in pendingEvents alongside
+        // the eventually-correct ones from the next tick's
+        // snap-tick bootstrap, producing the audible desync
+        // that survives until the next rewind.
+        this._simulation.forceTimingSnapAll();
 
         const lateRefreshHorizon = audioNow + this.lateRefreshWindowSeconds;
         const snapshot = this._captureSnapshot(audioNow);
