@@ -258,7 +258,7 @@ function findReferencePosition(source, candidate) {
  * @property {(dirty: boolean) => void} [onDirtyChange]
  * @property {() => void} [onSaved]
  * @property {() => void} [onRunScene]
- * @property {(objectId: string, expressionBody: string) => void} [onPromotePattern]
+ * @property {(objectIds: string[], expressionBody: string) => void} [onPromotePattern]
  * @property {(objectId: string) => void} [onClearPattern]
  * @property {(objectId: string, blockingLine: number) => void} [onClearPatternBlocked]
  */
@@ -1357,13 +1357,18 @@ export class TabbedEditor {
      * out) and emit one of three callbacks accordingly. Two
      * paths run through here:
      *
-     *   Promote path. Cursor sits inside a live
-     *   LabeledStatement whose label name starts with $ and
-     *   whose body is an ExpressionStatement. Emit
-     *   onPromotePattern with the objectId (label minus the
-     *   leading $) and the expression body text sliced from
-     *   the source so the user's original whitespace and
-     *   formatting carry through.
+     *   Promote path. Cursor sits inside a live labelled
+     *   pattern block. The block may be a single
+     *   $objectId: expression form or a chain of
+     *   dollar-prefixed labels stacked in front of one
+     *   expression statement (section 9). Walk the chain
+     *   inward, collect every dollar-prefixed label, and
+     *   emit onPromotePattern with the full list of
+     *   objectIds plus the expression body text sliced
+     *   from the source so the user's original whitespace
+     *   and formatting carry through. The receiving handler
+     *   applies the same cyclePattern to every named object
+     *   in one applySceneEdit.
      *
      *   Clear path. Cursor sits inside a comment whose text
      *   matches the labelled-block shape — leading non-
@@ -1440,44 +1445,65 @@ export class TabbedEditor {
         if (ast === null || !Array.isArray(ast.body)) return false;
 
         // Collect every live (uncommented) top-level
-        // labelled block. Used by both paths: the promote
-        // path needs the AST node to slice the expression
-        // body; the clear path needs the objectId set to
-        // detect a still-defining-this-id block elsewhere
-        // in the file, plus the line number for the
-        // messages-area note when one is found.
-        /** @type {Array<{objectId: string, node: any, lineNum: number}>} */
+        // labelled pattern block, walking each top-level
+        // LabeledStatement's chain inward and accepting
+        // only chains where every label is dollar-prefixed
+        // and the innermost body is an ExpressionStatement.
+        // Each entry carries the full list of dollar-prefixed
+        // labels along the chain plus the outer node for
+        // cursor-containment checks and the pre-sliced
+        // expressionText. The clear path searches across
+        // all entries' objectIds for a still-defining-this-id
+        // block elsewhere in the file when a commented-out
+        // labelled block is Cmd-Entered.
+        /** @type {Array<{objectIds: string[], node: any, lineNum: number, expressionText: string}>} */
         const liveBlocks = [];
         for (const node of ast.body) {
             if (node.type !== "LabeledStatement") continue;
-            const label = node.label;
-            if (label === null ||
-                label.type !== "Identifier" ||
-                typeof label.name !== "string") continue;
-            if (!label.name.startsWith("$")) continue;
-            const objectId = label.name.slice(1);
+
+            /** @type {string[]} */
+            const objectIds = [];
+            let current = node;
+            let chainValid = true;
+            while (current !== null && current.type === "LabeledStatement") {
+                const lbl = current.label;
+                if (lbl === null ||
+                    lbl.type !== "Identifier" ||
+                    typeof lbl.name !== "string" ||
+                    !lbl.name.startsWith("$")) {
+                    chainValid = false;
+                    break;
+                }
+                objectIds.push(lbl.name.slice(1));
+                current = current.body;
+            }
+            if (!chainValid) continue;
+            if (current === null || current.type !== "ExpressionStatement") continue;
+            const expr = current.expression;
+            if (expr === null) continue;
+
             liveBlocks.push({
-                objectId,
+                objectIds,
                 node,
                 lineNum: this.view.state.doc.lineAt(node.start).number,
+                expressionText: source.slice(expr.start, expr.end),
             });
         }
 
         // Promote path. Cursor inside any live labelled
-        // block whose body is an ExpressionStatement: emit
-        // onPromotePattern with the expression body text.
-        // Acorn's start/end are character offsets into the
-        // source string; the check is inclusive on both
-        // ends so a cursor immediately after the block's
-        // closing punctuation still counts as inside.
+        // block: emit onPromotePattern with the full list
+        // of objectIds along the chain plus the expression
+        // body text. Acorn's start/end are character
+        // offsets into the source string; the check is
+        // inclusive on both ends so a cursor immediately
+        // after the block's closing punctuation still
+        // counts as inside. For a single-label block the
+        // list has one entry; for a chained block all
+        // sharers get promoted in one applySceneEdit on
+        // the receiving side.
         for (const lb of liveBlocks) {
             if (cursorPos < lb.node.start || cursorPos > lb.node.end) continue;
-            const body = lb.node.body;
-            if (body === null || body.type !== "ExpressionStatement") continue;
-            const expr = body.expression;
-            if (expr === null) continue;
-            const expressionText = source.slice(expr.start, expr.end);
-            this.onPromotePattern(lb.objectId, expressionText);
+            this.onPromotePattern(lb.objectIds, lb.expressionText);
             return true;
         }
 
@@ -1497,7 +1523,7 @@ export class TabbedEditor {
             const m = /^\s*\$([a-zA-Z_][a-zA-Z0-9_]*)\s*:/.exec(c.value);
             if (m === null) continue;
             const objectId = m[1];
-            const blocking = liveBlocks.find((lb) => lb.objectId === objectId);
+            const blocking = liveBlocks.find((lb) => lb.objectIds.includes(objectId));
             if (blocking !== undefined) {
                 this.onClearPatternBlocked(objectId, blocking.lineNum);
             } else {

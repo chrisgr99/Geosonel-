@@ -278,18 +278,34 @@ function extractTopLevelFunctionNames(source) {
 /**
  * Walk a behaviours.js AST for top-level labelled statements
  * whose label is dollar-prefixed ($objectId form) and whose
- * body is an expression statement. Each such labelled block
- * is a strudel pattern block per section 28. Return the
- * extracted blocks plus a stripped source where each block's
- * range is replaced with whitespace, preserving the file's
- * line layout so error line numbers from executing the
- * remainder still match the user's original source.
+ * body is an expression statement, directly or via a chain
+ * of further dollar-prefixed labels. Each such labelled
+ * block is a strudel pattern block per section 9.
+ *
+ * A chain like `$CRV1: $CRV5: note("c d e f");` parses as
+ * nested LabeledStatements wrapping one ExpressionStatement.
+ * The walk collects every dollar-prefixed label until it
+ * reaches the inner ExpressionStatement and emits one
+ * labelledBlock entry per collected label, all sharing the
+ * same expressionText and the same source range (the outer
+ * statement's start/end). Downstream consumers operate
+ * per-label without structural change; the only difference
+ * is that several entries now resolve to the same expression
+ * text, which is precisely what the shared block conveys.
+ *
+ * Return the extracted blocks plus a stripped source where
+ * each block's range is replaced with whitespace, preserving
+ * the file's line layout so error line numbers from
+ * executing the remainder still match the user's original
+ * source.
  *
  * Labelled statements whose label does not start with a
  * dollar, and labelled statements whose body is not an
  * expression (a labelled block statement, a labelled var
  * declaration), are left untouched in the stripped source
- * and execute as ordinary JavaScript like anything else.
+ * and execute as ordinary JavaScript like anything else. A
+ * chain that mixes a dollar-prefixed label with a non-dollar
+ * one is treated as ordinary code in the same way.
  *
  * @param {any} ast Acorn AST of the behaviours source.
  * @param {string} source Original behaviours source.
@@ -304,17 +320,42 @@ function splitLabelledStatements(ast, source) {
         if (node.type !== "LabeledStatement") continue;
         const labelName = node.label && node.label.name;
         if (!labelName || labelName[0] !== "$") continue;
-        if (!node.body || node.body.type !== "ExpressionStatement") continue;
 
-        const objectId = labelName.slice(1);
-        const expr = node.body.expression;
+        // Walk the label chain inward, collecting every
+        // dollar-prefixed label until the body is no longer
+        // a LabeledStatement. The chain is valid only if
+        // every label along the way is dollar-prefixed and
+        // the innermost body is an ExpressionStatement. A
+        // non-dollar label anywhere in the chain, or a
+        // non-expression terminus, leaves the entire chain
+        // intact in the stripped source as ordinary code.
+        /** @type {string[]} */
+        const objectIds = [];
+        let current = node;
+        let chainValid = true;
+        while (current && current.type === "LabeledStatement") {
+            const curLabel = current.label && current.label.name;
+            if (!curLabel || curLabel[0] !== "$") {
+                chainValid = false;
+                break;
+            }
+            objectIds.push(curLabel.slice(1));
+            current = current.body;
+        }
+        if (!chainValid) continue;
+        if (!current || current.type !== "ExpressionStatement") continue;
+
+        const expr = current.expression;
         const expressionText = source.slice(expr.start, expr.end);
+        const range = { start: node.start, end: node.end };
 
-        labelledBlocks.push({
-            objectId,
-            expressionText,
-            range: { start: node.start, end: node.end },
-        });
+        for (const objectId of objectIds) {
+            labelledBlocks.push({
+                objectId,
+                expressionText,
+                range,
+            });
+        }
 
         // Replace the block's source range with whitespace,
         // keeping newlines in place so the stripped source

@@ -424,8 +424,8 @@ async function main() {
             // the title-bar transition is the signal.
         },
         onRunScene: () => { runScene(); },
-        onPromotePattern: (objectId, expressionBody) => {
-            void handlePromotePattern(objectId, expressionBody);
+        onPromotePattern: (objectIds, expressionBody) => {
+            void handlePromotePattern(objectIds, expressionBody);
         },
         onClearPattern: (objectId) => {
             void handleClearPattern(objectId);
@@ -2154,14 +2154,24 @@ async function main() {
      * right and one unit down on screen, since canvas Y
      * is up). cyclePattern carries over from the source
      * so the duplicate fires the same pattern from the
-     * moment it appears. The labelled pattern blocks in
-     * behaviors.js are intentionally not duplicated; the
-     * duplicate becomes visible in the Code tab only when
-     * the user clicks Create on the inspector's pattern
-     * row, and at that point scaffoldPatternBlock uses
-     * the duplicate's existing cyclePattern as the
-     * default expression so the scaffolded block matches
-     * what is already playing.
+     * moment it appears.
+     *
+     * When the source has a matching labelled pattern
+     * block in behaviors.js, a parallel block is
+     * appended for the duplicate using the same
+     * expression text and the new id. This means the
+     * duplicate appears in the Code tab immediately and
+     * a canvas double-click on the duplicate navigates
+     * to its own labelled block rather than falling
+     * through to the Properties tab as an apparent
+     * un-authored object. Sources without a labelled
+     * block produce duplicates also without one,
+     * mirroring the source's state. The expression is
+     * copied verbatim from the source's labelled block
+     * (not from the duplicate's cyclePattern field), so
+     * variable references and other indirection in the
+     * source's block are preserved in the duplicate's
+     * block.
      *
      * Newly created duplicates are auto-selected, replacing
      * the source selection. The user can immediately drag
@@ -2169,10 +2179,22 @@ async function main() {
      * properties in the inspector. No-op when the selection
      * is empty.
      *
-     * Undoable via applyCanvasEdit. Behaviors.js is not
-     * touched by the duplicate operation itself, so the
-     * asymmetric-undo issue that would arise from
-     * duplicating labelled blocks does not apply here.
+     * Undo. The undo stack snapshots only scene.json, so
+     * undoing a duplicate reverts the scene-level state
+     * (object array, ids, positions) but leaves the
+     * appended labelled blocks in behaviors.js. The
+     * orphaned blocks reference ids that no longer
+     * resolve and surface in the Code tab with the
+     * orphan-tag red wavy underline, so the user can
+     * see and clean them up if desired.
+     *
+     * Callback function declarations (hasHit_id,
+     * beenHit_id, onTick_id) are not yet duplicated by
+     * this commit; a duplicated object that referenced
+     * a callback by name still references the same
+     * function as the source, so both objects share the
+     * callback's behaviour. Renaming and cloning those
+     * declarations is a separate change.
      */
     const performDuplicate = async () => {
         const sel = canvas.getSelection();
@@ -2189,12 +2211,88 @@ async function main() {
         const oldTriggerLen = currentScene !== null ? currentScene.triggers.length : 0;
         const oldCurveLen = currentScene !== null ? currentScene.curves.length : 0;
 
+        // Capture each selected source's labelled-block
+        // expression text (if any) so we can build matching
+        // labelled blocks for the duplicates after the scene
+        // mutation lands. Done before applyCanvasEdit so the
+        // capture sees the pre-duplicate currentScene; the
+        // post-duplicate run wouldn't differ for the
+        // sources' blocks (they aren't touched), but reading
+        // up front keeps the intent obvious. When a source
+        // has multiple labelled blocks (section 28 allows
+        // variants), only the first is captured; this
+        // matches the loader's first-block-wins resolution
+        // and the navigation candidate order in
+        // candidatesForObject.
+        /** @type {Map<string, string>} */
+        const sourceExpressions = new Map();
+        if (currentScene !== null && Array.isArray(currentScene.labelledBlocks)) {
+            /** @type {Set<string>} */
+            const sourceIds = new Set();
+            for (const i of sel.sprites) {
+                const obj = currentScene.sprites[i];
+                if (obj !== undefined && typeof obj.id === "string") sourceIds.add(obj.id);
+            }
+            for (const i of sel.triggers) {
+                const obj = currentScene.triggers[i];
+                if (obj !== undefined && typeof obj.id === "string") sourceIds.add(obj.id);
+            }
+            for (const i of sel.curves) {
+                const obj = currentScene.curves[i];
+                if (obj !== undefined && typeof obj.id === "string") sourceIds.add(obj.id);
+            }
+            for (const block of currentScene.labelledBlocks) {
+                if (sourceIds.has(block.objectId) &&
+                    !sourceExpressions.has(block.objectId)) {
+                    sourceExpressions.set(block.objectId, block.expressionText);
+                }
+            }
+        }
+
         /** @type {Array<{kind: "sprite" | "trigger" | "curve", oldId: string | null, newId: string}>} */
         let mappings = [];
         await applyCanvasEdit((data) => {
             mappings = duplicateSelection(data, sel, 1, -1);
         });
         if (mappings.length === 0) return;
+
+        // For each duplicate whose source had a labelled
+        // block, append a parallel block to behaviors.js
+        // using the captured source expression text and the
+        // duplicate's new id. scaffoldPatternBlock trims
+        // trailing whitespace and prepends a blank-line
+        // separator on each call, so repeated calls produce
+        // a sequence of cleanly-separated blocks at the end
+        // of the file. After all appends land, refresh the
+        // editor view and re-run the scene so the loader's
+        // labelledBlocks list picks up the new blocks; this
+        // is what flips objectHasCodeSource to true for the
+        // duplicates and makes double-click navigate to the
+        // Code tab. Skipped entirely when no source in the
+        // selection had a labelled block, so the typical
+        // duplicate-a-fresh-object case (no labelled blocks
+        // anywhere yet) doesn't pay for behaviors.js parsing
+        // or an extra runScene.
+        if (sourceExpressions.size > 0) {
+            const behaviorsFile = session.bundle.getFile("behaviors.js");
+            if (behaviorsFile !== null) {
+                let newContent = behaviorsFile.content;
+                let changed = false;
+                for (const m of mappings) {
+                    if (m.oldId === null) continue;
+                    const expression = sourceExpressions.get(m.oldId);
+                    if (expression === undefined) continue;
+                    const result = scaffoldPatternBlock(newContent, m.newId, expression);
+                    newContent = result.newContent;
+                    changed = true;
+                }
+                if (changed) {
+                    session.bundle.updateContent("behaviors.js", newContent);
+                    editor.refreshActiveTabFromBundle();
+                    await runScene();
+                }
+            }
+        }
 
         // Count duplicates per kind from the mappings
         // (rather than from the input selection length) so
@@ -2661,20 +2759,30 @@ async function main() {
     // (the labelled block's tag references an id that no
     // longer exists in scene.json) the handler likewise
     // logs and returns.
-    handlePromotePattern = async (objectId, expressionBody) => {
+    handlePromotePattern = async (objectIds, expressionBody) => {
         const parseResult = parsePatternToPositions(expressionBody);
         const line = formatParseResultForConsole(expressionBody, parseResult);
         messages.write(line, parseResult.ok ? "info" : "error");
         if (!parseResult.ok) return;
 
-        // Look up the object by id in the current scene.json
+        // Look up each objectId in the current scene.json
         // arrays to determine its kind and index, then build
-        // a synthetic single-object selection for
-        // setCyclePatternOnSelection. Parsing scene.json
-        // here is independent of applySceneEdit's own parse
-        // a few lines down; the duplication is cheap (the
-        // file is small) and keeps the not-found case
-        // observable before the edit pipeline runs.
+        // a combined selection for setCyclePatternOnSelection.
+        // Chained labelled blocks share one expression across
+        // multiple objects (section 9), so a Cmd-Enter on a
+        // chain promotes the same expressionBody to every
+        // object whose id is on the chain in one
+        // applySceneEdit. Single-label blocks fold in as a
+        // chain of length one. Ids that don't resolve to any
+        // object in scene.json (e.g. the chain carries an
+        // orphan label whose object was deleted) are logged
+        // as errors but do not abort the operation; the
+        // remaining resolved ids still get the promotion.
+        // Parsing scene.json here is independent of
+        // applySceneEdit's own parse a few lines down; the
+        // duplication is cheap (the file is small) and keeps
+        // the not-found case observable before the edit
+        // pipeline runs.
         const sceneFile = session.bundle.getFile("scene.json");
         if (sceneFile === null) {
             messages.write("No scene.json in this score.", "error");
@@ -2688,35 +2796,41 @@ async function main() {
             );
             return;
         }
-        /** @type {"sprites" | "triggers" | "curves" | null} */
-        let foundKind = null;
-        let foundIndex = -1;
-        for (const kind of /** @type {const} */ (["sprites", "triggers", "curves"])) {
-            const arr = parsed.data[kind];
-            if (!Array.isArray(arr)) continue;
-            for (let i = 0; i < arr.length; i++) {
-                const entry = arr[i];
-                if (entry !== null &&
-                    typeof entry === "object" &&
-                    !Array.isArray(entry) &&
-                    entry.id === objectId) {
-                    foundKind = kind;
-                    foundIndex = i;
-                    break;
-                }
-            }
-            if (foundKind !== null) break;
-        }
-        if (foundKind === null) {
-            messages.write(
-                `Pattern promote: no object with id ${objectId} in scene.json.`,
-                "error",
-            );
-            return;
-        }
+
         /** @type {{sprites: number[], triggers: number[], curves: number[]}} */
         const selection = { sprites: [], triggers: [], curves: [] };
-        selection[foundKind].push(foundIndex);
+        let foundAny = false;
+        for (const objectId of objectIds) {
+            /** @type {"sprites" | "triggers" | "curves" | null} */
+            let foundKind = null;
+            let foundIndex = -1;
+            for (const kind of /** @type {const} */ (["sprites", "triggers", "curves"])) {
+                const arr = parsed.data[kind];
+                if (!Array.isArray(arr)) continue;
+                for (let i = 0; i < arr.length; i++) {
+                    const entry = arr[i];
+                    if (entry !== null &&
+                        typeof entry === "object" &&
+                        !Array.isArray(entry) &&
+                        entry.id === objectId) {
+                        foundKind = kind;
+                        foundIndex = i;
+                        break;
+                    }
+                }
+                if (foundKind !== null) break;
+            }
+            if (foundKind === null) {
+                messages.write(
+                    `Pattern promote: no object with id ${objectId} in scene.json.`,
+                    "error",
+                );
+                continue;
+            }
+            selection[foundKind].push(foundIndex);
+            foundAny = true;
+        }
+        if (!foundAny) return;
 
         await applySceneEdit((data) =>
             setCyclePatternOnSelection(data, selection, expressionBody),
