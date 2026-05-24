@@ -1942,6 +1942,27 @@ body.dragging-canvas-insp-thumb * {
     color: #a8a8a8;
 }
 
+/* Co-label count indicator on the Band 1 Pattern row.
+ * Surfaces a brief "+N" tag after the Pattern button when
+ * the selected object's labelled block is shared with
+ * other objects on the same chain (section 9). N is the
+ * count of other objects sharing the chain. Muted tone
+ * because the indicator is metadata about the button
+ * rather than primary content; small font matches the
+ * inspector's other inline annotations (.insp-units).
+ * The right margin doubles as the spacer that keeps the
+ * indicator from crowding into the Repeats label that
+ * follows on the same row without widening the row when
+ * the indicator is absent (the rule applies only when
+ * the element is rendered, which only happens for shared
+ * chains). */
+.insp-co-label-count {
+    color: #a8a8a8;
+    font-size: 10pt;
+    flex-shrink: 0;
+    margin-right: 8px;
+}
+
 /* Inline single-letter label that sits immediately before a
  * field, used by the Cursor Size row's R/L prefixes. Tighter
  * spacing than a regular label so it reads as belonging to

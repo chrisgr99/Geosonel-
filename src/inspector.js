@@ -36,15 +36,19 @@
  * cycle duration field is universal across kinds but
  * greys for trigger-only selections since triggers
  * cannot self-fire under the cursor-as-collider model.
- * Row 3 is the pattern row: a static "Pattern for
- * This Object" label plus one button whose text
- * incorporates the labelled-block tag the button
- * targets. With a single object selected the button
- * reads "Create $id" when no labelled block for the
- * selected object exists in behaviors.js, or "Go to
- * $id" when one does. Multi-select and empty
- * selections grey the row and shorten the button text
- * to just "Create" with no identifier.
+ * Row 3 is the pattern row: a static "Pattern" label
+ * plus one button whose text incorporates the labelled-
+ * block tag the button targets. With a single object
+ * selected the button reads "Create $id" when no
+ * labelled block for the selected object exists in
+ * behaviors.js, or "Go to $id" when one does. When the
+ * selected object's labelled block is part of a chain
+ * shared with other objects (section 9), a small "+N"
+ * indicator follows the button showing the count of
+ * co-labels (other objects sharing the same block).
+ * Multi-select and empty selections grey the row and
+ * shorten the button text to just "Create" with no
+ * identifier.
  * The user-typed Name field that earlier inspector
  * versions exposed has been dropped; the schema field
  * stays in place for future re-surfacing.
@@ -468,24 +472,33 @@ export class Inspector {
      * fire under the cursor-as-collider model and their
      * cycle counter is internal-only.
      *
-     * Row 3 is the pattern row: a static "Pattern for
-     * This Object" label plus one button whose text
-     * incorporates the labelled-block tag the button
-     * targets. With a single object selected the button
-     * reads "Create $id" when no labelled block for the
-     * selected object exists in behaviors.js, or "Go to
-     * $id" when one does. Multi-select and empty
-     * selections grey the row and shorten the button
-     * text to just "Create" with no identifier.
-     * Existence check is strictly labelled-block-based:
-     * scene.labelledBlocks is scanned for an entry
-     * whose objectId matches the selected object's id.
-     * The button routes through two edit kinds:
-     * createPatternBlock when no block exists (scaffolds
-     * $id: sound("") at the end of behaviors.js via
-     * scaffoldPatternBlock) and goToObjectInCode when
-     * one does (scrolls the Code tab to the block's
-     * declaration line).
+     * Row 3 is the pattern row: a static "Pattern"
+     * label plus one button whose text incorporates
+     * the labelled-block tag the button targets. With
+     * a single object selected the button reads
+     * "Create $id" when no labelled block for the
+     * selected object exists in behaviors.js, or "Go
+     * to $id" when one does. When the selected
+     * object's labelled block is part of a chain
+     * shared with other objects (section 9), a small
+     * "+N" indicator follows the button showing the
+     * count of co-labels (other objects sharing the
+     * same block). Multi-select and empty selections
+     * grey the row and shorten the button text to
+     * just "Create" with no identifier. Existence
+     * check and co-label count are strictly
+     * labelled-block-based: scene.labelledBlocks is
+     * scanned for an entry whose objectId matches the
+     * selected object's id, then for sibling entries
+     * that share the same source range (the loader
+     * emits one entry per label in a chain, all
+     * sharing the chain's range). The button routes
+     * through two edit kinds: createPatternBlock when
+     * no block exists (scaffolds $id: sound("") at
+     * the end of behaviors.js via
+     * scaffoldPatternBlock) and goToObjectInCode
+     * when one does (scrolls the Code tab to the
+     * block's declaration line).
      *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
@@ -650,27 +663,36 @@ export class Inspector {
 
         // Row 3: pattern row. Active only for single-
         // object selections; multi-select and empty
-        // selections grey the row. Existence check is
-        // strictly labelled-block-based.
+        // selections grey the row. Existence check and
+        // co-label count are strictly labelled-block-
+        // based. The loader emits one labelledBlocks
+        // entry per label in a chain, all sharing the
+        // same source range; the count of OTHER entries
+        // with the matching range is the +N indicator.
         const patternRowActive = ctx.isSingle && objs.all.length === 1;
         const patternObj = patternRowActive ? objs.all[0] : null;
         let labelledBlockExists = false;
+        let coLabelCount = 0;
         if (patternObj !== null && this._scene !== null) {
             const blocks = this._scene.labelledBlocks;
-            labelledBlockExists = Array.isArray(blocks)
-                && blocks.some((b) => b.objectId === patternObj.id);
+            if (Array.isArray(blocks)) {
+                const myBlock = blocks.find((b) => b.objectId === patternObj.id);
+                if (myBlock !== undefined) {
+                    labelledBlockExists = true;
+                    for (const b of blocks) {
+                        if (b.objectId !== patternObj.id &&
+                            b.range.start === myBlock.range.start &&
+                            b.range.end === myBlock.range.end) {
+                            coLabelCount++;
+                        }
+                    }
+                }
+            }
         }
 
         const r3 = mkRow();
-        // The left label uses an inline width wider
-        // than W.leftLabel (78px) since "Pattern for
-        // This Object" doesn't fit at that width. Not
-        // promoted to a W constant since this row is
-        // the only use; the longer label pushes the
-        // button right but the row stays visually
-        // balanced with the rows above.
-        r3.appendChild(mkLabel("Pattern for This Object", {
-            width: 160,
+        r3.appendChild(mkLabel("Pattern", {
+            width: W.leftLabel,
             disabled: !patternRowActive,
         }));
 
@@ -707,6 +729,22 @@ export class Inspector {
             });
         }
         r3.appendChild(patternButton);
+
+        // +N co-label indicator. Rendered only when the
+        // selected object's labelled block has at least
+        // one co-label (another object sharing the same
+        // chain). The right margin doubles as the
+        // spacer that keeps the indicator from
+        // crowding into the Repeats label below; when
+        // there's no indicator the row's normal flex
+        // gap is the only spacing between button and
+        // Repeats label.
+        if (labelledBlockExists && coLabelCount > 0) {
+            const coLabel = document.createElement("span");
+            coLabel.className = "insp-co-label-count";
+            coLabel.textContent = "+" + coLabelCount;
+            r3.appendChild(coLabel);
+        }
 
         // Repeats field. Curve-only: only curves have a
         // visible cursor sweeping along a path where "how
