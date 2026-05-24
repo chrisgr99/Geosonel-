@@ -19,8 +19,8 @@
 
 // @ts-check
 
-import { EditorView, keymap, lineNumbers, drawSelection } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
-import { EditorState, Compartment } from "https://esm.sh/@codemirror/state@6.5.2";
+import { EditorView, keymap, lineNumbers, drawSelection, ViewPlugin, Decoration, WidgetType } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
+import { EditorState, Compartment, RangeSetBuilder } from "https://esm.sh/@codemirror/state@6.5.2";
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo as cmUndo, redo as cmRedo } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
 import { indentOnInput, indentUnit, bracketMatching } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
 import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6?deps=@codemirror/state@6.5.2";
@@ -152,6 +152,219 @@ function jsonErrorPosition(message, source) {
     }
     return 0;
 }
+
+/**
+ * Soft-wrap hanging-indent extension.
+ *
+ * When EditorView.lineWrapping is on, long lines flow to a
+ * second visual row at column 0 by default. For code that
+ * uses indentation to convey structure (nested function
+ * bodies, dot-method chains inside callbacks), the column-
+ * zero continuation reads as if the wrapped portion is at
+ * top-level scope. The hanging-indent variant aligns each
+ * continuation visual row with the first non-whitespace
+ * character of the original line, so the wrap reads as a
+ * continuation at the same indent level as the source.
+ *
+ * Implementation: per visible logical line, count leading
+ * whitespace characters and emit a Decoration.line whose
+ * inline style sets padding-left to that many ch units and
+ * text-indent to the negative of the same. padding-left
+ * applies to every visual row of the line; text-indent
+ * shifts the FIRST row back by the same amount so the
+ * original leading whitespace renders in place. Net effect:
+ * first row sits at its natural column, continuation rows
+ * sit at the first-non-whitespace column.
+ *
+ * Tabs count as one character each. The codebase uses
+ * 4-space indent via indentUnit so tabs are uncommon; if
+ * they appear the column estimate may differ from rendered
+ * width but the wrap will still align reasonably with the
+ * line's start.
+ */
+const hangingIndentPlugin = ViewPlugin.fromClass(class {
+    constructor(view) {
+        this.decorations = this._compute(view);
+    }
+
+    update(update) {
+        if (update.docChanged || update.viewportChanged) {
+            this.decorations = this._compute(update.view);
+        }
+    }
+
+    _compute(view) {
+        const builder = new RangeSetBuilder();
+        for (const { from, to } of view.visibleRanges) {
+            let pos = from;
+            while (pos <= to) {
+                const line = view.state.doc.lineAt(pos);
+                const m = line.text.match(/^[ \t]*/);
+                const leading = m !== null ? m[0].length : 0;
+                if (leading > 0) {
+                    builder.add(line.from, line.from, Decoration.line({
+                        attributes: {
+                            style: `padding-left: ${leading}ch; text-indent: -${leading}ch;`,
+                        },
+                    }));
+                }
+                pos = line.to + 1;
+            }
+        }
+        return builder.finish();
+    }
+}, {
+    decorations: v => v.decorations,
+});
+
+/**
+ * Token-boundary soft-wrap break opportunities.
+ *
+ * EditorView.lineWrapping uses overflow-wrap: anywhere as its
+ * fallback when no other soft-break point fits. That means a
+ * long mixed token like `circleRadius*sin(angle)` (one CSS
+ * "word" since it has no spaces) gets broken at the column
+ * boundary, splitting the identifier or operator mid-token.
+ * For code, the wrap reads better when it lands at the
+ * boundary between tokens (between an identifier and an
+ * operator, between an operator and a paren, between a
+ * paren and a string delimiter) rather than mid-identifier.
+ *
+ * This plugin injects an invisible <wbr> widget at every
+ * transition between identifier characters ([A-Za-z0-9_$])
+ * and non-identifier characters across the visible source.
+ * <wbr> is the HTML "word break opportunity" element:
+ * invisible, no content, just a hint to the layout engine
+ * that breaking here is acceptable. The browser prefers
+ * these over overflow-wrap: anywhere, so wraps land at
+ * token boundaries when one fits. Very long single
+ * identifiers that exceed the editor width still fall back
+ * to mid-token breaks; that fallback stays active and
+ * covers the edge case where no boundary fits.
+ *
+ * Whitespace runs inside the source are already soft-break
+ * opportunities under default CSS, so no widget is needed
+ * for them — the transitions adjacent to whitespace pick
+ * up break points naturally.
+ *
+ * Char-code comparisons rather than a regex for the
+ * per-character test; the test runs once per visible source
+ * char on every viewport update, and the comparison form
+ * avoids regex engine overhead in the inner loop.
+ */
+class WbrWidget extends WidgetType {
+    eq() { return true; }
+    toDOM() { return document.createElement("wbr"); }
+    ignoreEvent() { return true; }
+}
+
+const wbrDecoration = Decoration.widget({
+    widget: new WbrWidget(),
+    side: 0,
+});
+
+const tokenBreakPlugin = ViewPlugin.fromClass(class {
+    constructor(view) {
+        this.decorations = this._compute(view);
+    }
+
+    update(update) {
+        if (update.docChanged || update.viewportChanged) {
+            this.decorations = this._compute(update.view);
+        }
+    }
+
+    _compute(view) {
+        const builder = new RangeSetBuilder();
+        for (const { from, to } of view.visibleRanges) {
+            const text = view.state.doc.sliceString(from, to);
+            let prevWord = false;
+            let primed = false;
+            for (let i = 0; i < text.length; i++) {
+                const code = text.charCodeAt(i);
+                const isWord =
+                    (code >= 48 && code <= 57) ||   // 0-9
+                    (code >= 65 && code <= 90) ||   // A-Z
+                    (code >= 97 && code <= 122) ||  // a-z
+                    code === 95 ||                  // _
+                    code === 36;                    // $
+                if (primed && isWord !== prevWord) {
+                    builder.add(from + i, from + i, wbrDecoration);
+                }
+                prevWord = isWord;
+                primed = true;
+            }
+        }
+        return builder.finish();
+    }
+}, {
+    decorations: v => v.decorations,
+});
+
+/**
+ * Wrap-related theme rules.
+ *
+ * Loaded into the wrap compartment alongside lineWrapping,
+ * hangingIndentPlugin, and tokenBreakPlugin so the whole
+ * wrap behaviour toggles as one extension when the Soft-
+ * Wrap Long Lines preference changes. Splitting these out
+ * of the static theme keeps the always-on theme block free
+ * of rules that would create visible artifacts (trailing
+ * padding column, wrap marker mask) when wrapping is off.
+ *
+ * .cm-content uses pre-wrap rather than CodeMirror's
+ * break-spaces default, so trailing whitespace at a wrap
+ * point doesn't render and the last token sits flush
+ * against the right edge.
+ *
+ * .cm-line carries a two-layer background-image for the
+ * wrap marker. The first layer is a single-colour linear-
+ * gradient acting as an opaque mask at the bottom-right
+ * corner; the second is an inline SVG of ↵ (U+21B5)
+ * repeating vertically at the right edge. The marker
+ * tiles once per line-height of element height, so on a
+ * wrapped logical line the marker appears at every visual
+ * row's right edge; the bottom-right mask covers the last
+ * line-height worth, hiding the marker on the final visual
+ * row (which doesn't wrap). On a non-wrapping logical line
+ * the mask covers the whole right edge and the marker is
+ * hidden entirely. The mask colour matches the editor
+ * surface (#141414 from main.css's #editor-area .cm-editor
+ * rule); on the active line the colour switches via the
+ * CSS variable to oneDark's active-line background so the
+ * mask stays invisible there too. Marker colour is the
+ * comment colour from cmTheme.js so it reads at the same
+ * brightness as documentation text.
+ *
+ * padding-right reserves a column matching the marker
+ * width inside .cm-line so text wraps before reaching the
+ * marker rather than running underneath it. The marker
+ * width is held in a CSS variable so the padding, the
+ * background tile width, and the mask tile width stay in
+ * lockstep — change the variable to resize and the text
+ * reflows to leave the matching amount of space.
+ */
+const wrapTheme = EditorView.theme({
+    ".cm-content": {
+        whiteSpace: "pre-wrap",
+    },
+    ".cm-line": {
+        "--gxw-wrap-mask-bg": "#141414",
+        "--gxw-wrap-marker-width": "1.5ch",
+        paddingRight: "var(--gxw-wrap-marker-width)",
+        backgroundImage:
+            "linear-gradient(var(--gxw-wrap-mask-bg), var(--gxw-wrap-mask-bg)), " +
+            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 20'><text x='7' y='16' text-anchor='middle' font-family='monospace' font-size='18' font-weight='bold' fill='%23c8c0b0'>%E2%86%B5</text></svg>\")",
+        backgroundRepeat: "no-repeat, repeat-y",
+        backgroundPosition: "right bottom, right top",
+        backgroundSize:
+            "var(--gxw-wrap-marker-width) 1lh, " +
+            "var(--gxw-wrap-marker-width) 1lh",
+    },
+    ".cm-line.cm-activeLine": {
+        "--gxw-wrap-mask-bg": "#2c313a",
+    },
+});
 
 /**
  * Tab label overrides. Files with a friendly name listed here
@@ -329,12 +542,27 @@ export class TabbedEditor {
          */
         this._strudelCompartment = new Compartment();
 
+        /**
+         * Compartment holding the line-wrap related
+         * extensions: EditorView.lineWrapping, the hanging-
+         * indent plugin, the token-break plugin, and the
+         * wrap-only theme rules (padding column, ↵ marker,
+         * pre-wrap whitespace). All four toggle together
+         * when the Soft-Wrap Long Lines preference changes,
+         * so a flip in the Settings dialog reflows the
+         * editor between wrap and no-wrap modes cleanly
+         * without artifacts in either direction.
+         * @type {Compartment}
+         */
+        this._wrapCompartment = new Compartment();
+
         this._mountEditor();
         this._mountInspector();
         this._mountCanvasInspector();
         this._renderTabs();
         this._subscribeBundleDirty();
         this._subscribeStrudelPreferences();
+        this._subscribeWrapPreference();
 
         // The form-based Properties inspector is the default
         // landing tab — for most editing the form is what the
@@ -448,6 +676,57 @@ export class TabbedEditor {
         const onChange = () => this._reconfigureStrudelCompartment();
         subscribePreference("enableStrudelAutocomplete", onChange);
         subscribePreference("enableStrudelTooltips", onChange);
+    }
+
+    /**
+     * Compute the wrap-compartment extension list from the
+     * user's Soft-Wrap Long Lines preference. When on, the
+     * compartment holds EditorView.lineWrapping, the
+     * hanging-indent plugin, the token-break plugin, and
+     * wrapTheme (the wrap-only CSS rules). When off, the
+     * list is empty so text doesn't wrap and the marker
+     * plus padding column don't render. Read from the same
+     * compartment under the constructor (initial mount) and
+     * the preference subscriber (live toggle) so both paths
+     * derive the same answer from current state.
+     * @returns {any[]}
+     */
+    _wrapExtensions() {
+        if (!getPreference("enableLineWrapping")) return [];
+        return [
+            EditorView.lineWrapping,
+            hangingIndentPlugin,
+            tokenBreakPlugin,
+            wrapTheme,
+        ];
+    }
+
+    /**
+     * Dispatch a wrap-compartment reconfigure based on the
+     * current preference state. Called by the preference
+     * subscriber so a flip of the Soft-Wrap Long Lines
+     * control in the Settings dialog reflows the editor
+     * immediately.
+     */
+    _reconfigureWrapCompartment() {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: this._wrapCompartment.reconfigure(this._wrapExtensions()),
+        });
+    }
+
+    /**
+     * Subscribe to the Soft-Wrap Long Lines preference so a
+     * flip of the control in the Settings dialog
+     * immediately reconfigures the editor's wrap
+     * compartment. Called once at construction; no
+     * unsubscribe is wired because the editor lives for
+     * the duration of the app session.
+     */
+    _subscribeWrapPreference() {
+        subscribePreference("enableLineWrapping", () => {
+            this._reconfigureWrapCompartment();
+        });
     }
 
     // --- Bundle lifecycle ---
@@ -832,6 +1111,7 @@ export class TabbedEditor {
                 lineNumbers(),
                 history(),
                 drawSelection(),
+                this._wrapCompartment.of(this._wrapExtensions()),
                 indentOnInput(),
                 indentUnit.of("    "),
                 bracketMatching(),

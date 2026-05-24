@@ -109,6 +109,15 @@ export const PREFERENCES = [
         category: "Code Editor",
     },
     {
+        key: "enableLineWrapping",
+        label: "Soft-Wrap Long Lines",
+        description:
+            "When on, lines longer than the editor pane wrap onto multiple visual rows. Wraps land at token boundaries (between identifiers, operators, parens) rather than mid-identifier, and continuation rows are indented to match the start of the original line. A \u21b5 marker appears at each wrap point. When off, long lines extend horizontally with a scroll bar.",
+        type: "boolean",
+        default: true,
+        category: "Code Editor",
+    },
+    {
         key: "imageDimBypass",
         label: "Brightness Reduction: Bypass",
         description: "",
