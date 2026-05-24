@@ -146,6 +146,7 @@ import {
     scaffoldCallbackSlotFunction,
     scaffoldPatternBlock,
     addLabelToBlock,
+    removeLabelFromBlock,
     setCanvasW,
     setCanvasH,
     setSceneBpm,
@@ -2345,6 +2346,120 @@ async function main() {
         });
     };
 
+    /**
+     * Delete every currently selected canvas object. Each
+     * object is removed from scene.json's sprites,
+     * triggers, or curves array, and the canvas's
+     * selection is cleared before the mutation so stale
+     * indexes don't outlive the array renumbering.
+     *
+     * When a deleted object has a labelled pattern block
+     * in behaviors.js, its label is trimmed from the
+     * chain via removeLabelFromBlock. A chain with more
+     * than one label keeps the remaining labels in the
+     * stacked convention (one per line above the line
+     * carrying the innermost label and the expression).
+     * A chain whose only label was the deleted object's
+     * has the whole block removed, along with one blank-
+     * line separator so adjacent blocks don't end up
+     * with doubled gaps. Sources without a labelled
+     * block leave behaviors.js untouched.
+     *
+     * Multiple deletions in one gesture are processed
+     * sequentially: each removeLabelFromBlock call
+     * re-parses behaviors.js so positions stay fresh as
+     * earlier removals shift offsets. When several
+     * deleted objects share one chain, each call trims
+     * one more label; the final chain reflects all the
+     * removals.
+     *
+     * Undo. The scene.json mutation goes through
+     * applyCanvasEdit so it lands on the undo stack;
+     * Cmd-Z restores the deleted objects. The
+     * behaviors.js trim is not on the undo stack (no
+     * undo coverage for code-tab edits at this
+     * milestone), so undoing a delete that touched
+     * labelled blocks restores the scene-level objects
+     * but leaves the chains in their trimmed state.
+     * The just-restored objects whose labels were
+     * trimmed become orphans from the chain's
+     * perspective — the chain no longer mentions them.
+     * The user can re-run Cmd-Enter on the chain to
+     * re-author or hand-edit behaviors.js to restore
+     * the labels.
+     */
+    const performDeleteSelection = async () => {
+        const sel = canvas.getSelection();
+        const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
+        if (total === 0) return;
+
+        // Capture the set of selected source ids whose
+        // labelled blocks exist in behaviors.js, before
+        // the scene mutation lands. Same shape as the
+        // capture in performDuplicate.
+        /** @type {Set<string>} */
+        const idsWithBlocks = new Set();
+        if (currentScene !== null && Array.isArray(currentScene.labelledBlocks)) {
+            /** @type {Set<string>} */
+            const selectedIds = new Set();
+            for (const i of sel.sprites) {
+                const obj = currentScene.sprites[i];
+                if (obj !== undefined && typeof obj.id === "string") selectedIds.add(obj.id);
+            }
+            for (const i of sel.triggers) {
+                const obj = currentScene.triggers[i];
+                if (obj !== undefined && typeof obj.id === "string") selectedIds.add(obj.id);
+            }
+            for (const i of sel.curves) {
+                const obj = currentScene.curves[i];
+                if (obj !== undefined && typeof obj.id === "string") selectedIds.add(obj.id);
+            }
+            for (const block of currentScene.labelledBlocks) {
+                if (selectedIds.has(block.objectId)) {
+                    idsWithBlocks.add(block.objectId);
+                }
+            }
+        }
+
+        // Clear the canvas's selection up front — the
+        // indexes are about to refer to objects that no
+        // longer exist, and removeObjects renumbers the
+        // remaining entries so any stale index would
+        // point at the wrong thing.
+        canvas.setSelection({ sprites: [], triggers: [], curves: [] });
+        await applyCanvasEdit((data) => removeObjects(data, sel));
+
+        // For each deleted object whose source had a
+        // labelled block, trim its label from the chain
+        // in behaviors.js via removeLabelFromBlock. Each
+        // call re-parses so positions stay fresh as
+        // earlier removals shift offsets. After all
+        // trims land, refresh the editor view and
+        // re-run the scene so the loader's
+        // labelledBlocks list picks up the trimmed
+        // state. Skipped entirely when no deleted
+        // object had a labelled block.
+        if (idsWithBlocks.size > 0) {
+            const behaviorsFile = session.bundle.getFile("behaviors.js");
+            if (behaviorsFile !== null) {
+                let newContent = behaviorsFile.content;
+                let changed = false;
+                for (const id of idsWithBlocks) {
+                    const result = removeLabelFromBlock(newContent, id);
+                    if (result.removed) {
+                        newContent = result.newContent;
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    session.bundle.updateContent("behaviors.js", newContent);
+                    editor.refreshActiveTabFromBundle();
+                    await runScene();
+                }
+            }
+        }
+    };
+
     canvas.setEditCallback(async (edit) => {
         if (edit.kind === "addSprite") {
             await applyCanvasEdit((data) => addSpriteAt(data, edit.x, edit.y));
@@ -3055,12 +3170,7 @@ async function main() {
         const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
         if (total === 0) return;
         e.preventDefault();
-        // Clear the canvas's selection up front — the indexes
-        // are about to refer to objects that no longer exist,
-        // and removeObjects renumbers the remaining entries
-        // so any stale index would point at the wrong thing.
-        canvas.setSelection({ sprites: [], triggers: [], curves: [] });
-        void applyCanvasEdit((data) => removeObjects(data, sel));
+        void performDeleteSelection();
     });
 
     // --- Menus ---

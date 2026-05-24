@@ -1760,6 +1760,158 @@ export function addLabelToBlock(content, sourceId, newId) {
 }
 
 /**
+ * Remove a label from a labelled pattern block whose chain
+ * contains the given object id. When the chain has more
+ * than one label, the target label is dropped and the chain
+ * is rebuilt in the stacked convention (one label per line
+ * above a final line that carries the innermost label and
+ * the expression). When the chain has only this one label,
+ * the entire block is removed from behaviors.js, along with
+ * one blank-line separator so adjacent blocks don't end up
+ * with doubled gaps between them.
+ *
+ * Used by the delete path in main.js: for each deleted
+ * object whose source has a labelled block, the object's
+ * label is trimmed from its chain via this helper. Deleted
+ * objects without a labelled block skip the trim entirely;
+ * behaviors.js is left untouched. Symmetric counterpart to
+ * addLabelToBlock on the duplicate path.
+ *
+ * Chain detection mirrors the loader's
+ * splitLabelledStatements and the editor's
+ * _tryPromoteLabelledBlock: walk top-level
+ * LabeledStatements, then descend through nested
+ * LabeledStatement bodies as long as every label is
+ * dollar-prefixed, until reaching the inner
+ * ExpressionStatement. A chain is valid only when every
+ * label along the way is dollar-prefixed and the innermost
+ * body is an ExpressionStatement.
+ *
+ * Rebuild format. The remaining labels are emitted in the
+ * stacked convention used by addLabelToBlock: each label
+ * (except the innermost) on its own line, and the innermost
+ * label on the same line as the expression. The indent
+ * matches the leading whitespace of the original chain so
+ * an indented block stays aligned. Chains that arrived
+ * here in inline form (multiple labels on one line, an
+ * older convention or a hand-typed layout) are normalised
+ * to the stacked form by this rebuild — the helper's only
+ * way of writing labels is the stacked form, so any chain
+ * touched by a delete comes out stacked.
+ *
+ * Returns { newContent, removed }. When no top-level chain
+ * contains the object id, removed is false and newContent
+ * equals the input. Parse failures in behaviors.js are also
+ * treated as a no-op (removed is false, content unchanged),
+ * so a broken file doesn't cascade into a destructive edit.
+ *
+ * @param {string} content  Current behaviors.js source.
+ * @param {string} objectId  Identifier of the object whose
+ *   label to trim from its chain.
+ * @returns {{ newContent: string, removed: boolean }}
+ */
+export function removeLabelFromBlock(content, objectId) {
+    /** @type {any} */
+    let ast;
+    try {
+        ast = acorn.parse(content, {
+            ecmaVersion: 2022,
+            sourceType: "script",
+            allowReturnOutsideFunction: true,
+        });
+    } catch (err) {
+        return { newContent: content, removed: false };
+    }
+    if (ast === null ||
+        typeof ast !== "object" ||
+        !Array.isArray(ast.body)) {
+        return { newContent: content, removed: false };
+    }
+    for (const node of ast.body) {
+        if (node.type !== "LabeledStatement") continue;
+        /** @type {string[]} */
+        const objectIds = [];
+        /** @type {any} */
+        let current = node;
+        let chainValid = true;
+        while (current && current.type === "LabeledStatement") {
+            const curLabel = current.label && current.label.name;
+            if (!curLabel || curLabel[0] !== "$") {
+                chainValid = false;
+                break;
+            }
+            objectIds.push(curLabel.slice(1));
+            current = current.body;
+        }
+        if (!chainValid) continue;
+        if (!current || current.type !== "ExpressionStatement") continue;
+        if (!objectIds.includes(objectId)) continue;
+
+        // Compute the line-start of the outer block and
+        // the indent (leading whitespace of that line).
+        const outerStart = node.start;
+        const outerEnd = node.end;
+        let lineStart = outerStart;
+        while (lineStart > 0 && content.charCodeAt(lineStart - 1) !== 10) {
+            lineStart--;
+        }
+        const beforeNode = content.slice(lineStart, outerStart);
+        const indent = /^\s*$/.test(beforeNode) ? beforeNode : "";
+        // Extend the removal end past the block's
+        // terminator newline (if present) so removing
+        // the block doesn't leave a blank line behind.
+        let removalEnd = outerEnd;
+        const hadTerminator =
+            removalEnd < content.length &&
+            content.charCodeAt(removalEnd) === 10;
+        if (hadTerminator) removalEnd++;
+
+        // Filter the labels. Drop every instance of the
+        // target id (an id should appear at most once,
+        // but the filter is defensive against a
+        // malformed chain).
+        const remaining = objectIds.filter((id) => id !== objectId);
+
+        if (remaining.length === 0) {
+            // No labels left — remove the whole block.
+            // Collapse one blank-line separator if the
+            // removal would otherwise leave doubled
+            // blank lines.
+            let dropStart = lineStart;
+            let dropEnd = removalEnd;
+            if (dropStart > 0 &&
+                content.charCodeAt(dropStart - 1) === 10 &&
+                dropEnd < content.length &&
+                content.charCodeAt(dropEnd) === 10) {
+                dropEnd++;
+            }
+            const newContent = content.slice(0, dropStart) + content.slice(dropEnd);
+            return { newContent, removed: true };
+        }
+
+        // Rebuild the chain with remaining labels in
+        // the stacked convention. Every label except
+        // the innermost lives on its own line; the
+        // innermost sits on the same line as the
+        // expression.
+        const expressionText = content.slice(current.start, current.end);
+        const lines = [];
+        for (let i = 0; i < remaining.length; i++) {
+            const label = remaining[i];
+            if (i < remaining.length - 1) {
+                lines.push(indent + "$" + label + ":");
+            } else {
+                lines.push(indent + "$" + label + ": " + expressionText);
+            }
+        }
+        const rebuilt = lines.join("\n") + (hadTerminator ? "\n" : "");
+        const newContent = content.slice(0, lineStart) + rebuilt + content.slice(removalEnd);
+        return { newContent, removed: true };
+    }
+    return { newContent: content, removed: false };
+}
+
+/**
  * Escape a string for safe inclusion in a RegExp source.
  * Used by scaffoldCallbackSlotFunction's existence check;
  * function names that pass the inspector's identifier
