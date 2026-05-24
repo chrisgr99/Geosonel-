@@ -309,6 +309,106 @@ const IMAGE_SIGNALS = [
 ];
 
 /**
+ * Clamp-then-linear-remap transform. Given a source signal
+ * Pattern emitting a numeric value per hap, mapClip returns
+ * a new Pattern whose value is the source clipped to
+ * [inLo, inHi] and then linearly remapped to [outLo, outHi].
+ * Values at or below inLo produce outLo; at or above inHi
+ * produce outHi; in between, scale linearly.
+ *
+ * Composes with any Pattern emitting numeric hap values:
+ * the px image-colour signals above, strudel's builtin
+ * sine / saw / perlin, or any future GXW transform helper.
+ * The typical use is to stretch the sub-range where an
+ * image's tonality actually lives onto a musically useful
+ * output range, with the clip ends preventing an unexpectedly
+ * bright or dark pixel from blowing past the intended range.
+ * For example:
+ *
+ *   note(mapClip(pxLt, 0.6, 0.8, 60, 72).struct("1 1 1 1"))
+ *
+ * fires four notes per cycle whose MIDI value is pxLt's
+ * lightness sampled at firing time, remapped from the 0.6 -
+ * 0.8 input band onto 60 - 72 (C4 to C5), clipping outside
+ * the band. The `.struct(...)` call is strudel's idiom for
+ * overlaying a rhythmic structure onto a continuous signal
+ * Pattern — the mini-notation string sets when events fire,
+ * the signal provides each event's value. Replace "1 1 1 1"
+ * with any strudel rhythm pattern (e.g. `"1 ~ 1 1"` for a
+ * rest on beat two, `"1 1*2 1 1"` for a doubled second beat)
+ * to vary the rhythm independently of the pitch mapping.
+ *
+ * Implementation. Built as a strudel signal(fn) Pattern whose
+ * fn re-queries the source Pattern at the requested time and
+ * applies the clip-and-remap math in plain JS. The re-query
+ * path rather than a Pattern-method chain (.fmap / .sub /
+ * .mul / .range) keeps mapClip independent of which transform
+ * operators the loaded strudel build happens to expose. The
+ * downstream cost is that the new Pattern carries minimal
+ * structure (one hap per query, value computed on the fly),
+ * which is the right shape for the GXW signals it most
+ * commonly wraps — those signals are themselves structure-
+ * light signal(fn) patterns.
+ *
+ * Edge cases. inLo equal to inHi (degenerate input range)
+ * returns the midpoint of outLo and outHi instead of dividing
+ * by zero. A source queryArc that throws, returns no haps, or
+ * emits a non-numeric value falls back to a sampled input of
+ * 0, which after clipping and remapping produces outLo —
+ * matching the no-data behaviour of the px signals themselves.
+ *
+ * @param {any} sig    Source strudel Pattern (numeric-valued).
+ * @param {number} inLo
+ * @param {number} inHi
+ * @param {number} outLo
+ * @param {number} outHi
+ * @returns {any}  A new strudel Pattern.
+ */
+function mapClip(sig, inLo, inHi, outLo, outHi) {
+    /** @type {any} */
+    const win = window;
+    /** @type {any} */
+    const signalFn = win.signal;
+    if (typeof signalFn !== "function") {
+        console.warn(
+            "[signals] mapClip called before strudel runtime is ready; " +
+            "returning source pattern unchanged.",
+        );
+        return sig;
+    }
+    const inSpan = inHi - inLo;
+    return signalFn((/** @type {number} */ t) => {
+        // Re-query the source pattern around time t to get its
+        // current value. epsilon is small enough not to span
+        // multiple cycles for any reasonable signal, large
+        // enough to avoid empty-range edge cases in strudel's
+        // hap-matching logic.
+        const epsilon = 1e-6;
+        let v = 0;
+        try {
+            const haps = sig.queryArc(t, t + epsilon);
+            if (Array.isArray(haps) && haps.length > 0) {
+                const hv = haps[0].value;
+                if (typeof hv === "number" && Number.isFinite(hv)) {
+                    v = hv;
+                }
+            }
+        } catch (err) {
+            // Defensive: a source queryArc throw shouldn't
+            // tear down the firing engine. v stays 0, which
+            // after clipping and remapping produces outLo.
+            v = 0;
+        }
+        if (inSpan === 0) {
+            return (outLo + outHi) / 2;
+        }
+        const clipped = v < inLo ? inLo : v > inHi ? inHi : v;
+        const normalized = (clipped - inLo) / inSpan;
+        return outLo + normalized * (outHi - outLo);
+    });
+}
+
+/**
  * Install all dynamic image-colour signals as window
  * globals so cycle-function patterns can reference them
  * as bare names. Called from main.js after the strudel
@@ -353,4 +453,11 @@ export function installImageSignals() {
         "[signals] image-colour signals installed: " +
         IMAGE_SIGNALS.map((s) => s.name).join(", "),
     );
+    // Install transform helpers alongside the signals. mapClip
+    // is the first of a family of clamp / scale / remap
+    // utilities (more will land as Chris ports the GeoSonix
+    // toolkit). Patterns can reference these as bare names the
+    // same way they reference pxLt and the other signals.
+    win.mapClip = mapClip;
+    console.log("[signals] mapClip transform helper installed");
 }

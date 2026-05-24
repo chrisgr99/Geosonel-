@@ -50,12 +50,15 @@
  * Value mapping. Reads fields off the strudel Hap value as
  * confirmed by the MIDI integration spike:
  *
- *   - note (required, string): note name like "c4" or "C4",
- *     converted to MIDI number via noteNameToMidi. Events
- *     without a recognised note field are skipped silently
- *     after a one-time console.warn (typical for sample-
- *     based patterns like sound("bd") that don't translate
- *     to MIDI).
+ *   - note (required): MIDI pitch as either a string note name
+ *     like "c4" / "C4" (converted via noteNameToMidi) or a
+ *     numeric MIDI value 0-127 (rounded to the nearest integer).
+ *     Numeric values reach this code when the note source is a
+ *     continuous signal (sine, pxLt, mapClip, etc.) or an
+ *     explicit number passed to strudel's note(). Events without
+ *     either form in the note field are skipped silently after a
+ *     one-time console.warn (typical for sample-based patterns
+ *     like sound("bd") that don't translate to MIDI).
  *   - gain (optional, number 0-1): mapped to MIDI velocity
  *     0-127 via Math.round(gain * 127). When absent or
  *     non-numeric, defaults to 64 (mezzo-forte) which is
@@ -402,8 +405,31 @@ export class MIDISender {
         if (!this._isReady) return;
         if (value === null || typeof value !== "object") return;
 
-        const noteStr = value.note;
-        if (typeof noteStr !== "string") {
+        const noteField = value.note;
+        /** @type {number} */
+        let noteNumber;
+        if (typeof noteField === "number" && Number.isFinite(noteField)) {
+            // Numeric note value. Reaches this code when the
+            // note source is a continuous signal (sine, pxLt,
+            // mapClip, etc.) or an explicit number passed to
+            // strudel's note(). Round to the nearest integer;
+            // out-of-MIDI-range values are dropped with a per-
+            // occurrence warning to surface pitch-arithmetic
+            // blunders, since a misbehaving signal can flood
+            // the console either way and a one-time gate would
+            // mask later mistakes.
+            noteNumber = Math.round(noteField);
+            if (noteNumber < 0 || noteNumber > 127) {
+                console.warn(`[MIDI] Note number ${noteNumber} out of MIDI range 0-127. Skipping.`);
+                return;
+            }
+        } else if (typeof noteField === "string") {
+            noteNumber = noteNameToMidi(noteField);
+            if (noteNumber < 0) {
+                console.warn(`[MIDI] Unrecognised note name: "${noteField}". Skipping.`);
+                return;
+            }
+        } else {
             if (!this._warnedNoNote) {
                 this._warnedNoNote = true;
                 console.warn(
@@ -412,11 +438,6 @@ export class MIDISender {
                     "use note() or n().scale() to drive an external synth.",
                 );
             }
-            return;
-        }
-        const noteNumber = noteNameToMidi(noteStr);
-        if (noteNumber < 0) {
-            console.warn(`[MIDI] Unrecognised note name: "${noteStr}". Skipping.`);
             return;
         }
 
@@ -462,7 +483,7 @@ export class MIDISender {
 
         this._emit({
             type: "send",
-            note: noteStr,
+            note: typeof noteField === "string" ? noteField : String(noteNumber),
             velocity,
             channel,
         });
