@@ -145,6 +145,7 @@ import {
     setOnTickFunctionOnSelection,
     scaffoldCallbackSlotFunction,
     scaffoldPatternBlock,
+    addLabelToBlock,
     setCanvasW,
     setCanvasH,
     setSceneBpm,
@@ -2157,21 +2158,34 @@ async function main() {
      * moment it appears.
      *
      * When the source has a matching labelled pattern
-     * block in behaviors.js, a parallel block is
-     * appended for the duplicate using the same
-     * expression text and the new id. This means the
-     * duplicate appears in the Code tab immediately and
-     * a canvas double-click on the duplicate navigates
-     * to its own labelled block rather than falling
-     * through to the Properties tab as an apparent
-     * un-authored object. Sources without a labelled
-     * block produce duplicates also without one,
-     * mirroring the source's state. The expression is
-     * copied verbatim from the source's labelled block
-     * (not from the duplicate's cyclePattern field), so
-     * variable references and other indirection in the
-     * source's block are preserved in the duplicate's
-     * block.
+     * block in behaviors.js, the duplicate's id is
+     * added to that block's label chain rather than
+     * appended as a separate block elsewhere in the
+     * file. The new label sits on its own line above
+     * the original chain, so a block like
+     *
+     *     $CRV1: note("c d e f");
+     *
+     * becomes
+     *
+     *     $CRV5:
+     *     $CRV1: note("c d e f");
+     *
+     * after duplicating CRV1. JavaScript parses the
+     * stacked form as one chained LabeledStatement, so
+     * both objects share the same expression text and
+     * editing the pattern in one place affects every
+     * sharer (section 9). The duplicate appears in the
+     * Code tab inside the shared block immediately,
+     * so a canvas double-click navigates there rather
+     * than falling through to the Properties tab as
+     * an apparent un-authored object. Sources without
+     * a labelled block produce duplicates also without
+     * one, mirroring the source's state. When several
+     * selected sources share one chain, each
+     * duplicate's label stacks above in mapping order,
+     * so the chain grows upward by one line per
+     * duplicate.
      *
      * Newly created duplicates are auto-selected, replacing
      * the source selection. The user can immediately drag
@@ -2179,14 +2193,15 @@ async function main() {
      * properties in the inspector. No-op when the selection
      * is empty.
      *
-     * Undo. The undo stack snapshots only scene.json, so
-     * undoing a duplicate reverts the scene-level state
-     * (object array, ids, positions) but leaves the
-     * appended labelled blocks in behaviors.js. The
-     * orphaned blocks reference ids that no longer
-     * resolve and surface in the Code tab with the
-     * orphan-tag red wavy underline, so the user can
-     * see and clean them up if desired.
+     * Undo. The undo stack snapshots only scene.json,
+     * so undoing a duplicate reverts the scene-level
+     * state (object array, ids, positions) but leaves
+     * the duplicate's label sitting on the source's
+     * chain in behaviors.js. The leftover label
+     * references an id that no longer resolves and
+     * surfaces in the Code tab with the orphan-tag
+     * red wavy underline, so the user can see and
+     * clean it up if desired.
      *
      * Callback function declarations (hasHit_id,
      * beenHit_id, onTick_id) are not yet duplicated by
@@ -2211,21 +2226,23 @@ async function main() {
         const oldTriggerLen = currentScene !== null ? currentScene.triggers.length : 0;
         const oldCurveLen = currentScene !== null ? currentScene.curves.length : 0;
 
-        // Capture each selected source's labelled-block
-        // expression text (if any) so we can build matching
-        // labelled blocks for the duplicates after the scene
-        // mutation lands. Done before applyCanvasEdit so the
-        // capture sees the pre-duplicate currentScene; the
-        // post-duplicate run wouldn't differ for the
-        // sources' blocks (they aren't touched), but reading
-        // up front keeps the intent obvious. When a source
-        // has multiple labelled blocks (section 28 allows
-        // variants), only the first is captured; this
-        // matches the loader's first-block-wins resolution
-        // and the navigation candidate order in
-        // candidatesForObject.
-        /** @type {Map<string, string>} */
-        const sourceExpressions = new Map();
+        // Capture the set of selected source ids whose
+        // labelled blocks exist in behaviors.js, so the
+        // duplicate path knows which mappings need a
+        // chain extension. Section 9 specifies that
+        // duplicating an object whose source has a
+        // labelled block adds the new id to that
+        // source's chain (see addLabelToBlock in
+        // sceneEditor.js); sources without a labelled
+        // block produce duplicates also without one and
+        // skip the chain edit entirely. Done before
+        // applyCanvasEdit so the capture sees the pre-
+        // duplicate currentScene; the post-duplicate
+        // run wouldn't differ for the sources' blocks
+        // (they aren't touched), but reading up front
+        // keeps the intent obvious.
+        /** @type {Set<string>} */
+        const sourceIdsWithBlocks = new Set();
         if (currentScene !== null && Array.isArray(currentScene.labelledBlocks)) {
             /** @type {Set<string>} */
             const sourceIds = new Set();
@@ -2242,9 +2259,8 @@ async function main() {
                 if (obj !== undefined && typeof obj.id === "string") sourceIds.add(obj.id);
             }
             for (const block of currentScene.labelledBlocks) {
-                if (sourceIds.has(block.objectId) &&
-                    !sourceExpressions.has(block.objectId)) {
-                    sourceExpressions.set(block.objectId, block.expressionText);
+                if (sourceIds.has(block.objectId)) {
+                    sourceIdsWithBlocks.add(block.objectId);
                 }
             }
         }
@@ -2256,35 +2272,40 @@ async function main() {
         });
         if (mappings.length === 0) return;
 
-        // For each duplicate whose source had a labelled
-        // block, append a parallel block to behaviors.js
-        // using the captured source expression text and the
-        // duplicate's new id. scaffoldPatternBlock trims
-        // trailing whitespace and prepends a blank-line
-        // separator on each call, so repeated calls produce
-        // a sequence of cleanly-separated blocks at the end
-        // of the file. After all appends land, refresh the
-        // editor view and re-run the scene so the loader's
-        // labelledBlocks list picks up the new blocks; this
-        // is what flips objectHasCodeSource to true for the
-        // duplicates and makes double-click navigate to the
-        // Code tab. Skipped entirely when no source in the
-        // selection had a labelled block, so the typical
-        // duplicate-a-fresh-object case (no labelled blocks
-        // anywhere yet) doesn't pay for behaviors.js parsing
-        // or an extra runScene.
-        if (sourceExpressions.size > 0) {
+        // For each duplicate whose source had a
+        // labelled block, add the duplicate's id to
+        // the source's existing chain in behaviors.js
+        // via addLabelToBlock. Each call re-parses
+        // behaviors.js so positions stay fresh as
+        // labels accumulate; calls are sequential so
+        // two duplicates from the same chain join in
+        // mapping order. When several selected sources
+        // share one chain (each label maps to a
+        // different selected source), every duplicate
+        // lands in that one shared chain. After all
+        // chain edits land, refresh the editor view
+        // and re-run the scene so the loader's
+        // labelledBlocks list picks up the new labels;
+        // this is what flips objectHasCodeSource to
+        // true for the duplicates and makes double-
+        // click navigate to the Code tab. Skipped
+        // entirely when no source in the selection had
+        // a labelled block, so the typical duplicate-
+        // a-fresh-object case doesn't pay for
+        // behaviors.js parsing or an extra runScene.
+        if (sourceIdsWithBlocks.size > 0) {
             const behaviorsFile = session.bundle.getFile("behaviors.js");
             if (behaviorsFile !== null) {
                 let newContent = behaviorsFile.content;
                 let changed = false;
                 for (const m of mappings) {
                     if (m.oldId === null) continue;
-                    const expression = sourceExpressions.get(m.oldId);
-                    if (expression === undefined) continue;
-                    const result = scaffoldPatternBlock(newContent, m.newId, expression);
-                    newContent = result.newContent;
-                    changed = true;
+                    if (!sourceIdsWithBlocks.has(m.oldId)) continue;
+                    const result = addLabelToBlock(newContent, m.oldId, m.newId);
+                    if (result.added) {
+                        newContent = result.newContent;
+                        changed = true;
+                    }
                 }
                 if (changed) {
                     session.bundle.updateContent("behaviors.js", newContent);

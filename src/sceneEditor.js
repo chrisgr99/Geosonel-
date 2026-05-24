@@ -32,6 +32,7 @@
 
 import { generateId, ensureIdCounters } from "./idGen.js";
 import { isValidBeatInterval } from "./beatIntervals.js";
+import * as acorn from "https://esm.sh/acorn@8";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
 const MULTILINE_ARRAY_KEYS = new Set(["curves"]);
@@ -1627,6 +1628,135 @@ export function scaffoldPatternBlock(content, objectId, defaultExpression) {
     const trimmed = content.replace(/\s+$/, "");
     const separator = trimmed.length === 0 ? "" : "\n\n";
     return { newContent: `${trimmed}${separator}${block}` };
+}
+
+/**
+ * Add a label to an existing labelled pattern block whose
+ * chain contains the given source id. The new label is
+ * inserted on its own line, immediately above the line
+ * holding the chain's first label, so a single-label
+ * block like:
+ *
+ *     $CRV1: note("c d e f");
+ *
+ * becomes:
+ *
+ *     $CRV5:
+ *     $CRV1: note("c d e f");
+ *
+ * after adding CRV5. A chain that already has stacked
+ * labels keeps its existing labels in place and the new
+ * label lands on top, so repeated duplicates pile up
+ * above the original (newest on top). JavaScript parses
+ * the stacked form as one chained LabeledStatement
+ * regardless of the whitespace between labels, so the
+ * loader and Cmd-Enter behaviour are unaffected; the
+ * line-per-label layout is purely a readability
+ * convention that makes co-labels easy to scan and edit
+ * in the Code tab.
+ *
+ * Used by the duplicate path in performDuplicate
+ * (main.js): for each duplicated object whose source
+ * has a labelled block, the duplicate's id joins the
+ * source's chain rather than landing as a separate
+ * block elsewhere in behaviors.js. This implements
+ * section 9's shared-pattern model — duplicated objects
+ * join their source's sharing group automatically, and
+ * editing the pattern in one place affects every label
+ * on the chain.
+ *
+ * Chain detection mirrors the loader's
+ * splitLabelledStatements and the editor's
+ * _tryPromoteLabelledBlock: walk top-level
+ * LabeledStatements, then descend through nested
+ * LabeledStatement bodies as long as every label is
+ * dollar-prefixed, until reaching the inner
+ * ExpressionStatement. A chain is valid only when every
+ * label along the way is dollar-prefixed and the
+ * innermost body is an ExpressionStatement.
+ *
+ * Indentation. The new label's line picks up the
+ * leading whitespace of the line containing the chain,
+ * so an indented chain stays visually aligned. Top-
+ * level blocks (the usual case) have no leading
+ * whitespace and the new label lines up at column zero.
+ * In the unusual case that the chain doesn't start at
+ * a line boundary (something else precedes it on the
+ * same line), the helper prepends a newline so the new
+ * label still lands on its own line.
+ *
+ * Returns { newContent, added }. When no top-level
+ * chain contains the source id, added is false and
+ * newContent equals the input. Parse failures in
+ * behaviors.js are also treated as a no-op (added is
+ * false, content unchanged), so a broken file doesn't
+ * cascade into a chained edit that compounds the
+ * error.
+ *
+ * @param {string} content  Current behaviors.js source.
+ * @param {string} sourceId  Identifier of the source
+ *   object whose chain to extend.
+ * @param {string} newId  Identifier to add as a new
+ *   label.
+ * @returns {{ newContent: string, added: boolean }}
+ */
+export function addLabelToBlock(content, sourceId, newId) {
+    /** @type {any} */
+    let ast;
+    try {
+        ast = acorn.parse(content, {
+            ecmaVersion: 2022,
+            sourceType: "script",
+            allowReturnOutsideFunction: true,
+        });
+    } catch (err) {
+        return { newContent: content, added: false };
+    }
+    if (ast === null ||
+        typeof ast !== "object" ||
+        !Array.isArray(ast.body)) {
+        return { newContent: content, added: false };
+    }
+    for (const node of ast.body) {
+        if (node.type !== "LabeledStatement") continue;
+        /** @type {string[]} */
+        const objectIds = [];
+        /** @type {any} */
+        let current = node;
+        let chainValid = true;
+        while (current && current.type === "LabeledStatement") {
+            const curLabel = current.label && current.label.name;
+            if (!curLabel || curLabel[0] !== "$") {
+                chainValid = false;
+                break;
+            }
+            objectIds.push(curLabel.slice(1));
+            current = current.body;
+        }
+        if (!chainValid) continue;
+        if (!current || current.type !== "ExpressionStatement") continue;
+        if (!objectIds.includes(sourceId)) continue;
+        // Insert the new label as its own line
+        // immediately above the chain. Indent matches
+        // the leading whitespace of the line holding
+        // the existing chain so the stacked labels
+        // align visually. When the chain doesn't sit
+        // at a line boundary (unusual but possible),
+        // prepend a newline so the new label still
+        // lands on its own line.
+        const insertPos = node.start;
+        let lineStart = insertPos;
+        while (lineStart > 0 && content.charCodeAt(lineStart - 1) !== 10) {
+            lineStart--;
+        }
+        const beforeNode = content.slice(lineStart, insertPos);
+        const insert = /^\s*$/.test(beforeNode)
+            ? "$" + newId + ":\n" + beforeNode
+            : "\n$" + newId + ":\n";
+        const newContent = content.slice(0, insertPos) + insert + content.slice(insertPos);
+        return { newContent, added: true };
+    }
+    return { newContent: content, added: false };
 }
 
 /**
