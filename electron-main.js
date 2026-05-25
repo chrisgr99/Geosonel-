@@ -32,6 +32,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 
 const { installMenu, updateMenuState } = require('./electron-menu.js');
+const mirror = require('./electron-mirror.js');
 
 // --- Native MIDI loader ---
 //
@@ -1309,6 +1310,24 @@ function registerStorageHandlers() {
       sendMidiMessage(bytes);
     }
   });
+
+  // --- Composition mirror (Section 15, Phase 1A commit 1) ---
+  //
+  // Renderer toggles the feature on / off via setEnabled,
+  // which writes the persisted setting and runs the
+  // corresponding folder lifecycle in one step. getStatus
+  // returns the enabled flag and the canonical folder
+  // path so the Settings dialog can render the MCP setup
+  // hint when the feature is on.
+
+  ipcMain.handle('gxw:mirror-set-enabled', async (_event, value) => {
+    await mirror.setEnabled(value);
+    return mirror.getStatus();
+  });
+
+  ipcMain.handle('gxw:mirror-get-status', async () => {
+    return mirror.getStatus();
+  });
 }
 
 // --- App lifecycle ---
@@ -1318,6 +1337,7 @@ app.whenReady().then(async () => {
   registerStorageHandlers();
   openMidiVirtualPort();
   await migrateScoresFolderToGxsExtension();
+  await mirror.initMirror();
   createWindow();
   installMenu(mainWindow);
 });
@@ -1330,6 +1350,7 @@ app.whenReady().then(async () => {
 // connected to the port.
 app.on('will-quit', () => {
   closeMidiVirtualPort();
+  mirror.shutdown();
 });
 
 // On macOS, apps usually stay running when all windows are closed; the user

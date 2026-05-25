@@ -148,6 +148,13 @@ function buildCategories(ctx) {
         name: "Storage",
         render: (panel) => renderStoragePanel(panel, ctx),
     });
+    if (isElectron) {
+        result.push({
+            kind: "custom",
+            name: "AI Integration",
+            render: (panel) => renderAiIntegrationPanel(panel, ctx),
+        });
+    }
     return result;
 }
 
@@ -495,6 +502,126 @@ function renderStoragePanel(panel, ctx) {
         "behaviours.js. Disconnecting just forgets the folder; the " +
         "files on disk are left in place.";
     panel.appendChild(help);
+}
+
+/**
+ * Render the AI Integration category, which controls the
+ * composition mirror added in Section 15. Electron-only;
+ * the category is filtered out on the web build by
+ * buildCategories so this function is never reached there.
+ *
+ * The mirror folder is a fixed canonical path under the
+ * user's Application Support directory; the user does not
+ * choose a location, only whether the feature is on or
+ * off. When on, the path is displayed with instructions
+ * to point a filesystem MCP server at it.
+ *
+ * @param {HTMLElement} panel
+ * @param {SettingsContext} _ctx
+ */
+function renderAiIntegrationPanel(panel, _ctx) {
+    /** @type {any} */
+    const gxwMirror = (/** @type {any} */ (window)).gxwMirror;
+
+    const intro = document.createElement("div");
+    intro.className = "settings-description settings-storage-intro";
+    intro.textContent =
+        "Enable a composition mirror so AI assistants can read " +
+        "and edit the score you are currently working on. When " +
+        "enabled, GeoSonel keeps a live copy of the open score " +
+        "in a fixed folder on disk. Point a filesystem MCP " +
+        "server (such as the one in Claude Desktop) at that " +
+        "folder to give the AI access. This feature is opt-in " +
+        "and off by default.";
+    panel.appendChild(intro);
+
+    // Toggle row.
+    const toggleRow = document.createElement("div");
+    toggleRow.className = "settings-row";
+    panel.appendChild(toggleRow);
+
+    const toggleLabel = document.createElement("label");
+    toggleLabel.className = "settings-label";
+    toggleLabel.textContent = "Enable AI integration";
+    toggleRow.appendChild(toggleLabel);
+
+    const toggleWrap = document.createElement("div");
+    toggleWrap.className = "settings-toggle";
+    const toggleInput = document.createElement("input");
+    toggleInput.type = "checkbox";
+    toggleInput.disabled = true;
+    toggleWrap.appendChild(toggleInput);
+    toggleRow.appendChild(toggleWrap);
+    toggleLabel.setAttribute("for", "settings-mirror-enabled");
+    toggleInput.id = "settings-mirror-enabled";
+
+    // Path display, populated by refresh(). Hidden when the
+    // feature is off so the panel does not advertise a path
+    // the user has not opted into.
+    const pathBlock = document.createElement("div");
+    pathBlock.className = "settings-row";
+    panel.appendChild(pathBlock);
+
+    const pathLabel = document.createElement("div");
+    pathLabel.className = "settings-label";
+    pathLabel.textContent = "Mirror folder";
+    pathBlock.appendChild(pathLabel);
+
+    const pathValue = document.createElement("div");
+    pathValue.className = "settings-storage-folder";
+    pathBlock.appendChild(pathValue);
+
+    const pathHint = document.createElement("div");
+    pathHint.className = "settings-description";
+    pathHint.textContent =
+        "Point your filesystem MCP server at this path. The " +
+        "folder's contents are managed by GeoSonel; do not " +
+        "edit them by hand.";
+    pathBlock.appendChild(pathHint);
+
+    const refresh = (status) => {
+        const isOn = status !== null && status.enabled === true;
+        toggleInput.checked = isOn;
+        toggleInput.disabled = false;
+        if (isOn && status !== null && typeof status.folderPath === "string") {
+            pathBlock.style.display = "";
+            pathValue.textContent = status.folderPath;
+        } else {
+            pathBlock.style.display = "none";
+            pathValue.textContent = "";
+        }
+    };
+
+    // Initial query. The IPC roundtrip is fast but async,
+    // so the checkbox starts disabled and refresh enables
+    // it once we know the current state.
+    refresh(null);
+    if (gxwMirror !== undefined && gxwMirror !== null) {
+        gxwMirror.getStatus().then(refresh).catch((err) => {
+            console.warn("GXW: could not read mirror status:", err);
+            // Leave the toggle disabled so the user does not
+            // attempt to flip a state we cannot reflect.
+        });
+    }
+
+    toggleInput.addEventListener("change", async () => {
+        if (gxwMirror === undefined || gxwMirror === null) return;
+        toggleInput.disabled = true;
+        try {
+            const status = await gxwMirror.setEnabled(toggleInput.checked);
+            refresh(status);
+        } catch (err) {
+            console.warn("GXW: could not toggle mirror:", err);
+            // Revert the checkbox so the displayed state
+            // matches the actual state.
+            try {
+                const status = await gxwMirror.getStatus();
+                refresh(status);
+            } catch {
+                toggleInput.disabled = false;
+            }
+        }
+    });
 }
 
 /**

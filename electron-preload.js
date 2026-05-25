@@ -146,3 +146,22 @@ contextBridge.exposeInMainWorld('gxwGallery', {
   loadImage: (id) =>
     ipcRenderer.invoke('gxw:gallery-load-image', id),
 });
+
+// Composition mirror IPC (Section 15, Phase 1A commit 1).
+//
+// The composition mirror is the Electron-only AI
+// integration surface introduced in Section 15 of
+// DESIGN.md. The main-process module (electron-mirror.js)
+// owns the mirror folder's lifecycle at
+// ~/Library/Application Support/GeoSonel/Active/ on macOS
+// and the persisted enabled flag in settings.json. The
+// renderer's Settings dialog uses this bridge to read the
+// current state (getStatus) and to toggle the feature on
+// or off (setEnabled). setEnabled returns the resulting
+// status so the dialog can refresh its display without a
+// follow-up getStatus call.
+contextBridge.exposeInMainWorld('gxwMirror', {
+  setEnabled: (value) =>
+    ipcRenderer.invoke('gxw:mirror-set-enabled', value),
+  getStatus: () => ipcRenderer.invoke('gxw:mirror-get-status'),
+});
