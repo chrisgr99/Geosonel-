@@ -172,6 +172,18 @@ const CANVAS_BORDER_WIDTH_PX = 3;
 const CURVE_COLOUR = "#7dd68a";
 const CURSOR_COLOUR = "#ffb060";
 const OBJECT_BOUNDARY_COLOUR = "#7db8d6";
+// Bright magenta used to highlight the object(s) the
+// editor cursor logically owns when sitting inside a
+// labelled pattern block in behaviors.js or inside a
+// top-level function declaration whose name is bound to
+// any object's hasHitFunction / beenHitFunction /
+// onTickFunction slot. Pure #ff00ff reads slightly cold;
+// nudging the red channel up to 0x44 keeps the warmth of
+// a CRT-era magenta while staying unmistakable against
+// the soft-blue object boundary and soft-green curve
+// defaults. Applied as a stroke override at draw time;
+// the object's stored color field is unchanged.
+const CURSOR_TARGET_COLOUR = "#ff44ff";
 const NO_IMAGE_FILL_COLOUR = "#404040";
 
 // Resolution of the pixel-sampling array built from the
@@ -497,6 +509,20 @@ export class Canvas {
             triggers: new Set(),
             curves: new Set(),
         };
+
+        /**
+         * Set of object ids that should render with the
+         * cursor-target magenta highlight. Driven by the
+         * editor through setCursorTargetIds whenever the
+         * cursor in behaviors.js moves in or out of a
+         * labelled pattern block or a top-level function
+         * declaration that binds to a slot. Empty when the
+         * Code tab isn't active, when the cursor sits in
+         * a non-binding region, or before the first
+         * runScene has provided a scene to the editor.
+         * @type {Set<string>}
+         */
+        this._cursorTargetIds = new Set();
 
         /**
          * Currently brightened hover target, or null. Tracks
@@ -1057,6 +1083,33 @@ export class Canvas {
     }
 
     /**
+     * Replace the set of object ids that render with the
+     * cursor-target magenta highlight. Driven by the
+     * editor on every behaviors.js cursor move and on
+     * every tab change. A set-equality short-circuit
+     * avoids redrawing when the new set matches the
+     * current one — selectionSet events in CodeMirror fire
+     * frequently during cursor motion and the typical
+     * sequence is many fires inside the same labelled
+     * block, all emitting the same id set.
+     * @param {Set<string>} ids
+     */
+    setCursorTargetIds(ids) {
+        if (ids.size === this._cursorTargetIds.size) {
+            let same = true;
+            for (const id of ids) {
+                if (!this._cursorTargetIds.has(id)) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) return;
+        }
+        this._cursorTargetIds = new Set(ids);
+        this.scheduleDraw();
+    }
+
+    /**
      * React to a transport play/pause state change. Starts
      * the continuous render loop on play, tears it down on
      * pause. Idempotent in either direction so a redundant
@@ -1350,9 +1403,17 @@ export class Canvas {
         // for hand-constructed Curve objects (tests, future
         // programmatic APIs) that bypass the constructor's
         // default.
-        const strokeColor = typeof curve.color === "string" && curve.color.length > 0
+        let strokeColor = typeof curve.color === "string" && curve.color.length > 0
             ? curve.color
             : CURVE_COLOUR;
+        // Cursor-target override: when the editor cursor
+        // logically owns this curve, swap in the magenta
+        // highlight before the hover lerp so a hovered +
+        // cursor-target curve still reads as cursor-target
+        // (lightened magenta) rather than lightened green.
+        if (this._cursorTargetIds.has(curve.id)) {
+            strokeColor = CURSOR_TARGET_COLOUR;
+        }
         ctx.strokeStyle = hovered
             ? lightenColor(strokeColor, HOVER_LIGHTEN_RATIO)
             : strokeColor;
@@ -1564,9 +1625,18 @@ export class Canvas {
             // object's identifying image-pixel colour stays
             // readable underneath.
             const hovered = this._isHovered("trigger", t);
-            ctx.strokeStyle = hovered
-                ? lightenColor(t.color, HOVER_LIGHTEN_RATIO)
+            // Cursor-target override: when the editor
+            // cursor logically owns this trigger, swap in
+            // the magenta highlight before the hover lerp
+            // so a hovered + cursor-target trigger reads
+            // as lightened magenta rather than lightened
+            // boundary blue.
+            const baseColor = this._cursorTargetIds.has(t.id)
+                ? CURSOR_TARGET_COLOUR
                 : t.color;
+            ctx.strokeStyle = hovered
+                ? lightenColor(baseColor, HOVER_LIGHTEN_RATIO)
+                : baseColor;
             ctx.lineWidth = hovered
                 ? 1.5 + HOVER_LINE_WIDTH_BONUS
                 : 1.5;
@@ -1609,9 +1679,18 @@ export class Canvas {
             // the image-pixel colour identifying the sprite
             // reads through the brightened ring.
             const hovered = this._isHovered("sprite", s);
-            ctx.strokeStyle = hovered
-                ? lightenColor(s.color, HOVER_LIGHTEN_RATIO)
+            // Cursor-target override: when the editor
+            // cursor logically owns this sprite, swap in
+            // the magenta highlight before the hover lerp
+            // so a hovered + cursor-target sprite reads
+            // as lightened magenta rather than lightened
+            // boundary blue.
+            const baseColor = this._cursorTargetIds.has(s.id)
+                ? CURSOR_TARGET_COLOUR
                 : s.color;
+            ctx.strokeStyle = hovered
+                ? lightenColor(baseColor, HOVER_LIGHTEN_RATIO)
+                : baseColor;
             ctx.lineWidth = hovered
                 ? 1.5 + HOVER_LINE_WIDTH_BONUS
                 : 1.5;

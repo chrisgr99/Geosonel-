@@ -34,6 +34,7 @@ import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect } from "./patternHighlight.js";
 import { isAutoCompletionEnabled } from "./strudel/codemirror/autocomplete.mjs";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
+import { deriveCursorTargetIds } from "./cursorTargets.js";
 import { getPreference, subscribePreference } from "./preferences.js";
 
 /**
@@ -495,6 +496,7 @@ function findReferencePosition(source, candidate) {
  * @property {(objectIds: string[], expressionBody: string) => void} [onPromotePattern]
  * @property {(objectId: string) => void} [onClearPattern]
  * @property {(objectId: string, blockingLine: number) => void} [onClearPatternBlocked]
+ * @property {(ids: Set<string>) => void} [onCursorTargetIdsChange]
  */
 
 export class TabbedEditor {
@@ -518,6 +520,7 @@ export class TabbedEditor {
         this.onPromotePattern = callbacks.onPromotePattern ?? (() => {});
         this.onClearPattern = callbacks.onClearPattern ?? (() => {});
         this.onClearPatternBlocked = callbacks.onClearPatternBlocked ?? (() => {});
+        this.onCursorTargetIdsChange = callbacks.onCursorTargetIdsChange ?? (() => {});
 
         /** @type {string | null} */
         this.activeName = null;
@@ -528,6 +531,21 @@ export class TabbedEditor {
         /** Suppress dirty-marking during programmatic document
          *  replacement (tab switches, bundle swaps). */
         this._suppressDirty = false;
+
+        /**
+         * Live scene reference for the cursor-target highlight.
+         * Set by main.js after every successful runScene via
+         * setScene; read by _emitCursorTargetIds when the
+         * cursor in behaviors.js sits inside a top-level
+         * FunctionDeclaration whose name needs to be looked
+         * up across each object's hasHitFunction /
+         * beenHitFunction / onTickFunction slots. Null
+         * before the first runScene; in that case the
+         * highlight emits an empty id set so the canvas
+         * stays at default colours.
+         * @type {{curves: any[], triggers: any[], sprites: any[]} | null}
+         */
+        this._scene = null;
 
         /**
          * Unsubscribe handle for the active bundle's dirty-
@@ -954,6 +972,66 @@ export class TabbedEditor {
     }
 
     /**
+     * Provide the editor with the live scene so the
+     * cursor-target highlight in behaviors.js can resolve
+     * top-level function declarations back to the object
+     * ids that bind them in hasHitFunction /
+     * beenHitFunction / onTickFunction slots. Called by
+     * main.js after each successful runScene, mirroring
+     * setSelectedObjectIds and setKnownObjectIds. After
+     * stashing the scene reference the editor re-emits the
+     * cursor-target id set so the canvas picks up any
+     * binding changes that landed with the reload (e.g.
+     * a slot was just rewired through the inspector and
+     * Cmd-Enter ran the scene). Safe to call before the
+     * view has mounted: _emitCursorTargetIds short-circuits
+     * in that case.
+     *
+     * @param {{curves: any[], triggers: any[], sprites: any[]} | null} scene
+     */
+    setScene(scene) {
+        this._scene = scene;
+        this._emitCursorTargetIds();
+    }
+
+    /**
+     * Re-derive the cursor-target id set from the editor's
+     * current selection range and the live scene, then
+     * fire onCursorTargetIdsChange with the result. A bare
+     * cursor with no selection comes through as a
+     * zero-width range and resolves to the single
+     * top-level node containing the cursor (the original
+     * behaviour); a non-empty selection unions the ids of
+     * every owned region the selection overlaps. Active
+     * only on behaviors.js / behaviours.js — any other tab
+     * fires an empty set so the canvas's highlight clears
+     * as soon as the user switches away from the Code
+     * tab. A null scene also fires empty so the highlight
+     * stays cleared until the first runScene has landed.
+     *
+     * Called by the editor's updateListener on every
+     * docChanged or selectionSet update (so cursor moves,
+     * drag-selection extensions, and edits all track the
+     * highlight in real time), by selectTab and
+     * selectTabAndScrollToFunction after a tab change,
+     * and by setScene after a fresh scene load.
+     */
+    _emitCursorTargetIds() {
+        if (this.view === null) return;
+        const isCodeTab =
+            this.activeName === "behaviors.js" ||
+            this.activeName === "behaviours.js";
+        if (!isCodeTab || this._scene === null) {
+            this.onCursorTargetIdsChange(new Set());
+            return;
+        }
+        const source = this.view.state.doc.toString();
+        const sel = this.view.state.selection.main;
+        const ids = deriveCursorTargetIds(source, sel.from, sel.to, this._scene);
+        this.onCursorTargetIdsChange(ids);
+    }
+
+    /**
      * Try to handle an Undo gesture against the currently-
      * focused element. Called by the native macOS menu's
      * Cmd-Z dispatcher (src/menuActions.js) so the
@@ -1176,6 +1254,24 @@ export class TabbedEditor {
                     if (update.docChanged) {
                         this._onDocChanged(update.state.doc.toString());
                     }
+                    // selectionSet fires on cursor moves and
+                    // selection changes without document
+                    // changes; docChanged fires on edits.
+                    // Either one can move the cursor in or
+                    // out of a labelled pattern block or a
+                    // top-level function declaration, so we
+                    // re-emit the cursor-target id set on
+                    // either trigger. The acorn re-parse
+                    // inside the helper is cheap for the
+                    // size of behaviors.js files composers
+                    // write; the same parse already runs on
+                    // Mod-Enter and Ctrl-/ without a
+                    // perceptible cost. A one-entry source-
+                    // text cache can be added later if
+                    // profiling shows it's worth it.
+                    if (update.docChanged || update.selectionSet) {
+                        this._emitCursorTargetIds();
+                    }
                 }),
                 EditorView.theme({
                     "&": {
@@ -1278,6 +1374,7 @@ export class TabbedEditor {
             this._showArea("inspector");
             this._reconfigureStrudelCompartment();
             this._renderTabs();
+            this._emitCursorTargetIds();
             return;
         }
 
@@ -1288,6 +1385,7 @@ export class TabbedEditor {
             this._showArea("canvas-inspector");
             this._reconfigureStrudelCompartment();
             this._renderTabs();
+            this._emitCursorTargetIds();
             return;
         }
 
@@ -1317,6 +1415,7 @@ export class TabbedEditor {
         this._suppressDirty = false;
 
         this._renderTabs();
+        this._emitCursorTargetIds();
     }
 
     /**
@@ -1417,6 +1516,7 @@ export class TabbedEditor {
 
         this._renderTabs();
         this.view.focus();
+        this._emitCursorTargetIds();
     }
 
     /**

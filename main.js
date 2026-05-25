@@ -435,6 +435,9 @@ async function main() {
         onClearPatternBlocked: (objectId, blockingLine) => {
             handleClearPatternBlocked(objectId, blockingLine);
         },
+        onCursorTargetIdsChange: (ids) => {
+            canvas.setCursorTargetIds(ids);
+        },
     });
 
     // --- Transport and audio engine ---
@@ -822,6 +825,7 @@ async function main() {
             // same indices (e.g. after an external
             // scene.json edit).
             currentScene = result.scene;
+            editor.setScene(result.scene);
             dispatchSelectedObjectIds(canvas.getSelection());
             dispatchKnownObjectIds();
             messages.write("Scene updated.");
