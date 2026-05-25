@@ -161,20 +161,35 @@ function jsonErrorPosition(message, source) {
  * uses indentation to convey structure (nested function
  * bodies, dot-method chains inside callbacks), the column-
  * zero continuation reads as if the wrapped portion is at
- * top-level scope. The hanging-indent variant aligns each
- * continuation visual row with the first non-whitespace
- * character of the original line, so the wrap reads as a
- * continuation at the same indent level as the source.
+ * top-level scope. The hanging-indent variant pulls every
+ * continuation visual row in one indent unit further than
+ * the source line's start column, so the wrapped portion
+ * reads as subordinate to its first row regardless of how
+ * deeply indented that first row already is. An unindented
+ * top-level line wraps to four-space-indented continuation
+ * rows; a four-space-indented line wraps to eight-space-
+ * indented continuation rows; and so on.
  *
  * Implementation: per visible logical line, count leading
- * whitespace characters and emit a Decoration.line whose
- * inline style sets padding-left to that many ch units and
+ * whitespace characters and add one indent unit (4 spaces,
+ * matching indentUnit at editor mount) to get the
+ * continuation column. Emit a Decoration.line whose inline
+ * style sets padding-left to that column in ch units and
  * text-indent to the negative of the same. padding-left
  * applies to every visual row of the line; text-indent
  * shifts the FIRST row back by the same amount so the
- * original leading whitespace renders in place. Net effect:
- * first row sits at its natural column, continuation rows
- * sit at the first-non-whitespace column.
+ * original leading whitespace and the line's content
+ * render at their natural columns. Net effect: first row
+ * sits at its natural column, continuation rows sit one
+ * tab stop further in than the source line's start.
+ *
+ * Always emits a decoration when wrap mode is active,
+ * including for lines with no leading whitespace, since
+ * the +4 continuation indent applies regardless of the
+ * line's own indent level. The plugin itself is only
+ * loaded into the wrap compartment when the Soft-Wrap
+ * Long Lines preference is on (see _wrapExtensions); when
+ * the preference is off, none of this code runs.
  *
  * Tabs count as one character each. The codebase uses
  * 4-space indent via indentUnit so tabs are uncommon; if
@@ -201,13 +216,19 @@ const hangingIndentPlugin = ViewPlugin.fromClass(class {
                 const line = view.state.doc.lineAt(pos);
                 const m = line.text.match(/^[ \t]*/);
                 const leading = m !== null ? m[0].length : 0;
-                if (leading > 0) {
-                    builder.add(line.from, line.from, Decoration.line({
-                        attributes: {
-                            style: `padding-left: ${leading}ch; text-indent: -${leading}ch;`,
-                        },
-                    }));
-                }
+                // One indent unit further than the source
+                // line's start column, matching indentUnit
+                // of four spaces at editor mount. Emitted
+                // for every line including unindented ones,
+                // so the continuation indent applies
+                // uniformly regardless of the line's own
+                // indent level.
+                const indent = leading + 4;
+                builder.add(line.from, line.from, Decoration.line({
+                    attributes: {
+                        style: `padding-left: ${indent}ch; text-indent: -${indent}ch;`,
+                    },
+                }));
                 pos = line.to + 1;
             }
         }
