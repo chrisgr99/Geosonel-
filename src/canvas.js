@@ -1340,9 +1340,22 @@ export class Canvas {
     _strokeCurveShape(curve) {
         const ctx = this.ctx;
         const hovered = this._isHovered("curve", curve);
-        ctx.strokeStyle = hovered
-            ? lightenColor(CURVE_COLOUR, HOVER_LIGHTEN_RATIO)
+        // Per-object stroke colour, with a defensive
+        // fallback to the global CURVE_COLOUR for any
+        // in-memory curve that arrives here without the
+        // color field populated. Scene loads through the
+        // Curve constructor get the schema default, and
+        // scenes parsed from older JSON pick up the same
+        // default at load time, so the fallback only fires
+        // for hand-constructed Curve objects (tests, future
+        // programmatic APIs) that bypass the constructor's
+        // default.
+        const strokeColor = typeof curve.color === "string" && curve.color.length > 0
+            ? curve.color
             : CURVE_COLOUR;
+        ctx.strokeStyle = hovered
+            ? lightenColor(strokeColor, HOVER_LIGHTEN_RATIO)
+            : strokeColor;
         ctx.lineWidth = hovered
             ? curve.curveThickness + HOVER_LINE_WIDTH_BONUS
             : curve.curveThickness;

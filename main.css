@@ -1929,6 +1929,27 @@ body.dragging-canvas-insp-thumb * {
     color: #a8a8a8;
 }
 
+/* Native colour picker, hidden visually but invoked
+ * programmatically when the user clicks the swatch. The
+ * <input type="color"> element has to be in the DOM and
+ * not display:none for .click() to open the OS picker, so
+ * we shrink it to a 1px square at zero opacity. pointer-
+ * events:none keeps the otherwise-invisible element out
+ * of accidental hit-tests; programmatic .click() still
+ * fires regardless because it dispatches the click event
+ * directly rather than going through pointer-event
+ * routing. */
+.insp-color-picker {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    pointer-events: none;
+}
+
 /* Units indicator after a field group, e.g. "(X, Y)" after
  * the position fields. Smaller than labels so it reads as a
  * tag rather than a primary label. */

@@ -415,6 +415,18 @@ export class Curve {
         this.curveThickness = opts.curveThickness ?? 1;
 
         /**
+         * Stroke colour for the curve's geometric body, as a
+         * CSS hex string. Default matches the legacy global
+         * curve colour from canvas.js (CURVE_COLOUR), so
+         * existing scores that load without a per-curve
+         * color field render identically to before. Editable
+         * through the inspector's Color row alongside sprite
+         * and trigger colours.
+         * @type {string}
+         */
+        this.color = opts.color ?? "#7dd68a";
+
+        /**
          * Cycle count at which the cursor halts. Default -1
          * means play forever; positive integers stop the
          * cursor after that many full cycles. Validated by

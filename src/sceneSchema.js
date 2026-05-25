@@ -151,6 +151,7 @@ export const CURVE_FIELDS = [
     { key: "vx", label: "VX", type: "number", default: 0 },
     { key: "vy", label: "VY", type: "number", default: 0 },
     { key: "curveThickness", label: "Curve Thickness", type: "number", default: 1 },
+    { key: "color", label: "Color", type: "color", default: "#7dd68a" },
     { key: "stopAtCycle", label: "Stop at Cycle", type: "integer", default: -1 },
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },

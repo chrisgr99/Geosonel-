@@ -66,9 +66,9 @@
  * Thickness stays curve-only since sprite cursor
  * visualisation is deferred; Sprite/Trigger Size
  * activates when the selection is exclusively that kind
- * (the row's label tracks which); Color activates when
- * sprites or triggers are present (curves carry no
- * per-object colour at this milestone). Starting State's
+ * (the row's label tracks which); Color activates for any
+ * non-empty selection since curves, sprites, and triggers
+ * all carry a per-object colour. Starting State's
  * four numeric fields and Curve Size W/H use absolute-
  * set semantics — typing a value commits that value as
  * the new coordinate (or dimension or velocity
@@ -151,8 +151,9 @@
  *   - Curve-only fields (Curve Size, Cursor Size, the two
  *     Thicknesses) are active only when at least one curve
  *     is selected.
- *   - Color is active when sprites or triggers are present;
- *     a curve-only selection greys it.
+ *   - Color is active when any object is present; curves,
+ *     sprites, and triggers all carry a per-object
+ *     colour.
  *   - Band 3 callback slots are universal: every row
  *     activates for any non-empty selection regardless
  *     of kinds.
@@ -1142,22 +1143,46 @@ export class Inspector {
 
     /**
      * Build the Color field, used by the Band 2 Color row.
-     * The field consists of a colour swatch followed by an
-     * editable hex string. As the user types valid hex into
-     * the text portion, the swatch updates live so the user
-     * can see the colour they're approaching before they
-     * commit. Commit and revert lifecycle mirrors
-     * _buildEditableField but is duplicated here because the
-     * field's structure is two-part (swatch + text) rather
-     * than a single contenteditable div.
+     * The field consists of a colour swatch, a hidden native
+     * <input type="color"> picker, and an editable hex
+     * string. As the user types valid hex into the text
+     * portion, the swatch updates live so the user can see
+     * the colour they're approaching before they commit.
+     * Clicking the swatch opens the OS colour picker (the
+     * native input is positioned offscreen but invoked via
+     * .click()); a colour committed in the picker fires the
+     * picker's change event and emits a setColor edit
+     * immediately, just like the text field's Enter commit.
+     * Commit and revert lifecycle for the text portion
+     * mirrors _buildEditableField but is duplicated here
+     * because the field's structure is multi-part (swatch +
+     * picker + text) rather than a single contenteditable
+     * div.
      *
-     * Disabled state (no sprites or triggers in the selection,
-     * or curve-only selection) shows a dim swatch and the
-     * stored hex value as plain text. Varies state (multi-
-     * select with mismatched colours) shows a placeholder
-     * neutral swatch and an empty text field; typing a value
-     * and committing sets every selected sprite and trigger
-     * to the typed colour.
+     * Disabled state (empty selection) shows a dim swatch
+     * and the stored hex value as plain text, with the
+     * picker omitted entirely so a stray swatch click on a
+     * greyed row does nothing. Varies state (multi-select
+     * with mismatched colours) shows a placeholder neutral
+     * swatch and an empty text field; the picker opens on
+     * the placeholder colour, and picking a value commits
+     * to every selected object regardless of kind via
+     * setColorOnSelection.
+     *
+     * Picker emit timing: only the change event triggers
+     * an emit, not input. The native picker's input event
+     * fires continuously as the user drags through colours;
+     * emitting on every fire would trigger an inspector
+     * re-render that destroys the picker DOM mid-session,
+     * collapsing the picker and aborting the pick. The
+     * change event fires once per commit (mouseup after
+     * drag, or Enter in the picker's hex input), which
+     * matches the user's mental model of "I'm done
+     * picking" and lets the re-render happen cleanly
+     * after the picker closes. The trade-off is no live
+     * canvas preview as the user drags, but the picker's
+     * own gradient preview gives immediate visual
+     * feedback inside the picker UI.
      *
      * @param {{ hex: string, editable: boolean, varies: boolean }} opts
      * @returns {HTMLDivElement}
@@ -1186,6 +1211,40 @@ export class Inspector {
             el.appendChild(text);
             return el;
         }
+
+        // Native colour picker, hidden visually but invoked
+        // programmatically when the user clicks the swatch.
+        // The OS picker gives the user a colour gradient,
+        // hue slider, hex input, and (on platforms that
+        // support it) an eyedropper without leaving the
+        // inspector's footprint. The picker element is
+        // sized to 1px with zero opacity so it contributes
+        // nothing visually; .click() on a hidden element
+        // still opens the picker as long as the element is
+        // in the DOM and not display:none.
+        //
+        // Native colour input accepts and returns
+        // "#rrggbb" strings only (lowercase, exactly 7
+        // chars). The picker's initial value is normalised
+        // to that shape; an empty initial value (varies
+        // state) falls back to the placeholder grey so the
+        // picker opens on a neutral colour rather than
+        // #000000, which would feel like the picker had
+        // "lost" the current colour.
+        const picker = document.createElement("input");
+        picker.type = "color";
+        picker.className = "insp-color-picker";
+        picker.value = normaliseHexForPicker(initialHex, placeholderColour);
+        el.appendChild(picker);
+
+        // Clicking the swatch opens the picker. The cursor
+        // change signals the click affordance; the disabled
+        // branch above returned before reaching here, so the
+        // swatch is always clickable in this code path.
+        swatch.style.cursor = "pointer";
+        swatch.addEventListener("click", () => {
+            picker.click();
+        });
 
         text.setAttribute("contenteditable", "plaintext-only");
         text.setAttribute("spellcheck", "false");
@@ -1220,6 +1279,10 @@ export class Inspector {
             if (committed) return;
             if (result.value !== initialHex) {
                 committed = true;
+                // Sync the picker so a subsequent open
+                // reflects the just-committed colour
+                // rather than the original.
+                picker.value = normaliseHexForPicker(result.value, placeholderColour);
                 this._emitEdit({ kind: "setColor", value: result.value });
             }
         };
@@ -1232,6 +1295,10 @@ export class Inspector {
             const result = validateHexColor(candidate);
             if (result.kind !== "hard") {
                 swatch.style.backgroundColor = result.value;
+                // Sync the picker to the in-flight typed
+                // value too so an open picker (if the user
+                // somehow has one) reflects the live state.
+                picker.value = normaliseHexForPicker(result.value, placeholderColour);
             }
             if (text.classList.contains("error-hard")) {
                 queueMicrotask(() => {
@@ -1250,12 +1317,34 @@ export class Inspector {
                 text.textContent = initialHex.toUpperCase();
                 text.classList.remove("error-hard", "error-soft");
                 swatch.style.backgroundColor = initialHex || placeholderColour;
+                picker.value = normaliseHexForPicker(initialHex, placeholderColour);
                 text.blur();
                 return;
             }
         });
         text.addEventListener("blur", () => {
             tryCommit("blur");
+        });
+
+        // Picker -> commit. The change event fires once per
+        // user commit (mouseup after drag, or Enter in the
+        // picker's hex input). See the band docstring above
+        // for why we don't wire the input event here.
+        picker.addEventListener("change", () => {
+            const pickedHex = picker.value;
+            const result = validateHexColor(pickedHex);
+            if (result.kind === "hard") return;
+            // Update the in-place visuals before emitting so
+            // the field reads correctly during the brief
+            // window before the inspector re-render lands.
+            swatch.style.backgroundColor = result.value;
+            text.textContent = result.value.toUpperCase();
+            text.classList.remove("error-hard", "error-soft");
+            if (committed) return;
+            if (result.value !== initialHex) {
+                committed = true;
+                this._emitEdit({ kind: "setColor", value: result.value });
+            }
         });
 
         el.appendChild(text);
@@ -1272,8 +1361,8 @@ export class Inspector {
      * extents, and the two thicknesses activate when curves
      * are in the selection; sprite/trigger size activates
      * when the selection is exclusively that kind; colour
-     * activates when sprites or triggers are present (curves
-     * carry no per-object colour at this milestone).
+     * activates for any non-empty selection (curves, sprites,
+     * and triggers all carry a per-object colour).
      *
      * Starting State's four fields and Curve Size W/H use
      * absolute-set semantics: the user types a value and
@@ -1297,7 +1386,7 @@ export class Inspector {
         const curveDisabled = !ctx.hasCurves;
         const sizeActive = sizeRowActive(ctx);
         const sizeLabel = sizeRowLabel(ctx);
-        const colorActive = ctx.hasSprites || ctx.hasTriggers;
+        const colorActive = ctx.total > 0;
         const positionActive = ctx.total > 0;
         // Velocity applies to sprites and curves; triggers
         // don't move under physics and carry no vx/vy
@@ -1559,11 +1648,11 @@ export class Inspector {
         }));
         band.appendChild(r4);
 
-        // Color. Sprites and triggers only — curves carry no
-        // per-object colour. Editable when at least one
-        // sprite or trigger is in the selection, including
-        // when the value varies (typing commits the typed
-        // colour to all selected sprites and triggers).
+        // Color. Universal across kinds — curves, sprites,
+        // and triggers all carry a per-object colour. Editable
+        // when at least one object is selected, including when
+        // the value varies (typing commits the typed colour
+        // to every object in the selection).
         const colorAgg = aggregateColor(objs);
 
         const r5 = mkRow();
@@ -2191,12 +2280,11 @@ function aggregateCurveSize(curves, axis) {
 }
 
 /**
- * Aggregate the colour field across every selected sprite
- * and trigger. Curves are excluded — they have no per-object
- * colour at this milestone (their stroke uses the global
- * CURVE_COLOUR). Returns the common value as a hex string,
- * "varies" when objects disagree, or empty for an empty
- * sprite-and-trigger slice.
+ * Aggregate the colour field across every selected object.
+ * Curves, sprites, and triggers all carry a per-object
+ * colour, so the aggregate walks all three slices. Returns
+ * the common value as a hex string, "varies" when objects
+ * disagree, or empty for an empty selection.
  *
  * @param {{ sprites: any[], triggers: any[], curves: any[] }} objs
  * @returns {string | "varies"}
@@ -2209,6 +2297,9 @@ function aggregateColor(objs) {
     }
     for (const t of objs.triggers) {
         if (typeof t.color === "string") values.push(t.color);
+    }
+    for (const c of objs.curves) {
+        if (typeof c.color === "string") values.push(c.color);
     }
     if (values.length === 0) return "";
     const first = values[0];
@@ -2584,6 +2675,35 @@ function wireSpinnerHalf(halfEl, direction, step, live, fieldEl, opts, inspector
             repeatInterval = setInterval(stepOnce, 60);
         }, 500);
     });
+}
+
+/**
+ * Coerce an arbitrary hex-string-shaped value into the
+ * "#rrggbb" format required by native <input type="color">.
+ * Native colour inputs reject anything that isn't exactly a
+ * leading "#" followed by six lowercase hex digits; passing
+ * anything else silently resets the picker's value to
+ * "#000000", which would surface as "black" the first time
+ * the user opens the picker after an edit landed in a
+ * different shape.
+ *
+ * Accepts an empty string, "#RGB" shorthand, or "#RRGGBB"
+ * in any case. Returns the corresponding lowercase 6-digit
+ * form, or the supplied fallback when the input is empty or
+ * doesn't parse as either shape.
+ *
+ * @param {string} hex
+ * @param {string} fallback
+ * @returns {string}
+ */
+function normaliseHexForPicker(hex, fallback) {
+    if (typeof hex !== "string" || hex.length === 0) return fallback;
+    if (/^#[0-9a-fA-F]{6}$/.test(hex)) return hex.toLowerCase();
+    if (/^#[0-9a-fA-F]{3}$/.test(hex)) {
+        const r = hex[1], g = hex[2], b = hex[3];
+        return ("#" + r + r + g + g + b + b).toLowerCase();
+    }
+    return fallback;
 }
 
 /**

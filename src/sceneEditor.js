@@ -1231,11 +1231,9 @@ export function setCursorThicknessOnCurves(data, selection, value) {
 }
 
 /**
- * Set color on every selected sprite and trigger. Curves in
- * the selection are ignored — curves carry no per-object
- * colour field at this milestone; their stroke uses the
- * global CURVE_COLOUR constant. (A curve-colour discussion is
- * deferred to a future commit.) The value is a CSS hex string
+ * Set color on every selected sprite, trigger, and curve.
+ * Universal across kinds since every object kind carries a
+ * per-object colour field. The value is a CSS hex string
  * stored as-is. Mutates `data` in place.
  *
  * @param {any} data
@@ -1246,6 +1244,7 @@ export function setColorOnSelection(data, selection, value) {
     setFieldOnSelection(data, {
         sprites: selection.sprites,
         triggers: selection.triggers,
+        curves: selection.curves,
     }, "color", String(value));
 }
 
