@@ -800,6 +800,17 @@ async function main() {
             simulation.setScene(result.scene);
             firingEngine.setScene(result.scene);
             applySceneParamsToTransport(result.scene, transport);
+            // Composition mirror runtime-state push (Phase 1A
+            // commit 3). Every successful scene reload
+            // refreshes the mirror's runtime-state.json with
+            // the new scene's positions, cursors, and
+            // transport state. The push is gated inside
+            // mirrorPush on transport-not-playing, so a
+            // reload during active playback (which the user
+            // can trigger via the inspector while playing)
+            // skips the write and the file stays at its
+            // most recent at-rest state.
+            mirrorPush.setScene(result.scene);
             if (editor.inspector) {
                 editor.inspector.setScene(result.scene);
             }
@@ -1364,6 +1375,8 @@ async function main() {
     // runs.
     const mirrorPush = new MirrorPush({ messages });
     mirrorPush.setBundle(session.bundle);
+    mirrorPush.setSimulation(simulation);
+    mirrorPush.setTransport(transport);
     {
         const gxwMirror = /** @type {any} */ (window).gxwMirror;
         if (gxwMirror !== undefined && gxwMirror !== null &&

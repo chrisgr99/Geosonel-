@@ -1339,6 +1339,18 @@ function registerStorageHandlers() {
   ipcMain.handle('gxw:mirror-push-score', async (_event, payload) => {
     await mirror.pushScore(payload);
   });
+
+  // Phase 1A commit 3: receive a runtime-state payload
+  // (sprite positions and velocities, curve cursor
+  // positions, transport time and beat) and write it as
+  // runtime-state.json. The renderer fires this on scene
+  // reloads, on transport pause, and on rewind, all gated
+  // on transport-not-playing so the file only updates at
+  // rest. Like push-score, the await lets a write failure
+  // surface to the renderer as a rejected IPC promise.
+  ipcMain.handle('gxw:mirror-push-runtime-state', async (_event, payload) => {
+    await mirror.pushRuntimeState(payload);
+  });
 }
 
 // --- App lifecycle ---

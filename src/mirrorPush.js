@@ -62,6 +62,8 @@
 
 // @ts-check
 
+import { sampleCurve } from "./curveGeometry.js";
+
 const DEBOUNCE_MS = 500;
 
 // Bundle's internal name for the callback-code file is
@@ -112,6 +114,42 @@ export class MirrorPush {
          * @type {boolean}
          */
         this._pushing = false;
+
+        // --- Runtime-state push pipeline (Phase 1A commit 3) ---
+        //
+        // Separate from the text-file push pipeline above.
+        // Runtime state captures simulation-side state that
+        // scene.json cannot express — current sprite
+        // positions and velocities after physics has run,
+        // current cursor positions along each curve,
+        // transport time and beat at the moment of capture.
+        // Written to runtime-state.json via a separate IPC
+        // (gxw:mirror-push-runtime-state) so the cadence
+        // stays independent of text-file pushes: runtime
+        // state changes on simulation events (runScene
+        // success, pause, rewind) while text changes on
+        // every edit. At-rest captures only: when the
+        // transport is playing, the push is skipped to
+        // avoid producing a churn of files no AI is going
+        // to read through.
+
+        /** @type {import("./simulation.js").Simulation | null} */
+        this._simulation = null;
+
+        /** @type {import("./transport.js").Transport | null} */
+        this._transport = null;
+
+        /** @type {import("./scene.js").Scene | null} */
+        this._scene = null;
+
+        /** @type {(() => void) | null} */
+        this._unsubscribePlay = null;
+
+        /** @type {(() => void) | null} */
+        this._unsubscribeRewind = null;
+
+        /** @type {boolean} */
+        this._pushingRuntime = false;
     }
 
     /**
@@ -197,6 +235,14 @@ export class MirrorPush {
         if (!wasEnabled && this._bundle !== null) {
             void this._pushNow();
         }
+        if (!wasEnabled) {
+            // Toggling on also pushes a fresh runtime-state
+            // snapshot if a scene is loaded and the
+            // transport is at rest, so the AI sees both
+            // the round-trip files and the runtime state
+            // immediately on enable.
+            void this._pushRuntimeStateNow();
+        }
     }
 
     /**
@@ -281,5 +327,226 @@ export class MirrorPush {
         } finally {
             this._pushing = false;
         }
+    }
+
+    // --- Runtime-state push pipeline (Phase 1A commit 3) ---
+
+    /**
+     * Hand the pipeline a reference to the Simulation it
+     * should read runtime state from. Called once from
+     * main.js after the Simulation is constructed.
+     * @param {import("./simulation.js").Simulation | null} simulation
+     */
+    setSimulation(simulation) {
+        this._simulation = simulation;
+    }
+
+    /**
+     * Hand the pipeline a reference to the Transport and
+     * subscribe to its play and rewind events so a pause
+     * or rewind triggers a fresh runtime-state push. The
+     * "play" event fires on both play() and pause(); the
+     * at-rest gate inside _pushRuntimeStateNow handles the
+     * play() case (skip, we're entering playback). Rewind
+     * always resets elapsed time to zero; pushing on rewind
+     * captures the reset positions so the runtime file
+     * reflects what the user sees after the rewind.
+     *
+     * Idempotent and switchable: passing a new transport
+     * unsubscribes from the old one's events first. Passing
+     * null unsubscribes and leaves the pipeline without
+     * transport-driven captures.
+     *
+     * @param {import("./transport.js").Transport | null} transport
+     */
+    setTransport(transport) {
+        if (this._unsubscribePlay !== null) {
+            this._unsubscribePlay();
+            this._unsubscribePlay = null;
+        }
+        if (this._unsubscribeRewind !== null) {
+            this._unsubscribeRewind();
+            this._unsubscribeRewind = null;
+        }
+        this._transport = transport;
+        if (transport === null) return;
+        this._unsubscribePlay = transport.on("play", () => {
+            void this._pushRuntimeStateNow();
+        });
+        this._unsubscribeRewind = transport.on("rewind", () => {
+            void this._pushRuntimeStateNow();
+        });
+    }
+
+    /**
+     * Update the pipeline's scene reference and push a
+     * fresh runtime-state snapshot. Called from main.js's
+     * runScene after a successful Scene build, so every
+     * scene reload (including the initial auto-run, score
+     * switches, and edits that trigger Cmd-Enter) updates
+     * runtime-state.json. The at-rest gate inside
+     * _pushRuntimeStateNow ensures the push is skipped
+     * when the transport happens to be playing through
+     * the reload.
+     *
+     * Passing null clears the scene reference and skips
+     * any push; used during teardown or when the scene
+     * load failed.
+     *
+     * @param {import("./scene.js").Scene | null} scene
+     */
+    setScene(scene) {
+        this._scene = scene;
+        if (scene === null) return;
+        void this._pushRuntimeStateNow();
+    }
+
+    /**
+     * Build a runtime-state payload from the current scene,
+     * simulation, and transport, and dispatch via
+     * window.gxwMirror.pushRuntimeState. No-op when the
+     * mirror is disabled, when any of scene/simulation/
+     * transport is missing, when another runtime push is
+     * already in flight, or when the transport is actively
+     * playing (the at-rest-only rule keeps the file stable
+     * while audio is firing). Failures log a warning and
+     * surface to the message area if one was provided.
+     */
+    async _pushRuntimeStateNow() {
+        if (!this._enabled) return;
+        if (this._scene === null) return;
+        if (this._simulation === null) return;
+        if (this._transport === null) return;
+        if (this._transport.isPlaying) return;
+        if (this._pushingRuntime) return;
+
+        /** @type {any} */
+        const gxwMirror = (/** @type {any} */ (window)).gxwMirror;
+        if (gxwMirror === undefined || gxwMirror === null ||
+            typeof gxwMirror.pushRuntimeState !== "function") {
+            return;
+        }
+
+        const payload = this._captureRuntimeState();
+        if (payload === null) return;
+
+        this._pushingRuntime = true;
+        try {
+            await gxwMirror.pushRuntimeState(payload);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn("GXW: mirror runtime-state push failed:", err);
+            if (this._messages !== null) {
+                this._messages.write(
+                    `Mirror runtime-state push failed: ${msg}`,
+                    "error",
+                );
+            }
+        } finally {
+            this._pushingRuntime = false;
+        }
+    }
+
+    /**
+     * Build the runtime-state payload. Returns null when
+     * any required reference is missing (callers gate
+     * separately, but the helper defends).
+     *
+     * Sprites: id, current position, current velocity,
+     * cycle counter and progress. The position and velocity
+     * are the live simulation values, which equal the
+     * authored values at true edit time (no playback yet)
+     * and diverge under physics after the transport has
+     * advanced and paused.
+     *
+     * Curves: id, current physics offset (dx, dy) relative
+     * to the authored shape, cycle counter and progress,
+     * halted flag, and cursor position. The cursor object
+     * carries the t parameter in [0, 1] plus the world
+     * coordinates (sampleCurve evaluated against the
+     * authored shape, then translated by the runtime
+     * offset). A null cursor means the shape couldn't be
+     * sampled — typically a degenerate piste with fewer
+     * than two points, or a not-yet-implemented shape type.
+     *
+     * Triggers are intentionally omitted: they don't move
+     * (no velocity field in the schema) and scene.json
+     * fully describes their position.
+     *
+     * Transport: state ("stopped" when elapsedSeconds is
+     * 0, "paused" otherwise; never "playing" since the
+     * at-rest gate in _pushRuntimeStateNow filters that
+     * out before we get here), elapsedSeconds,
+     * elapsedBeats (null for time-based pieces),
+     * musicalPosition (null for time-based or when no
+     * time signature is set), and bpm.
+     *
+     * @returns {object | null}
+     */
+    _captureRuntimeState() {
+        const scene = this._scene;
+        const simulation = this._simulation;
+        const transport = this._transport;
+        if (scene === null || simulation === null || transport === null) {
+            return null;
+        }
+
+        const elapsedSeconds = transport.elapsedSeconds;
+        const state = elapsedSeconds === 0 ? "stopped" : "paused";
+
+        const sprites = [];
+        for (const sprite of scene.sprites) {
+            if (typeof sprite.id !== "string") continue;
+            const runtime = simulation.getSpriteRuntime(sprite.id);
+            if (runtime === null) continue;
+            sprites.push({
+                id: sprite.id,
+                position: { x: runtime.x, y: runtime.y },
+                velocity: { vx: runtime.vx, vy: runtime.vy },
+                cycle: {
+                    count: runtime.cycleCount,
+                    progress: runtime.cycleProgress,
+                },
+            });
+        }
+
+        const curves = [];
+        for (const curve of scene.curves) {
+            if (typeof curve.id !== "string") continue;
+            const t = simulation.getCurveCursorT(curve.id);
+            const offset = simulation.getCurveRuntimeOffset(curve.id);
+            const cycleState = simulation.getCurveCycleState(curve.id);
+            const halted = simulation.isCurveHalted(curve.id);
+            const sample = sampleCurve(curve.shape, t);
+            const dx = offset !== null ? offset.dx : 0;
+            const dy = offset !== null ? offset.dy : 0;
+            const cursor = sample !== null
+                ? { t, x: sample.x + dx, y: sample.y + dy }
+                : null;
+            curves.push({
+                id: curve.id,
+                offset: { dx, dy },
+                halted,
+                cycle: cycleState !== null
+                    ? {
+                        count: cycleState.cycleCount,
+                        progress: cycleState.cycleProgress,
+                    }
+                    : { count: 0, progress: 0 },
+                cursor,
+            });
+        }
+
+        return {
+            transport: {
+                state,
+                elapsedSeconds,
+                elapsedBeats: transport.elapsedBeats,
+                musicalPosition: transport.musicalPosition,
+                bpm: transport.bpm,
+            },
+            sprites,
+            curves,
+        };
     }
 }

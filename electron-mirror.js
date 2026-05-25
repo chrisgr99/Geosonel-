@@ -44,6 +44,7 @@ const ACTIVE_FOLDER_NAME = 'Active';
 const ACTIVE_SCORE_FILENAME = 'active-score.json';
 const SCENE_FILENAME = 'scene.json';
 const BEHAVIOURS_FILENAME = 'behaviours.js';
+const RUNTIME_STATE_FILENAME = 'runtime-state.json';
 const PROTOCOL_VERSION = 1;
 const SETTING_KEY = 'mirrorEnabled';
 const TMP_SUFFIX = '.tmp';
@@ -359,6 +360,104 @@ async function pushScore(payload) {
     );
 }
 
+/**
+ * Receive a runtime-state payload from the renderer's
+ * MirrorPush pipeline and write it as runtime-state.json
+ * in the mirror folder. Phase 1A commit 3.
+ *
+ * Runtime state captures simulation-side state that
+ * scene.json cannot express: current sprite positions and
+ * velocities (which diverge from authored values after the
+ * transport plays and then pauses under physics), current
+ * cursor positions along each curve, the transport time and
+ * beat at the moment of capture. The file is written via
+ * atomic temp-and-rename so an AI reading it never sees a
+ * torn JSON. Single file overwritten on each push — no time
+ * series, the AI reasons over one moment of runtime state
+ * at a time.
+ *
+ * Captures happen at-rest only (transport stopped or paused).
+ * The renderer gates by checking transport.isPlaying before
+ * calling pushRuntimeState, so a captured payload here is
+ * always one of those two states. Active playback is
+ * deliberately not surfaced — capturing every frame of a
+ * running simulation would flood the file and produce more
+ * data than an AI can usefully reason about while audio is
+ * firing. The post-Phase-1B note-event log is the planned
+ * surface for playback observability when it lands.
+ *
+ * runtime-state.json schema:
+ *
+ *   {
+ *     protocolVersion: 1,
+ *     capturedAt: "ISO 8601 string",
+ *     transport: {
+ *       state: "stopped" | "paused",
+ *       elapsedSeconds: number,
+ *       elapsedBeats: number | null,    // null when bpm is null
+ *       musicalPosition: {bars, beats, ticks} | null,
+ *       bpm: number | null
+ *     },
+ *     sprites: [
+ *       {
+ *         id: string,
+ *         position: {x: number, y: number},
+ *         velocity: {vx: number, vy: number},
+ *         cycle: {count: number, progress: number}
+ *       }
+ *     ],
+ *     curves: [
+ *       {
+ *         id: string,
+ *         offset: {dx: number, dy: number},
+ *         halted: boolean,
+ *         cycle: {count: number, progress: number},
+ *         cursor: {t: number, x: number, y: number} | null
+ *       }
+ *     ]
+ *   }
+ *
+ * Triggers are intentionally omitted from the schema since
+ * they don't move (no velocity in the scene model) and
+ * scene.json fully describes their state. The cursor field
+ * on curves is null when the shape couldn't be sampled —
+ * typically a degenerate piste (fewer than two points) or a
+ * not-yet-implemented shape type (bezier, helice).
+ *
+ * The full schema also needs to be documented in AGENTS.md
+ * once that lands in commit 6, since it differs from
+ * scene.json's schema and an AI reading the mirror folder
+ * needs both descriptions.
+ *
+ * No-op when the mirror is disabled (defensive against a
+ * stray race where Settings toggled off while a push was
+ * already in flight). Errors propagate up through the IPC
+ * so the renderer can surface them via the message area.
+ *
+ * @param {object | null} payload
+ */
+async function pushRuntimeState(payload) {
+    if (!enabled) return;
+    if (payload === null || typeof payload !== 'object') return;
+
+    const folder = getMirrorFolderPath();
+    await fsp.mkdir(folder, { recursive: true });
+
+    const snapshot = {
+        protocolVersion: PROTOCOL_VERSION,
+        capturedAt: new Date().toISOString(),
+        transport: payload.transport ?? null,
+        sprites: Array.isArray(payload.sprites) ? payload.sprites : [],
+        curves: Array.isArray(payload.curves) ? payload.curves : [],
+    };
+
+    await writeAtomic(
+        path.join(folder, RUNTIME_STATE_FILENAME),
+        JSON.stringify(snapshot, null, 2),
+        null,
+    );
+}
+
 // --- Public API ---
 
 /**
@@ -475,4 +574,4 @@ function shutdown() {
     writeActiveScoreStubSync(false);
 }
 
-module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore };
+module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState };
