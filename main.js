@@ -93,6 +93,7 @@ import { installAppMenu } from "./src/appMenu.js";
 import { installMenuActions, pushMenuState, pushRecentScoresToMenu, pushBackupsToMenu } from "./src/menuActions.js";
 import { SceneLoader } from "./src/sceneLoader.js";
 import { DiskMirror } from "./src/diskMirror.js";
+import { MirrorPush } from "./src/mirrorPush.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
 import { actionSaveAs } from "./src/scoreActions.js";
@@ -1201,6 +1202,7 @@ async function main() {
         undoPast.length = 0;
         undoFuture.length = 0;
         session.bundle = newBundle;
+        mirrorPush.setBundle(newBundle);
         imageImporter.setBundle(newBundle);
         await editor.setBundle(newBundle);
         const img = newBundle.getCurrentImage();
@@ -1272,6 +1274,7 @@ async function main() {
             newBundle = await reconcileBundleWithDisk(newBundle, diskMirror);
 
             session.bundle = newBundle;
+            mirrorPush.setBundle(newBundle);
             imageImporter.setBundle(newBundle);
             await editor.setBundle(newBundle);
 
@@ -1337,6 +1340,44 @@ async function main() {
     };
     refreshScoreNameDisplay();
 
+    // Composition mirror push pipeline (Section 15, Phase
+    // 1A commit 2). Constructed once and kept alive for
+    // the session; setBundle is called here for the initial
+    // bundle and again from every session.bundle assignment
+    // (the disk-mirror onExternalChange path, switchToBundle,
+    // and the startup reconciliation) so the pipeline tracks
+    // the active score regardless of which path replaced it.
+    // setEnabled is called with whatever the main-process
+    // mirror's persisted enabled state is, queried via
+    // window.gxwMirror.getStatus. The renderer-side flag
+    // mirrors main's so pushes are gated cheaply before
+    // crossing IPC. The Settings dialog calls setEnabled too
+    // whenever the user toggles the feature.
+    //
+    // Referenced from inside session.switchToBundle and from
+    // the outer onExternalChange closure, both of which were
+    // defined above; JS closures capture variable bindings
+    // by reference, so the references resolve at call time
+    // rather than at definition time and this declaration
+    // landing after session is fine. Nothing calls
+    // switchToBundle or onExternalChange before this line
+    // runs.
+    const mirrorPush = new MirrorPush({ messages });
+    mirrorPush.setBundle(session.bundle);
+    {
+        const gxwMirror = /** @type {any} */ (window).gxwMirror;
+        if (gxwMirror !== undefined && gxwMirror !== null &&
+            typeof gxwMirror.getStatus === "function") {
+            void gxwMirror.getStatus().then((status) => {
+                if (status !== null && status !== undefined) {
+                    mirrorPush.setEnabled(status.enabled === true);
+                }
+            }).catch((err) => {
+                console.warn("GXW: could not query initial mirror status:", err);
+            });
+        }
+    }
+
     // Begin watching the initial score for external changes.
     // This is a no-op when disk mirroring isn't configured;
     // when it later becomes configured (via Settings), the
@@ -1353,6 +1394,7 @@ async function main() {
         const reconciled = await reconcileBundleWithDisk(session.bundle, diskMirror);
         if (reconciled !== session.bundle) {
             session.bundle = reconciled;
+            mirrorPush.setBundle(reconciled);
             imageImporter.setBundle(reconciled);
             await editor.setBundle(reconciled);
             const img = reconciled.getCurrentImage();
@@ -3299,6 +3341,7 @@ async function main() {
         imageImporter,
         canvas,
         diskMirror,
+        mirrorPush,
         performUndo,
         performRedo,
         performDuplicate,

@@ -42,6 +42,8 @@ const fsp = require('node:fs/promises');
 
 const ACTIVE_FOLDER_NAME = 'Active';
 const ACTIVE_SCORE_FILENAME = 'active-score.json';
+const SCENE_FILENAME = 'scene.json';
+const BEHAVIOURS_FILENAME = 'behaviours.js';
 const PROTOCOL_VERSION = 1;
 const SETTING_KEY = 'mirrorEnabled';
 const TMP_SUFFIX = '.tmp';
@@ -52,8 +54,16 @@ const TMP_SUFFIX = '.tmp';
 // returns this. `folderPathCache` lazily resolves the
 // folder path on first use since app.getPath('userData')
 // is not available before app.whenReady.
+// `lastPushedImageName` tracks the on-disk filename of the
+// most recently pushed image so that when the score's
+// image is replaced with one carrying a different filename
+// (different score open, or the user imported a new image
+// with a new name) we can unlink the stale file on the
+// next push and the mirror folder doesn't accumulate
+// orphaned images.
 let enabled = false;
 let folderPathCache = null;
+let lastPushedImageName = null;
 
 // Settings.json IO. The settings file lives in
 // app.getPath('userData') and is shared with the other
@@ -200,6 +210,155 @@ function writeActiveScoreStubSync(isLive) {
     }
 }
 
+// Atomic write helper. Writes the new content to a
+// <name>.tmp file first and then renames atomically into
+// place. On POSIX systems (macOS, Linux) the rename is
+// atomic from a reader's perspective: any process or AI
+// tool watching the target path sees either the old
+// content or the new content but never a torn write in
+// progress. fs.watch in Phase 1B will filter out events
+// for *.tmp files so a renderer push does not look like
+// an AI write to the round-trip pipeline. The Buffer
+// argument is used for binary writes; pass null for text.
+async function writeAtomic(targetPath, textContent, binaryContent) {
+    const tmpPath = targetPath + TMP_SUFFIX;
+    if (binaryContent !== null && binaryContent !== undefined) {
+        await fsp.writeFile(tmpPath, binaryContent);
+    } else {
+        await fsp.writeFile(tmpPath, textContent ?? '', 'utf8');
+    }
+    await fsp.rename(tmpPath, targetPath);
+}
+
+// Best-effort unlink for stale files (a previous image
+// whose filename differs from the current image's). ENOENT
+// is silently ignored — the file may already be gone from
+// an interrupted previous push, or never existed. Other
+// errors log a warning but do not throw because a stale
+// file lingering in the mirror folder is a cosmetic issue,
+// not a correctness one.
+async function tryUnlink(targetPath) {
+    try {
+        await fsp.unlink(targetPath);
+    } catch (err) {
+        if (err.code === 'ENOENT') return;
+        console.warn(`GXW: could not unlink stale mirror file ${targetPath}: ${err.message}`);
+    }
+}
+
+/**
+ * Receive a score-state payload from the renderer and
+ * write it into the mirror folder using atomic temp-and-
+ * rename writes. Phase 1A commit 2.
+ *
+ * Payload shape:
+ *   {
+ *     sceneJsonText: string,
+ *     behavioursJsText: string,
+ *     image: { name: string, bytes: ArrayBuffer, mimeType: string } | null,
+ *     score: { displayName: string, path: string | null, dirty: boolean }
+ *   }
+ *
+ * Writes scene.json and behaviours.js unconditionally
+ * (empty string is a valid content state). Writes the
+ * image to <image.name> when present; when the new image's
+ * name differs from the previously pushed image's name,
+ * the previous file is unlinked first so the folder does
+ * not accumulate orphans across score switches or image
+ * replacements. Finally updates active-score.json with
+ * protocolVersion, isLive=true, the score identity block,
+ * and the sync.lastSyncAt timestamp.
+ *
+ * No-op when the mirror is disabled. The renderer should
+ * not be calling pushScore in that state, but defending
+ * here keeps a stray race (Settings toggled off while a
+ * push was already in flight) from creating files in a
+ * folder we have just cleared.
+ *
+ * Errors are caught at the IPC handler in electron-main.js
+ * so a write failure surfaces as a rejected IPC promise
+ * the renderer can report via the message area.
+ *
+ * @param {{sceneJsonText?: string, behavioursJsText?: string, image?: {name: string, bytes: ArrayBuffer, mimeType: string} | null, score?: {displayName?: string, path?: string | null, dirty?: boolean}} | null} payload
+ */
+async function pushScore(payload) {
+    if (!enabled) return;
+    if (payload === null || typeof payload !== 'object') return;
+
+    const folder = getMirrorFolderPath();
+    // The folder is created at enable time, but if it has
+    // been removed externally since (the user deleted it
+    // through Finder, the disk filled and recovered, etc.)
+    // recreate it here so the push does not throw. Cheap
+    // when the folder already exists.
+    await fsp.mkdir(folder, { recursive: true });
+
+    // Write scene.json and behaviours.js atomically. Both
+    // are written every push, even when only one changed,
+    // because deciding what "changed" requires reading the
+    // previous on-disk content and the savings are not
+    // worth the complexity for kilobyte-scale text files.
+    await writeAtomic(
+        path.join(folder, SCENE_FILENAME),
+        typeof payload.sceneJsonText === 'string' ? payload.sceneJsonText : '',
+        null,
+    );
+    await writeAtomic(
+        path.join(folder, BEHAVIOURS_FILENAME),
+        typeof payload.behavioursJsText === 'string' ? payload.behavioursJsText : '',
+        null,
+    );
+
+    // Image handling. The bundle's image filename is
+    // arbitrary (whatever the user imported under), so we
+    // both write the new file and unlink any stale image
+    // from a previous push whose name differs.
+    let newImageName = null;
+    if (payload.image !== null && payload.image !== undefined &&
+        typeof payload.image.name === 'string' &&
+        payload.image.name.length > 0 &&
+        payload.image.bytes instanceof ArrayBuffer) {
+        const buffer = Buffer.from(payload.image.bytes);
+        await writeAtomic(
+            path.join(folder, payload.image.name),
+            null,
+            buffer,
+        );
+        newImageName = payload.image.name;
+    }
+    if (lastPushedImageName !== null && lastPushedImageName !== newImageName) {
+        await tryUnlink(path.join(folder, lastPushedImageName));
+    }
+    lastPushedImageName = newImageName;
+
+    // Update active-score.json with the latest score
+    // identity and a sync timestamp. The full schema
+    // (transport snapshot, files lists, lastApplyResult)
+    // lands in commit 5; here we surface what we know:
+    // displayName, path, dirty, lastSyncAt. The file is
+    // written via writeAtomic too so an AI watcher in a
+    // future round-trip iteration cannot read a torn
+    // mid-write JSON.
+    const score = payload.score ?? {};
+    const snapshot = {
+        protocolVersion: PROTOCOL_VERSION,
+        isLive: true,
+        score: {
+            displayName: typeof score.displayName === 'string' ? score.displayName : '',
+            path: typeof score.path === 'string' ? score.path : null,
+            dirty: score.dirty === true,
+        },
+        sync: {
+            lastSyncAt: new Date().toISOString(),
+        },
+    };
+    await writeAtomic(
+        path.join(folder, ACTIVE_SCORE_FILENAME),
+        JSON.stringify(snapshot, null, 2),
+        null,
+    );
+}
+
 // --- Public API ---
 
 /**
@@ -283,6 +442,10 @@ async function setEnabled(value) {
                 `GXW: clearing mirror folder on disable failed: ${err.message}`,
             );
         }
+        // Reset the image-name memory so the next enable +
+        // first push doesn't try to unlink a file that
+        // belongs to a previous session.
+        lastPushedImageName = null;
     }
 }
 
@@ -312,4 +475,4 @@ function shutdown() {
     writeActiveScoreStubSync(false);
 }
 
-module.exports = { initMirror, setEnabled, getStatus, shutdown };
+module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore };

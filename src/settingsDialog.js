@@ -36,6 +36,7 @@ import { loadAllScoreRecords } from "./storage.js";
  * @typedef {Object} SettingsContext
  * @property {import("./diskMirror.js").DiskMirror} diskMirror
  * @property {import("./messages.js").MessageArea} messages
+ * @property {import("./mirrorPush.js").MirrorPush} [mirrorPush]
  */
 
 /**
@@ -522,6 +523,7 @@ function renderStoragePanel(panel, ctx) {
 function renderAiIntegrationPanel(panel, _ctx) {
     /** @type {any} */
     const gxwMirror = (/** @type {any} */ (window)).gxwMirror;
+    const mirrorPush = _ctx.mirrorPush;
 
     const intro = document.createElement("div");
     intro.className = "settings-description settings-storage-intro";
@@ -610,6 +612,15 @@ function renderAiIntegrationPanel(panel, _ctx) {
         try {
             const status = await gxwMirror.setEnabled(toggleInput.checked);
             refresh(status);
+            // Notify the renderer-side push pipeline so it
+            // starts (or stops) pushing immediately on the
+            // user's gesture, rather than waiting for the
+            // next content change.
+            if (mirrorPush !== undefined && mirrorPush !== null &&
+                typeof mirrorPush.setEnabled === "function" &&
+                status !== null && status !== undefined) {
+                mirrorPush.setEnabled(status.enabled === true);
+            }
         } catch (err) {
             console.warn("GXW: could not toggle mirror:", err);
             // Revert the checkbox so the displayed state

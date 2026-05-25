@@ -65,6 +65,7 @@ import { relativeDateLabel } from "./relativeDate.js";
  * @property {ImageImporter} imageImporter
  * @property {Canvas} canvas
  * @property {import("./diskMirror.js").DiskMirror} diskMirror
+ * @property {import("./mirrorPush.js").MirrorPush} [mirrorPush]
  * @property {() => void} performUndo
  * @property {() => void} performRedo
  * @property {() => void} performDuplicate
@@ -245,6 +246,7 @@ export function installMenuActions(ctx) {
                 openSettingsDialog({
                     diskMirror: ctx.diskMirror,
                     messages: ctx.messages,
+                    mirrorPush: ctx.mirrorPush,
                 });
                 break;
 

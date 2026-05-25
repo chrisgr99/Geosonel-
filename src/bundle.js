@@ -184,6 +184,32 @@ export class Bundle {
         this._dirtyListeners = new Set();
 
         /**
+         * Subscribers fired on every content mutation of the
+         * bundle's `files` array — every updateContent on a
+         * text file, every setBinaryFile, every successful
+         * removeFile. Distinct from _dirtyListeners, which
+         * fires only on the dirty boolean's transitions; this
+         * fires on every mutation, even successive ones that
+         * never cross the false-to-true edge (a save clears
+         * dirty; the next keystroke makes it true again,
+         * which is one dirty transition but two content
+         * changes). Used by the composition mirror's push
+         * pipeline (src/mirrorPush.js) to wake up on each
+         * edit so its debounced push captures every change,
+         * not just the first edit after a save.
+         *
+         * Pinned-slot and displayBrightness mutations do
+         * NOT fire content-change because they live in the
+         * .gxw-meta.json sidecar rather than scene.json or
+         * behaviours.js, and the mirror does not surface
+         * the sidecar to AI tools. If a future need to
+         * surface them arises, the relevant mutators can
+         * be extended to emit then.
+         * @type {Set<() => void>}
+         */
+        this._contentChangeListeners = new Set();
+
+        /**
          * Per-text-file content snapshots at last save (or
          * initial load). Drives isFileDirty(): compares the
          * current in-memory content of a text file against the
@@ -210,6 +236,46 @@ export class Bundle {
     subscribeDirtyChange(cb) {
         this._dirtyListeners.add(cb);
         return () => this._dirtyListeners.delete(cb);
+    }
+
+    /**
+     * Subscribe to content-change events. The callback fires
+     * on every mutation of a file in the bundle’s files
+     * array — a text-file updateContent, a binary-file
+     * setBinaryFile, or a successful removeFile. Fires
+     * independently of the dirty boolean: a save clears
+     * dirty but does not fire content-change; the next
+     * keystroke fires both. Returns an unsubscribe function.
+     *
+     * Used by the composition mirror's push pipeline
+     * (src/mirrorPush.js) so its debounced push wakes up on
+     * every edit rather than only on dirty transitions.
+     *
+     * @param {() => void} cb
+     * @returns {() => void}
+     */
+    subscribeContentChange(cb) {
+        this._contentChangeListeners.add(cb);
+        return () => this._contentChangeListeners.delete(cb);
+    }
+
+    /**
+     * Fire all content-change listeners. Called from
+     * updateContent, setBinaryFile, and removeFile (when
+     * removal actually happened). Errors from individual
+     * subscribers are logged but do not interrupt other
+     * subscribers; the bundle's data model has already been
+     * mutated by the time we get here, so a thrown
+     * listener can't roll that back anyway.
+     */
+    _emitContentChange() {
+        for (const cb of this._contentChangeListeners) {
+            try {
+                cb();
+            } catch (err) {
+                console.error("GXW: bundle content-change listener threw.", err);
+            }
+        }
     }
 
     /**
@@ -329,6 +395,7 @@ export class Bundle {
         if (file === null) return;
         file.content = content;
         this.markDirty();
+        this._emitContentChange();
     }
 
     // --- Binary file operations (image importer-facing) ---
@@ -349,6 +416,7 @@ export class Bundle {
             this.files.push(file);
         }
         this.markDirty();
+        this._emitContentChange();
     }
 
     /**
@@ -369,7 +437,10 @@ export class Bundle {
         const before = this.files.length;
         this.files = this.files.filter((f) => f.name !== name);
         if (this.imageName === name) this.imageName = null;
-        if (this.files.length !== before) this.markDirty();
+        if (this.files.length !== before) {
+            this.markDirty();
+            this._emitContentChange();
+        }
     }
 
     /**

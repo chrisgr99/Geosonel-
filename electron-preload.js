@@ -164,4 +164,6 @@ contextBridge.exposeInMainWorld('gxwMirror', {
   setEnabled: (value) =>
     ipcRenderer.invoke('gxw:mirror-set-enabled', value),
   getStatus: () => ipcRenderer.invoke('gxw:mirror-get-status'),
+  pushScore: (payload) =>
+    ipcRenderer.invoke('gxw:mirror-push-score', payload),
 });

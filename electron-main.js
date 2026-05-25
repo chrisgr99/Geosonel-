@@ -1328,6 +1328,17 @@ function registerStorageHandlers() {
   ipcMain.handle('gxw:mirror-get-status', async () => {
     return mirror.getStatus();
   });
+
+  // Phase 1A commit 2: receive a score-state payload from
+  // the renderer's MirrorPush pipeline and write it into
+  // the mirror folder using atomic temp-and-rename. The
+  // handler awaits the push so a write failure surfaces
+  // as a rejected IPC promise the renderer can report via
+  // the message area; pushScore itself catches no errors,
+  // so we let any thrown error propagate up the IPC.
+  ipcMain.handle('gxw:mirror-push-score', async (_event, payload) => {
+    await mirror.pushScore(payload);
+  });
 }
 
 // --- App lifecycle ---
