@@ -12,15 +12,25 @@
 // artifacts describing canvas state and the round-trip
 // protocol.
 //
-// Phase 1A commit 1 (this commit). Foundational pieces
-// only: the module owns the folder's lifecycle (creation
-// on enable, clearing on disable, cleanup of leftover .tmp
-// files at startup), tracks the isLive flag in
-// active-score.json (true while GeoSonel is running, false
-// on quit), and exposes setEnabled / getStatus through
-// IPC. No content pushing happens yet — scene.json,
-// behaviours.js, image, and the observation-only
-// artifacts land in later Phase 1A commits.
+// This module owns the main-process side of the mirror:
+// folder lifecycle (creation on enable, clearing on
+// disable, cleanup of leftover .tmp files at startup);
+// content pushes from the renderer (scene.json,
+// behaviours.js, image); active-score.json maintenance
+// with protocol metadata and the transport snapshot;
+// runtime-state.json capture at at-rest moments; copying
+// the static AI grounding docs (AGENTS.md, sceneSchema.md)
+// on enable; and the fs.watch infrastructure that detects
+// external writes from an AI participating in the round-
+// trip protocol. Atomic temp-and-rename writes plus a
+// self-write mute mechanism keep self-originating events
+// out of the watch pipeline.
+//
+// Phase 1A (write side: bundle → mirror) is complete.
+// Phase 1B (round-trip: mirror → bundle) is partially in
+// place: the watcher detects events, but the apply
+// pipeline that turns those events into bundle updates
+// lands in later Phase 1B commits.
 //
 // Feature is opt-in. The user toggles it in Settings → AI
 // Integration. Default off so existing users do not get a
@@ -33,7 +43,7 @@
 // relying on its Settings → Storage panel, but the future
 // direction (Section 15) is this Electron-main-process
 // mirror at a stable canonical path, which is what gets
-// extended in subsequent Phase 1A commits.
+// extended in subsequent commits.
 
 const { app } = require('electron');
 const path = require('node:path');
@@ -51,6 +61,19 @@ const MIRROR_DOCS_DIR = 'mirror-docs';
 const PROTOCOL_VERSION = 1;
 const SETTING_KEY = 'mirrorEnabled';
 const TMP_SUFFIX = '.tmp';
+const MUTE_TTL_MS = 5000;
+// Empirically, fs.watch on macOS fires two events per
+// atomic temp-and-rename: typically a rename event
+// followed by a second rename or change event for the
+// same destination filename. Both must be suppressed for
+// a self-write to be invisible to the round-trip pipeline,
+// so each writeAtomic registers a mute with this initial
+// count. If a future macOS revision delivers a different
+// number of events per rename, the consequence is bounded:
+// fewer events leak as false positives (handled by the
+// apply pipeline's re-validation in Phase 1B commit 2),
+// more events leave count-residue that the TTL evicts.
+const EVENTS_PER_RENAME = 2;
 
 // Module-level state. `enabled` mirrors the persisted
 // setting and is the canonical in-process answer for "is
@@ -65,9 +88,16 @@ const TMP_SUFFIX = '.tmp';
 // with a new name) we can unlink the stale file on the
 // next push and the mirror folder doesn't accumulate
 // orphaned images.
+// `watcher` holds the fs.watch instance when the mirror is
+// enabled, null otherwise. `selfWriteMutes` is the Map
+// used by the round-trip watcher to ignore events from
+// the bundle's own writes; see the watcher infrastructure
+// section below.
 let enabled = false;
 let folderPathCache = null;
 let lastPushedImageName = null;
+let watcher = null;
+const selfWriteMutes = new Map();
 
 // Settings.json IO. The settings file lives in
 // app.getPath('userData') and is shared with the other
@@ -276,22 +306,153 @@ async function writeStaticDocs() {
     }
 }
 
+// Watcher infrastructure (Phase 1B). fs.watch on the
+// mirror folder detects external writes — typically AI-
+// edited scene.json or behaviours.js arriving via a
+// filesystem MCP server — so the bundle can apply them
+// back into its in-memory state. The watcher is started
+// when the mirror is enabled and torn down on disable or
+// app quit. Score-switch lifecycle is a later Phase 1B
+// commit.
+//
+// Event filtering happens in two layers. *.tmp events are
+// dropped entirely since those are intermediate states
+// from the bundle's own atomic-write staging. Non-.tmp
+// events are checked against the self-write mute Map:
+// writeAtomic registers an expected event count on the
+// destination filename before its rename (see
+// EVENTS_PER_RENAME for why the count is not 1), the
+// handler consumes one count per matching event, and a
+// TTL evicts stale entries if an event count is
+// over-registered (e.g., a rename that failed, or a
+// macOS variant that delivers fewer events than expected).
+// Count-based muting rather than time-window muting means
+// a genuine AI write landing soon after a self-write does
+// not get accidentally suppressed.
+//
+// MUTE_TTL_MS is set generously (5 seconds) as defensive
+// headroom against FSEvents stalls under heavy system load.
+// In normal conditions events arrive within tens of
+// milliseconds and consume their mutes almost immediately.
+// The TTL only matters as a safety net for residual
+// uncounted slots; legitimate AI writes within the window
+// are not blocked because the mute is already consumed by
+// then.
+//
+// For this commit (Phase 1B commit 1) events that pass
+// the filters are just logged. Phase 1B commit 2 will
+// connect a quiescence-based batcher and the validation
+// pipeline; the console.log call inside handleWatcherEvent
+// is the hook point for that integration.
+
+function muteNextEvent(filename) {
+    const existing = selfWriteMutes.get(filename);
+    if (existing !== undefined) {
+        existing.count += EVENTS_PER_RENAME;
+        clearTimeout(existing.timeoutId);
+        existing.timeoutId = setTimeout(() => {
+            selfWriteMutes.delete(filename);
+        }, MUTE_TTL_MS);
+    } else {
+        const timeoutId = setTimeout(() => {
+            selfWriteMutes.delete(filename);
+        }, MUTE_TTL_MS);
+        selfWriteMutes.set(filename, { count: EVENTS_PER_RENAME, timeoutId });
+    }
+}
+
+function consumeMute(filename) {
+    const entry = selfWriteMutes.get(filename);
+    if (entry === undefined) return false;
+    entry.count -= 1;
+    if (entry.count <= 0) {
+        clearTimeout(entry.timeoutId);
+        selfWriteMutes.delete(filename);
+    }
+    return true;
+}
+
+function clearAllMutes() {
+    for (const entry of selfWriteMutes.values()) {
+        clearTimeout(entry.timeoutId);
+    }
+    selfWriteMutes.clear();
+}
+
+function handleWatcherEvent(eventType, filename) {
+    // fs.watch can deliver a null filename on some
+    // platforms (Linux inotify when the underlying event
+    // lacks a name). On macOS this should not happen, but
+    // the defensive check is cheap.
+    if (filename === null) return;
+
+    // Intermediate atomic-write staging files. The .tmp
+    // file is short-lived and never the final write
+    // target, so there is nothing to apply.
+    if (filename.endsWith(TMP_SUFFIX)) return;
+
+    // Self-originating writes registered by writeAtomic.
+    // The mute consumes one expected event per
+    // registration.
+    if (consumeMute(filename)) return;
+
+    // Surface the event. For Phase 1B commit 1 this is
+    // just a log line; commit 2 will replace this with a
+    // call into the quiescence batcher and apply pipeline.
+    console.log(`GXW: mirror watcher saw ${eventType} on ${filename}`);
+}
+
+function startWatcher() {
+    if (watcher !== null) return;
+    const folder = getMirrorFolderPath();
+    try {
+        watcher = fs.watch(folder, { persistent: false }, handleWatcherEvent);
+    } catch (err) {
+        console.warn(
+            `GXW: could not start mirror watcher: ${err.message}. ` +
+            `AI edits to round-trip files will not be detected this session.`,
+        );
+        watcher = null;
+    }
+}
+
+function stopWatcher() {
+    if (watcher === null) return;
+    try {
+        watcher.close();
+    } catch (err) {
+        console.warn(`GXW: error closing mirror watcher: ${err.message}`);
+    }
+    watcher = null;
+    clearAllMutes();
+}
+
 // Atomic write helper. Writes the new content to a
 // <name>.tmp file first and then renames atomically into
 // place. On POSIX systems (macOS, Linux) the rename is
 // atomic from a reader's perspective: any process or AI
 // tool watching the target path sees either the old
 // content or the new content but never a torn write in
-// progress. fs.watch in Phase 1B will filter out events
-// for *.tmp files so a renderer push does not look like
-// an AI write to the round-trip pipeline. The Buffer
-// argument is used for binary writes; pass null for text.
+// progress. The watcher (when running) filters out events
+// on *.tmp files entirely and uses the self-write mute
+// mechanism registered just before the rename below to
+// suppress the rename event on the destination filename,
+// so a self-originating write never looks like an AI edit
+// to the round-trip pipeline. The Buffer argument is used
+// for binary writes; pass null for text.
 async function writeAtomic(targetPath, textContent, binaryContent) {
     const tmpPath = targetPath + TMP_SUFFIX;
     if (binaryContent !== null && binaryContent !== undefined) {
         await fsp.writeFile(tmpPath, binaryContent);
     } else {
         await fsp.writeFile(tmpPath, textContent ?? '', 'utf8');
+    }
+    // Register the upcoming rename event as self-originating
+    // so the watcher's event handler ignores it. Skipped when
+    // no watcher is running (early startup before
+    // startWatcher, or mirror disabled).
+    if (watcher !== null) {
+        muteNextEvent(path.basename(targetPath));
     }
     await fsp.rename(tmpPath, targetPath);
 }
@@ -510,10 +671,10 @@ async function pushScore(payload) {
  * typically a degenerate piste (fewer than two points) or a
  * not-yet-implemented shape type (bezier, helice).
  *
- * The full schema also needs to be documented in AGENTS.md
- * once that lands in commit 6, since it differs from
- * scene.json's schema and an AI reading the mirror folder
- * needs both descriptions.
+ * The full schema is documented in AGENTS.md (a sibling
+ * file in the mirror folder, landed in Phase 1A commit 5),
+ * since it differs from scene.json's schema and an AI
+ * reading the mirror folder needs both descriptions.
  *
  * No-op when the mirror is disabled (defensive against a
  * stray race where Settings toggled off while a push was
@@ -567,6 +728,7 @@ async function initMirror() {
         await cleanLeftoverTmpFiles();
         await writeStaticDocs();
         await writeActiveScoreStub(true);
+        startWatcher();
     } catch (err) {
         console.warn(
             `GXW: mirror initialization failed (${err.message}). ` +
@@ -601,6 +763,7 @@ async function setEnabled(value) {
             await cleanLeftoverTmpFiles();
             await writeStaticDocs();
             await writeActiveScoreStub(true);
+            startWatcher();
         } catch (err) {
             console.warn(
                 `GXW: enabling mirror failed: ${err.message}. ` +
@@ -610,11 +773,14 @@ async function setEnabled(value) {
             await writeMirrorEnabledSetting(false);
         }
     } else {
-        // Disable: best-effort isLive=false write so an AI
-        // observing the folder briefly between toggle-off
-        // and folder-clear sees the right state, then
-        // clear the folder. The clear path tolerates the
-        // file already being gone.
+        // Disable: stop the watcher first so any events
+        // from the upcoming clearMirrorFolder do not flow
+        // through the handler, then best-effort isLive=false
+        // write so an AI observing the folder briefly
+        // between toggle-off and folder-clear sees the
+        // right state, then clear the folder. The clear
+        // path tolerates the file already being gone.
+        stopWatcher();
         try {
             await writeActiveScoreStub(false);
         } catch {
@@ -659,6 +825,7 @@ function getStatus() {
  */
 function shutdown() {
     if (!enabled) return;
+    stopWatcher();
     writeActiveScoreStubSync(false);
 }
 
