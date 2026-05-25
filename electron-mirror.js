@@ -45,6 +45,9 @@ const ACTIVE_SCORE_FILENAME = 'active-score.json';
 const SCENE_FILENAME = 'scene.json';
 const BEHAVIOURS_FILENAME = 'behaviours.js';
 const RUNTIME_STATE_FILENAME = 'runtime-state.json';
+const AGENTS_FILENAME = 'AGENTS.md';
+const SCENE_SCHEMA_FILENAME = 'sceneSchema.md';
+const MIRROR_DOCS_DIR = 'mirror-docs';
 const PROTOCOL_VERSION = 1;
 const SETTING_KEY = 'mirrorEnabled';
 const TMP_SUFFIX = '.tmp';
@@ -192,7 +195,12 @@ function makeStubSnapshot(isLive) {
         transport: null,
         files: {
             roundTrip: [],
-            observationOnly: [ACTIVE_SCORE_FILENAME],
+            observationOnly: [
+                ACTIVE_SCORE_FILENAME,
+                RUNTIME_STATE_FILENAME,
+                AGENTS_FILENAME,
+                SCENE_SCHEMA_FILENAME,
+            ],
         },
         lastApplyResult: null,
     };
@@ -226,6 +234,45 @@ function writeActiveScoreStubSync(isLive) {
         fs.writeFileSync(target, JSON.stringify(stub, null, 2), 'utf8');
     } catch (err) {
         console.warn(`GXW: could not write isLive=false on quit: ${err.message}`);
+    }
+}
+
+// Copy the static AI-grounding documents (AGENTS.md and
+// sceneSchema.md) from the repo's mirror-docs/ folder into
+// the mirror folder. These files are reference material for
+// any AI reading the mirror — AGENTS.md is the protocol
+// orientation, sceneSchema.md is the scene.json schema
+// reference. They are read-only from the AI's side and only
+// (re-)written when the mirror is enabled, so contents stay
+// stable across content pushes.
+//
+// Sources live at <__dirname>/mirror-docs/<name>. In dev
+// mode __dirname resolves to the repo root; in a packaged
+// app it resolves to the bundled location of
+// electron-mirror.js. The build configuration must include
+// mirror-docs/ in the package alongside electron-mirror.js
+// for the packaged-app case; without it the reads fall
+// through to the catch and the static docs are absent from
+// the mirror folder, which leaves any AI reading the mirror
+// without reference material but does not break the rest of
+// the protocol.
+//
+// Failures are best-effort: log a warning and continue.
+async function writeStaticDocs() {
+    const folder = getMirrorFolderPath();
+    const docs = [AGENTS_FILENAME, SCENE_SCHEMA_FILENAME];
+    for (const name of docs) {
+        const sourcePath = path.join(__dirname, MIRROR_DOCS_DIR, name);
+        const targetPath = path.join(folder, name);
+        try {
+            const content = await fsp.readFile(sourcePath, 'utf8');
+            await writeAtomic(targetPath, content, null);
+        } catch (err) {
+            console.warn(
+                `GXW: could not write static doc ${name}: ${err.message}. ` +
+                `AI reading the mirror will be missing this reference.`,
+            );
+        }
     }
 }
 
@@ -383,7 +430,12 @@ async function pushScore(payload) {
         transport: payload.transport ?? null,
         files: {
             roundTrip: roundTripFiles,
-            observationOnly: [ACTIVE_SCORE_FILENAME, RUNTIME_STATE_FILENAME],
+            observationOnly: [
+                ACTIVE_SCORE_FILENAME,
+                RUNTIME_STATE_FILENAME,
+                AGENTS_FILENAME,
+                SCENE_SCHEMA_FILENAME,
+            ],
         },
         lastApplyResult: null,
     };
@@ -513,6 +565,7 @@ async function initMirror() {
     try {
         await ensureMirrorFolder();
         await cleanLeftoverTmpFiles();
+        await writeStaticDocs();
         await writeActiveScoreStub(true);
     } catch (err) {
         console.warn(
@@ -546,6 +599,7 @@ async function setEnabled(value) {
         try {
             await ensureMirrorFolder();
             await cleanLeftoverTmpFiles();
+            await writeStaticDocs();
             await writeActiveScoreStub(true);
         } catch (err) {
             console.warn(
