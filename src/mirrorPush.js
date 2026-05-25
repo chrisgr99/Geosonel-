@@ -53,11 +53,12 @@
  * edits (Phase 1B), fs.watch round-trip (Phase 1B), the
  * snapshot PNGs (Phase 1A commit 3), snapshot-
  * description.md (Phase 1A commit 4), full active-score.json
- * schema (Phase 1A commit 5). This module pushes the
- * round-trip files (scene.json, behaviours.js, image) and a
- * partial active-score.json snapshot covering score identity
- * and sync timestamp; the rest builds on top in later
- * commits.
+ * schema (Phase 1A commit 4 — was originally planned for
+ * commit 5 before the slot collapsed). This module pushes
+ * the round-trip files (scene.json, behaviours.js, image)
+ * and a partial active-score.json snapshot covering score
+ * identity and sync timestamp; the rest builds on top in
+ * later commits.
  */
 
 // @ts-check
@@ -147,6 +148,18 @@ export class MirrorPush {
 
         /** @type {(() => void) | null} */
         this._unsubscribeRewind = null;
+
+        /**
+         * BPM-change subscription on the transport. Added
+         * in commit 4 so the active-score.json transport
+         * block stays current as the user adjusts BPM —
+         * BPM is a session-level setting that doesn't
+         * flow through content-change events, so without
+         * this subscription the AI's view of tempo would
+         * be stale.
+         * @type {(() => void) | null}
+         */
+        this._unsubscribeBpm = null;
 
         /** @type {boolean} */
         this._pushingRuntime = false;
@@ -313,6 +326,7 @@ export class MirrorPush {
                 path: bundle.path,
                 dirty: bundle.dirty,
             },
+            transport: this._captureActiveScoreTransport(),
         };
 
         this._pushing = true;
@@ -329,6 +343,47 @@ export class MirrorPush {
         }
     }
 
+    /**
+     * Build the transport block written into active-
+     * score.json's snapshot. Commit 4 surface: state
+     * ("playing", "paused", or "stopped"), elapsedSeconds,
+     * beat (transport.elapsedBeats, which is null for
+     * time-based pieces), bpm (null for time-based
+     * pieces). Returns null when no Transport is wired
+     * yet — main.js calls setTransport after construction,
+     * but a _pushNow racing that wiring should produce a
+     * coherent payload rather than throw.
+     *
+     * Distinct from _captureRuntimeState's transport
+     * block: that one carries more (elapsedBeats,
+     * musicalPosition) and lands in runtime-state.json,
+     * which is captured at-rest only. The active-score.json
+     * block reflects the live transport at push time,
+     * including during playback, since the active-score
+     * push fires on play, rewind, and bpm events.
+     *
+     * @returns {{state: string, elapsedSeconds: number, beat: number | null, bpm: number | null} | null}
+     */
+    _captureActiveScoreTransport() {
+        const transport = this._transport;
+        if (transport === null) return null;
+        const elapsedSeconds = transport.elapsedSeconds;
+        let state;
+        if (transport.isPlaying) {
+            state = "playing";
+        } else if (elapsedSeconds === 0) {
+            state = "stopped";
+        } else {
+            state = "paused";
+        }
+        return {
+            state,
+            elapsedSeconds,
+            beat: transport.elapsedBeats,
+            bpm: transport.bpm,
+        };
+    }
+
     // --- Runtime-state push pipeline (Phase 1A commit 3) ---
 
     /**
@@ -343,14 +398,24 @@ export class MirrorPush {
 
     /**
      * Hand the pipeline a reference to the Transport and
-     * subscribe to its play and rewind events so a pause
-     * or rewind triggers a fresh runtime-state push. The
-     * "play" event fires on both play() and pause(); the
-     * at-rest gate inside _pushRuntimeStateNow handles the
-     * play() case (skip, we're entering playback). Rewind
-     * always resets elapsed time to zero; pushing on rewind
-     * captures the reset positions so the runtime file
-     * reflects what the user sees after the rewind.
+     * subscribe to its play, rewind, and bpm events. The
+     * play and rewind events fire two pushes each: a
+     * runtime-state push (so runtime-state.json reflects
+     * the new at-rest moment) and a debounced active-score
+     * push (so active-score.json's transport block
+     * reflects current playback state). The bpm event
+     * fires only the active-score push, since bpm changes
+     * don't affect at-rest runtime state in a way that
+     * needs a runtime-state refresh on its own.
+     *
+     * The "play" event fires on both play() and pause();
+     * the at-rest gate inside _pushRuntimeStateNow handles
+     * the play() case (skip, we're entering playback) while
+     * the active-score push has no such gate — it captures
+     * "playing" as a state value rather than skipping.
+     * Rewind always resets elapsed time to zero; pushing on
+     * rewind captures the reset positions and the new
+     * state="stopped" transport value.
      *
      * Idempotent and switchable: passing a new transport
      * unsubscribes from the old one's events first. Passing
@@ -368,13 +433,22 @@ export class MirrorPush {
             this._unsubscribeRewind();
             this._unsubscribeRewind = null;
         }
+        if (this._unsubscribeBpm !== null) {
+            this._unsubscribeBpm();
+            this._unsubscribeBpm = null;
+        }
         this._transport = transport;
         if (transport === null) return;
         this._unsubscribePlay = transport.on("play", () => {
             void this._pushRuntimeStateNow();
+            this._scheduleDebouncedPush();
         });
         this._unsubscribeRewind = transport.on("rewind", () => {
             void this._pushRuntimeStateNow();
+            this._scheduleDebouncedPush();
+        });
+        this._unsubscribeBpm = transport.on("bpm", () => {
+            this._scheduleDebouncedPush();
         });
     }
 

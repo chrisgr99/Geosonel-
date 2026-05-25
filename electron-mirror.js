@@ -174,19 +174,40 @@ async function cleanLeftoverTmpFiles() {
     }
 }
 
-// Minimal active-score.json stub for Phase 1A commit 1.
-// Carries only protocolVersion and isLive — the full
-// schema (transport, files lists, lastApplyResult, score
-// metadata) lands in commit 5 once content pushing and
-// snapshot capture are in place. Until then, an AI reading
-// the folder can at least verify the protocol version and
-// whether GeoSonel is currently running, which is enough
-// to gate "is it safe to edit" decisions.
-async function writeActiveScoreStub(isLive) {
-    const stub = {
+// Build an active-score.json stub with the full schema
+// shape but null / empty defaults for any field that has
+// no value yet. Used by writeActiveScoreStub on startup
+// and enable, and by writeActiveScoreStubSync on quit, so
+// an AI reading the folder before the first content push
+// (or after the app has quit) sees the same shape it will
+// see after content lands — just with placeholder values
+// rather than real ones. Keeping the shape stable means
+// the AI doesn't have to special-case the pre-push state.
+function makeStubSnapshot(isLive) {
+    return {
         protocolVersion: PROTOCOL_VERSION,
         isLive,
+        score: null,
+        sync: null,
+        transport: null,
+        files: {
+            roundTrip: [],
+            observationOnly: [ACTIVE_SCORE_FILENAME],
+        },
+        lastApplyResult: null,
     };
+}
+
+// active-score.json stub writer. Phase 1A commit 1 wrote
+// a minimal {protocolVersion, isLive} object here; commit
+// 4 expands it to the full schema shape (via
+// makeStubSnapshot) so the file's structure is stable
+// across the app's lifecycle. An AI reading the folder
+// before the first content push sees the same field names
+// it will see afterwards, just populated with null / empty
+// placeholders instead of real values.
+async function writeActiveScoreStub(isLive) {
+    const stub = makeStubSnapshot(isLive);
     const target = path.join(getMirrorFolderPath(), ACTIVE_SCORE_FILENAME);
     await fsp.writeFile(target, JSON.stringify(stub, null, 2), 'utf8');
 }
@@ -199,10 +220,7 @@ async function writeActiveScoreStub(isLive) {
 // the mirror is enabled, and enabling always ensures the
 // folder up front.
 function writeActiveScoreStubSync(isLive) {
-    const stub = {
-        protocolVersion: PROTOCOL_VERSION,
-        isLive,
-    };
+    const stub = makeStubSnapshot(isLive);
     const target = path.join(getMirrorFolderPath(), ACTIVE_SCORE_FILENAME);
     try {
         fs.writeFileSync(target, JSON.stringify(stub, null, 2), 'utf8');
@@ -257,7 +275,8 @@ async function tryUnlink(targetPath) {
  *     sceneJsonText: string,
  *     behavioursJsText: string,
  *     image: { name: string, bytes: ArrayBuffer, mimeType: string } | null,
- *     score: { displayName: string, path: string | null, dirty: boolean }
+ *     score: { displayName: string, path: string | null, dirty: boolean },
+ *     transport: { state: string, elapsedSeconds: number, beat: number | null, bpm: number | null } | null
  *   }
  *
  * Writes scene.json and behaviours.js unconditionally
@@ -280,7 +299,7 @@ async function tryUnlink(targetPath) {
  * so a write failure surfaces as a rejected IPC promise
  * the renderer can report via the message area.
  *
- * @param {{sceneJsonText?: string, behavioursJsText?: string, image?: {name: string, bytes: ArrayBuffer, mimeType: string} | null, score?: {displayName?: string, path?: string | null, dirty?: boolean}} | null} payload
+ * @param {{sceneJsonText?: string, behavioursJsText?: string, image?: {name: string, bytes: ArrayBuffer, mimeType: string} | null, score?: {displayName?: string, path?: string | null, dirty?: boolean}, transport?: {state?: string, elapsedSeconds?: number, beat?: number | null, bpm?: number | null} | null} | null} payload
  */
 async function pushScore(payload) {
     if (!enabled) return;
@@ -333,14 +352,23 @@ async function pushScore(payload) {
     lastPushedImageName = newImageName;
 
     // Update active-score.json with the latest score
-    // identity and a sync timestamp. The full schema
-    // (transport snapshot, files lists, lastApplyResult)
-    // lands in commit 5; here we surface what we know:
-    // displayName, path, dirty, lastSyncAt. The file is
-    // written via writeAtomic too so an AI watcher in a
-    // future round-trip iteration cannot read a torn
-    // mid-write JSON.
+    // identity, sync timestamp, transport snapshot, files
+    // lists, and lastApplyResult placeholder. Commit 4
+    // expanded this from a stub-shaped {protocolVersion,
+    // isLive, score, sync} into the full schema; the
+    // transport block reflects the renderer's view at push
+    // time (state, elapsedSeconds, beat, bpm); the files
+    // block declares which files in the folder are round-
+    // trip versus observation-only so the AI knows which
+    // it can write to; lastApplyResult ships as null until
+    // Phase 1B's validation pipeline lands and starts
+    // populating it with apply outcomes. The file is
+    // written via writeAtomic so an AI watcher in a future
+    // round-trip iteration cannot read a torn mid-write
+    // JSON.
     const score = payload.score ?? {};
+    const roundTripFiles = [SCENE_FILENAME, BEHAVIOURS_FILENAME];
+    if (newImageName !== null) roundTripFiles.push(newImageName);
     const snapshot = {
         protocolVersion: PROTOCOL_VERSION,
         isLive: true,
@@ -352,6 +380,12 @@ async function pushScore(payload) {
         sync: {
             lastSyncAt: new Date().toISOString(),
         },
+        transport: payload.transport ?? null,
+        files: {
+            roundTrip: roundTripFiles,
+            observationOnly: [ACTIVE_SCORE_FILENAME, RUNTIME_STATE_FILENAME],
+        },
+        lastApplyResult: null,
     };
     await writeAtomic(
         path.join(folder, ACTIVE_SCORE_FILENAME),
