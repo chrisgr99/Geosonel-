@@ -88,6 +88,58 @@ const MIRROR_SCENE_FILENAME = "scene.json";
 
 export class MirrorPush {
     /**
+     * Subscribe to state changes in the confirm-to-apply
+     * machine. The callback receives an object with
+     * {state, heldBatch, rejectionInfo} on every
+     * transition. Returns an unsubscribe function.
+     *
+     * Used by the dialog UI in main.js to update its
+     * visual state when batches start, become ready,
+     * fail validation, or are accepted/cancelled.
+     *
+     * @param {(state: {state: string, heldBatch: any, rejectionInfo: any}) => void} callback
+     * @returns {() => void}
+     */
+    addStateChangeListener(callback) {
+        this._stateChangeListeners.add(callback);
+        return () => this._stateChangeListeners.delete(callback);
+    }
+
+    _emitStateChange() {
+        const snapshot = {
+            state: this._batchState,
+            heldBatch: this._heldBatch,
+            rejectionInfo: this._rejectionInfo,
+        };
+        for (const cb of this._stateChangeListeners) {
+            try {
+                cb(snapshot);
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`GXW: mirrorPush state-change listener threw: ${msg}`);
+            }
+        }
+    }
+
+    /**
+     * Called via the gxwMirror.onBatchStarted IPC
+     * subscription when the main process detects that an
+     * AI batch is beginning — either because .pending
+     * appeared or because the first round-trip event of
+     * a no-sentinel batch arrived. Transitions the state
+     * machine to 'thinking' so the dialog UI can show
+     * the pulsing Thinking indicator. No-op when already
+     * in a non-idle state (the latch on the main side
+     * should prevent duplicate signals, but defending is
+     * cheap).
+     */
+    onBatchStarted() {
+        if (this._batchState !== "idle") return;
+        this._batchState = "thinking";
+        this._emitStateChange();
+    }
+
+    /**
      * @param {{ messages?: import("./messages.js").MessageArea | null }} [options]
      */
     constructor(options = {}) {
@@ -196,6 +248,32 @@ export class MirrorPush {
 
         /** @type {(() => Promise<void>) | null} */
         this._runScene = null;
+
+        // --- Confirm-to-apply state machine (Phase 1B commit 4b) ---
+        //
+        // Under confirm-to-apply, applyBatch no longer
+        // applies immediately on batch-ready arrival.
+        // Instead it validates and holds the batch in
+        // _heldBatch, transitions _batchState to 'ready',
+        // and emits to listeners (the dialog UI) which
+        // then shows the user the Accept/Cancel buttons.
+        // When the user clicks Accept, confirmApply runs
+        // the actual apply work. When the user clicks
+        // Cancel, cancelApply discards and rolls back.
+        // Validation failures transition to 'rejected'
+        // with the error details captured in _rejectionInfo.
+
+        /** @type {'idle' | 'thinking' | 'ready' | 'rejected'} */
+        this._batchState = "idle";
+
+        /** @type {Array<{filename: string, kind: "text" | "binary", content: string | ArrayBuffer, mimeType?: string}> | null} */
+        this._heldBatch = null;
+
+        /** @type {{filename: string, error: string} | null} */
+        this._rejectionInfo = null;
+
+        /** @type {Set<(state: {state: string, heldBatch: any, rejectionInfo: any}) => void>} */
+        this._stateChangeListeners = new Set();
     }
 
     /**
@@ -705,82 +783,67 @@ export class MirrorPush {
     }
 
     /**
-     * Validate a batch of AI-originated file writes and,
-     * on success, apply each entry back into the active
-     * bundle. The renderer end of the round-trip protocol
-     * established in Phase 1B commit 1: the main-process
-     * watcher in electron-mirror.js detects external
-     * writes, packages a batch payload after a 500ms
-     * quiescence window, and dispatches via
-     * gxw:mirror-batch-ready (subscribed in main.js).
+     * Validate an incoming AI batch and either hold it
+     * for user confirmation (success) or reject it with
+     * an immediate rollback (validation failure). Phase
+     * 1B commit 4b refactor of the previous applyBatch:
+     * the actual bundle mutations and runScene have
+     * moved into confirmApply, which fires only when
+     * the user clicks Accept on the dialog. This method
+     * just validates and updates state — the bundle is
+     * not touched here.
      *
-     * Batch shape:
+     * Empty batch (AI wrote .pending and removed it
+     * without writing any round-trip files, or the
+     * orphan timer fired with nothing accumulated)
+     * dismisses the dialog silently: writes a success
+     * result with empty applied[], returns to idle
+     * state. No user prompt needed.
      *
-     *   [
-     *     { filename: "scene.json", kind: "text", content: "..." },
-     *     { filename: "behaviours.js", kind: "text", content: "..." },
-     *     { filename: "image.png", kind: "binary", content: ArrayBuffer, mimeType: "image/png" }
-     *   ]
+     * Validation pass mirrors what commit 2 established:
+     * scene.json must parse via parseScene; behaviours.js
+     * must parse cleanly under Acorn; image entries are
+     * accepted without validation. On any text-entry
+     * validation failure the whole batch is rejected:
+     * last-apply-result.json is written with the rejection
+     * details, the bundle's last-known-good state is
+     * force-pushed back to the mirror to overwrite the
+     * AI's bad write, and the state machine transitions
+     * to 'rejected' so the dialog can surface the error
+     * details to the user.
      *
-     * Validation runs first, all-or-nothing: scene.json
-     * must JSON-parse to an object (via parseScene from
-     * sceneEditor.js, which also enforces the top-level-
-     * object shape); behaviours.js must parse cleanly
-     * under Acorn; image entries are accepted without
-     * validation. If any text entry fails validation the
-     * whole batch is rejected: a warning logs to the
-     * renderer console, the bundle stays at its prior
-     * content, last-apply-result.json is written with the
-     * rejection details (Phase 1B commit 3), and the
-     * bundle's last-known-good state is force-pushed back
-     * to the mirror folder via _pushNow so the AI sees
-     * its bad write was discarded. The bundle itself
-     * needs no rollback because validation runs before
-     * any mutations; the rollback target is the mirror's
-     * on-disk state, not the in-memory bundle.
-     *
-     * On success, every entry is applied: text entries
-     * via bundle.updateContent (with filename translation
-     * from the mirror's behaviours.js to the bundle's
-     * behaviors.js), the image via bundle.replaceImage
-     * and canvas.setImage. The editor is reloaded so the
-     * tabs show the new content, and the runScene thunk
-     * fires so the canvas, simulation, and firing engine
-     * pick up the new scene. last-apply-result.json is
-     * written with the success status and the list of
-     * filenames that were applied. bundle.updateContent
-     * emits content-change events; the existing push
-     * pipeline wakes on those and writes the same content
-     * back to the mirror after the next debounce window,
-     * muting the resulting self-write event. The redundant
-     * push is harmless and self-resolves; preventing it
-     * would complicate the apply path more than it's worth.
-     *
-     * No-op when the bundle reference is null (startup or
-     * post-teardown). When _editor, _canvas, or _runScene
-     * is null the bundle update still runs but the
-     * dependent refresh step is skipped, so partial
-     * wiring during startup is tolerated rather than
-     * throwing.
+     * On validation success the validated batch is
+     * stored in _heldBatch and the state machine
+     * transitions to 'ready'. The dialog shows the
+     * Accept button (green); a subsequent confirmApply
+     * call applies the held batch via the existing
+     * bundle.updateContent / replaceImage / runScene
+     * machinery.
      *
      * @param {Array<{filename: string, kind: "text" | "binary", content: string | ArrayBuffer, mimeType?: string}>} batch
      * @returns {Promise<void>}
      */
-    async applyBatch(batch) {
-        if (!Array.isArray(batch) || batch.length === 0) return;
+    async onBatchReceived(batch) {
+        if (!Array.isArray(batch)) return;
         if (this._bundle === null) return;
 
-        // Validation pass. Text entries are parsed in turn;
-        // any failure short-circuits with a log line, a
-        // rejection record written to last-apply-result.json,
-        // and a force-push back to the mirror so the
-        // bundle's last-known-good state overwrites the
-        // AI's bad write. Image entries are not validated
-        // — a malformed image will surface when the canvas
-        // tries to decode it, which is a visible failure
-        // the user can react to. Future commits can add
-        // image-shape validation if it proves worth the
-        // cost.
+        // Empty batch dismisses silently. The dialog that
+        // appeared on batch-started returns to idle
+        // without prompting the user.
+        if (batch.length === 0) {
+            await this._writeApplyResult({
+                status: "success",
+                timestamp: new Date().toISOString(),
+                applied: [],
+            });
+            this._heldBatch = null;
+            this._rejectionInfo = null;
+            this._batchState = "idle";
+            this._emitStateChange();
+            return;
+        }
+
+        // Validation pass.
         for (const entry of batch) {
             if (entry.kind !== "text") continue;
             const content = typeof entry.content === "string" ? entry.content : "";
@@ -812,19 +875,58 @@ export class MirrorPush {
             }
         }
 
-        // Apply pass. Each text entry routes through
-        // bundle.updateContent with the mirror-to-bundle
-        // filename translation; the image entry routes
-        // through bundle.replaceImage and then
-        // canvas.setImage so the canvas paints the new
-        // bitmap without waiting for runScene. contentHash
-        // is passed as null on image replacement: the
-        // bundle's gallery-sync pass recomputes on demand,
-        // so we don't pay the SHA-256 cost on every AI
-        // image write. The applied array accumulates the
-        // filenames actually landed (in mirror-surface
-        // naming) for the success record written at the
-        // end of the method.
+        // Validation succeeded — hold the batch and
+        // transition to 'ready'. The dialog UI shows the
+        // green Accept button. confirmApply will be
+        // invoked when the user clicks it.
+        this._heldBatch = batch;
+        this._rejectionInfo = null;
+        this._batchState = "ready";
+        this._emitStateChange();
+    }
+
+    /**
+     * Apply the held batch on user confirmation. Phase
+     * 1B commit 4b: this is the second half of what was
+     * applyBatch in commit 2 — the actual bundle
+     * mutations, editor refresh, and scene rebuild that
+     * land the AI's changes. Wraps the apply in a
+     * transport pause-and-resume so playback doesn't
+     * glitch during the runScene rebuild.
+     *
+     * No-op when not in 'ready' state — the dialog UI
+     * should already gate the user-facing Accept button
+     * to the ready state, but defensive checks here
+     * prevent any race or double-click from triggering
+     * an unwanted apply.
+     *
+     * Writes last-apply-result.json with status "success"
+     * and the list of files applied, then transitions
+     * state to 'idle' so the dialog dismisses.
+     */
+    async confirmApply() {
+        if (this._batchState !== "ready") return;
+        if (this._heldBatch === null) return;
+        if (this._bundle === null) return;
+
+        const batch = this._heldBatch;
+        this._heldBatch = null;
+
+        // Pause transport if playing so runScene's scene
+        // rebuild doesn't fire mid-cycle. We resume after
+        // the apply completes.
+        const transport = this._transport;
+        const wasPlaying = transport !== null && transport.isPlaying;
+        if (wasPlaying) {
+            try {
+                transport.pause();
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`GXW: transport.pause failed during apply: ${msg}`);
+            }
+        }
+
+        // Apply each entry into the bundle.
         const applied = [];
         for (const entry of batch) {
             if (entry.kind === "text") {
@@ -855,16 +957,6 @@ export class MirrorPush {
             }
         }
 
-        // Refresh the editor so the JSON and Code tabs
-        // show the AI's content rather than whatever was
-        // in their CodeMirror buffers before. reloadFromBundle
-        // is heavier than refreshActiveTabFromBundle (it
-        // rebuilds the tab bar) but covers both text
-        // surfaces in one call, which matters when the AI
-        // edits both files at once and the user is
-        // viewing whichever one isn't the active tab. The
-        // currently-active tab survives the reload when
-        // its filename is unchanged.
         if (this._editor !== null) {
             try {
                 this._editor.reloadFromBundle();
@@ -874,13 +966,6 @@ export class MirrorPush {
             }
         }
 
-        // Rebuild the scene so the canvas, simulation, and
-        // firing engine pick up the new content. runScene
-        // is a thunk in main.js; failures inside it are
-        // surfaced through its own message-area writes, so
-        // we just await and log any unexpected throw
-        // here. The await propagates so callers can chain
-        // post-apply work in a future commit if needed.
         if (this._runScene !== null) {
             try {
                 await this._runScene();
@@ -890,16 +975,104 @@ export class MirrorPush {
             }
         }
 
-        // Record the success outcome to last-apply-result.json
-        // (Phase 1B commit 3). The AI reads this file after
-        // its edit to confirm what landed. Best-effort: a
-        // failed write logs but doesn't undo the apply,
-        // since the apply itself has already taken effect
-        // in the bundle.
+        // Resume transport if it was playing before the
+        // apply.
+        if (wasPlaying && transport !== null) {
+            try {
+                transport.play();
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`GXW: transport.play failed after apply: ${msg}`);
+            }
+        }
+
         await this._writeApplyResult({
             status: "success",
             timestamp: new Date().toISOString(),
             applied,
+        });
+
+        this._batchState = "idle";
+        this._emitStateChange();
+    }
+
+    /**
+     * Cancel the current batch on user request. Phase
+     * 1B commit 4b. Behaviour depends on the state at
+     * cancel time:
+     *
+     *   - 'thinking': the AI is still working; the held
+     *     batch is not yet built. Call the main-process
+     *     cancelBatch IPC to clear the sentinel and any
+     *     accumulated events. Then force-push the
+     *     bundle's state back to the mirror to overwrite
+     *     anything the AI partially wrote. Write a
+     *     cancelled result so the AI sees the outcome.
+     *
+     *   - 'ready': the batch is in our hands but hasn't
+     *     been applied. Discard the held batch, force-
+     *     push bundle state to mirror, write cancelled
+     *     result.
+     *
+     *   - 'rejected': the rollback already ran inside
+     *     _reportRejectionAndRollback. Just dismiss the
+     *     dialog — no further work needed.
+     *
+     *   - 'idle': no-op.
+     *
+     * The state transitions to 'idle' immediately so a
+     * double-click on Cancel can't trigger duplicate
+     * rollback pushes.
+     */
+    async cancelApply() {
+        const previousState = this._batchState;
+        if (previousState === "idle") return;
+
+        // Snapshot and clear state first so a fast
+        // double-click can't re-enter the cancel work.
+        this._batchState = "idle";
+        this._heldBatch = null;
+        this._rejectionInfo = null;
+        this._emitStateChange();
+
+        // 'rejected' state had its rollback inside
+        // _reportRejectionAndRollback already; nothing
+        // more to do.
+        if (previousState === "rejected") return;
+
+        // 'thinking' state: tell main to clear the
+        // sentinel and pending events. Best-effort — if
+        // the IPC bridge is unavailable (web build,
+        // teardown race) we proceed with the rollback
+        // anyway.
+        if (previousState === "thinking") {
+            /** @type {any} */
+            const gxwMirror = (/** @type {any} */ (window)).gxwMirror;
+            if (gxwMirror !== undefined && gxwMirror !== null
+                && typeof gxwMirror.cancelBatch === "function") {
+                try {
+                    await gxwMirror.cancelBatch();
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.warn(`GXW: cancelBatch IPC failed: ${msg}`);
+                }
+            }
+        }
+
+        // For both 'thinking' and 'ready' cancels: force-
+        // push bundle state back to the mirror so any
+        // partially-written AI content is overwritten
+        // with the known-good content.
+        try {
+            await this._pushNow();
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`GXW: rollback push failed during cancel: ${msg}`);
+        }
+
+        await this._writeApplyResult({
+            status: "cancelled",
+            timestamp: new Date().toISOString(),
         });
     }
 
@@ -927,23 +1100,21 @@ export class MirrorPush {
             filename,
             error,
         });
-        // Rollback by force-pushing the bundle's current
-        // state to the mirror. _pushNow cancels the
-        // debounce timer and writes scene.json,
-        // behaviours.js, and the image atomically; the
-        // resulting watcher events are self-write mutes
-        // so nothing feeds back through applyBatch. The
-        // last-apply-result.json write above is not
-        // overwritten by this push: it's a separate file
-        // outside the round-trip set that _pushNow
-        // touches. last-apply-result.json itself is
-        // observation-only.
         try {
             await this._pushNow();
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.warn(`GXW: rollback push failed: ${msg}`);
         }
+        // Transition to 'rejected' state so the dialog UI
+        // can surface the error details to the user. The
+        // user clicks Dismiss to acknowledge; the
+        // rollback above already restored the mirror to
+        // last-known-good state.
+        this._heldBatch = null;
+        this._rejectionInfo = { filename, error };
+        this._batchState = "rejected";
+        this._emitStateChange();
     }
 
     /**

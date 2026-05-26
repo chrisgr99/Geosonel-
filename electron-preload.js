@@ -191,4 +191,24 @@ contextBridge.exposeInMainWorld('gxwMirror', {
     ipcRenderer.on('gxw:mirror-batch-ready', listener);
     return () => ipcRenderer.removeListener('gxw:mirror-batch-ready', listener);
   },
+  // Subscribe to batch-started signals from the main
+  // process (Phase 1B commit 4b). Fired when the AI
+  // writes .pending or when the first round-trip event
+  // of a no-sentinel batch arrives. The renderer's
+  // MirrorPush flips into Thinking state and shows the
+  // confirm-to-apply dialog. Subsequent batch-ready will
+  // transition the dialog to Ready or Rejected.
+  onBatchStarted: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('gxw:mirror-batch-started', listener);
+    return () => ipcRenderer.removeListener('gxw:mirror-batch-started', listener);
+  },
+  // Cancel an in-flight batch on user request (Phase 1B
+  // commit 4b). Called when the user clicks Cancel in
+  // the dialog's Thinking state to clear the main-side
+  // sentinel and accumulated events. Renderer follows
+  // up with a rollback push to restore the mirror's
+  // contents to the bundle's known-good state.
+  cancelBatch: () =>
+    ipcRenderer.invoke('gxw:mirror-cancel-batch'),
 });

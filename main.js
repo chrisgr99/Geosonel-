@@ -94,6 +94,7 @@ import { installMenuActions, pushMenuState, pushRecentScoresToMenu, pushBackupsT
 import { SceneLoader } from "./src/sceneLoader.js";
 import { DiskMirror } from "./src/diskMirror.js";
 import { MirrorPush } from "./src/mirrorPush.js";
+import { AiBatchDialog } from "./src/aiBatchDialog.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
 import { actionSaveAs } from "./src/scoreActions.js";
@@ -1377,30 +1378,59 @@ async function main() {
     mirrorPush.setBundle(session.bundle);
     mirrorPush.setSimulation(simulation);
     mirrorPush.setTransport(transport);
-    // Apply-pipeline wiring (Phase 1B commit 2). The
-    // editor and canvas references are direct; runScene
-    // is wrapped in a thunk because the variable is
-    // reassigned above (its initial declaration was a
-    // placeholder) and the thunk's late binding lets
-    // mirrorPush's applyBatch resolve the current value
-    // each time. The onBatchReady subscription is the
-    // renderer-side hook for the watcher's quiescence
-    // batcher in electron-mirror.js: AI writes to the
-    // mirror folder ship across IPC as a batch payload,
-    // which applyBatch validates and applies back into
-    // the bundle.
+    // Apply-pipeline wiring (Phase 1B commit 2; commit
+    // 4b reshaped the entry point into a confirm-to-
+    // apply state machine). The editor and canvas
+    // references are direct; runScene is wrapped in a
+    // thunk because the variable is reassigned above
+    // (its initial declaration was a placeholder) and
+    // the thunk's late binding lets mirrorPush resolve
+    // the current value each time. The onBatchStarted
+    // and onBatchReady subscriptions are the renderer-
+    // side hooks for the watcher in electron-mirror.js:
+    // a batch-started event (sentinel arrival or first
+    // round-trip event of a no-sentinel batch) flips
+    // mirrorPush into Thinking state so the dialog can
+    // render its pulsating indicator; the subsequent
+    // batch-ready event carries the read-from-disk
+    // entries and routes through onBatchReceived,
+    // which validates and either holds the batch for
+    // user confirmation (transition to Ready) or
+    // reports a rejection (transition to Rejected).
     mirrorPush.setEditor(editor);
     mirrorPush.setCanvas(canvas);
     mirrorPush.setRunScene(() => runScene());
     {
         const gxwMirror = /** @type {any} */ (window).gxwMirror;
-        if (gxwMirror !== undefined && gxwMirror !== null &&
-            typeof gxwMirror.onBatchReady === "function") {
-            gxwMirror.onBatchReady((batch) => {
-                void mirrorPush.applyBatch(batch);
-            });
+        if (gxwMirror !== undefined && gxwMirror !== null) {
+            if (typeof gxwMirror.onBatchStarted === "function") {
+                gxwMirror.onBatchStarted(() => {
+                    mirrorPush.onBatchStarted();
+                });
+            }
+            if (typeof gxwMirror.onBatchReady === "function") {
+                gxwMirror.onBatchReady((batch) => {
+                    void mirrorPush.onBatchReceived(batch);
+                });
+            }
         }
     }
+
+    // Confirm-to-apply dialog (Section 15 Phase 1B
+    // commit 4b). Mounts into #canvas-area, subscribes
+    // to mirrorPush state changes, and renders the
+    // appropriate visualisation per state: a small
+    // Thinking/Accept dialog above the message area
+    // while a batch is in flight, and a larger error
+    // dialog centered over the canvas on rejection.
+    // Constructed after mirrorPush so the listener is
+    // attached before any AI write can fire. The dialog
+    // owns its own DOM and lifecycle; the local const
+    // here just keeps the instance reachable to satisfy
+    // ts-check, since the live reference is rooted via
+    // mirrorPush's state-change listener subscription.
+    const aiBatchDialog = new AiBatchDialog(mirrorPush);
+    void aiBatchDialog;
     {
         const gxwMirror = /** @type {any} */ (window).gxwMirror;
         if (gxwMirror !== undefined && gxwMirror !== null &&

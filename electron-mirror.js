@@ -147,8 +147,18 @@ let mainWindow = null;
 // inactivity while the sentinel is active and acts as a
 // safety net against an AI that never removes its
 // sentinel — typically because its process died mid-batch.
+//
+// batchInProgress is the latch that tracks whether the
+// renderer has already been notified that a batch is in
+// flight (via gxw:mirror-batch-started). It flips true on
+// first round-trip event in a no-sentinel batch or on
+// sentinel arrival, and back to false when processBatch
+// fires batch-ready (signalling batch completion to the
+// renderer) or when cancelBatch clears state. Prevents
+// double-firing batch-started events.
 let sentinelActive = false;
 let orphanTimer = null;
+let batchInProgress = false;
 
 // Settings.json IO. The settings file lives in
 // app.getPath('userData') and is shared with the other
@@ -533,11 +543,22 @@ function handleWatcherEvent(eventType, filename) {
     // the orphan timer resets on each new event; without
     // a sentinel, the quiescence timer triggers
     // processBatch after QUIESCENCE_MS of inactivity.
+    const wasEmpty = pendingBatch.size === 0;
     pendingBatch.add(filename);
 
     if (sentinelActive) {
         resetOrphanTimer();
     } else {
+        // No-sentinel path: this might be the first event
+        // of a fresh batch. If so, notify the renderer so
+        // the confirm-to-apply dialog appears in its
+        // Thinking state. The dialog stays in that state
+        // through the QUIESCENCE_MS wait and transitions
+        // to Ready (or Rejected) when processBatch fires
+        // batch-ready.
+        if (wasEmpty && !batchInProgress) {
+            notifyBatchStarted();
+        }
         if (quiescenceTimer !== null) clearTimeout(quiescenceTimer);
         quiescenceTimer = setTimeout(() => {
             quiescenceTimer = null;
@@ -588,6 +609,16 @@ function handleSentinelArrival() {
     if (quiescenceTimer !== null) {
         clearTimeout(quiescenceTimer);
         quiescenceTimer = null;
+    }
+
+    // Notify the renderer that a batch is starting so the
+    // confirm-to-apply dialog appears in its Thinking
+    // state. The dialog stays in that state through the
+    // AI's work (could be many seconds) and transitions
+    // to Ready when processBatch fires batch-ready after
+    // the AI removes the sentinel.
+    if (!batchInProgress) {
+        notifyBatchStarted();
     }
 
     resetOrphanTimer();
@@ -652,6 +683,24 @@ async function removeSentinelFile() {
     }
 }
 
+// Notify the renderer that an AI batch has started.
+// Fired on sentinel arrival or on the first round-trip
+// event of a no-sentinel batch. The renderer responds
+// by showing the confirm-to-apply dialog in its Thinking
+// state. batchInProgress latches the notification so
+// subsequent events in the same batch don't re-fire it.
+// Reset to false when processBatch fires batch-ready or
+// when cancelBatch clears state.
+function notifyBatchStarted() {
+    batchInProgress = true;
+    if (mainWindow === null) return;
+    try {
+        mainWindow.webContents.send('gxw:mirror-batch-started');
+    } catch (err) {
+        console.warn(`GXW: failed to dispatch batch-started: ${err.message}`);
+    }
+}
+
 // Read each file in the pending batch from disk, package
 // the entries as {filename, kind, content [, mimeType]},
 // and dispatch to the renderer via webContents.send. The
@@ -680,7 +729,7 @@ async function removeSentinelFile() {
 async function processBatch() {
     const filenames = Array.from(pendingBatch);
     pendingBatch.clear();
-    if (filenames.length === 0) return;
+    batchInProgress = false;
 
     const folder = getMirrorFolderPath();
     const entries = [];
@@ -711,12 +760,21 @@ async function processBatch() {
         }
     }
 
-    if (entries.length === 0) return;
-
+    // Always dispatch batch-ready, even when the batch is
+    // empty (e.g., AI wrote .pending and removed it
+    // without writing any round-trip files, or the orphan
+    // timer fired with nothing accumulated). The empty
+    // batch tells the renderer to dismiss the dialog that
+    // appeared on batch-started — without this dispatch
+    // the dialog would stick around with no batch to
+    // accept or reject. The renderer's applyBatch handles
+    // empty arrays by transitioning straight back to idle.
     if (mainWindow === null) {
-        console.warn(
-            `GXW: mirror batch ready but no main window to dispatch to; dropping ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}.`,
-        );
+        if (entries.length > 0) {
+            console.warn(
+                `GXW: mirror batch ready but no main window to dispatch to; dropping ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}.`,
+            );
+        }
         return;
     }
     try {
@@ -772,6 +830,7 @@ function stopWatcher() {
 // at the next startup or enable will handle it.
 function clearSentinelState() {
     sentinelActive = false;
+    batchInProgress = false;
     if (orphanTimer !== null) {
         clearTimeout(orphanTimer);
         orphanTimer = null;
@@ -1250,6 +1309,43 @@ function setMainWindow(window) {
 }
 
 /**
+ * Cancel an in-flight batch on user request. Phase 1B
+ * commit 4b. Called via IPC from the renderer when the
+ * user clicks Cancel on the confirm-to-apply dialog
+ * during the Thinking state (sentinel still active or
+ * quiescence still pending).
+ *
+ * Clears all in-flight batch state on the main side:
+ * sentinel active flag, accumulated pendingBatch,
+ * quiescence and orphan timers, the batch-started
+ * latch. Removes the .pending file from disk if
+ * present so the AI's view aligns with the cancel.
+ * The renderer is responsible for the rollback push
+ * back to the bundle's state — cancelBatch only
+ * clears the main-process side.
+ *
+ * No-op when the mirror is disabled. The watcher event
+ * that would fire from the .pending unlink is harmless:
+ * handleSentinelEvent sees sentinelActive=false (already
+ * cleared here) and silently skips.
+ */
+async function cancelBatch() {
+    if (!enabled) return;
+    sentinelActive = false;
+    batchInProgress = false;
+    pendingBatch.clear();
+    if (orphanTimer !== null) {
+        clearTimeout(orphanTimer);
+        orphanTimer = null;
+    }
+    if (quiescenceTimer !== null) {
+        clearTimeout(quiescenceTimer);
+        quiescenceTimer = null;
+    }
+    await removeSentinelFile();
+}
+
+/**
  * Shut down the mirror at app quit. When enabled, writes
  * isLive=false to active-score.json synchronously so the
  * transition lands before the process exits. Called from
@@ -1262,4 +1358,4 @@ function shutdown() {
     writeActiveScoreStubSync(false);
 }
 
-module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, setMainWindow, writeApplyResult };
+module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, setMainWindow, writeApplyResult, cancelBatch };

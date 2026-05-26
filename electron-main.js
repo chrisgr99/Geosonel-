@@ -1364,6 +1364,15 @@ function registerStorageHandlers() {
   ipcMain.handle('gxw:mirror-write-apply-result', async (_event, payload) => {
     await mirror.writeApplyResult(payload);
   });
+
+  // Phase 1B commit 4b: cancel an in-flight AI batch on
+  // user request. Called from the renderer when the user
+  // clicks Cancel on the confirm-to-apply dialog during
+  // the Thinking state. Main-side teardown only — the
+  // renderer is responsible for the rollback push.
+  ipcMain.handle('gxw:mirror-cancel-batch', async () => {
+    await mirror.cancelBatch();
+  });
 }
 
 // --- App lifecycle ---
