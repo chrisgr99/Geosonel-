@@ -157,13 +157,19 @@ The callback execution context (the `ctx` parameter), pattern-emission API, and 
 
 `behaviours.js` is parsed with Acorn before being applied. Syntax errors reject the batch with the parser's message in `last-apply-result.json`.
 
-## Atomic write protocol
+## Atomic write protocol and the .pending sentinel
 
 Files in this folder use temp-and-rename atomic writes. When the bundle pushes content, it writes `scene.json.tmp` then renames to `scene.json`; an AI watching `scene.json` directly never sees a torn write. AIs editing round-trip files should follow the same pattern: write `scene.json.tmp` first, then rename, so the bundle's watcher sees an atomic transition.
 
-For batches that touch more than one round-trip file or include slow operations (image generation), write a `.pending` sentinel file in this folder *before* the batch and remove it *after*. The bundle's watcher then waits for `.pending` to disappear before applying the batch as a unit. A `.pending` file older than 60 seconds is treated as orphaned and removed.
+When you receive a user request that involves the score in any way, write a `.pending` sentinel file in this folder as your very first action — before reading, analysing, or editing anything. The sentinel signals to GeoSonel that you are working on a score-related task; the user sees a thinking indicator from that moment rather than only when files begin to change. The watcher pauses its automatic batching timer while `.pending` exists, so all your subsequent writes coalesce into one logical batch regardless of how long your work takes. When you finish, remove `.pending`. The bundle applies whatever accumulated as a single coherent batch.
 
-Note: the round-trip watcher and validation pipeline are part of Phase 1B. As of the current build, watcher detection, batch validation, apply, rollback on rejection, and `last-apply-result.json` reporting are in place; the `.pending` sentinel handling for large or slow batches is planned for a later commit. Atomic-write habits are still worth following.
+Write `.pending` even when you might end up making no changes — do your reading and thinking, decide what to do, remove `.pending` whether or not you wrote anything. An empty batch is a no-op for the apply pipeline; the point is the early signal to the user.
+
+The sentinel content can be empty or carry a brief identifier; only the file's existence matters to the watcher.
+
+If `.pending` is held for more than 90 seconds without new round-trip file activity, GeoSonel treats it as orphaned: the file is removed automatically and whatever round-trip files accumulated are processed as a normal batch (validation still applies). The 90-second window is for inactivity — keep making writes and the timeout resets, so a long sequence of edits with intervening thinking is fine.
+
+Note: as of the current build, watcher detection, batch validation, apply, rollback on rejection, `last-apply-result.json` reporting, and `.pending` sentinel coordination are all in place. Atomic-write habits remain worth following.
 
 ## When in doubt
 

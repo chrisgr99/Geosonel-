@@ -86,6 +86,26 @@ const QUIESCENCE_MS = 500;
 // apply pipeline's re-validation in Phase 1B commit 2),
 // more events leave count-residue that the TTL evicts.
 const EVENTS_PER_RENAME = 2;
+// Sentinel filename and orphan timeout for AI batch
+// coordination (Phase 1B commit 4). When an AI is about
+// to make a score-related change, it writes this file
+// as its first action; the watcher then suppresses the
+// quiescence-based batching timer and lets events
+// accumulate without ceiling. When the AI is done
+// (writes complete, or AI decided no writes were needed),
+// it removes the sentinel and the watcher fires
+// processBatch immediately, ensuring multi-file batches
+// land as one coalesced apply regardless of how slow the
+// AI's tool-call cadence is. ORPHAN_TIMEOUT_MS guards
+// against an AI that died mid-batch: 90 seconds of
+// inactivity (no new round-trip events arriving while
+// the sentinel is active) treats the sentinel as
+// abandoned — the watcher removes the file itself and
+// processBatch fires with whatever accumulated. The
+// validation pipeline in mirrorPush.applyBatch catches
+// any broken or partial content.
+const PENDING_SENTINEL_FILENAME = '.pending';
+const ORPHAN_TIMEOUT_MS = 90000;
 
 // Module-level state. `enabled` mirrors the persisted
 // setting and is the canonical in-process answer for "is
@@ -120,6 +140,15 @@ const selfWriteMutes = new Map();
 const pendingBatch = new Set();
 let quiescenceTimer = null;
 let mainWindow = null;
+// Sentinel state (Phase 1B commit 4). When the AI writes
+// .pending we set sentinelActive=true and suppress the
+// quiescence timer so events can accumulate without
+// timeout. The orphan timer fires after 90 seconds of
+// inactivity while the sentinel is active and acts as a
+// safety net against an AI that never removes its
+// sentinel — typically because its process died mid-batch.
+let sentinelActive = false;
+let orphanTimer = null;
 
 // Settings.json IO. The settings file lives in
 // app.getPath('userData') and is shared with the other
@@ -227,6 +256,19 @@ async function cleanLeftoverTmpFiles() {
         // Do not let cleanup failure block initialization.
         console.warn(`GXW: leftover .tmp cleanup failed: ${err.message}`);
     }
+}
+
+// Remove a leftover .pending sentinel from a previous
+// session. If the app died with an AI batch mid-flight
+// the .pending file would survive to the next startup;
+// without cleanup, the watcher would immediately enter
+// sentinel mode on start (the file already exists),
+// which is wrong because no AI from this session put
+// it there. Cleaning at startup gives every fresh
+// session a known-good no-sentinel state. Best-effort:
+// ENOENT is normal, other failures log a warning.
+async function cleanLeftoverSentinel() {
+    await removeSentinelFile();
 }
 
 // Build an active-score.json stub with the full schema
@@ -460,6 +502,19 @@ function handleWatcherEvent(eventType, filename) {
     // target, so there is nothing to apply.
     if (filename.endsWith(TMP_SUFFIX)) return;
 
+    // Sentinel events route to the dedicated handler that
+    // decides between arrival (file appeared) and removal
+    // (file disappeared). Sentinel files are protocol-
+    // level coordination, neither round-trip nor
+    // observation-only, so we don't run them through the
+    // self-write mute or round-trip filter — the mirror
+    // never writes the sentinel itself, only AI processes
+    // and the orphan-timer cleanup do.
+    if (filename === PENDING_SENTINEL_FILENAME) {
+        void handleSentinelEvent();
+        return;
+    }
+
     // Self-originating writes registered by writeAtomic.
     // The mute consumes one expected event per
     // registration.
@@ -472,18 +527,129 @@ function handleWatcherEvent(eventType, filename) {
     // current image).
     if (!isRoundTripFile(filename)) return;
 
-    // Quiescence batcher. Each event adds its filename to
-    // the pending set (a Set so multiple events on the
-    // same file in one window coalesce naturally) and
-    // resets the timer. processBatch fires after
-    // QUIESCENCE_MS of inactivity reads each pending file
-    // and ships the batch to the renderer.
+    // Accumulate the event. Behaviour beyond accumulation
+    // depends on sentinel state: when the sentinel is
+    // active, events accumulate without timeout and only
+    // the orphan timer resets on each new event; without
+    // a sentinel, the quiescence timer triggers
+    // processBatch after QUIESCENCE_MS of inactivity.
     pendingBatch.add(filename);
-    if (quiescenceTimer !== null) clearTimeout(quiescenceTimer);
-    quiescenceTimer = setTimeout(() => {
+
+    if (sentinelActive) {
+        resetOrphanTimer();
+    } else {
+        if (quiescenceTimer !== null) clearTimeout(quiescenceTimer);
+        quiescenceTimer = setTimeout(() => {
+            quiescenceTimer = null;
+            void processBatch();
+        }, QUIESCENCE_MS);
+    }
+}
+
+// Handle a watcher event for the sentinel file. Checks
+// whether .pending currently exists on disk to
+// distinguish a creation from a deletion (fs.watch's
+// 'rename' eventType fires for both on macOS), then
+// routes to arrival or removal accordingly. A redundant
+// arrival event (file already known to be there)
+// just resets the orphan timer, which is the correct
+// idempotent behaviour. A redundant removal event
+// (sentinelActive already false) is silently dropped.
+async function handleSentinelEvent() {
+    const folder = getMirrorFolderPath();
+    const sentinelPath = path.join(folder, PENDING_SENTINEL_FILENAME);
+    let exists = false;
+    try {
+        await fsp.access(sentinelPath);
+        exists = true;
+    } catch {
+        exists = false;
+    }
+
+    if (exists) {
+        handleSentinelArrival();
+    } else if (sentinelActive) {
+        await handleSentinelRemoval();
+    }
+}
+
+// Enter sentinel mode. Cancels any pending quiescence
+// timer (we now wait for the AI's explicit sentinel
+// removal rather than for inter-event silence) and
+// starts the orphan timer so an AI that dies mid-batch
+// doesn't hold the mirror indefinitely. Idempotent:
+// calling this while sentinelActive is already true
+// just resets the orphan timer, which is the right
+// behaviour for a redundant event — the AI is still
+// alive and writing.
+function handleSentinelArrival() {
+    sentinelActive = true;
+
+    if (quiescenceTimer !== null) {
+        clearTimeout(quiescenceTimer);
         quiescenceTimer = null;
-        void processBatch();
-    }, QUIESCENCE_MS);
+    }
+
+    resetOrphanTimer();
+}
+
+// Exit sentinel mode and fire processBatch immediately
+// to ship whatever accumulated. The orphan timer is
+// cancelled. If pendingBatch is empty (the AI wrote
+// .pending and removed it without writing any round-
+// trip files — e.g., it decided no change was needed)
+// processBatch is a no-op and the renderer never sees
+// a batch-ready event, which is the correct behaviour:
+// there was nothing to apply.
+async function handleSentinelRemoval() {
+    sentinelActive = false;
+
+    if (orphanTimer !== null) {
+        clearTimeout(orphanTimer);
+        orphanTimer = null;
+    }
+
+    await processBatch();
+}
+
+// Reset the orphan timer. Called on sentinel arrival
+// (start timer) and on each round-trip event while the
+// sentinel is active (push the timer back). The
+// semantics are "90 seconds of inactivity" — a busy AI
+// can hold the sentinel arbitrarily long as long as it
+// keeps making writes, while a dead AI triggers the
+// timeout after 90s of silence. On timeout: clear
+// sentinel state, remove the .pending file (best
+// effort), and process whatever accumulated as a normal
+// completion. The validation pipeline in
+// mirrorPush.applyBatch catches broken or partial
+// content via the existing rejection-and-rollback path.
+function resetOrphanTimer() {
+    if (orphanTimer !== null) clearTimeout(orphanTimer);
+    orphanTimer = setTimeout(async () => {
+        orphanTimer = null;
+        sentinelActive = false;
+        await removeSentinelFile();
+        await processBatch();
+    }, ORPHAN_TIMEOUT_MS);
+}
+
+// Remove the .pending sentinel file from disk. Used by
+// the orphan timeout path and by cleanLeftoverSentinel.
+// ENOENT is silently ignored — the sentinel may already
+// be gone (raced removal, never created in the first
+// place). Other errors log a warning but do not throw,
+// since failing to remove the sentinel is a state-
+// leakage issue rather than a correctness one.
+async function removeSentinelFile() {
+    const folder = getMirrorFolderPath();
+    const sentinelPath = path.join(folder, PENDING_SENTINEL_FILENAME);
+    try {
+        await fsp.unlink(sentinelPath);
+    } catch (err) {
+        if (err.code === 'ENOENT') return;
+        console.warn(`GXW: failed to remove sentinel: ${err.message}`);
+    }
 }
 
 // Read each file in the pending batch from disk, package
@@ -596,6 +762,20 @@ function stopWatcher() {
     watcher = null;
     clearAllMutes();
     clearPendingBatch();
+    clearSentinelState();
+}
+
+// Clear sentinel state and cancel the orphan timer.
+// Called from stopWatcher so an outstanding sentinel
+// doesn't carry over after teardown. The .pending file
+// itself stays on disk if it existed — cleanLeftoverSentinel
+// at the next startup or enable will handle it.
+function clearSentinelState() {
+    sentinelActive = false;
+    if (orphanTimer !== null) {
+        clearTimeout(orphanTimer);
+        orphanTimer = null;
+    }
 }
 
 // Atomic write helper. Writes the new content to a
@@ -962,6 +1142,7 @@ async function initMirror() {
     try {
         await ensureMirrorFolder();
         await cleanLeftoverTmpFiles();
+        await cleanLeftoverSentinel();
         await writeStaticDocs();
         await writeActiveScoreStub(true);
         startWatcher();
@@ -997,6 +1178,7 @@ async function setEnabled(value) {
         try {
             await ensureMirrorFolder();
             await cleanLeftoverTmpFiles();
+            await cleanLeftoverSentinel();
             await writeStaticDocs();
             await writeActiveScoreStub(true);
             startWatcher();
