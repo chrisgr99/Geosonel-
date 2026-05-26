@@ -58,10 +58,22 @@ const RUNTIME_STATE_FILENAME = 'runtime-state.json';
 const AGENTS_FILENAME = 'AGENTS.md';
 const SCENE_SCHEMA_FILENAME = 'sceneSchema.md';
 const MIRROR_DOCS_DIR = 'mirror-docs';
+const LAST_APPLY_RESULT_FILENAME = 'last-apply-result.json';
 const PROTOCOL_VERSION = 1;
 const SETTING_KEY = 'mirrorEnabled';
 const TMP_SUFFIX = '.tmp';
 const MUTE_TTL_MS = 5000;
+// Quiescence window for the watcher's apply pipeline.
+// On each event that survives the .tmp and self-write
+// filters, the apply timer resets to fire after this many
+// milliseconds of inactivity. A logical AI edit that
+// touches several files in rapid succession lands as one
+// batch; a long-running multi-file write that exceeds the
+// window is the case the .pending sentinel handles (Phase
+// 1B commit 4). 500ms matches the design doc and is well
+// under the inter-keystroke interval of any plausible user
+// action that would race with an AI write.
+const QUIESCENCE_MS = 500;
 // Empirically, fs.watch on macOS fires two events per
 // atomic temp-and-rename: typically a rename event
 // followed by a second rename or change event for the
@@ -98,6 +110,16 @@ let folderPathCache = null;
 let lastPushedImageName = null;
 let watcher = null;
 const selfWriteMutes = new Map();
+// Quiescence batcher state (Phase 1B commit 2). pendingBatch
+// holds the set of filenames seen since the last apply; the
+// quiescenceTimer resets on each event and fires processBatch
+// when no events have arrived for QUIESCENCE_MS milliseconds.
+// mainWindow is the BrowserWindow reference electron-main.js
+// hands us via setMainWindow; processBatch uses it to dispatch
+// the assembled batch to the renderer over IPC.
+const pendingBatch = new Set();
+let quiescenceTimer = null;
+let mainWindow = null;
 
 // Settings.json IO. The settings file lives in
 // app.getPath('userData') and is shared with the other
@@ -228,11 +250,11 @@ function makeStubSnapshot(isLive) {
             observationOnly: [
                 ACTIVE_SCORE_FILENAME,
                 RUNTIME_STATE_FILENAME,
+                LAST_APPLY_RESULT_FILENAME,
                 AGENTS_FILENAME,
                 SCENE_SCHEMA_FILENAME,
             ],
         },
-        lastApplyResult: null,
     };
 }
 
@@ -379,6 +401,53 @@ function clearAllMutes() {
     selfWriteMutes.clear();
 }
 
+// Whether a filename is one of the round-trip files the
+// apply pipeline acts on. Round-trip files are scene.json,
+// behaviours.js, and the current image (whose filename
+// matches lastPushedImageName). Observation-only files
+// (active-score.json, runtime-state.json, AGENTS.md,
+// sceneSchema.md) and any AI-created files with names we
+// don't recognise return false and the watcher ignores them
+// — the design treats observation-only as write-from-bundle
+// and any AI edits to them as discardable.
+//
+// Image filename matching is strict on lastPushedImageName:
+// if an AI writes an image under a different filename the
+// event is ignored rather than treated as a replacement.
+// The AI is expected to overwrite the existing image
+// filename; broadening to recognise arbitrary new image
+// names is a later-phase consideration once the basic
+// round-trip is in real use.
+function isRoundTripFile(filename) {
+    if (filename === SCENE_FILENAME) return true;
+    if (filename === BEHAVIOURS_FILENAME) return true;
+    if (lastPushedImageName !== null && filename === lastPushedImageName) return true;
+    return false;
+}
+
+// Minimal mime-type inference for the batch payload's
+// image entry. Covers the image formats GeoSonel imports
+// today (png, jpg, jpeg, gif, webp, svg). Anything else
+// falls through to application/octet-stream and the
+// renderer's apply path treats it as opaque bytes. The
+// inference duplicates what electron-main.js's getMimeType
+// does for the same extensions; kept local here so the
+// mirror module doesn't reach into electron-main.js's
+// internals for a one-call helper.
+function inferImageMimeType(filename) {
+    const dot = filename.lastIndexOf('.');
+    const ext = dot === -1 ? '' : filename.slice(dot).toLowerCase();
+    switch (ext) {
+        case '.png':  return 'image/png';
+        case '.jpg':  return 'image/jpeg';
+        case '.jpeg': return 'image/jpeg';
+        case '.gif':  return 'image/gif';
+        case '.webp': return 'image/webp';
+        case '.svg':  return 'image/svg+xml';
+        default:      return 'application/octet-stream';
+    }
+}
+
 function handleWatcherEvent(eventType, filename) {
     // fs.watch can deliver a null filename on some
     // platforms (Linux inotify when the underlying event
@@ -396,10 +465,111 @@ function handleWatcherEvent(eventType, filename) {
     // registration.
     if (consumeMute(filename)) return;
 
-    // Surface the event. For Phase 1B commit 1 this is
-    // just a log line; commit 2 will replace this with a
-    // call into the quiescence batcher and apply pipeline.
-    console.log(`GXW: mirror watcher saw ${eventType} on ${filename}`);
+    // Filter to round-trip files. Observation-only files
+    // and unrecognised AI-created files are ignored
+    // outright — the apply pipeline only acts on the
+    // round-trip surface (scene.json, behaviours.js,
+    // current image).
+    if (!isRoundTripFile(filename)) return;
+
+    // Quiescence batcher. Each event adds its filename to
+    // the pending set (a Set so multiple events on the
+    // same file in one window coalesce naturally) and
+    // resets the timer. processBatch fires after
+    // QUIESCENCE_MS of inactivity reads each pending file
+    // and ships the batch to the renderer.
+    pendingBatch.add(filename);
+    if (quiescenceTimer !== null) clearTimeout(quiescenceTimer);
+    quiescenceTimer = setTimeout(() => {
+        quiescenceTimer = null;
+        void processBatch();
+    }, QUIESCENCE_MS);
+}
+
+// Read each file in the pending batch from disk, package
+// the entries as {filename, kind, content [, mimeType]},
+// and dispatch to the renderer via webContents.send. The
+// renderer's MirrorPush.applyBatch validates and applies.
+// Reads happen serially rather than in parallel — the
+// batch is small (at most three files in Phase 1) and
+// keeping the I/O ordered makes any failure log lines
+// line up with the file they refer to.
+//
+// Files that disappeared between event delivery and the
+// read (e.g., AI deleted right after writing) log a
+// warning and drop out of the batch. The remaining entries
+// still ship; the renderer applies what's there. This is
+// consistent with the design's failure model: the bundle
+// stays at its previous content if a batch can't be
+// applied cleanly, and a subsequent push will overwrite
+// the mirror back to the bundle's view.
+//
+// Dispatch is best-effort: a missing mainWindow (AI write
+// arrived before electron-main.js wired one up, or the
+// window has been destroyed) logs and drops. webContents
+// sends arriving before the renderer's onBatchReady
+// listener is registered are simply not observed by the
+// renderer; the next user edit's push corrects any
+// disagreement.
+async function processBatch() {
+    const filenames = Array.from(pendingBatch);
+    pendingBatch.clear();
+    if (filenames.length === 0) return;
+
+    const folder = getMirrorFolderPath();
+    const entries = [];
+    for (const filename of filenames) {
+        const filepath = path.join(folder, filename);
+        const isText = filename === SCENE_FILENAME || filename === BEHAVIOURS_FILENAME;
+        try {
+            if (isText) {
+                const content = await fsp.readFile(filepath, 'utf8');
+                entries.push({ filename, kind: 'text', content });
+            } else {
+                const buffer = await fsp.readFile(filepath);
+                const ab = buffer.buffer.slice(
+                    buffer.byteOffset,
+                    buffer.byteOffset + buffer.byteLength,
+                );
+                entries.push({
+                    filename,
+                    kind: 'binary',
+                    content: ab,
+                    mimeType: inferImageMimeType(filename),
+                });
+            }
+        } catch (err) {
+            console.warn(
+                `GXW: could not read mirror file ${filename} for batch: ${err.message}`,
+            );
+        }
+    }
+
+    if (entries.length === 0) return;
+
+    if (mainWindow === null) {
+        console.warn(
+            `GXW: mirror batch ready but no main window to dispatch to; dropping ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}.`,
+        );
+        return;
+    }
+    try {
+        mainWindow.webContents.send('gxw:mirror-batch-ready', entries);
+    } catch (err) {
+        console.warn(`GXW: failed to dispatch mirror batch: ${err.message}`);
+    }
+}
+
+// Cancel any pending quiescence timer and drop the
+// in-progress batch. Called from stopWatcher (mirror
+// disable, app quit) so events that arrived just before
+// the watcher closed don't fire processBatch afterwards.
+function clearPendingBatch() {
+    if (quiescenceTimer !== null) {
+        clearTimeout(quiescenceTimer);
+        quiescenceTimer = null;
+    }
+    pendingBatch.clear();
 }
 
 function startWatcher() {
@@ -425,6 +595,7 @@ function stopWatcher() {
     }
     watcher = null;
     clearAllMutes();
+    clearPendingBatch();
 }
 
 // Atomic write helper. Writes the new content to a
@@ -594,11 +765,11 @@ async function pushScore(payload) {
             observationOnly: [
                 ACTIVE_SCORE_FILENAME,
                 RUNTIME_STATE_FILENAME,
+                LAST_APPLY_RESULT_FILENAME,
                 AGENTS_FILENAME,
                 SCENE_SCHEMA_FILENAME,
             ],
         },
-        lastApplyResult: null,
     };
     await writeAtomic(
         path.join(folder, ACTIVE_SCORE_FILENAME),
@@ -701,6 +872,71 @@ async function pushRuntimeState(payload) {
     await writeAtomic(
         path.join(folder, RUNTIME_STATE_FILENAME),
         JSON.stringify(snapshot, null, 2),
+        null,
+    );
+}
+
+/**
+ * Write last-apply-result.json with the outcome of the
+ * renderer's most recent applyBatch call. Phase 1B commit
+ * 3. Called via IPC from the renderer's mirrorPush.js
+ * after every batch — success or rejection — so an AI
+ * reading the mirror folder can find out whether its last
+ * edit was accepted, and if not, why.
+ *
+ * Two payload shapes. Success:
+ *
+ *   {
+ *     status: "success",
+ *     timestamp: "ISO 8601 string",
+ *     applied: ["scene.json", "behaviours.js"]
+ *   }
+ *
+ * Rejection:
+ *
+ *   {
+ *     status: "rejected",
+ *     timestamp: "ISO 8601 string",
+ *     filename: "scene.json",
+ *     error: "Expected double-quoted property name in JSON at position 613"
+ *   }
+ *
+ * The success applied list reflects what actually landed:
+ * for a multi-file batch with one image and two text
+ * files, all three filenames appear in mirror-surface
+ * naming. The rejection filename is the first file that
+ * failed validation; applyBatch short-circuits on the
+ * first failure, so a rejection result describes one
+ * specific problem rather than every problem.
+ *
+ * The file is written via writeAtomic so an AI watching
+ * for changes never reads a torn mid-write JSON. The
+ * watcher's round-trip filter excludes
+ * last-apply-result.json by name, so the resulting events
+ * are dropped at the filter rather than feeding back
+ * through the apply pipeline — the self-write mute path
+ * is in place too, but the filter would catch them
+ * regardless.
+ *
+ * No-op when the mirror is disabled (defensive against a
+ * stray race where Settings toggled off while a batch was
+ * mid-apply). Errors propagate up through the IPC so
+ * mirrorPush.js can log them, though rollback proceeds
+ * regardless: surfacing the apply result is best-effort,
+ * keeping the mirror folder consistent with the bundle is
+ * mandatory.
+ *
+ * @param {object | null} payload
+ */
+async function writeApplyResult(payload) {
+    if (!enabled) return;
+    if (payload === null || typeof payload !== 'object') return;
+
+    const folder = getMirrorFolderPath();
+    await fsp.mkdir(folder, { recursive: true });
+    await writeAtomic(
+        path.join(folder, LAST_APPLY_RESULT_FILENAME),
+        JSON.stringify(payload, null, 2),
         null,
     );
 }
@@ -817,6 +1053,21 @@ function getStatus() {
 }
 
 /**
+ * Hand the mirror a reference to the main BrowserWindow.
+ * Used by processBatch to dispatch ready batches to the
+ * renderer via webContents.send. Called once from
+ * electron-main.js after createWindow runs.
+ *
+ * Null-tolerant: passing null clears the reference, used
+ * during teardown when the window is being destroyed.
+ *
+ * @param {Electron.BrowserWindow | null} window
+ */
+function setMainWindow(window) {
+    mainWindow = window;
+}
+
+/**
  * Shut down the mirror at app quit. When enabled, writes
  * isLive=false to active-score.json synchronously so the
  * transition lands before the process exits. Called from
@@ -829,4 +1080,4 @@ function shutdown() {
     writeActiveScoreStubSync(false);
 }
 
-module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState };
+module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, setMainWindow, writeApplyResult };

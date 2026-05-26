@@ -1377,6 +1377,30 @@ async function main() {
     mirrorPush.setBundle(session.bundle);
     mirrorPush.setSimulation(simulation);
     mirrorPush.setTransport(transport);
+    // Apply-pipeline wiring (Phase 1B commit 2). The
+    // editor and canvas references are direct; runScene
+    // is wrapped in a thunk because the variable is
+    // reassigned above (its initial declaration was a
+    // placeholder) and the thunk's late binding lets
+    // mirrorPush's applyBatch resolve the current value
+    // each time. The onBatchReady subscription is the
+    // renderer-side hook for the watcher's quiescence
+    // batcher in electron-mirror.js: AI writes to the
+    // mirror folder ship across IPC as a batch payload,
+    // which applyBatch validates and applies back into
+    // the bundle.
+    mirrorPush.setEditor(editor);
+    mirrorPush.setCanvas(canvas);
+    mirrorPush.setRunScene(() => runScene());
+    {
+        const gxwMirror = /** @type {any} */ (window).gxwMirror;
+        if (gxwMirror !== undefined && gxwMirror !== null &&
+            typeof gxwMirror.onBatchReady === "function") {
+            gxwMirror.onBatchReady((batch) => {
+                void mirrorPush.applyBatch(batch);
+            });
+        }
+    }
     {
         const gxwMirror = /** @type {any} */ (window).gxwMirror;
         if (gxwMirror !== undefined && gxwMirror !== null &&

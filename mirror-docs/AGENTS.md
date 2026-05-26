@@ -24,8 +24,9 @@ The folder contains two kinds of file: round-trip files that the AI may edit (th
 
 **Observation-only files:**
 
-- `active-score.json` — protocol metadata: score identity, sync timestamp, current transport snapshot, files lists, and the result of the most recent AI-edit batch.
+- `active-score.json` — protocol metadata: score identity, sync timestamp, current transport snapshot, files lists.
 - `runtime-state.json` — simulation-side state at the moment of the last at-rest capture. Schema below.
+- `last-apply-result.json` — outcome of the most recent AI-edit batch (success or rejection with details). Schema below.
 - `sceneSchema.md` — scene.json reference, generated from `src/sceneSchema.js` in the repo.
 - `AGENTS.md` — this file.
 
@@ -53,15 +54,39 @@ The first file to read on any new conversation. Top-level shape:
   },
   "files": {
     "roundTrip": ["scene.json", "behaviours.js", "tofes.jpg"],
-    "observationOnly": ["active-score.json", "runtime-state.json", "sceneSchema.md", "AGENTS.md"]
-  },
-  "lastApplyResult": null
+    "observationOnly": ["active-score.json", "runtime-state.json", "last-apply-result.json", "sceneSchema.md", "AGENTS.md"]
+  }
 }
 ```
 
 `score.path` is `null` for an Untitled bundle the user has not saved yet. `score.dirty` indicates unsaved changes in the in-memory bundle. `transport.state` is `"playing"`, `"paused"`, or `"stopped"`; `beat` and `bpm` are `null` for time-based pieces with no tempo set.
 
-`lastApplyResult` is `null` until the round-trip validation pipeline (Phase 1B) lands. When that pipeline ships, this field will carry the result of the most recent AI-edit batch — an `appliedAt` timestamp, a `status` (`"accepted"` or `"rejected"`), a `summary` string, and an `errors` array with file path, error kind, and detail for each failure. Until then, AI edits to round-trip files are not yet automatically applied; the bundle's pipeline for receiving AI writes is under development.
+## last-apply-result.json
+
+Written by GeoSonel after every AI-edit batch — success or rejection — so an AI reading the folder can find out whether its last edit was accepted, and if not, why. The file does not exist until the first batch lands; an AI reading the mirror folder before any batch has been processed will see it absent.
+
+Success shape:
+
+```json
+{
+  "status": "success",
+  "timestamp": "2026-05-26T22:15:33.412Z",
+  "applied": ["scene.json", "behaviours.js"]
+}
+```
+
+Rejection shape:
+
+```json
+{
+  "status": "rejected",
+  "timestamp": "2026-05-26T22:15:33.412Z",
+  "filename": "scene.json",
+  "error": "Expected double-quoted property name in JSON at position 613"
+}
+```
+
+The `applied` list on success reflects what actually landed in the bundle, in mirror-surface naming. The `filename` and `error` on rejection identify the first file that failed validation — GeoSonel short-circuits on the first failure, so a rejection record describes one specific problem rather than every problem in the batch. When a batch is rejected, the bundle's last-known-good state is force-pushed back to the mirror folder, so the round-trip files (`scene.json`, `behaviours.js`, the image) revert to their pre-batch content within the same write window that produces this file.
 
 ## runtime-state.json
 
@@ -120,7 +145,7 @@ The image lives in `files.roundTrip` in active-score.json so the protocol permit
 
 ## Editing scene.json
 
-Use `sceneSchema.md` (in this folder) as the field-by-field reference. The bundle validates AI-edited scene.json against `src/sceneSchema.js` (the authoritative source the .md is derived from). A failing edit is rejected as a whole batch — the in-memory state is not changed, the mirror is rewritten with the last-known-good content, and `lastApplyResult` in active-score.json carries the failure detail.
+Use `sceneSchema.md` (in this folder) as the field-by-field reference. The bundle validates AI-edited scene.json against `src/sceneSchema.js` (the authoritative source the .md is derived from). A failing edit is rejected as a whole batch — the in-memory state is not changed, the mirror is rewritten with the last-known-good content, and `last-apply-result.json` carries the failure detail.
 
 Object IDs (`CRV1`, `TRG2`, etc.) are referenced by callback function names in `behaviours.js` (e.g. `hasHit_CRV1`). Renaming an ID without renaming the matching callback breaks the binding silently. When restructuring IDs, update both files in the same batch.
 
@@ -130,7 +155,7 @@ Object IDs (`CRV1`, `TRG2`, etc.) are referenced by callback function names in `
 
 The callback execution context (the `ctx` parameter), pattern-emission API, and the modulatable-parameter machinery are described in `DESIGN.md` Section 9 (Behaviour Slots) and Section 10 (Pattern Language). Read those before authoring substantial behaviour code.
 
-`behaviours.js` is parsed with Acorn before being applied. Syntax errors reject the batch with the parser's line, column, and message in `lastApplyResult`.
+`behaviours.js` is parsed with Acorn before being applied. Syntax errors reject the batch with the parser's message in `last-apply-result.json`.
 
 ## Atomic write protocol
 
@@ -138,7 +163,7 @@ Files in this folder use temp-and-rename atomic writes. When the bundle pushes c
 
 For batches that touch more than one round-trip file or include slow operations (image generation), write a `.pending` sentinel file in this folder *before* the batch and remove it *after*. The bundle's watcher then waits for `.pending` to disappear before applying the batch as a unit. A `.pending` file older than 60 seconds is treated as orphaned and removed.
 
-Note: the round-trip watcher and validation pipeline are part of Phase 1B and not yet implemented. AI edits to round-trip files in the current Phase 1A do not flow back into the bundle automatically. Atomic-write habits are still worth following so the protocol works correctly once Phase 1B ships.
+Note: the round-trip watcher and validation pipeline are part of Phase 1B. As of the current build, watcher detection, batch validation, apply, rollback on rejection, and `last-apply-result.json` reporting are in place; the `.pending` sentinel handling for large or slow batches is planned for a later commit. Atomic-write habits are still worth following.
 
 ## When in doubt
 
@@ -146,7 +171,7 @@ Ask the user. They drive the work; the AI carries it out. Three patterns worth k
 
 - When an edit could be destructive (image replacement, removing objects, large structural changes), confirm before writing.
 - When a request is ambiguous about which object or which behaviour, ask which one rather than guessing.
-- When validation rejects a batch, share the `lastApplyResult` details with the user and propose the fix; do not silently retry with a guess.
+- When validation rejects a batch, share the `last-apply-result.json` details with the user and propose the fix; do not silently retry with a guess.
 
 The user's gesture is always authoritative. If the user switches scores while an AI batch is in flight, that batch is cancelled — the user moved on.
 

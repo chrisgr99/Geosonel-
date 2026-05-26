@@ -64,6 +64,8 @@
 // @ts-check
 
 import { sampleCurve } from "./curveGeometry.js";
+import { parseScene } from "./sceneEditor.js";
+import * as acorn from "https://esm.sh/acorn@8";
 
 const DEBOUNCE_MS = 500;
 
@@ -74,6 +76,15 @@ const DEBOUNCE_MS = 500;
 // (behavioursJsText) and the read from the bundle uses the
 // American name.
 const BUNDLE_BEHAVIORS_FILENAME = "behaviors.js";
+
+// Filename the mirror writes the callback-code file as on
+// disk. Phase 1B commit 2's applyBatch translates from
+// this mirror-surface name to BUNDLE_BEHAVIORS_FILENAME
+// when updating the bundle, so an AI's behaviours.js write
+// lands on the bundle's behaviors.js without the bundle
+// having to know about the spelling difference.
+const MIRROR_BEHAVIOURS_FILENAME = "behaviours.js";
+const MIRROR_SCENE_FILENAME = "scene.json";
 
 export class MirrorPush {
     /**
@@ -163,6 +174,28 @@ export class MirrorPush {
 
         /** @type {boolean} */
         this._pushingRuntime = false;
+
+        // --- Apply pipeline (Phase 1B commit 2) ---
+        //
+        // References used by applyBatch to push validated
+        // AI-originated content back into the active
+        // editor and trigger a scene rebuild. Wired up
+        // from main.js after the editor, canvas, and
+        // runScene are constructed; null until then, and
+        // applyBatch tolerates any of them being null
+        // (the validation and bundle-update path still
+        // runs; only the editor refresh, canvas image
+        // refresh, or scene rebuild that depend on the
+        // missing reference are skipped).
+
+        /** @type {import("./editor.js").TabbedEditor | null} */
+        this._editor = null;
+
+        /** @type {import("./canvas.js").Canvas | null} */
+        this._canvas = null;
+
+        /** @type {(() => Promise<void>) | null} */
+        this._runScene = null;
     }
 
     /**
@@ -622,5 +655,322 @@ export class MirrorPush {
             sprites,
             curves,
         };
+    }
+
+    // --- Apply pipeline (Phase 1B commit 2) ---
+
+    /**
+     * Hand the pipeline a reference to the TabbedEditor.
+     * Used by applyBatch to refresh the editor's tabs
+     * from the bundle after an AI batch lands, so the
+     * JSON and Code tabs show the AI's edits rather than
+     * the bundle's pre-edit content. Called once from
+     * main.js after the editor is constructed; null
+     * during early startup and during teardown.
+     *
+     * @param {import("./editor.js").TabbedEditor | null} editor
+     */
+    setEditor(editor) {
+        this._editor = editor;
+    }
+
+    /**
+     * Hand the pipeline a reference to the Canvas. Used
+     * by applyBatch to push fresh image bytes onto the
+     * canvas after the bundle's replaceImage lands, so
+     * the visual background updates without waiting for
+     * the next runScene to redraw. Called once from
+     * main.js after the canvas is constructed; null
+     * during early startup and during teardown.
+     *
+     * @param {import("./canvas.js").Canvas | null} canvas
+     */
+    setCanvas(canvas) {
+        this._canvas = canvas;
+    }
+
+    /**
+     * Hand the pipeline a thunk that triggers the
+     * renderer's runScene flow. Called from main.js after
+     * runScene is assigned. The thunk shape (rather than
+     * a direct function reference) lets main.js capture
+     * the runScene binding by closure so the actual
+     * function looked up at call time reflects any
+     * post-construction reassignment.
+     *
+     * @param {(() => Promise<void>) | null} runScene
+     */
+    setRunScene(runScene) {
+        this._runScene = runScene;
+    }
+
+    /**
+     * Validate a batch of AI-originated file writes and,
+     * on success, apply each entry back into the active
+     * bundle. The renderer end of the round-trip protocol
+     * established in Phase 1B commit 1: the main-process
+     * watcher in electron-mirror.js detects external
+     * writes, packages a batch payload after a 500ms
+     * quiescence window, and dispatches via
+     * gxw:mirror-batch-ready (subscribed in main.js).
+     *
+     * Batch shape:
+     *
+     *   [
+     *     { filename: "scene.json", kind: "text", content: "..." },
+     *     { filename: "behaviours.js", kind: "text", content: "..." },
+     *     { filename: "image.png", kind: "binary", content: ArrayBuffer, mimeType: "image/png" }
+     *   ]
+     *
+     * Validation runs first, all-or-nothing: scene.json
+     * must JSON-parse to an object (via parseScene from
+     * sceneEditor.js, which also enforces the top-level-
+     * object shape); behaviours.js must parse cleanly
+     * under Acorn; image entries are accepted without
+     * validation. If any text entry fails validation the
+     * whole batch is rejected: a warning logs to the
+     * renderer console, the bundle stays at its prior
+     * content, last-apply-result.json is written with the
+     * rejection details (Phase 1B commit 3), and the
+     * bundle's last-known-good state is force-pushed back
+     * to the mirror folder via _pushNow so the AI sees
+     * its bad write was discarded. The bundle itself
+     * needs no rollback because validation runs before
+     * any mutations; the rollback target is the mirror's
+     * on-disk state, not the in-memory bundle.
+     *
+     * On success, every entry is applied: text entries
+     * via bundle.updateContent (with filename translation
+     * from the mirror's behaviours.js to the bundle's
+     * behaviors.js), the image via bundle.replaceImage
+     * and canvas.setImage. The editor is reloaded so the
+     * tabs show the new content, and the runScene thunk
+     * fires so the canvas, simulation, and firing engine
+     * pick up the new scene. last-apply-result.json is
+     * written with the success status and the list of
+     * filenames that were applied. bundle.updateContent
+     * emits content-change events; the existing push
+     * pipeline wakes on those and writes the same content
+     * back to the mirror after the next debounce window,
+     * muting the resulting self-write event. The redundant
+     * push is harmless and self-resolves; preventing it
+     * would complicate the apply path more than it's worth.
+     *
+     * No-op when the bundle reference is null (startup or
+     * post-teardown). When _editor, _canvas, or _runScene
+     * is null the bundle update still runs but the
+     * dependent refresh step is skipped, so partial
+     * wiring during startup is tolerated rather than
+     * throwing.
+     *
+     * @param {Array<{filename: string, kind: "text" | "binary", content: string | ArrayBuffer, mimeType?: string}>} batch
+     * @returns {Promise<void>}
+     */
+    async applyBatch(batch) {
+        if (!Array.isArray(batch) || batch.length === 0) return;
+        if (this._bundle === null) return;
+
+        // Validation pass. Text entries are parsed in turn;
+        // any failure short-circuits with a log line, a
+        // rejection record written to last-apply-result.json,
+        // and a force-push back to the mirror so the
+        // bundle's last-known-good state overwrites the
+        // AI's bad write. Image entries are not validated
+        // — a malformed image will surface when the canvas
+        // tries to decode it, which is a visible failure
+        // the user can react to. Future commits can add
+        // image-shape validation if it proves worth the
+        // cost.
+        for (const entry of batch) {
+            if (entry.kind !== "text") continue;
+            const content = typeof entry.content === "string" ? entry.content : "";
+            if (entry.filename === MIRROR_SCENE_FILENAME) {
+                const parsed = parseScene(content);
+                if (!parsed.ok) {
+                    const errorMessage = parsed.error;
+                    console.warn(
+                        `GXW: AI batch rejected — scene.json validation failed: ${errorMessage}`,
+                    );
+                    await this._reportRejectionAndRollback(MIRROR_SCENE_FILENAME, errorMessage);
+                    return;
+                }
+            } else if (entry.filename === MIRROR_BEHAVIOURS_FILENAME) {
+                try {
+                    acorn.parse(content, {
+                        ecmaVersion: "latest",
+                        sourceType: "script",
+                        allowReturnOutsideFunction: true,
+                    });
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.warn(
+                        `GXW: AI batch rejected — behaviours.js validation failed: ${msg}`,
+                    );
+                    await this._reportRejectionAndRollback(MIRROR_BEHAVIOURS_FILENAME, msg);
+                    return;
+                }
+            }
+        }
+
+        // Apply pass. Each text entry routes through
+        // bundle.updateContent with the mirror-to-bundle
+        // filename translation; the image entry routes
+        // through bundle.replaceImage and then
+        // canvas.setImage so the canvas paints the new
+        // bitmap without waiting for runScene. contentHash
+        // is passed as null on image replacement: the
+        // bundle's gallery-sync pass recomputes on demand,
+        // so we don't pay the SHA-256 cost on every AI
+        // image write. The applied array accumulates the
+        // filenames actually landed (in mirror-surface
+        // naming) for the success record written at the
+        // end of the method.
+        const applied = [];
+        for (const entry of batch) {
+            if (entry.kind === "text") {
+                const content = typeof entry.content === "string" ? entry.content : "";
+                const bundleName = entry.filename === MIRROR_BEHAVIOURS_FILENAME
+                    ? BUNDLE_BEHAVIORS_FILENAME
+                    : entry.filename;
+                this._bundle.updateContent(bundleName, content);
+                applied.push(entry.filename);
+            } else if (entry.kind === "binary") {
+                if (!(entry.content instanceof ArrayBuffer)) continue;
+                const mimeType = typeof entry.mimeType === "string" && entry.mimeType !== ""
+                    ? entry.mimeType
+                    : "application/octet-stream";
+                this._bundle.replaceImage(entry.filename, entry.content, mimeType, null);
+                applied.push(entry.filename);
+                if (this._canvas !== null) {
+                    try {
+                        await this._canvas.setImage({
+                            bytes: entry.content,
+                            mimeType,
+                        });
+                    } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        console.warn(`GXW: canvas setImage failed during AI batch apply: ${msg}`);
+                    }
+                }
+            }
+        }
+
+        // Refresh the editor so the JSON and Code tabs
+        // show the AI's content rather than whatever was
+        // in their CodeMirror buffers before. reloadFromBundle
+        // is heavier than refreshActiveTabFromBundle (it
+        // rebuilds the tab bar) but covers both text
+        // surfaces in one call, which matters when the AI
+        // edits both files at once and the user is
+        // viewing whichever one isn't the active tab. The
+        // currently-active tab survives the reload when
+        // its filename is unchanged.
+        if (this._editor !== null) {
+            try {
+                this._editor.reloadFromBundle();
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`GXW: editor reload failed during AI batch apply: ${msg}`);
+            }
+        }
+
+        // Rebuild the scene so the canvas, simulation, and
+        // firing engine pick up the new content. runScene
+        // is a thunk in main.js; failures inside it are
+        // surfaced through its own message-area writes, so
+        // we just await and log any unexpected throw
+        // here. The await propagates so callers can chain
+        // post-apply work in a future commit if needed.
+        if (this._runScene !== null) {
+            try {
+                await this._runScene();
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`GXW: runScene failed during AI batch apply: ${msg}`);
+            }
+        }
+
+        // Record the success outcome to last-apply-result.json
+        // (Phase 1B commit 3). The AI reads this file after
+        // its edit to confirm what landed. Best-effort: a
+        // failed write logs but doesn't undo the apply,
+        // since the apply itself has already taken effect
+        // in the bundle.
+        await this._writeApplyResult({
+            status: "success",
+            timestamp: new Date().toISOString(),
+            applied,
+        });
+    }
+
+    /**
+     * Write a rejection record to last-apply-result.json
+     * and force-push the bundle's current state back to
+     * the mirror so the AI's bad write is overwritten
+     * with the last-known-good content. Phase 1B commit
+     * 3. Both operations are best-effort: the rollback
+     * runs regardless of whether the result write
+     * succeeded, since keeping the mirror folder
+     * consistent with the bundle is the higher-priority
+     * concern. The result write surfaces the cause of
+     * rejection to the AI; the rollback restores the
+     * mirror's contents.
+     *
+     * @param {string} filename Mirror-surface filename that failed validation.
+     * @param {string} error Validation error message.
+     * @returns {Promise<void>}
+     */
+    async _reportRejectionAndRollback(filename, error) {
+        await this._writeApplyResult({
+            status: "rejected",
+            timestamp: new Date().toISOString(),
+            filename,
+            error,
+        });
+        // Rollback by force-pushing the bundle's current
+        // state to the mirror. _pushNow cancels the
+        // debounce timer and writes scene.json,
+        // behaviours.js, and the image atomically; the
+        // resulting watcher events are self-write mutes
+        // so nothing feeds back through applyBatch. The
+        // last-apply-result.json write above is not
+        // overwritten by this push: it's a separate file
+        // outside the round-trip set that _pushNow
+        // touches. last-apply-result.json itself is
+        // observation-only.
+        try {
+            await this._pushNow();
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`GXW: rollback push failed: ${msg}`);
+        }
+    }
+
+    /**
+     * Forward an apply-result payload to the main process
+     * via the gxwMirror bridge. Tolerates the bridge
+     * being unavailable (web build or early startup
+     * before the preload script attached). Errors are
+     * logged but never thrown, since reporting the apply
+     * result is best-effort — the apply itself has
+     * already taken effect (or, on rejection, the
+     * rollback is about to run regardless).
+     *
+     * @param {object} payload
+     * @returns {Promise<void>}
+     */
+    async _writeApplyResult(payload) {
+        /** @type {any} */
+        const gxwMirror = (/** @type {any} */ (window)).gxwMirror;
+        if (gxwMirror === undefined || gxwMirror === null ||
+            typeof gxwMirror.writeApplyResult !== "function") {
+            return;
+        }
+        try {
+            await gxwMirror.writeApplyResult(payload);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`GXW: writeApplyResult failed: ${msg}`);
+        }
     }
 }

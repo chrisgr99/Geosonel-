@@ -168,4 +168,27 @@ contextBridge.exposeInMainWorld('gxwMirror', {
     ipcRenderer.invoke('gxw:mirror-push-score', payload),
   pushRuntimeState: (payload) =>
     ipcRenderer.invoke('gxw:mirror-push-runtime-state', payload),
+  // Write last-apply-result.json with the outcome of the
+  // renderer's most recent applyBatch call (Phase 1B
+  // commit 3). Called after every batch — success or
+  // rejection — so an AI reading the mirror folder can
+  // find out whether its last edit was accepted, and if
+  // not, why.
+  writeApplyResult: (payload) =>
+    ipcRenderer.invoke('gxw:mirror-write-apply-result', payload),
+  // Subscribe to ready batches from the main-process
+  // watcher (Phase 1B commit 2). The main process's
+  // electron-mirror.js fires gxw:mirror-batch-ready with
+  // an array of {filename, kind, content [, mimeType]}
+  // entries when its quiescence timer drains and the
+  // pending files have been read from disk. The
+  // renderer's MirrorPush.applyBatch is the consumer:
+  // it validates each entry and applies the bytes back
+  // into the bundle. Returns an unsubscribe function so
+  // a future tear-down path can detach the listener.
+  onBatchReady: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('gxw:mirror-batch-ready', listener);
+    return () => ipcRenderer.removeListener('gxw:mirror-batch-ready', listener);
+  },
 });

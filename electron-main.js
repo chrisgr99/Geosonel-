@@ -1351,6 +1351,19 @@ function registerStorageHandlers() {
   ipcMain.handle('gxw:mirror-push-runtime-state', async (_event, payload) => {
     await mirror.pushRuntimeState(payload);
   });
+
+  // Phase 1B commit 3: receive the outcome of the
+  // renderer's most recent applyBatch call and write it
+  // as last-apply-result.json. Called after every batch,
+  // success or rejection, so an AI reading the mirror
+  // folder can find out whether its last edit was
+  // accepted, and if not, why. Payload validation lives
+  // inside writeApplyResult; an await here lets a write
+  // failure surface as a rejected IPC promise the
+  // renderer can log.
+  ipcMain.handle('gxw:mirror-write-apply-result', async (_event, payload) => {
+    await mirror.writeApplyResult(payload);
+  });
 }
 
 // --- App lifecycle ---
@@ -1362,6 +1375,16 @@ app.whenReady().then(async () => {
   await migrateScoresFolderToGxsExtension();
   await mirror.initMirror();
   createWindow();
+  // Hand the mirror the BrowserWindow it dispatches
+  // ready batches to (Phase 1B commit 2). initMirror
+  // starts the watcher before this runs, so any
+  // AI write that arrives in the gap between watcher
+  // start and this assignment surfaces as a
+  // dropped-batch warning in the main-process log
+  // and is overwritten on the next user edit's
+  // push. The gap is on the order of milliseconds in
+  // practice.
+  mirror.setMainWindow(mainWindow);
   installMenu(mainWindow);
 });
 
