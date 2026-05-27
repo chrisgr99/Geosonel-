@@ -595,6 +595,23 @@ export class TabbedEditor {
          */
         this._wrapCompartment = new Compartment();
 
+        /**
+         * Compartment holding the read-only state effect
+         * that blocks user input while the AI batch
+         * confirm-to-apply dialog is visible (Phase 1B
+         * commit 4b.2). Reconfigured to
+         * [EditorState.readOnly.of(true)] by aiBatchDialog
+         * when the dialog opens and back to [] when it
+         * closes. EditorState.readOnly blocks keystrokes
+         * and paste; it still allows scrolling, selection
+         * for copy, and programmatic dispatches — which
+         * is what mirrorPush.confirmApply uses to land the
+         * held batch's edits, so apply continues to work
+         * under the lock.
+         * @type {Compartment}
+         */
+        this._readOnlyCompartment = new Compartment();
+
         this._mountEditor();
         this._mountInspector();
         this._mountCanvasInspector();
@@ -920,6 +937,34 @@ export class TabbedEditor {
     }
 
     /**
+     * Set the editor's read-only state. Used by
+     * aiBatchDialog (Phase 1B commit 4b.2) to lock the
+     * Code tab against keystrokes while the AI batch
+     * confirm-to-apply dialog is visible.
+     * EditorState.readOnly blocks user input — keystrokes
+     * and paste — but still allows scrolling, selection
+     * for copy, and programmatic dispatches. The apply
+     * path inside mirrorPush.confirmApply uses
+     * programmatic dispatches to land the held batch's
+     * edits, so it continues to work under the lock; only
+     * the user's keyboard is gated.
+     *
+     * Safe to call before the view has mounted: the call
+     * is a no-op in that case. Idempotent: setting the
+     * same state twice produces no visible change.
+     *
+     * @param {boolean} readOnly
+     */
+    setReadOnly(readOnly) {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: this._readOnlyCompartment.reconfigure(
+                readOnly ? [EditorState.readOnly.of(true)] : [],
+            ),
+        });
+    }
+
+    /**
      * Update the editor's selected-object-id state so the
      * Stage A5 active-tag decoration in patternHighlight.js
      * highlights labelled blocks whose dollar-prefixed
@@ -1211,6 +1256,7 @@ export class TabbedEditor {
                 history(),
                 drawSelection(),
                 this._wrapCompartment.of(this._wrapExtensions()),
+                this._readOnlyCompartment.of([]),
                 indentOnInput(),
                 indentUnit.of("    "),
                 bracketMatching(),

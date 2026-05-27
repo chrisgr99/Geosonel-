@@ -140,6 +140,26 @@ export class MirrorPush {
     }
 
     /**
+     * Called via the gxwMirror.onOrphanWrite IPC
+     * subscription when the main process drops a
+     * round-trip file event because no .pending sentinel
+     * is active. The event is a late write from a batch
+     * the user cancelled, or an AI not following the
+     * required .pending-first protocol. The orphan write
+     * is dropped on the main side; here we just surface
+     * a log line in the message area so the user has
+     * forensic visibility. No state changes.
+     *
+     * @param {{ filename: string }} payload
+     */
+    onOrphanWrite(payload) {
+        if (this._messages === null) return;
+        const filename = (payload !== null && typeof payload === "object" &&
+            typeof payload.filename === "string") ? payload.filename : "unknown file";
+        this._messages.write(`Mirror: ignored late write to ${filename} (no active session).`);
+    }
+
+    /**
      * @param {{ messages?: import("./messages.js").MessageArea | null }} [options]
      */
     constructor(options = {}) {

@@ -1413,6 +1413,11 @@ async function main() {
                     void mirrorPush.onBatchReceived(batch);
                 });
             }
+            if (typeof gxwMirror.onOrphanWrite === "function") {
+                gxwMirror.onOrphanWrite((payload) => {
+                    mirrorPush.onOrphanWrite(payload);
+                });
+            }
         }
     }
 
@@ -1424,13 +1429,20 @@ async function main() {
     // while a batch is in flight, and a larger error
     // dialog centered over the canvas on rejection.
     // Constructed after mirrorPush so the listener is
-    // attached before any AI write can fire. The dialog
-    // owns its own DOM and lifecycle; the local const
-    // here just keeps the instance reachable to satisfy
-    // ts-check, since the live reference is rooted via
-    // mirrorPush's state-change listener subscription.
+    // attached before any AI write can fire. Commit
+    // 4b.2 added the edit-blocking and OS-notification
+    // role; the editor and toolbar references are wired
+    // via setEditor / setToolbar below so the dialog
+    // can drive the CodeMirror read-only lock and the
+    // tool-disarm step on lock engagement.
     const aiBatchDialog = new AiBatchDialog(mirrorPush);
-    void aiBatchDialog;
+    // Phase 1B commit 4b.2 wiring. The dialog uses the
+    // editor reference for the CodeMirror read-only lock
+    // and the toolbar reference for the tool-disarm step
+    // on lock engagement. setEditor lands here because
+    // editor already exists; setToolbar is deferred until
+    // after the toolbar is constructed below.
+    aiBatchDialog.setEditor(editor);
     {
         const gxwMirror = /** @type {any} */ (window).gxwMirror;
         if (gxwMirror !== undefined && gxwMirror !== null &&
@@ -1521,6 +1533,7 @@ async function main() {
         return;
     }
     const toolbar = new Toolbar(toolbarEl);
+    aiBatchDialog.setToolbar(toolbar);
 
     // Wire the transport view and MIDI indicator now that
     // the toolbar has built its DOM. Both modules find

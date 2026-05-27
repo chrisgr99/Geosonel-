@@ -309,6 +309,23 @@ export class Toolbar {
     }
 
     /**
+     * Disarm any currently-active tool, dropping the
+     * toolbar back to idle. Symmetric with
+     * setActive(null, false) but reads as the explicit
+     * intent at the call site. Used by aiBatchDialog's
+     * Phase 1B commit 4b.2 lock path: when the AI batch
+     * dialog appears, any armed or locked tool is dropped
+     * to idle so the canvas doesn't carry stale tool state
+     * through the locked period — even though the canvas
+     * itself is also blocked at the CSS layer, the JS
+     * tool-state needs the same reset so the cursor and
+     * any pending tool-specific listeners clear.
+     */
+    disarmAll() {
+        this.setActive(null, false);
+    }
+
+    /**
      * Programmatically set the Play Selected toggle's active
      * flag. Updates the button's visual state (active class
      * on / off) and emits to subscribers iff the flag

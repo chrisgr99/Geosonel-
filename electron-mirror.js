@@ -63,17 +63,6 @@ const PROTOCOL_VERSION = 1;
 const SETTING_KEY = 'mirrorEnabled';
 const TMP_SUFFIX = '.tmp';
 const MUTE_TTL_MS = 5000;
-// Quiescence window for the watcher's apply pipeline.
-// On each event that survives the .tmp and self-write
-// filters, the apply timer resets to fire after this many
-// milliseconds of inactivity. A logical AI edit that
-// touches several files in rapid succession lands as one
-// batch; a long-running multi-file write that exceeds the
-// window is the case the .pending sentinel handles (Phase
-// 1B commit 4). 500ms matches the design doc and is well
-// under the inter-keystroke interval of any plausible user
-// action that would race with an AI write.
-const QUIESCENCE_MS = 500;
 // Empirically, fs.watch on macOS fires two events per
 // atomic temp-and-rename: typically a rename event
 // followed by a second rename or change event for the
@@ -130,29 +119,32 @@ let folderPathCache = null;
 let lastPushedImageName = null;
 let watcher = null;
 const selfWriteMutes = new Map();
-// Quiescence batcher state (Phase 1B commit 2). pendingBatch
-// holds the set of filenames seen since the last apply; the
-// quiescenceTimer resets on each event and fires processBatch
-// when no events have arrived for QUIESCENCE_MS milliseconds.
-// mainWindow is the BrowserWindow reference electron-main.js
-// hands us via setMainWindow; processBatch uses it to dispatch
-// the assembled batch to the renderer over IPC.
+// Batch accumulator state (Phase 1B commit 2). pendingBatch
+// holds the set of filenames seen while .pending is active.
+// processBatch dispatches the assembled batch to the renderer
+// over IPC when the AI removes the sentinel (or the orphan
+// timer fires as a safety net). mainWindow is the
+// BrowserWindow reference electron-main.js hands us via
+// setMainWindow; processBatch uses it to dispatch.
 const pendingBatch = new Set();
-let quiescenceTimer = null;
 let mainWindow = null;
-// Sentinel state (Phase 1B commit 4). When the AI writes
-// .pending we set sentinelActive=true and suppress the
-// quiescence timer so events can accumulate without
-// timeout. The orphan timer fires after 90 seconds of
+// Sentinel state. .pending is required for all AI writes
+// (see AGENTS.md): the AI creates the file before writing
+// any round-trip files and removes it after the batch is
+// complete. sentinelActive mirrors the file's presence in
+// the in-process state. Round-trip events that arrive
+// while sentinelActive is false are orphans (late writes
+// from a cancelled batch, or an AI not following the
+// protocol) and get dropped after a log line goes to the
+// renderer. The orphan timer fires after 90 seconds of
 // inactivity while the sentinel is active and acts as a
 // safety net against an AI that never removes its
-// sentinel — typically because its process died mid-batch.
+// sentinel, typically because its process died mid-batch.
 //
 // batchInProgress is the latch that tracks whether the
 // renderer has already been notified that a batch is in
 // flight (via gxw:mirror-batch-started). It flips true on
-// first round-trip event in a no-sentinel batch or on
-// sentinel arrival, and back to false when processBatch
+// sentinel arrival and back to false when processBatch
 // fires batch-ready (signalling batch completion to the
 // renderer) or when cancelBatch clears state. Prevents
 // double-firing batch-started events.
@@ -521,7 +513,7 @@ function handleWatcherEvent(eventType, filename) {
     // never writes the sentinel itself, only AI processes
     // and the orphan-timer cleanup do.
     if (filename === PENDING_SENTINEL_FILENAME) {
-        void handleSentinelEvent();
+        handleSentinelEvent();
         return;
     }
 
@@ -537,34 +529,19 @@ function handleWatcherEvent(eventType, filename) {
     // current image).
     if (!isRoundTripFile(filename)) return;
 
-    // Accumulate the event. Behaviour beyond accumulation
-    // depends on sentinel state: when the sentinel is
-    // active, events accumulate without timeout and only
-    // the orphan timer resets on each new event; without
-    // a sentinel, the quiescence timer triggers
-    // processBatch after QUIESCENCE_MS of inactivity.
-    const wasEmpty = pendingBatch.size === 0;
-    pendingBatch.add(filename);
-
-    if (sentinelActive) {
-        resetOrphanTimer();
-    } else {
-        // No-sentinel path: this might be the first event
-        // of a fresh batch. If so, notify the renderer so
-        // the confirm-to-apply dialog appears in its
-        // Thinking state. The dialog stays in that state
-        // through the QUIESCENCE_MS wait and transitions
-        // to Ready (or Rejected) when processBatch fires
-        // batch-ready.
-        if (wasEmpty && !batchInProgress) {
-            notifyBatchStarted();
-        }
-        if (quiescenceTimer !== null) clearTimeout(quiescenceTimer);
-        quiescenceTimer = setTimeout(() => {
-            quiescenceTimer = null;
-            void processBatch();
-        }, QUIESCENCE_MS);
+    // .pending is required for all AI writes (see
+    // AGENTS.md). A round-trip event without an active
+    // sentinel is an orphan, either a late write from a
+    // batch the user cancelled or an AI not following
+    // protocol. Drop it and notify the renderer's message
+    // area so the user has a forensic log line.
+    if (!sentinelActive) {
+        notifyOrphanWrite(filename);
+        return;
     }
+
+    pendingBatch.add(filename);
+    resetOrphanTimer();
 }
 
 // Handle a watcher event for the sentinel file. Checks
@@ -576,40 +553,33 @@ function handleWatcherEvent(eventType, filename) {
 // just resets the orphan timer, which is the correct
 // idempotent behaviour. A redundant removal event
 // (sentinelActive already false) is silently dropped.
-async function handleSentinelEvent() {
+//
+// Synchronous existence check (fs.existsSync rather than
+// fsp.access) so sentinelActive is set before
+// handleWatcherEvent returns. With an async check, a
+// scene.json event arriving during the await could see
+// sentinelActive still false and get dropped as an
+// orphan. The cost is one stat call against the mirror
+// folder, cheap and main-process local.
+function handleSentinelEvent() {
     const folder = getMirrorFolderPath();
     const sentinelPath = path.join(folder, PENDING_SENTINEL_FILENAME);
-    let exists = false;
-    try {
-        await fsp.access(sentinelPath);
-        exists = true;
-    } catch {
-        exists = false;
-    }
-
+    const exists = fs.existsSync(sentinelPath);
     if (exists) {
         handleSentinelArrival();
     } else if (sentinelActive) {
-        await handleSentinelRemoval();
+        void handleSentinelRemoval();
     }
 }
 
-// Enter sentinel mode. Cancels any pending quiescence
-// timer (we now wait for the AI's explicit sentinel
-// removal rather than for inter-event silence) and
-// starts the orphan timer so an AI that dies mid-batch
-// doesn't hold the mirror indefinitely. Idempotent:
-// calling this while sentinelActive is already true
-// just resets the orphan timer, which is the right
-// behaviour for a redundant event — the AI is still
-// alive and writing.
+// Enter sentinel mode. Starts the orphan timer so an AI
+// that dies mid-batch doesn't hold the mirror
+// indefinitely. Idempotent: calling this while
+// sentinelActive is already true just resets the orphan
+// timer, which is the right behaviour for a redundant
+// event — the AI is still alive and writing.
 function handleSentinelArrival() {
     sentinelActive = true;
-
-    if (quiescenceTimer !== null) {
-        clearTimeout(quiescenceTimer);
-        quiescenceTimer = null;
-    }
 
     // Notify the renderer that a batch is starting so the
     // confirm-to-apply dialog appears in its Thinking
@@ -701,6 +671,22 @@ function notifyBatchStarted() {
     }
 }
 
+// Notify the renderer that an AI write arrived without
+// an active .pending sentinel. The renderer surfaces a
+// log line in the message area so the user has forensic
+// visibility into late writes from cancelled batches
+// (or AIs not following protocol). No state changes
+// here: orphan writes are dropped entirely and don't
+// participate in any batch.
+function notifyOrphanWrite(filename) {
+    if (mainWindow === null) return;
+    try {
+        mainWindow.webContents.send('gxw:mirror-orphan-write', { filename });
+    } catch (err) {
+        console.warn(`GXW: failed to dispatch orphan-write: ${err.message}`);
+    }
+}
+
 // Read each file in the pending batch from disk, package
 // the entries as {filename, kind, content [, mimeType]},
 // and dispatch to the renderer via webContents.send. The
@@ -784,15 +770,10 @@ async function processBatch() {
     }
 }
 
-// Cancel any pending quiescence timer and drop the
-// in-progress batch. Called from stopWatcher (mirror
-// disable, app quit) so events that arrived just before
-// the watcher closed don't fire processBatch afterwards.
+// Drop the in-progress batch. Called from stopWatcher
+// (mirror disable, app quit) so any accumulated events
+// don't leak into a subsequent enable's batch state.
 function clearPendingBatch() {
-    if (quiescenceTimer !== null) {
-        clearTimeout(quiescenceTimer);
-        quiescenceTimer = null;
-    }
     pendingBatch.clear();
 }
 
@@ -1337,10 +1318,6 @@ async function cancelBatch() {
     if (orphanTimer !== null) {
         clearTimeout(orphanTimer);
         orphanTimer = null;
-    }
-    if (quiescenceTimer !== null) {
-        clearTimeout(quiescenceTimer);
-        quiescenceTimer = null;
     }
     await removeSentinelFile();
 }

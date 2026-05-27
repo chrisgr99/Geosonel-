@@ -161,15 +161,17 @@ The callback execution context (the `ctx` parameter), pattern-emission API, and 
 
 Files in this folder use temp-and-rename atomic writes. When the bundle pushes content, it writes `scene.json.tmp` then renames to `scene.json`; an AI watching `scene.json` directly never sees a torn write. AIs editing round-trip files should follow the same pattern: write `scene.json.tmp` first, then rename, so the bundle's watcher sees an atomic transition.
 
-When you receive a user request that involves the score in any way, write a `.pending` sentinel file in this folder as your very first action — before reading, analysing, or editing anything. The sentinel signals to GeoSonel that you are working on a score-related task; the user sees a thinking indicator from that moment rather than only when files begin to change. The watcher pauses its automatic batching timer while `.pending` exists, so all your subsequent writes coalesce into one logical batch regardless of how long your work takes. When you finish, remove `.pending`. The bundle applies whatever accumulated as a single coherent batch.
+The `.pending` sentinel is required. Before writing any round-trip file (scene.json, behaviours.js, image), create an empty `.pending` file in the mirror folder as your very first action, before reading or analysing anything. When you finish the batch, remove `.pending`. The sentinel is the protocol-level signal that says "an AI session is in flight"; GeoSonel uses it to accumulate writes as one logical batch and to show the user a thinking indicator from the moment you begin.
 
-Write `.pending` even when you might end up making no changes — do your reading and thinking, decide what to do, remove `.pending` whether or not you wrote anything. An empty batch is a no-op for the apply pipeline; the point is the early signal to the user.
+Writes that arrive while `.pending` is absent are dropped by GeoSonel. They have no effect on the bundle and the user sees an "ignored late write" log line in the message area. This includes any writes that happen after a cancellation (see below); the protocol does not tolerate write-without-sentinel as an oversight.
 
-The sentinel content can be empty or carry a brief identifier; only the file's existence matters to the watcher.
+Write `.pending` even when you might end up making no changes. Do your reading and thinking, decide what to do, remove `.pending` whether or not you wrote anything. An empty batch is a no-op for the apply pipeline; the point is the early signal to the user that you are working on the request.
 
-If `.pending` is held for more than 90 seconds without new round-trip file activity, GeoSonel treats it as orphaned: the file is removed automatically and whatever round-trip files accumulated are processed as a normal batch (validation still applies). The 90-second window is for inactivity — keep making writes and the timeout resets, so a long sequence of edits with intervening thinking is fine.
+The sentinel content can be empty or carry a brief identifier; only the file's existence matters to GeoSonel.
 
-Note: as of the current build, watcher detection, batch validation, apply, rollback on rejection, `last-apply-result.json` reporting, and `.pending` sentinel coordination are all in place. Atomic-write habits remain worth following.
+If `.pending` vanishes while you are mid-batch and you did not remove it yourself, GeoSonel has cancelled your run, typically because the user clicked Cancel in the confirm-to-apply dialog. Subsequent writes will be dropped as orphans regardless of what you do next. Stop writing immediately, tell the user that the in-flight changes were cancelled, and wait for further instruction before starting any new batch.
+
+If `.pending` is held for more than 90 seconds without new round-trip file activity, GeoSonel treats it as orphaned: the file is removed automatically and whatever round-trip files accumulated are processed as a normal batch (validation still applies). The 90-second window is for inactivity. Keep making writes and the timeout resets, so a long sequence of edits with intervening thinking is fine.
 
 ## When in doubt
 

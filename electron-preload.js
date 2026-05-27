@@ -211,4 +211,16 @@ contextBridge.exposeInMainWorld('gxwMirror', {
   // contents to the bundle's known-good state.
   cancelBatch: () =>
     ipcRenderer.invoke('gxw:mirror-cancel-batch'),
+  // Subscribe to orphan-write notifications from the
+  // main-process watcher. Fired when a round-trip file
+  // event arrives while no .pending sentinel is active,
+  // typically a late write from a cancelled batch or
+  // an AI not following protocol. The renderer surfaces
+  // a log line in the message area; no state changes.
+  // Payload is { filename }.
+  onOrphanWrite: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('gxw:mirror-orphan-write', listener);
+    return () => ipcRenderer.removeListener('gxw:mirror-orphan-write', listener);
+  },
 });
