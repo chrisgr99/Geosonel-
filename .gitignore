@@ -3,6 +3,7 @@ commit-msg.txt
 commit-*.txt
 recent-commits.txt
 IN_FLIGHT.md
+DEFERRED.md
 
 # Electron migration (Stage 1+)
 node_modules/

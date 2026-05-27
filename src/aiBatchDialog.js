@@ -72,13 +72,35 @@
  *     null tolerance, not because the race is expected
  *     to fire in practice.
  *
- * Deferred to commit 4b.2:
- *   - Edit blocking at the input layer while the dialog
- *     is open (user can still edit the bundle, and any
- *     such edit will be silently overwritten when
- *     Accept fires).
- *   - OS-level banner notification when transitioning
- *     to ready state.
+ * Edit blocking (Phase 1B commit 4b.2). While the dialog
+ * is visible (any non-idle state), _render toggles
+ * body.ai-batch-active on the document body so the CSS
+ * rules in mode-overrides.css can dim and disable
+ * editable surfaces — inspector form fields, canvas
+ * tool-layer clicks, toolbar tool/action/canvas-field
+ * buttons, BPM field, and the in-page menubar. The Code
+ * tab's CodeMirror view is gated via editor.setReadOnly
+ * (a state-effect dispatch, not a CSS rule) at the same
+ * transition. Any currently-armed or locked toolbar tool
+ * is dropped to idle when the lock engages so the canvas
+ * doesn't carry stale tool state across the locked
+ * period. Transport, sidebar-toggle (Focus Canvas), Play
+ * Selected, and the display-only indicators stay live
+ * — those don't mutate score data, so locking them
+ * would just frustrate the user.
+ *
+ * OS notification (Phase 1B commit 4b.2). When the
+ * dialog transitions from thinking to ready, _render
+ * fires a native banner notification announcing the
+ * held batch is awaiting review. The notification fires
+ * unconditionally rather than only when the window is
+ * unfocused: focused-window firing duplicates the
+ * in-window dialog (a minor cost) but never misses the
+ * notification when the user has moved focus to a
+ * different app to keep working. Wrapped in try/catch
+ * so the web build's default-permission state doesn't
+ * throw; Electron requires no permission and the banner
+ * fires natively.
  */
 
 // @ts-check
@@ -93,8 +115,42 @@ export class AiBatchDialog {
         /** @type {'idle' | 'thinking' | 'ready' | 'rejected'} */
         this._currentState = "idle";
 
+        /**
+         * Previous state, tracked across _render calls so
+         * the thinking→ready transition can fire the OS
+         * notification (commit 4b.2) and the idle→non-idle
+         * transition can disarm an active toolbar tool.
+         * Always reflects the most recent state seen by
+         * _render. Initialised to idle to match
+         * _currentState's initial value.
+         * @type {'idle' | 'thinking' | 'ready' | 'rejected'}
+         */
+        this._previousState = "idle";
+
         /** @type {{filename: string, error: string} | null} */
         this._currentRejectionInfo = null;
+
+        /**
+         * Editor reference for the commit 4b.2 read-only
+         * lock. Wired by main.js via setEditor after both
+         * editor and dialog are constructed. Null until
+         * wired; _render guards on null so the dialog
+         * still works (minus the read-only lock) if the
+         * wiring is somehow skipped.
+         * @type {import("./editor.js").TabbedEditor | null}
+         */
+        this._editor = null;
+
+        /**
+         * Toolbar reference for the commit 4b.2 tool
+         * disarm. Wired by main.js via setToolbar after
+         * both toolbar and dialog are constructed (toolbar
+         * is built later than the dialog, hence the setter
+         * rather than a constructor argument). Null until
+         * wired; _render guards on null.
+         * @type {import("./toolbar.js").Toolbar | null}
+         */
+        this._toolbar = null;
 
         this._buildSmallDialog();
         this._buildLargeErrorDialog();
@@ -113,6 +169,32 @@ export class AiBatchDialog {
             this._render(s);
         });
         this._render({ state: "idle", heldBatch: null, rejectionInfo: null });
+    }
+
+    /**
+     * Wire the editor reference used for the commit 4b.2
+     * read-only lock. main.js calls this after the editor
+     * is constructed (the editor exists before the dialog
+     * does, so this could equally be a constructor
+     * argument; the setter form keeps the wiring symmetric
+     * with setToolbar, which has to be a setter because
+     * the toolbar is built later in main.js).
+     * @param {import("./editor.js").TabbedEditor} editor
+     */
+    setEditor(editor) {
+        this._editor = editor;
+    }
+
+    /**
+     * Wire the toolbar reference used for the commit 4b.2
+     * tool disarm on lock engagement. main.js calls this
+     * after the toolbar is constructed, which happens
+     * after this dialog is constructed — hence the setter
+     * rather than a constructor argument.
+     * @param {import("./toolbar.js").Toolbar} toolbar
+     */
+    setToolbar(toolbar) {
+        this._toolbar = toolbar;
     }
 
     /**
@@ -281,6 +363,37 @@ export class AiBatchDialog {
         this._currentState = /** @type {any} */ (stateSnapshot.state);
         this._currentRejectionInfo = stateSnapshot.rejectionInfo;
 
+        // Phase 1B commit 4b.2: edit blocking plus OS
+        // notification. The body class drives the CSS rules
+        // in mode-overrides.css; the editor read-only call
+        // drives the CodeMirror state-effect. Both follow
+        // dialog visibility — on while the dialog is
+        // visible (any non-idle state), off when state
+        // returns to idle.
+        const wasIdle = this._previousState === "idle";
+        const isIdle = stateSnapshot.state === "idle";
+        document.body.classList.toggle("ai-batch-active", !isIdle);
+        if (this._editor !== null) {
+            this._editor.setReadOnly(!isIdle);
+        }
+        // On the idle→non-idle edge (typically thinking),
+        // disarm any active toolbar tool so the canvas
+        // doesn't carry stale tool state through the
+        // locked period. Idempotent inside the non-idle
+        // window: re-renders within thinking, ready, or
+        // rejected skip the call.
+        if (wasIdle && !isIdle && this._toolbar !== null) {
+            this._toolbar.disarmAll();
+        }
+        // OS banner on thinking→ready transition. Fires
+        // regardless of window focus per the simpler-
+        // version 4b.2 spec.
+        if (this._previousState === "thinking" &&
+            stateSnapshot.state === "ready") {
+            this._fireReadyNotification();
+        }
+        this._previousState = /** @type {any} */ (stateSnapshot.state);
+
         // Always hide the large error on state
         // transition; the Details button is the only
         // path that re-shows it, and only in the
@@ -394,6 +507,46 @@ export class AiBatchDialog {
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.warn("GXW: copy error details to clipboard failed:", msg);
+        }
+    }
+
+    /**
+     * Fire an OS-level banner notification announcing
+     * that the held batch has transitioned to ready and
+     * is awaiting user confirmation (Phase 1B commit
+     * 4b.2). Title "GeoSonel", body "AI edits ready to
+     * review." — short and self-contained so the
+     * notification reads at a glance from another app's
+     * notification stack.
+     *
+     * Always fires regardless of window focus (the
+     * simpler-version 4b.2 choice). When GeoSonel has
+     * focus the banner duplicates the in-window dialog,
+     * a minor cost; when focus is elsewhere the
+     * notification is the user's only signal that the
+     * AI's edits are ready and the window needs
+     * attention.
+     *
+     * Wrapped in try/catch because the web build's
+     * default Notification permission state can throw
+     * on construction in some browsers; Electron grants
+     * Notification by default so this just works there.
+     * On the web build a denied or default permission
+     * leaves the user without a banner but the in-window
+     * dialog still serves as the primary signal, so we
+     * deliberately don't prompt for permission — the
+     * notification is a nice-to-have, not a load-bearing
+     * surface.
+     */
+    _fireReadyNotification() {
+        try {
+            new Notification("GeoSonel", {
+                body: "AI edits ready to review.",
+            });
+        } catch (err) {
+            // Permission denied or Notification API
+            // unavailable. Silently skip; the in-window
+            // dialog still serves as the primary signal.
         }
     }
 }

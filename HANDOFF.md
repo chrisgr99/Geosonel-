@@ -23,7 +23,9 @@ For deeper reading as needed:
 
 ## Current state
 
-The single most important file for picking up where work left off is /Users/chrisgr/ProgrammingProjects/GXW/IN_FLIGHT.md. Read it first. It captures the current task, decisions made in the previous session, files touched, the immediate next step, and any open questions. This is gitignored, lives in the repo, and is the mechanism by which a context-compressed or resumed session avoids losing in-progress work.
+The single most important file for picking up where work left off is /Users/chrisgr/ProgrammingProjects/GXW/IN_FLIGHT.md. Read it first. It captures the current task, decisions made in the previous session, files touched, the immediate next step, and any open questions. Section headings inside IN_FLIGHT.md carry ISO date stamps marking when the section was last touched; updates inside an existing section append a new dated paragraph at the top so the chronology stays visible. Sections that haven't been updated in roughly two days migrate to the companion DEFERRED.md file on the next session that notices.
+
+DEFERRED.md is the companion file for parked items not currently in motion but kept for future reference. IN_FLIGHT.md holds a "Deferred items index" at the bottom listing every section in DEFERRED.md with a one-sentence description and approximate line range, so a session can scan the catalogue and pull individual items without reading the full file. Items move from DEFERRED.md back to IN_FLIGHT.md when work on them resumes. Both files are gitignored, live in the repo, and together are the mechanism by which a context-compressed or resumed session avoids losing in-progress work.
 
 For broader context on recently shipped work, give Chris the terminal command below to refresh a summary of recent commits to a file, then read it. The file can be stale relative to actual HEAD if a previous session forgot to regenerate it, so refresh it at session start before trusting its contents.
 
@@ -37,6 +39,6 @@ After IN_FLIGHT.md and the recent-commits file, consult design/TODO.md for pendi
 
 For setup and how to run GXW locally, see README.md at the repo root. It has the static-server invocation, the browser requirements, and the stack overview.
 
-Two project-specific file paths the conventions in CLAUDE.md depend on: the commit message file is /Users/chrisgr/Documents/gxw-commit-msg.txt, and IN_FLIGHT.md lives at /Users/chrisgr/ProgrammingProjects/GXW/IN_FLIGHT.md.
+Three project-specific file paths the conventions in CLAUDE.md depend on: the commit message file is /Users/chrisgr/Documents/gxw-commit-msg.txt, IN_FLIGHT.md lives at /Users/chrisgr/ProgrammingProjects/GXW/IN_FLIGHT.md, and DEFERRED.md lives at /Users/chrisgr/ProgrammingProjects/GXW/DEFERRED.md.
 
-Keep IN_FLIGHT.md updated throughout the session per the in-flight session notes convention in CLAUDE.md. Update it whenever a decision is made, a file is touched, or the next step shifts. This is the mechanism that lets a session survive context compression or end-and-resume without scrambled work.
+Keep IN_FLIGHT.md updated throughout the session per the in-flight session notes convention in CLAUDE.md. Update it whenever a decision is made, a file is touched, or the next step shifts. Move items between IN_FLIGHT.md and DEFERRED.md as the focus shifts: parked work migrates to DEFERRED.md, and resumed work moves back to IN_FLIGHT.md. This is the mechanism that lets a session survive context compression or end-and-resume without scrambled work.
