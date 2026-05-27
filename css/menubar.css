@@ -1,0 +1,168 @@
+/* Menubar (web build only).
+ *
+ * In-page menubar that sits in the top row of the web build.
+ * Hidden under body.electron-mode (override lives in
+ * mode-overrides.css), where the native macOS menu bar
+ * replaces it. This file also carries the View menu dropdown
+ * styling for the popovers triggered when a menubar item is
+ * clicked.
+ */
+
+#top-row {
+    display: flex;
+    align-items: center;
+    background-color: #3a3a3a;
+    height: 40px;
+    padding: 0 8px;
+}
+
+#menubar {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    justify-content: flex-start;
+    gap: 4px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.menu-item {
+    padding: 4px 12px;
+    cursor: pointer;
+    border-radius: 3px;
+    user-select: none;
+}
+
+.menu-item:hover,
+.menu-item:focus {
+    background-color: #555555;
+    outline: none;
+}
+
+/* --- View menu dropdown --- */
+
+.menu-dropdown {
+    position: absolute;
+    display: none;
+    background-color: #3a3a3a;
+    border: 1px solid #777777;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    min-width: 200px;
+    z-index: 1000;
+    padding: 4px 0;
+}
+
+.menu-dropdown.open {
+    display: block;
+}
+
+.menu-dropdown-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px;
+    color: #e0e0e0;
+    font-size: 14pt;
+    cursor: pointer;
+    user-select: none;
+    gap: 24px;
+}
+
+.menu-dropdown-item:hover,
+.menu-dropdown-item:focus {
+    background-color: #555555;
+    outline: none;
+}
+
+.menu-dropdown-shortcut {
+    color: #a0a0a0;
+    font-size: 12pt;
+}
+
+/* Right-pointing chevron at the end of a submenu row, in the
+ * same slot the shortcut hint occupies. Visual cue that the
+ * row opens a child menu rather than firing an action.
+ * Matches the menu accent green when the row's submenu is
+ * currently open so the user sees which submenu their click
+ * just produced. */
+.menu-dropdown-submenu-chevron {
+    color: #a0a0a0;
+    font-size: 12pt;
+    line-height: 1;
+}
+
+.menu-dropdown-item.submenu-open .menu-dropdown-submenu-chevron {
+    color: #5fc858;
+}
+
+.menu-dropdown-item.submenu-open {
+    background-color: #555555;
+}
+
+/* Submenu dropdown. Same visual chrome as a top-level
+ * dropdown so the user reads the submenu as a sibling of
+ * the parent menu. Parented inside the parent dropdown (so
+ * outside-click handling treats submenu clicks as inside
+ * the dropdown subtree) but positioned `fixed` so its
+ * left/top coordinates are viewport-relative regardless of
+ * the parent's position context. Higher z-index than the
+ * parent so it always paints on top. */
+.menu-dropdown-submenu {
+    position: fixed;
+    z-index: 1100;
+}
+
+.menu-dropdown-separator {
+    height: 1px;
+    background-color: #555555;
+    margin: 4px 0;
+}
+
+/* Checkmark column reservation. When buildDropdown sees a
+ * checkable entry it adds .menu-dropdown-checkable to the
+ * dropdown; every item label inside that dropdown then
+ * carries an invisible checkmark glyph as a ::before
+ * pseudo-element. The transparent glyph claims the space
+ * the visible checkmark will need so labels stay
+ * column-aligned regardless of which row is currently
+ * checked. When the row is checked, the glyph's color
+ * shifts to the inspector's accent green and the
+ * checkmark appears in the reserved space. The colour
+ * accent matches inspector checkboxes (.insp-checkbox.checked,
+ * .cm-pattern-active-tag), so any "this is on" affordance
+ * in GXW reads in the same green. */
+.menu-dropdown-checkable .menu-dropdown-label::before {
+    content: "\2713";
+    color: transparent;
+    margin-right: 8px;
+    font-size: 14pt;
+    line-height: 1;
+    display: inline-block;
+    width: 0.8em;
+}
+
+.menu-dropdown-checkable .menu-dropdown-item.checked .menu-dropdown-label::before {
+    color: #5fc858;
+}
+
+/* Disabled item: muted text, no hover affordance, no
+ * pointer cursor. The click handler in menuUtil.js skips
+ * the action when the entry's disabled getter returns
+ * true, so the row reads as inert visually and is inert
+ * functionally. The shortcut hint dims along with the
+ * main label so the row reads as a single greyed unit
+ * rather than as a label-with-bright-shortcut. */
+.menu-dropdown-item.disabled {
+    color: #707070;
+    cursor: default;
+}
+
+.menu-dropdown-item.disabled:hover,
+.menu-dropdown-item.disabled:focus {
+    background-color: transparent;
+}
+
+.menu-dropdown-item.disabled .menu-dropdown-shortcut {
+    color: #606060;
+}

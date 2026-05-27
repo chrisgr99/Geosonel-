@@ -1,0 +1,58 @@
+/* Dividers.
+ *
+ * Static dividers (horizontal and vertical) for non-draggable
+ * region boundaries, plus the draggable variants for the
+ * message-divider (between canvas-area and message-area) and
+ * the body-divider (between editor-pane and canvas-pane).
+ * Hover and active-drag states lift the colour so the divider
+ * reads as live.
+ */
+
+.divider-horizontal {
+    background-color: #777777;
+    height: 3px;
+    width: 100%;
+}
+
+.divider-vertical {
+    background-color: #777777;
+    width: 3px;
+    height: 100%;
+}
+
+/* Draggable dividers. Used for the horizontal divider
+ * between the canvas area and the message area, and for
+ * the vertical body divider between the editor pane and
+ * the canvas pane. Width or height stays at 3 pixels to
+ * match the static dividers; the hit target is implicitly
+ * a bit larger because the cursor resize styling extends
+ * to the full element bounds. Hover and active-drag
+ * states lift the colour so the divider reads as live. */
+#message-divider.divider-draggable {
+    flex: 0 0 3px;
+    cursor: row-resize;
+    position: relative;
+}
+
+#message-divider.divider-draggable:hover,
+#message-divider.divider-draggable.dragging {
+    background-color: #999999;
+}
+
+#body-divider.divider-draggable {
+    flex: 0 0 3px;
+    cursor: col-resize;
+    position: relative;
+}
+
+#body-divider.divider-draggable:hover,
+#body-divider.divider-draggable.dragging {
+    background-color: #999999;
+}
+
+/* Static body divider fallback: applies only if the
+ * draggable variant isn't active (defensive against an
+ * older cached HTML referencing the bare class). */
+#body-divider {
+    flex: 0 0 3px;
+}

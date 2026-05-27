@@ -1,0 +1,395 @@
+/* Modal dialogs.
+ *
+ * Shared chrome for the in-app dialog surfaces created by
+ * dialog.js (Open Score, New Score, Save As, Rename,
+ * Duplicate, confirmation prompts, Settings, About, and the
+ * promptDialog() replacement for window.prompt that works
+ * under sandboxed Electron). Layout: a fixed overlay that
+ * centres the dialog over the viewport, the dialog card
+ * itself with a draggable title bar, an optional list of
+ * items, a generic body slot for everything else, and a
+ * button row at the bottom.
+ *
+ * Specific dialog families that build on the shared chrome:
+ *   - Modal body: generic content area within a dialog.
+ *   - Prompt dialog: replacement for window.prompt.
+ *   - About dialog: app name, version, paths, attribution.
+ *   - Settings dialog: sidebar + panel + per-row controls,
+ *     including the Storage sub-category.
+ */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.modal-dialog {
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 4px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    min-width: 420px;
+    max-width: 600px;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+}
+
+.modal-title {
+    color: #f0f0f0;
+    font-size: 18pt;
+    font-weight: bold;
+    margin-bottom: 16px;
+    cursor: move;
+    user-select: none;
+}
+
+.modal-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid #555555;
+    background-color: #242424;
+    margin-bottom: 16px;
+}
+
+.modal-list-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid #3a3a3a;
+    cursor: pointer;
+}
+
+.modal-list-item:last-child {
+    border-bottom: none;
+}
+
+.modal-list-item:hover,
+.modal-list-item:focus {
+    background-color: #3a3a3a;
+    outline: none;
+}
+
+.modal-list-item.selected {
+    background-color: #4a4a4a;
+}
+
+.modal-list-item.selected .modal-list-name {
+    color: #ffffff;
+}
+
+.modal-list-name {
+    color: #f0f0f0;
+    font-size: 14pt;
+}
+
+.modal-list-date {
+    color: #909090;
+    font-size: 11pt;
+    margin-top: 2px;
+}
+
+.modal-empty {
+    color: #909090;
+    font-style: italic;
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 16px;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.modal-button {
+    background-color: #555555;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 6px 16px;
+    font-size: 13pt;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.modal-button:hover,
+.modal-button:focus {
+    background-color: #666666;
+    outline: none;
+}
+
+.modal-button:disabled {
+    background-color: #3a3a3a;
+    color: #666666;
+    cursor: default;
+}
+
+.modal-button-primary {
+    background-color: #2d7a3a;
+    border-color: #3fa054;
+}
+
+.modal-button-primary:hover,
+.modal-button-primary:focus {
+    background-color: #358a44;
+}
+
+.modal-button-primary:disabled {
+    background-color: #3a3a3a;
+    border-color: #555555;
+    color: #666666;
+}
+
+/* --- Modal body (generic content area within a dialog) --- */
+
+.modal-body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin-bottom: 16px;
+    overflow-y: auto;
+}
+
+/* --- Prompt dialog (in-app replacement for window.prompt) ---
+ *
+ * Used by dialog.js's promptDialog() — the styled in-app
+ * replacement for window.prompt(), which fails silently in
+ * Electron under sandboxed/context-isolated webPreferences.
+ * Styling matches the inspector's editable-field pattern
+ * (lighter-grey fill, bright green editability border) so
+ * the input reads as part of the same visual language.
+ */
+
+.modal-description {
+    color: #c8c8c8;
+    font-size: 12pt;
+    margin-bottom: 10px;
+    line-height: 1.35;
+}
+
+.modal-error {
+    color: #d4a05a;
+    font-size: 11pt;
+    margin-bottom: 10px;
+    line-height: 1.35;
+}
+
+.modal-input {
+    background-color: #6b6b6b;
+    border: 2px solid #46b03e;
+    border-radius: 3px;
+    padding: 0 12px;
+    color: #ffffff;
+    height: 36px;
+    font-size: 14pt;
+    font-family: inherit;
+    box-sizing: border-box;
+    margin-bottom: 12px;
+}
+
+.modal-input:focus {
+    outline: none;
+    border-color: #5fc858;
+}
+
+/* --- About dialog --- */
+
+.about-body {
+    gap: 0;
+}
+
+.about-header {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #555555;
+}
+
+.about-app-name {
+    color: #00ff33;
+    font-size: 24pt;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+.about-description {
+    color: #c8c8c8;
+    font-size: 13pt;
+    margin-top: 4px;
+}
+
+.about-row {
+    display: flex;
+    gap: 16px;
+    padding: 6px 0;
+    align-items: baseline;
+}
+
+.about-row-label {
+    color: #909090;
+    font-size: 12pt;
+    min-width: 110px;
+}
+
+.about-row-value {
+    color: #f0f0f0;
+    font-size: 13pt;
+    word-break: break-all;
+}
+
+.about-row-value-empty {
+    color: #808080;
+    font-style: italic;
+}
+
+/* --- Settings dialog --- */
+
+.settings-body {
+    overflow: hidden;
+}
+
+.settings-layout {
+    display: flex;
+    gap: 16px;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.settings-sidebar {
+    flex: 0 0 140px;
+    border-right: 1px solid #555555;
+    padding-right: 8px;
+    overflow-y: auto;
+}
+
+.settings-category {
+    padding: 8px 12px;
+    color: #d0d0d0;
+    font-size: 14pt;
+    cursor: pointer;
+    border-radius: 3px;
+    user-select: none;
+}
+
+.settings-category:hover,
+.settings-category:focus {
+    background-color: #3a3a3a;
+    outline: none;
+}
+
+.settings-category.selected {
+    background-color: #4a4a4a;
+    color: #ffffff;
+}
+
+.settings-panel {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding-right: 4px;
+    min-height: 280px;
+}
+
+.settings-row {
+    margin-bottom: 18px;
+}
+
+.settings-label {
+    display: block;
+    color: #f0f0f0;
+    font-size: 14pt;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.settings-input {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 4px 8px;
+    font-size: 14pt;
+    font-family: inherit;
+}
+
+.settings-input-number {
+    width: 100px;
+}
+
+.settings-input-text {
+    width: 100%;
+}
+
+.settings-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Native checkbox styling for the schema-driven boolean
+ * control. The default macOS checkbox is around 13 pixels
+ * square and reads as a tiny grey square at the inspector's
+ * font size, especially under accessibility zoom; sizing it
+ * to 20 pixels and applying the app's green accent colour
+ * makes it match the visual weight of the number inputs and
+ * the inspector's own checkboxes. accent-color is the modern
+ * standard property that recolours native form controls
+ * without replacing them; supported in all current browsers. */
+.settings-toggle input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: #5fc858;
+    cursor: pointer;
+}
+
+.settings-description {
+    color: #a0a0a0;
+    font-size: 12pt;
+    margin-top: 4px;
+    line-height: 1.35;
+}
+
+/* --- Settings: Storage category --- */
+
+.settings-storage-intro {
+    margin-top: 0;
+    margin-bottom: 16px;
+    line-height: 1.4;
+}
+
+.settings-storage-status {
+    background-color: #242424;
+    border: 1px solid #555555;
+    padding: 12px;
+    border-radius: 3px;
+}
+
+.settings-storage-folder {
+    color: #f0f0f0;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 13pt;
+    word-break: break-all;
+    margin-top: 4px;
+}
+
+.settings-storage-folder-empty {
+    color: #808080;
+    font-style: italic;
+    font-family: inherit;
+}
+
+.settings-storage-state {
+    color: #a0a0a0;
+    font-size: 12pt;
+    margin-top: 6px;
+}
+
+.settings-storage-buttons {
+    display: flex;
+    gap: 8px;
+    margin: 14px 0;
+    flex-wrap: wrap;
+}

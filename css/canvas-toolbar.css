@@ -1,0 +1,488 @@
+/* Canvas toolbar.
+ *
+ * Horizontal strip across the top of the canvas pane that
+ * holds object-creation tool buttons on the left, transport
+ * + musical-position + BPM + action button + canvas-size +
+ * MIDI indicator on the right. The container sits above the
+ * canvas area so the canvas itself shrinks to make room for
+ * it. Background matches the editor pane's tab bar so the
+ * toolbar reads as a sibling chrome strip rather than as
+ * content.
+ *
+ * On Electron the canvas-toolbar takes over the role the
+ * web build's top row plays: it sits flush at the top of
+ * the window once body.electron-mode hides the top row
+ * (override in mode-overrides.css). When body.focus-canvas
+ * is on, mode-overrides.css adds left padding to keep
+ * toolbar items at their normal absolute screen positions
+ * after the editor pane collapses.
+ */
+
+#canvas-toolbar {
+    flex: 0 0 auto;
+    height: 40px;
+    background-color: #141414;
+    border-bottom: 3px solid #777777;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+}
+
+/* --- Focus Canvas toggle button (leftmost) ---
+ *
+ * Toggles Focus Canvas mode via the same closure the View
+ * menu's Focus Canvas item and Cmd-Shift-F use, so all
+ * three entry points share one piece of state. The icon
+ * is a small rectangle with a filled left segment
+ * representing the editor pane; the fill fades out when
+ * Focus Canvas is active so the button shows the mode's
+ * current state at a glance. Always visible — when Focus
+ * Canvas is on, this button is the most obvious place to
+ * turn it off.
+ */
+.sidebar-toggle-btn {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: #c8c8c8;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+}
+
+.sidebar-toggle-btn:hover {
+    background-color: #555555;
+    color: #ffffff;
+}
+
+.sidebar-toggle-btn:focus {
+    outline: none;
+    border-color: #c8c8c8;
+    color: #ffffff;
+}
+
+.sidebar-toggle-icon {
+    width: 20px;
+    height: 16px;
+}
+
+.sidebar-toggle-fill {
+    transition: opacity 150ms ease-out;
+    opacity: 0.85;
+}
+
+.sidebar-toggle-btn.sidebar-collapsed .sidebar-toggle-fill {
+    opacity: 0;
+}
+
+/* --- Transport buttons (rewind, play-pause) ---
+ *
+ * Sized to match the toolbar's 32-pixel button footprint
+ * so they read as siblings of the tool buttons rather
+ * than oversized chrome from a different visual era.
+ * Circular shape is preserved so they still carry the
+ * conventional transport-control identity at a glance.
+ */
+.transport-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 16px;
+    background-color: #555555;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    font-size: 14pt;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    flex: 0 0 auto;
+}
+
+.transport-btn:hover,
+.transport-btn:focus {
+    background-color: #666666;
+    outline: none;
+}
+
+/* Musical position display: monospace digits so they don't
+ * shift horizontally as values change. Sized to read clearly
+ * against the toolbar's other elements without dominating
+ * the strip. */
+.musical-position {
+    color: #f0f0f0;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 14pt;
+    font-weight: normal;
+    line-height: 1;
+    padding: 0 4px;
+    flex: 0 0 auto;
+}
+
+/* BPM group: small label + numeric input. Lives inside the
+ * canvas-toolbar next to the musical-position readout. */
+.field-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.field-label {
+    color: #c8c8c8;
+    font-size: 11pt;
+}
+
+.field-input {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 2px 4px;
+    font-size: 12pt;
+    font-weight: normal;
+    width: 56px;
+    height: 24px;
+    font-family: inherit;
+}
+
+.field-readonly {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 2px 8px;
+    font-size: 12pt;
+    font-weight: normal;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+}
+
+/* --- MIDI output indicator ---
+ *
+ * Shows the chosen MIDI port name once MIDISender.init
+ * completes ("MIDI: IAC Bus 1" for the typical macOS
+ * setup) and flashes a brighter green outline on each
+ * note dispatched so the user has a live confirmation
+ * that audio is going out the port. Before init the
+ * placeholder text "MIDI: —" sits in a dimmed state
+ * showing the indicator's footprint without committing
+ * to a port; once active, the text brightens to match
+ * the other transport bar elements.
+ *
+ * The flash adds an outline rather than a background fill
+ * because background flicker would draw the eye too
+ * strongly given how often it fires (4-16 times per
+ * cycle on typical patterns). The 80ms decay (set in
+ * main.js's wireMidiIndicator) lands long enough to
+ * register and short enough not to merge into a steady
+ * outline at high event rates; a single deferred timer
+ * resets on every send so back-to-back notes produce one
+ * extended flash rather than rapid on-off flicker. */
+.midi-indicator {
+    background-color: #2a2a2a;
+    color: #a8a8a8;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 2px 10px;
+    font-size: 11pt;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    user-select: none;
+    transition: border-color 80ms ease-out, color 80ms ease-out;
+}
+
+.midi-indicator-active {
+    color: #f0f0f0;
+    border-color: #777777;
+}
+
+.midi-indicator-flash {
+    border-color: #5fc858;
+    color: #5fc858;
+    box-shadow: 0 0 6px rgba(95, 200, 88, 0.4);
+}
+
+/* --- Object-creation tool buttons ---
+ *
+ * Tool button: square, icon-only, three states (idle, armed,
+ * locked). Idle uses a clearly visible mid-tone outline so
+ * the button reads as interactive even before the user
+ * hovers. Hover bumps the outline brighter still and adds a
+ * subtle background shift. Armed and locked share the green
+ * accent the wordmark uses; locked is heavier than armed so
+ * it reads as a more committed state. The icon colour
+ * follows currentColor so SVGs change tone with state
+ * without needing per-state assets.
+ */
+.toolbar-tool {
+    width: 32px;
+    height: 32px;
+    background-color: #2a2a2a;
+    border: 1px solid #888888;
+    border-radius: 3px;
+    color: #c0c0c0;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.toolbar-tool:hover {
+    background-color: #3a3a3a;
+    border-color: #c8c8c8;
+    color: #f0f0f0;
+}
+
+.toolbar-tool:focus {
+    outline: none;
+    border-color: #c8c8c8;
+}
+
+/* While the mouse button is held down on a toolbar button,
+ * preview the armed-state green so the user sees the click
+ * landing. After mouseup, the toolbar's own state machine
+ * decides whether to actually arm or lock the tool, and the
+ * .toolbar-tool-armed / .toolbar-tool-locked classes take
+ * over from there — :active just bridges the gap so the
+ * click never feels unacknowledged. Higher specificity than
+ * the armed/locked classes means a click on an already-armed
+ * or locked tool also flashes; that's fine, the visual still
+ * reads as a meaningful click. */
+.toolbar-tool:active {
+    background-color: #1f3a25;
+    border-color: #00ff33;
+    color: #d8f5d8;
+    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+}
+
+.toolbar-tool-armed {
+    background-color: #1f3a25;
+    border-color: #00ff33;
+    color: #d8f5d8;
+    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+}
+
+.toolbar-tool-locked {
+    background-color: #1f3a25;
+    border-color: #00ff33;
+    border-width: 2px;
+    color: #ffffff;
+    box-shadow: 0 0 8px rgba(0, 255, 51, 0.6) inset, 0 0 6px rgba(0, 255, 51, 0.4);
+}
+
+/* Spacer between the left tool cluster and the right action
+ * cluster. flex-grow:1 absorbs the leftover horizontal
+ * space so the right cluster sits flush against the
+ * toolbar's right edge regardless of how many tool
+ * buttons live on the left. */
+.toolbar-spacer {
+    flex: 1 1 auto;
+}
+
+/* Vertical bar between adjacent button groups on the
+ * left side of the toolbar. Used to separate the object-
+ * creation tool cluster from the Play Selected toggle so
+ * the eye reads the two as distinct groups. Rendered as a
+ * thin mid-grey line about 24 pixels tall (60% of the
+ * toolbar's 40-pixel height) so it sits visually centred
+ * within the toolbar and reads as a separator rather than
+ * a content line. Horizontal margins give the adjacent
+ * buttons room to breathe so the bar doesn't crowd them.
+ * Flex-shrink: 0 keeps the bar intact when the toolbar
+ * gets tight on horizontal space — the groups stay
+ * visibly separated rather than collapsing into one row
+ * of buttons. */
+.toolbar-group-separator {
+    flex: 0 0 2px;
+    height: 24px;
+    background-color: #888888;
+    border-radius: 1px;
+    margin: 0 10px;
+}
+
+/* Right-side cluster: image-import action button followed
+ * by the Canvas: W H controls. The 16-pixel gap separates
+ * the button from the canvas-size group so the two read as
+ * distinct affordances rather than one continuous strip. */
+.toolbar-right-cluster {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex: 0 0 auto;
+}
+
+/* Action button: same square footprint as a tool button so
+ * the toolbar reads as a row of consistent controls, but
+ * without the armed/locked states (an action fires once on
+ * click rather than entering a persistent mode). Hover
+ * brightens the outline and background for click-landing
+ * feedback; :active flashes the same green the tool
+ * buttons use during a click so the visual language stays
+ * consistent across the whole toolbar. */
+.toolbar-action-button {
+    width: 32px;
+    height: 32px;
+    background-color: #2a2a2a;
+    border: 1px solid #888888;
+    border-radius: 3px;
+    color: #c0c0c0;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.toolbar-action-button:hover {
+    background-color: #3a3a3a;
+    border-color: #c8c8c8;
+    color: #f0f0f0;
+}
+
+.toolbar-action-button:focus {
+    outline: none;
+    border-color: #c8c8c8;
+}
+
+.toolbar-action-button:active {
+    background-color: #1f3a25;
+    border-color: #00ff33;
+    color: #d8f5d8;
+    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+}
+
+/* Toggle button: square footprint matching the tool and
+ * action buttons but with an on / off state distinct from
+ * both. Idle state mirrors the action button (dark fill,
+ * mid-grey border) so the button reads as part of the same
+ * visual system; the active state shifts to a warm amber
+ * border with a subtle glow so the user can see the toggle
+ * is on at a glance. Amber rather than green deliberately:
+ * the tool buttons already use green for their armed and
+ * locked states, and using a different accent for the
+ * toggle separates "this changes what a canvas click does"
+ * (green) from "this changes what plays" (amber). The
+ * active hover and focus states bump the amber brighter
+ * for click-landing feedback while staying inside the
+ * warm-attention range. */
+.toolbar-toggle-button {
+    width: 32px;
+    height: 32px;
+    background-color: #2a2a2a;
+    border: 1px solid #888888;
+    border-radius: 3px;
+    color: #c0c0c0;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.toolbar-toggle-button:hover {
+    background-color: #3a3a3a;
+    border-color: #c8c8c8;
+    color: #f0f0f0;
+}
+
+.toolbar-toggle-button:focus {
+    outline: none;
+    border-color: #c8c8c8;
+}
+
+.toolbar-toggle-button-active {
+    background-color: #3a2e1a;
+    border-color: #d4a05a;
+    border-width: 2px;
+    color: #f0e0c0;
+    box-shadow: 0 0 6px rgba(212, 160, 90, 0.45);
+}
+
+.toolbar-toggle-button-active:hover {
+    background-color: #463722;
+    border-color: #e8b870;
+    box-shadow: 0 0 8px rgba(232, 184, 112, 0.6);
+}
+
+/* Canvas size controls. Layout: "Canvas:" label, W field, H
+ * field, with a small inter-field gap. The label-to-field
+ * spacing is tight enough that the label reads as a prefix
+ * of the W field rather than as a column heading. */
+.toolbar-canvas-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+
+.toolbar-canvas-label {
+    color: #c8c8c8;
+    font-size: 11pt;
+    margin-right: 2px;
+    user-select: none;
+}
+
+/* Numeric field for canvas W and H. Visually mirrors the
+ * inspector's editable fields (lighter-grey fill, green
+ * border, white text, monospace digits) so the user reads
+ * "editable numeric value" the same way they do in the
+ * inspector. Sized to fit three digits comfortably (the
+ * documented range is 1..200). Contenteditable focus
+ * suppresses the browser's default outline since the green
+ * border is already a clear focus signal; on focus the
+ * border bumps slightly brighter so the active field is
+ * distinguishable when both are visible. The cursor stays
+ * at the default text I-beam when editing and switches to
+ * ns-resize on hover-without-focus to hint at scroll-wheel
+ * scrubbing. */
+.toolbar-canvas-field {
+    background-color: #6b6b6b;
+    border: 2px solid #46b03e;
+    border-radius: 3px;
+    padding: 0 6px;
+    color: #ffffff;
+    height: 24px;
+    min-width: 40px;
+    font-size: 13pt;
+    line-height: 1;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: ns-resize;
+    user-select: none;
+}
+
+.toolbar-canvas-field:focus {
+    outline: none;
+    border-color: #5fc858;
+    cursor: text;
+    user-select: text;
+}
+
+/* Hard validation error: red wavy underline matching the
+ * inspector's error-hard convention. Triggers when the user
+ * presses Enter on a value outside 1..200 or non-numeric
+ * input. Cleared on the next keystroke or on a successful
+ * commit. */
+.toolbar-canvas-field.error {
+    text-decoration: underline wavy #d4564b;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 2px;
+}

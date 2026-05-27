@@ -1,0 +1,501 @@
+/* Editor (Code tab).
+ *
+ * Tab bar at the top of the editor pane (Inspector,
+ * Code, Canvas, plus per-file tabs), CodeMirror chrome
+ * inside #editor-area (background, gutters, scroller),
+ * active-tag and orphan-tag highlights for labelled
+ * pattern blocks and callback-function declarations, the
+ * Strudel autocomplete popup and Ctrl-hover tooltip
+ * surfaces, and a CodeMirror selection-highlight
+ * override that wins over the oneDark default.
+ */
+
+/* --- Editor tab bar --- */
+
+.tab-bar {
+    display: flex;
+    align-items: flex-end;
+    height: 32px;
+    background-color: #141414;
+    position: relative;
+}
+
+.tab {
+    padding: 6px 14px;
+    font-size: 14pt;
+    font-weight: bold;
+    background-color: #141414;
+    color: #c0c0c0;
+    border: 1px solid #777777;
+    border-bottom: none;
+    margin-right: 2px;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1;
+}
+
+.tab-selected {
+    background-color: #3a3a3a;
+    color: #ffffff;
+    position: relative;
+    z-index: 2;
+    margin-bottom: -3px;
+    padding-bottom: 9px;
+}
+
+.tab-bar-filler {
+    flex: 1;
+    align-self: stretch;
+    border-bottom: 3px solid #777777;
+}
+
+.tab-bar::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background-color: #777777;
+    z-index: 1;
+}
+
+/* Per-tab dirty indicator. The Bundle's isFileDirty(name)
+ * lights this class on a tab whose file content differs
+ * from its last-saved snapshot; editor.js's _renderFileTab
+ * and _renderVirtualTab toggle the class on every refresh.
+ * Rendered as a saturated yellow dot prefixed to the tab
+ * label via a ::before pseudo-element so the tab text
+ * layout stays untouched. The yellow (#FFCC00) matches
+ * the Unsaved indicator's attention-warm hue but pushed
+ * brighter for high luminance against the dark tab
+ * background and the green inspector frames; sized at
+ * 12px diameter to read clearly against the 14pt tab
+ * text under accessibility zoom. */
+.tab.tab-dirty::before {
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: #FFCC00;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+/* --- CodeMirror chrome --- */
+
+#editor-area .cm-editor {
+    height: 100%;
+    background-color: #141414;
+}
+
+#editor-area .cm-editor.cm-focused {
+    outline: none;
+}
+
+#editor-area .cm-scroller {
+    background-color: #141414;
+}
+
+#editor-area .cm-gutters {
+    background-color: #141414;
+    border-right: 1px solid #555555;
+}
+
+/* Stage A5 active-tag highlight. The CodeMirror decoration
+ * in patternHighlight.js marks two kinds of identifier as
+ * cm-pattern-active-tag whenever the identifier resolves
+ * to a currently-selected canvas object: the $objectId:
+ * tag of a labelled pattern block, and the function-name
+ * identifier of a top-level callback function declaration
+ * whose name follows the slotName_objectId convention
+ * (hasHit_id, beenHit_id, onTick_id). The accent green
+ * (#5fc858) matches the inspector's checkbox-checked
+ * colour, the brightest of the inspector-band greens and
+ * the one that reads most cleanly against the editor's
+ * near-black background.
+ *
+ * The descendant selector is essential: CodeMirror's
+ * syntax highlighter wraps identifier text ($sp_xxxxx or
+ * onTick_cv_xxxxx) in its own inner span carrying a colour
+ * class (pink, via contrastOverrides in cmTheme.js). That
+ * inner span's own colour overrides inherited colour from
+ * the active-tag wrapper, so without targeting descendants
+ * the green would only paint the colon of a labelled-block
+ * tag (a direct text node inside the wrapper) and leave
+ * the identifier text pink — and function names, which
+ * are entirely inner-span, would not turn green at all.
+ * !important keeps the green winning over the inner span's
+ * class colour, which has equal CSS specificity. */
+#editor-area .cm-pattern-active-tag,
+#editor-area .cm-pattern-active-tag * {
+    color: #5fc858 !important;
+}
+
+/* Orphan-tag flag. The CodeMirror decoration in
+ * patternHighlight.js marks the $objectId: tag of a
+ * labelled pattern block as cm-pattern-orphan-tag when
+ * the objectId does not match any object in the current
+ * scene. A label with no object is a hard error: the
+ * block fires no pattern and the only sensible recovery
+ * is either to remove the block or to rename it to point
+ * at an existing object. The wavy red underline matches
+ * the inspector and toolbar's error-hard convention
+ * (text-decoration: underline wavy #d4564b) so the visual
+ * language reads consistently across surfaces. The
+ * decoration is applied to the wrapper and all
+ * descendants so the underline paints under both the
+ * label identifier (rendered by CodeMirror's syntax
+ * highlighter inside an inner span) and the colon
+ * (a direct text node next to it). Active-tag green
+ * and orphan-tag red are mutually exclusive on the same
+ * label by construction — a selected object exists in
+ * the scene, so its id is never in the orphan set. */
+#editor-area .cm-pattern-orphan-tag,
+#editor-area .cm-pattern-orphan-tag * {
+    text-decoration: underline wavy #d4564b;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 2px;
+}
+
+/* --- Strudel autocomplete + Ctrl-hover tooltip ---
+ *
+ * Two surfaces share most of their visual language:
+ *
+ *   - The autocomplete popup, rendered by CodeMirror's
+ *     @codemirror/autocomplete extension. Two parts: the
+ *     completion list itself (.cm-tooltip-autocomplete
+ *     and its option rows) and the optional info panel
+ *     beside it that renders the rich documentation for
+ *     the highlighted completion. The info panel's HTML
+ *     comes from the vendored Autocomplete renderer in
+ *     src/strudel/codemirror/autocomplete.mjs and uses
+ *     the .autocomplete-info-* class family.
+ *
+ *   - The Ctrl-hover tooltip, rendered by the vendored
+ *     strudelTooltip extension in
+ *     src/strudel/codemirror/tooltip.mjs. Carries its
+ *     own .strudel-tooltip wrapper around the same
+ *     Autocomplete renderer output, so the inner
+ *     .autocomplete-info-* styling is shared between the
+ *     popup info panel and the Ctrl-hover surface.
+ *
+ * Visual target: a dark, dense documentation pill that
+ * matches the editor's near-black background and the
+ * inspector's lighter-grey field fill, so the surfaces
+ * read as siblings of the canvas tooltip and the
+ * inspector's read-only hints rather than as foreign
+ * elements imported from a different design system.
+ * Section titles and inline labels pick up the
+ * inspector's accent green (#5fc858) so the visual
+ * hierarchy is consistent with the rest of GXW.
+ */
+
+/* Autocomplete popup chrome. CodeMirror's default theme
+ * paints a near-white box that's jarring against the
+ * dark editor; these overrides repaint it in the editor's
+ * panel-dark / divider-grey palette so the popup reads as
+ * editor chrome.
+ *
+ * .cm-tooltip is the generic wrapper CodeMirror uses for
+ * any tooltip surface (autocomplete popups, hover
+ * tooltips, lint diagnostics). Scoping to .cm-editor here
+ * limits the effect to surfaces hosted by our editor
+ * instance so any future tooltip surface elsewhere isn't
+ * affected. */
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete {
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 3px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    color: #d8d4cc;
+    font-size: 12pt;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+}
+
+.cm-editor .cm-tooltip-autocomplete > ul {
+    max-height: 320px;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 12pt;
+}
+
+.cm-editor .cm-tooltip-autocomplete > ul > li {
+    padding: 3px 10px;
+    color: #d8d4cc;
+    line-height: 1.3;
+}
+
+.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected] {
+    background-color: #46b03e;
+    color: #ffffff;
+}
+
+/* The little type-tag chip CodeMirror prepends to each
+ * completion ("function", "sound", "pitch", etc.). Sits
+ * in a muted secondary tone so the option label itself
+ * stays the dominant text on each row. */
+.cm-editor .cm-completionIcon {
+    color: #a0a0a0;
+    opacity: 0.8;
+    margin-right: 6px;
+}
+
+.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionIcon {
+    color: #ffffff;
+    opacity: 1.0;
+}
+
+/* Matched-prefix highlight on the option label, used by
+ * CodeMirror to show why a completion matched the typed
+ * fragment. Accent green so it ties to the inspector's
+ * active-tag highlight and the section titles inside the
+ * info panel. */
+.cm-editor .cm-completionMatchedText {
+    color: #5fc858;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText {
+    color: #ffffff;
+    text-decoration: underline;
+}
+
+/* Info panel, the second-column docs box that paints
+ * beside the option list when the highlighted completion
+ * has rich documentation. The vendored Autocomplete
+ * renderer wraps its content in .autocomplete-info-container;
+ * the .autocomplete-info-tooltip inside hosts the actual
+ * paragraphs and lists.
+ *
+ * CodeMirror reserves the .cm-completionInfo wrapper for
+ * info-panel content; styling it here sizes and frames
+ * the panel itself so the inner .autocomplete-info-*
+ * rules can lay out content within a known footprint. */
+.cm-editor .cm-tooltip.cm-completionInfo {
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 3px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    color: #d8d4cc;
+    max-width: 480px;
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 0;
+}
+
+/* Ctrl-hover tooltip wrapper. Same dark pill chrome as the
+ * info panel, with a slightly heavier shadow so the
+ * tooltip lifts visibly off the editor surface (the info
+ * panel sits inside CodeMirror's own tooltip frame which
+ * provides its own shadow; the Ctrl-hover surface paints
+ * directly into the page and needs the shadow on its own
+ * wrapper). */
+.strudel-tooltip {
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 3px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+    color: #d8d4cc;
+    max-width: 480px;
+    max-height: 360px;
+    overflow-y: auto;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+}
+
+/* Shared inner container. Same paint inside both the
+ * autocomplete info panel and the Ctrl-hover wrapper.
+ * The 12px vertical padding pairs with the section
+ * blocks' own margins to give comfortable rhythm without
+ * needing per-section padding overrides. */
+.autocomplete-info-container {
+    padding: 10px 14px;
+    font-size: 12pt;
+    line-height: 1.4;
+}
+
+.autocomplete-info-tooltip {
+    display: block;
+}
+
+/* Function name header. The biggest, brightest piece of
+ * text in the panel — it's the answer to "what am I
+ * looking at?" Monospace because it's a code identifier;
+ * the rest of the panel is sans-serif because it's prose
+ * documentation. */
+.autocomplete-info-function-name {
+    color: #ffffff;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 14pt;
+    font-weight: bold;
+    line-height: 1.2;
+    margin: 0 0 6px 0;
+}
+
+/* Synonyms line, when present. Lists alternate names for
+ * the same function (e.g. "s" is a synonym for "sound").
+ * Muted text since it's metadata about the entry rather
+ * than the entry's own behaviour, and the inline list of
+ * names is monospace because they're code identifiers. */
+.autocomplete-info-function-synonyms {
+    color: #a0a0a0;
+    font-size: 11pt;
+    margin: 0 0 8px 0;
+    line-height: 1.3;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+}
+
+/* Function description paragraph. The body of the docs:
+ * sans-serif so it reads as prose, comfortable line
+ * height for paragraphs that wrap. The 10px bottom
+ * margin sets up the rhythm with the Parameters block
+ * below it. */
+.autocomplete-info-function-description {
+    color: #d8d4cc;
+    font-size: 12pt;
+    line-height: 1.45;
+    margin: 0 0 10px 0;
+}
+
+/* The Parameters and Examples sections. Each carries a
+ * small accent-green heading and a content block. The
+ * heading uses the same accent green as the inspector's
+ * active-tag highlight, which threads a consistent
+ * "meaningful section" colour through the documentation
+ * UI. */
+.autocomplete-info-params-section,
+.autocomplete-info-examples-section {
+    margin: 0 0 10px 0;
+}
+
+.autocomplete-info-params-section:last-child,
+.autocomplete-info-examples-section:last-child {
+    margin-bottom: 0;
+}
+
+.autocomplete-info-section-title {
+    color: #5fc858;
+    font-size: 11pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0 0 4px 0;
+    line-height: 1.2;
+}
+
+/* Parameter list. Indented slightly so the params read
+ * as a child of the section heading; list-style:none
+ * because each item carries its own structured layout
+ * with name + type chip + description. */
+.autocomplete-info-params-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.autocomplete-info-param-item {
+    padding: 3px 0;
+    line-height: 1.4;
+}
+
+.autocomplete-info-param-item + .autocomplete-info-param-item {
+    border-top: 1px solid #3a3a3a;
+}
+
+/* Parameter name. Monospace identifier in the inspector's
+ * white field-text colour so it reads as the primary
+ * piece of each param row. */
+.autocomplete-info-param-name {
+    color: #ffffff;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 12pt;
+    font-weight: bold;
+    margin-right: 8px;
+}
+
+/* Parameter type chip. A dimmer monospace tag set in
+ * the field-fill grey so it reads as metadata about the
+ * name without competing with it. The small padding +
+ * radius give it pill shape so the eye separates the
+ * name and the type at a glance. */
+.autocomplete-info-param-type {
+    color: #c8c8c8;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 10pt;
+    background-color: #3a3a3a;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 1px 6px;
+}
+
+/* Parameter description, rendered as a block beneath the
+ * name + type pair so wrapping text doesn't have to flow
+ * around the chip. Indented slightly so the visual
+ * hierarchy reads as name+type on top, description
+ * beneath. */
+.autocomplete-info-param-desc {
+    color: #c8c8c8;
+    font-size: 11pt;
+    line-height: 1.4;
+    margin-top: 3px;
+    margin-left: 2px;
+}
+
+/* Example code block. Monospace, near-black fill
+ * matching the editor background so each example reads
+ * as a snippet you could paste into the Code tab. The
+ * mid-grey border separates the block from the
+ * surrounding panel without competing with the section
+ * heading. white-space:pre-wrap preserves the example's
+ * own line breaks while letting long lines wrap at the
+ * panel's width. */
+.autocomplete-info-example-code {
+    color: #d8d4cc;
+    background-color: #141414;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 6px 10px;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 11pt;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+    margin: 0 0 6px 0;
+}
+
+.autocomplete-info-example-code:last-child {
+    margin-bottom: 0;
+}
+
+/* --- CodeMirror selection highlight override ---
+ *
+ * CodeMirror's selection background (oneDark default) sits
+ * very close in luminance to the near-black editor
+ * background, which is hard to see at high zoom levels with
+ * limited eyesight. Override here at the CSS level with
+ * !important to guarantee the rule wins regardless of
+ * CodeMirror's StyleModule mounting order or specificity
+ * games. Covers both rendering paths: the drawSelection()
+ * layer (.cm-selectionBackground div) and native browser
+ * selection (.cm-content ::selection plus ::selection).
+ *
+ * Focused state (cursor active in editor) is bright; the
+ * unfocused state (editor has selection but focus is
+ * elsewhere) dims to a less prominent companion color so
+ * the active editing surface still reads more visually
+ * strong.
+ */
+.cm-editor.cm-focused .cm-selectionLayer .cm-selectionBackground,
+.cm-editor.cm-focused .cm-content ::selection {
+    background-color: #9070c0 !important;
+    background: #9070c0 !important;
+}
+
+.cm-editor .cm-selectionLayer .cm-selectionBackground,
+.cm-editor .cm-selectionBackground,
+.cm-editor .cm-content ::selection {
+    background-color: #5a4580 !important;
+    background: #5a4580 !important;
+}

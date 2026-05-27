@@ -1,0 +1,398 @@
+/* Canvas inspector (Canvas tab).
+ *
+ * Selection-independent scene-level chrome reached through
+ * the Canvas tab: canvas dimensions, background-image
+ * controls, image-transformation sliders, recent-image
+ * gallery, and the pinned per-score image section. See
+ * DESIGN.md Section 13.5.
+ *
+ * Layout. A top row with Load Image / Clear Image buttons
+ * and the W / H numeric fields, plus separators framing
+ * the gallery and pinned sections below. The brightness
+ * slider sits above the section divider. Thumbnails use
+ * fixed pixel dimensions driven by the
+ * --canvas-insp-thumb-size CSS variable that
+ * canvasInspector.js computes at mount time from the
+ * Properties inspector's natural floor width.
+ */
+
+.canvas-insp-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 14px;
+    min-height: 100%;
+}
+
+.canvas-insp-top-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.canvas-insp-button {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 4px 10px;
+    height: 28px;
+    font-size: 12pt;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+    user-select: none;
+}
+
+.canvas-insp-button:hover:not(:disabled):not(.disabled) {
+    background-color: #3a3a3a;
+}
+
+.canvas-insp-button:disabled,
+.canvas-insp-button.disabled {
+    color: #707070;
+    border-color: #555555;
+    cursor: default;
+    background-color: transparent;
+}
+
+.canvas-insp-axis-label {
+    color: #c8c8c8;
+    font-size: 11pt;
+    margin-left: 6px;
+    user-select: none;
+}
+
+/* Section caption preceding a row of related controls
+ * (Stage 5: the top row's "Image:" caption). Bolder and
+ * lighter than .canvas-insp-axis-label so it reads as a
+ * section header rather than as an inline field label.
+ * white-space: nowrap keeps the caption from breaking
+ * across lines if the parent ever wraps. */
+.canvas-insp-section-caption {
+    color: #e0e0e0;
+    font-weight: 600;
+    font-size: 12pt;
+    margin-right: 4px;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.canvas-insp-separator {
+    height: 2px;
+    background-color: #777777;
+    margin: 14px 0;
+}
+
+/* "Size:" sub-caption that labels the W/H fields in the
+ * top row (Stage 6). Adds extra left margin on top of the
+ * row's 8 px gap so the caption visually starts a new
+ * group rather than reading as one more sibling of the
+ * Image / Load / Clear strip. Combined with the row's gap
+ * the total visible spacing in front of "Size:" comes out
+ * to 24 px, which separates the two groups clearly at
+ * typical inspector widths without expanding the row
+ * past its current footprint. */
+.canvas-insp-size-caption {
+    margin-left: 16px;
+}
+
+/* Brightness slider row (Stage 6). Sits between the top
+ * button row and the separator that divides the image
+ * controls from the pinned section. Layout: bold label on
+ * the left in the same style as the "Image:" and "Size:"
+ * captions above; native range slider flexing to fill the
+ * remaining space up to the inspector's natural floor
+ * width. The fixed row width (--canvas-insp-gallery-width)
+ * mirrors the section divider below so the slider's right
+ * edge aligns with the right edge of both the gallery
+ * grids and the divider — the whole right side of the
+ * inspector reads as one consistent column.
+ *
+ * The slider drives the canvas's display brightness as a
+ * render-time globalAlpha multiplier; image-derived
+ * music signals (pxLt, OKLCh, anything sampling pixels)
+ * read from the unmodified source bitmap and are not
+ * affected. See DESIGN.md Section 13.5. */
+.canvas-insp-brightness-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: var(--canvas-insp-gallery-width, 420px);
+    margin-top: 6px;
+}
+
+/* Native range slider, recoloured to the inspector's
+ * accent green via accent-color (same modern property the
+ * Settings dialog uses for its checkbox). accent-color
+ * tints both the thumb and the filled portion of the
+ * track on browsers that support it (Chrome 93+, Safari
+ * 15.4+, Firefox 92+), which covers every browser GXW
+ * targets. The fallback on older builds is the browser's
+ * default blue — functional but visually off-brand. */
+.canvas-insp-brightness-slider {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 20px;
+    accent-color: #46b03e;
+    cursor: pointer;
+}
+
+.canvas-insp-brightness-slider:focus {
+    outline: none;
+}
+
+/* Recent-image gallery and per-score pinned section
+ * (Stage 5 redesign, DESIGN.md Section 13.5). Both
+ * sections render as 3-column grids with fixed pixel
+ * column widths, sized by the CSS variable
+ * --canvas-insp-thumb-size that canvasInspector.js
+ * computes at mount time from the measured Properties
+ * inspector Starting State row width minus the inter-
+ * column gap. Thumbnails take the same fixed pixel
+ * dimensions explicitly. The fixed pixel sizing is
+ * critical for body-divider drag performance: with flex
+ * columns and aspect-ratio children the browser re-lays
+ * out every thumbnail on every drag frame even when the
+ * gallery's own width is constant, because parent
+ * reflow marks descendant layout dirty. Stage 4 first
+ * established this fix with its hardcoded 72px columns;
+ * Stage 5 keeps the same pattern but adapts the size to
+ * the natural inspector floor for better readability.
+ *
+ * Pinned section. Six fixed slots in a 2-row by 3-column
+ * grid. Column count is 3; rows fall out implicitly from
+ * the slot count. Placeholders for empty slots so the
+ * grid's footprint reads even when the score has no
+ * pins yet.
+ *
+ * Shared gallery. Variable number of slots (one per
+ * entry) under the recency-bump model. Vertical
+ * scrolling falls through to #canvas-inspector-area's
+ * overflow-y. Empty-state message replaces the grid
+ * when the entry list is empty so the section's
+ * purpose stays visible. */
+.canvas-insp-pinned {
+    display: grid;
+    grid-template-columns: repeat(3, var(--canvas-insp-thumb-size, 136px));
+    gap: 6px;
+}
+
+.canvas-insp-gallery {
+    display: grid;
+    grid-template-columns: repeat(3, var(--canvas-insp-thumb-size, 136px));
+    gap: 6px;
+}
+
+/* Divider between the pinned section and the shared
+ * gallery. Heavier than .canvas-insp-separator (which
+ * sits between control rows) so the section boundary
+ * reads at a glance. Width matches the gallery's so the
+ * divider doesn't extend past the grids on either side. */
+.canvas-insp-section-divider {
+    height: 3px;
+    background-color: #777777;
+    margin: 14px 0;
+    width: var(--canvas-insp-gallery-width, 420px);
+}
+
+/* Empty-state message shown in the shared gallery when
+ * no entries exist. grid-column: 1 / -1 makes it span
+ * the full grid width so it reads as one centred line
+ * rather than wedging into a single column. */
+.canvas-insp-gallery-empty {
+    color: #a0a0a0;
+    font-style: italic;
+    font-size: 12pt;
+    padding: 20px 0;
+    text-align: center;
+    grid-column: 1 / -1;
+}
+
+/* Thumbnail slot. Three states share this base: empty
+ * (dim placeholder, no pointer), populated (an inline
+ * img element fills the slot, click sets the background),
+ * and populated + active (carries the green frame matching
+ * the Properties tab's editable-field accent). The slot's
+ * 2-pixel transparent border in the base state reserves
+ * space for the active frame so adding the active class
+ * doesn't push neighbouring slots around.
+ *
+ * Stage 5: explicit fixed-pixel width and height driven by
+ * the --canvas-insp-thumb-size CSS variable the grid
+ * columns use, with the height computed via calc as two
+ * thirds of the width for a 3:2 aspect (wider than tall).
+ * The 3:2 aspect matches the typical canvas aspect ratio
+ * and the typical landscape imported image so the dominant
+ * case needs little or no letterboxing inside the thumb.
+ * Fixed pixel dimensions (rather than aspect-ratio) match
+ * Stage 4's pattern for body-divider drag performance:
+ * explicit pixel dimensions skip the per-frame layout work
+ * that flex columns + aspect-ratio children would otherwise
+ * incur during parent reflow. */
+.canvas-insp-thumb {
+    width: var(--canvas-insp-thumb-size, 136px);
+    height: calc(var(--canvas-insp-thumb-size, 136px) * 2 / 3);
+    box-sizing: border-box;
+    background-color: #3a3a3a;
+    border: 2px solid transparent;
+    border-radius: 3px;
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.canvas-insp-thumb.empty {
+    cursor: default;
+}
+
+.canvas-insp-thumb.active {
+    border-color: #46b03e;
+}
+
+/* Subtle hover affordance on populated slots only. The
+ * brighter outline reads as "clickable" without using the
+ * green frame (which is reserved for the active-state
+ * signal). Empty slots get no hover effect since they're
+ * not clickable. */
+.canvas-insp-thumb:not(.empty):not(.active):hover {
+    border-color: #777777;
+}
+
+.canvas-insp-thumb.active:hover {
+    border-color: #5fc858;
+}
+
+.canvas-insp-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    display: block;
+    pointer-events: none;
+}
+
+/* Drag mechanics across both gallery sections (Stage 5
+ * second commit). The user drags any thumbnail — shared
+ * or pinned — with three possible outcomes per drop
+ * location:
+ *
+ *   - On another pinned slot: pin or reorder (see the
+ *     dropHashOnPinnedSlot logic in bundle.js).
+ *   - Outside the canvas inspector pane: vanish-animate
+ *     and remove (gallery remove for shared, unpin for
+ *     pinned).
+ *   - Click below the 4px motion threshold: still sets
+ *     as background, same as before drag mechanics.
+ *
+ * Cursor affordance. Both shared and populated pinned
+ * thumbs get a grab cursor on hover so the user reads
+ * them as draggable before they try. Empty pinned slots
+ * stay at the default since there's nothing there to
+ * drag (they're still drop targets, just not drag
+ * sources). The body class flips the cursor to grabbing
+ * globally during an active drag so the gesture reads
+ * as live regardless of where the cursor lands. */
+.canvas-insp-shared-slot,
+.canvas-insp-pinned-slot:not(.empty) {
+    cursor: grab;
+}
+
+body.dragging-canvas-insp-thumb,
+body.dragging-canvas-insp-thumb * {
+    cursor: grabbing !important;
+    user-select: none;
+}
+
+/* Floating drag preview. Created and positioned by
+ * canvasInspector.js's _createDragPreview and the
+ * pointermove handler; appended to document.body so it
+ * floats above all panes. The transform offset centres
+ * the preview on the cursor; pointer-events: none keeps
+ * it out of the elementFromPoint hit test so the drop
+ * target detection sees through it to the pinned slot
+ * underneath. The 3:2 aspect matches the pinned and
+ * shared slot dimensions so the preview reads as a
+ * thumbnail being carried, not as a generic chip. The
+ * semi-transparency plus shadow give it a sense of
+ * lift; the green border ties it to the inspector's
+ * editability accent so the user reads it as "image
+ * being moved into the editable pinned area". */
+.canvas-insp-drag-preview {
+    position: fixed;
+    pointer-events: none;
+    width: var(--canvas-insp-thumb-size, 136px);
+    height: calc(var(--canvas-insp-thumb-size, 136px) * 2 / 3);
+    transform: translate(-50%, -50%);
+    border: 2px solid #5fc858;
+    border-radius: 3px;
+    overflow: hidden;
+    opacity: 0.85;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    z-index: 5000;
+    background-color: #3a3a3a;
+    transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.canvas-insp-drag-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    display: block;
+}
+
+/* Off-pane state. When the cursor leaves the canvas
+ * inspector pane during a drag, the preview's border
+ * switches from green (editability accent for the
+ * pinned-area drop) to red (the remove/unpin accent
+ * shared with the inspector's hard-error squiggle), so
+ * the user sees "releasing here will remove this image"
+ * before they commit. The shadow recolours to match
+ * for cohesion. */
+.canvas-insp-drag-preview.will-remove {
+    border-color: #d4564b;
+    box-shadow: 0 6px 18px rgba(212, 86, 75, 0.55);
+}
+
+/* Vanish animation: triggered by adding the .vanishing
+ * class at the start of an off-pane release. Scales
+ * the preview to 1.4x while fading opacity to 0 over
+ * 350ms, matching the timing the design doc specifies
+ * for drag-off-edge removals. forwards keeps the final
+ * state visible until canvasInspector.js's setTimeout
+ * removes the element, so there's no flash back to the
+ * initial state at the end of the keyframes. The
+ * combined transform preserves the cursor-centre
+ * translate from the resting preview style. */
+@keyframes canvas-insp-drag-vanish {
+    from {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.85;
+    }
+    to {
+        transform: translate(-50%, -50%) scale(1.4);
+        opacity: 0;
+    }
+}
+
+.canvas-insp-drag-preview.vanishing {
+    animation: canvas-insp-drag-vanish 350ms ease-out forwards;
+    transition: none;
+}
+
+/* Drop-target highlight on the pinned slot under the
+ * cursor. Brighter green than the active-frame so the
+ * "drop here" affordance is unambiguous even when the
+ * target slot is already the current background (active
+ * frame + drop-target stack visibly). The slight inset
+ * glow gives an additional shimmer cue under brightness-
+ * sensitive viewing. Empty target slots get the same
+ * highlight; they're a valid drop target too (and the
+ * common case for a fresh pin). */
+.canvas-insp-thumb.drop-target {
+    border-color: #5fc858;
+    box-shadow: 0 0 0 2px rgba(95, 200, 88, 0.35) inset,
+                0 0 10px rgba(95, 200, 88, 0.45);
+}

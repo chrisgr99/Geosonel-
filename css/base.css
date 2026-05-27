@@ -1,0 +1,106 @@
+/* GXW base layer.
+ *
+ * Universal box-sizing reset, html/body baseline (font, background,
+ * colour, overflow), scrollbar styling, the :root --editor-pane-width
+ * variable, and the #app grid container. Loaded first; everything
+ * else cascades on top of these defaults.
+ *
+ * Colour naming conventions used throughout:
+ *   Near-black:   #2a2a2a  (editor background, input field fill)
+ *   Panel dark:   #3a3a3a  (top row, tab-selected, pane titles)
+ *   Mid-grey:     #555555  (menu bar accent, transport button fill)
+ *   Divider:      #777777  (all dividers and subtle borders)
+ *   Warm off-white:#d8d4cc (editor text)
+ *   Light text:   #f0f0f0  (time displays, button labels)
+ *   Secondary:    #c8c8c8  (field labels)
+ *   Tab inactive: #c0c0c0  (unselected tab text)
+ *
+ * Layout shape. The top row in HTML contains only the in-page
+ * menubar, and only the web build shows it; on Electron, the
+ * native macOS menu bar takes over and body.electron-mode hides
+ * the entire top row plus its divider (see mode-overrides.css)
+ * so the canvas-toolbar sits flush at the top of the window. The
+ * body below holds the canvas and editor panes side by side.
+ * There is no bottom chrome — the bottom of the body reaches the
+ * window edge so the OS dock doesn't pop up over app controls on
+ * auto-hide systems.
+ */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+    font-size: 15pt;
+    background-color: #2a2a2a;
+    color: #d8d4cc;
+}
+
+/* Scrollbars sit in muted dark tones rather than the browser's
+ * default bright white. The thumb stays clearly visible against
+ * the track but no longer dominates the panes it appears in —
+ * important for users with brightness sensitivity or accessibility
+ * zoom, where a tall white thumb in a partially-filled scroll
+ * region is genuinely dazzling. Width is left at the browser
+ * default so the thumb stays comfortably grabbable; only the
+ * colour changes. scrollbar-color is the modern standard
+ * property; the ::-webkit-scrollbar block provides the same
+ * effect for browsers that support the older WebKit pseudo-
+ * elements (Edge, Chrome, Safari all read one or both). The
+ * track sits at the panel background colour so it disappears
+ * into the surface; the thumb at #555 picks up the same mid-
+ * grey used elsewhere in the chrome, with a slight lift on
+ * hover for grab feedback. */
+* {
+    scrollbar-color: #555555 #2a2a2a;
+}
+
+::-webkit-scrollbar-track {
+    background-color: #2a2a2a;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #555555;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: #6a6a6a;
+}
+
+::-webkit-scrollbar-corner {
+    background-color: #2a2a2a;
+}
+
+/* Root app container — fills the viewport. Top row, divider,
+ * body. The auto / 3px / 1fr tracks size to the menubar on
+ * web; on Electron the body.electron-mode override in
+ * mode-overrides.css collapses the top two rows entirely so
+ * the canvas-toolbar sits flush at the top. */
+#app {
+    display: grid;
+    grid-template-rows: auto 3px 1fr;
+    height: 100%;
+    width: 100%;
+}
+
+/* Editor-pane width sync. Set by main.js on every editor-pane
+ * resize and on initial-width restore, so the canvas-toolbar
+ * can compensate for the editor pane's width when Focus
+ * Canvas is active. Without the compensation, entering Focus
+ * Canvas shifts every toolbar item leftward by the editor
+ * pane's previous width and breaks muscle memory for where
+ * each button lives on screen. The body.focus-canvas
+ * #canvas-toolbar rule in mode-overrides.css uses this
+ * variable to pad the toolbar's left edge by exactly that
+ * width, keeping each toolbar item at its normal absolute
+ * screen position whether Focus Canvas is on or off. */
+:root {
+    --editor-pane-width: 0px;
+}

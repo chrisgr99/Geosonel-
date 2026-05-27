@@ -1,0 +1,803 @@
+/* Property inspector (Properties tab).
+ *
+ * The inspector replicates the GeoSonix property editor's look
+ * as closely as possible: dark grey panel, lighter grey field
+ * fills, bright green frames around editable fields, green-
+ * filled checkboxes, green stepper dots on numeric fields, and
+ * green combo-box triangles. Fields that don't apply to the
+ * current selection (multi-select restriction or type-
+ * irrelevance) stay in their fixed positions but lose their
+ * green frame and gain muted text — a single visual signal
+ * for "not editable right now" regardless of cause.
+ *
+ * Also carries the popover dropdown surfaces, the read-only
+ * rhythm-string treatment, the canvas-object identification
+ * tooltip (which shares visual vocabulary with the read-only
+ * hint), the slot-field placeholder treatment, the create
+ * button, the colour field, units indicator, co-label count,
+ * inline letter, numeric-field wrapper + spinner, and the
+ * bottom spacer.
+ */
+
+.inspector-pane {
+    color: #d8d4cc;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+    height: 100%;
+}
+
+/* The panel is a vertical stack of bands followed by a
+ * bottom spacer. min-height: 100% lets the panel reach
+ * the inspector-area's bottom even when the bands' natural
+ * heights don't fill it; when they do overfill it, the
+ * panel grows past the viewport and inspector-area's
+ * overflow-y handles scrolling. */
+.inspector-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+}
+
+.insp-title-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 8px 14px 6px 14px;
+    border-bottom: 2px solid #777777;
+}
+
+.insp-title-left {
+    color: #ffffff;
+    font-size: 18pt;
+    font-weight: 400;
+    line-height: 1.1;
+}
+
+/* The handle portion of a single-select title (the part
+ * after the kind label) renders bright when it's a user-
+ * typed name and dim-italic when it's a generated-id
+ * placeholder. Italic reuses the visual cue used by the
+ * read-only Object ID field in Band 1, so the same
+ * "system-generated, not user-set" signal shows up in both
+ * places. The colour tracks the disabled-state text colour
+ * so the placeholder reads as a sibling of every other
+ * "not-currently-active" element in the inspector. The
+ * kind label to the left of the handle stays white because
+ * it's useful information regardless of whether a name has
+ * been assigned. */
+.insp-title-handle.placeholder {
+    color: #a8a8a8;
+    font-style: italic;
+}
+
+.insp-title-right {
+    color: #ffffff;
+    font-size: 11pt;
+}
+
+.insp-band {
+    padding: 5px 14px;
+    border-bottom: 2px solid #777777;
+}
+
+.insp-band:last-child {
+    border-bottom: none;
+}
+
+.insp-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 3px 0;
+    min-height: 24px;
+}
+
+.insp-label {
+    text-align: right;
+    color: #ffffff;
+    font-size: 10pt;
+    line-height: 1.15;
+    flex-shrink: 0;
+}
+
+.insp-label.disabled {
+    color: #a8a8a8;
+}
+
+/* Editable text or numeric field. The lighter-grey fill
+ * stays visible whether the field is editable or disabled
+ * — that's how GeoSonix shows empty fields, as a clearly
+ * visible field-shaped rectangle. The fill colour is
+ * deliberately a strong step lighter than the panel
+ * background (#6b6b6b vs #2a2a2a) and only slightly darker
+ * than the divider colour #777777, so each field reads as a
+ * distinct rectangle even when its border is suppressed in
+ * the disabled or locked state — important because the
+ * inspector is full of fields and a faint fill would let
+ * the form's structure dissolve into the panel,
+ * particularly under accessibility zoom where small
+ * contrast differences soften further. Disabled-state text
+ * lifts to #a8a8a8 to keep its spread against the brighter
+ * fill comfortable for readability while staying clearly
+ * dimmer than the white of active fields. The .disabled
+ * and .locked variants drop the green frame so the field
+ * reads as non-interactive; .locked also italicises so the
+ * read-only id field looks distinct from a disabled-by-
+ * context field. */
+.insp-field {
+    background-color: #6b6b6b;
+    border: 2px solid #d8d4cc;
+    border-radius: 3px;
+    padding: 0 8px;
+    color: #ffffff;
+    height: 24px;
+    font-size: 11pt;
+    box-sizing: border-box;
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.insp-field.disabled {
+    border-color: transparent;
+    color: #a8a8a8;
+}
+
+/* Locked: read-only by design (the Object ID field). Same
+ * dim-italic styling as the title-bar handle placeholder, so
+ * the "system-generated, not user-set" signal is consistent
+ * wherever a generated id appears in the inspector. The
+ * colour tracks the disabled-state text colour so the two
+ * read as siblings rather than visually distinct states. */
+.insp-field.locked {
+    border-color: transparent;
+    color: #a8a8a8;
+    font-style: italic;
+}
+
+/* Squiggly underline for hard validation errors on the Name
+ * field — invalid identifier, reserved word, or a string
+ * matching the auto-generated id format. Red wavy underline
+ * matches the VS Code idiom for diagnostic-level errors;
+ * text-decoration-skip-ink:none keeps the squiggle continuous
+ * under descenders. */
+.insp-field.error-hard {
+    text-decoration: underline wavy #d4564b;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 2px;
+}
+
+/* Squiggly underline for soft conflicts — the name is valid
+ * but already used by another object. Yellow matches the
+ * Unsaved indicator's attention colour; same wavy idiom as
+ * the hard-error case but distinct hue so the two states
+ * read differently at a glance. */
+.insp-field.error-soft {
+    text-decoration: underline wavy #d4a05a;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 2px;
+}
+
+/* Suppress the browser's default focus outline on a
+ * contenteditable Name field. The green border on .insp-field
+ * is already a clear focus and editability signal, and an
+ * extra outline ring on top of it just adds visual noise. */
+.insp-field[contenteditable]:focus {
+    outline: none;
+}
+
+/* Round checkbox. Empty by default with a thin grey ring;
+ * checked state fills with the inspector's green and tints
+ * the ring to match. Disabled state mutes the ring and
+ * suppresses any hover affordance. */
+.insp-checkbox {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #777777;
+    border-radius: 50%;
+    background-color: #6b6b6b;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    cursor: pointer;
+}
+
+.insp-checkbox.checked {
+    background-color: #5fc858;
+    border-color: #5fc858;
+}
+
+/* Tri-state: rendered when a multi-selection's objects
+ * disagree on the boolean. Green ring (so the field still
+ * reads as editable) with a green horizontal dash through
+ * the middle, distinguishing it from both empty (grey ring,
+ * dark fill) and checked (fully green). */
+.insp-checkbox.varies {
+    border-color: #5fc858;
+    background-color: #6b6b6b;
+    position: relative;
+}
+
+.insp-checkbox.varies::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 3px;
+    right: 3px;
+    height: 2px;
+    margin-top: -1px;
+    background-color: #5fc858;
+    border-radius: 1px;
+}
+
+.insp-checkbox.disabled {
+    border-color: #555555;
+    cursor: default;
+}
+
+.insp-checkbox.disabled.checked {
+    background-color: #555555;
+    border-color: #555555;
+}
+
+/* Combo box. Green triangle indicator on the right. Disabled
+ * variant drops the green frame and mutes the triangle but
+ * keeps the lighter-grey fill so the field's footprint stays
+ * visible. */
+.insp-combo {
+    background-color: #6b6b6b;
+    border: 2px solid #d8d4cc;
+    border-radius: 3px;
+    padding: 0 24px 0 8px;
+    color: #ffffff;
+    height: 24px;
+    font-size: 11pt;
+    position: relative;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.insp-combo.disabled {
+    border-color: transparent;
+    color: #a8a8a8;
+    cursor: default;
+}
+
+.insp-combo::after {
+    content: '';
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    margin-top: -2px;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #d8d4cc;
+}
+
+.insp-combo.disabled::after {
+    border-top-color: #707070;
+}
+
+/* When a popover is open, the trigger combo retains its
+ * styling but the dropdown triangle inverts to a downward-
+ * pointing chevron equivalent. The simplest visual
+ * indication that the popover is live: a brighter outline
+ * on the combo itself. Pure styling — the popover element
+ * exists separately and handles its own positioning. */
+.insp-combo.insp-combo-open {
+    border-color: #ffffff;
+    background-color: #767676;
+}
+
+/* Native <select> dropdown styled to fit the inspector.
+ * Suppresses the browser's default arrow chrome and paints
+ * a custom green triangle on the right, matching the
+ * .insp-combo aesthetic so the dropdown reads as a sibling
+ * of the inspector's other editable controls. Native
+ * <select> gives OS-level keyboard navigation (arrow keys,
+ * type-ahead), VoiceOver compatibility, and a popup menu
+ * that escapes the inspector pane's clipping for free —
+ * advantages over a custom popover that justify the slight
+ * visual mismatch with the rest of the contenteditable
+ * fields. Used by Band 1's Beat Interval control.
+ *
+ * Disabled state: the .disabled class drops the green
+ * frame and mutes the text, mirroring .insp-field.disabled.
+ * The native :disabled selector covers the same case for
+ * the browser's own disabled-attribute behaviour. Both
+ * are kept in lockstep because inspector.js sets both. */
+.insp-dropdown {
+    background-color: #6b6b6b;
+    border: 2px solid #d8d4cc;
+    border-radius: 3px;
+    padding: 0 22px 0 8px;
+    color: #ffffff;
+    height: 24px;
+    font-size: 11pt;
+    font-family: inherit;
+    line-height: 1;
+    box-sizing: border-box;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%23d8d4cc' d='M0 0h8L4 5z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    background-size: 8px 5px;
+}
+
+.insp-dropdown:focus {
+    outline: none;
+    border-color: #ffffff;
+}
+
+.insp-dropdown.disabled,
+.insp-dropdown:disabled {
+    border-color: transparent;
+    color: #a8a8a8;
+    cursor: default;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%23707070' d='M0 0h8L4 5z'/></svg>");
+}
+
+/* Native <option> elements inherit the OS dropdown menu
+ * styling once the popup is open. Browsers vary widely in
+ * whether they respect <option> backgrounds and colours;
+ * setting them here covers Chrome and Edge (which honour
+ * them) while leaving Safari and Firefox at their native
+ * menu look. The chosen values keep the menu legible
+ * against either rendering path. */
+.insp-dropdown option {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+}
+
+/* --- Popover dropdown --- */
+
+/* Floats over the page in fixed positioning, set by the
+ * combo's click handler from getBoundingClientRect. Lighter-
+ * grey fill matching the combo trigger so the popover reads
+ * as a continuation of the field; subtle border so it sits
+ * cleanly over the inspector without a heavy frame. Z-index
+ * keeps it above the inspector pane and above the canvas
+ * pane's selection markers. */
+.insp-popover {
+    position: fixed;
+    z-index: 3000;
+    background-color: #6b6b6b;
+    border: 2px solid #ffffff;
+    border-radius: 3px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    padding: 2px 0;
+    color: #ffffff;
+    font-size: 11pt;
+    max-height: 380px;
+    overflow-y: auto;
+}
+
+.insp-popover-option {
+    padding: 4px 14px;
+    cursor: pointer;
+    line-height: 1.2;
+    user-select: none;
+}
+
+.insp-popover-option:hover {
+    background-color: rgba(95, 200, 88, 0.25);
+}
+
+/* Currently-selected option carries a green tint so the
+ * user sees their existing value when the popover opens.
+ * The styling is distinct from hover so the two states
+ * coexist (selected option, currently-hovered option). */
+.insp-popover-option.selected {
+    background-color: #46b03e;
+    color: #ffffff;
+}
+
+.insp-popover-option.selected:hover {
+    background-color: #5fc858;
+}
+
+/* --- Read-only rhythm-string field --- */
+
+/* Rhythm-string fields (activeBeats, strength) display a
+ * monospace font so each character is visually equal-width
+ * — important for reading rhythm patterns at a glance,
+ * since the columns of x/dot/digit characters carry the
+ * pattern's structural meaning. The inspector's default
+ * sans-serif font would let typography squash the structure. */
+.insp-rhythm-string {
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 11pt;
+    letter-spacing: 0.5px;
+}
+
+/* Read-only state for an editable field: the field accepts
+ * focus, allows text selection and copy, but rejects
+ * mutating keystrokes. Visually, the green frame is
+ * replaced with a muted grey so the field reads as not-
+ * currently-editable. The cursor changes to a text I-beam
+ * on hover so users see the field is still selectable. */
+.insp-field.readonly {
+    border-color: #777777;
+    cursor: text;
+}
+
+.insp-field.readonly:focus {
+    border-color: #999999;
+    outline: none;
+}
+
+/* Hint shown on focus of a read-only rhythm-string field.
+ * Positioned via the inspector's JS using fixed coordinates
+ * derived from getBoundingClientRect of the focused field.
+ * Styled as a small unobtrusive tooltip explaining how to
+ * unlock editing. */
+.insp-readonly-hint {
+    position: fixed;
+    z-index: 3000;
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 3px;
+    padding: 6px 10px;
+    color: #d8d4cc;
+    font-size: 10pt;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+    max-width: 360px;
+    pointer-events: none;
+}
+
+/* --- Canvas-object identification tooltip ---
+ *
+ * Floated next to the pointer when it rests on a canvas
+ * object (sprite, trigger, curve, curve cursor, or curve
+ * beat-point marker) for longer than the canvas's tooltip
+ * delay. Same visual vocabulary as .insp-readonly-hint
+ * (fixed-positioned dark pill with a thin mid-grey
+ * border) so identification surfaces in the inspector and
+ * on the canvas read as siblings. Text sits a touch larger
+ * here than in the inspector hint because the canvas
+ * tooltip is identification (kind + id) rather than a
+ * wordy how-to, so a single short line at the inspector's
+ * primary-text size is more readable than the hint's
+ * smaller copy. The canvas's _showTooltip sets left/top
+ * inline from the pointer's clientX/Y; white-space:nowrap
+ * is replaced here with pre-line so multi-line tooltip
+ * content displays correctly. pointer-events:none lets the
+ * tooltip float over canvas objects without intercepting
+ * the canvas's own mousemove and click hit-tests.
+ *
+ * Lives in inspector.css because its visual idiom matches
+ * the inspector's read-only hint exactly; sit-next-to
+ * the inspector hint in the source for the same reason.
+ */
+.canvas-tooltip {
+    position: fixed;
+    z-index: 3000;
+    background-color: #2a2a2a;
+    border: 1px solid #777777;
+    border-radius: 3px;
+    padding: 4px 10px;
+    color: #f0f0f0;
+    font-size: 11pt;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+    white-space: pre-line;
+}
+
+/* --- Slot field placeholder (Band 3 message-function bindings) ---
+ *
+ * Placeholder-hint display when the field is empty. The
+ * placeholder text itself is in the field's textContent so
+ * a screen reader / accessibility-zoom user sees the same
+ * proposed-name hint a sighted user does, but it's styled
+ * muted-italic to read as a hint rather than a stored
+ * value. Focus clears the placeholder for editing; blur
+ * restores it iff the field is empty. The two transitions
+ * are managed by inspector.js's _buildSlotField helper.
+ */
+.insp-field.placeholder-shown {
+    color: #a8a8a8;
+    font-style: italic;
+}
+
+/* Create button. Outlined green to match the function-binding
+ * field next to it; disabled variant mutes both border and
+ * text. */
+.insp-btn-create {
+    background-color: transparent;
+    border: 2px solid #46b03e;
+    color: #ffffff;
+    border-radius: 3px;
+    padding: 0 14px;
+    height: 24px;
+    font-size: 10pt;
+    line-height: 1;
+    cursor: pointer;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    font-family: inherit;
+}
+
+.insp-btn-create:hover {
+    background-color: rgba(70, 176, 62, 0.18);
+}
+
+.insp-btn-create.disabled {
+    border-color: #555555;
+    color: #a8a8a8;
+    cursor: default;
+    background-color: transparent;
+}
+
+/* Color field: a green-bordered box containing a colour swatch
+ * and the hex code. The swatch fills with the field's value
+ * via inline style. Empty/disabled state still shows the
+ * field's footprint via the lighter-grey fill. */
+.insp-color {
+    background-color: #6b6b6b;
+    border: 2px solid #d8d4cc;
+    border-radius: 3px;
+    padding: 0 6px;
+    height: 24px;
+    width: 130px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.insp-color.disabled {
+    border-color: transparent;
+    cursor: default;
+}
+
+.insp-color-swatch {
+    width: 32px;
+    height: 14px;
+    border-radius: 1px;
+    border: 1px solid #555555;
+    flex-shrink: 0;
+}
+
+.insp-color-text {
+    color: #ffffff;
+    font-size: 10pt;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+}
+
+.insp-color.disabled .insp-color-text {
+    color: #a8a8a8;
+}
+
+/* Native colour picker, hidden visually but invoked
+ * programmatically when the user clicks the swatch. The
+ * <input type="color"> element has to be in the DOM and
+ * not display:none for .click() to open the OS picker, so
+ * we shrink it to a 1px square at zero opacity. pointer-
+ * events:none keeps the otherwise-invisible element out
+ * of accidental hit-tests; programmatic .click() still
+ * fires regardless because it dispatches the click event
+ * directly rather than going through pointer-event
+ * routing. */
+.insp-color-picker {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    pointer-events: none;
+}
+
+/* Units indicator after a field group, e.g. "(X, Y)" after
+ * the position fields. Smaller than labels so it reads as a
+ * tag rather than a primary label. */
+.insp-units {
+    color: #ffffff;
+    font-size: 10pt;
+    flex-shrink: 0;
+}
+
+.insp-units.disabled {
+    color: #a8a8a8;
+}
+
+/* Co-label count indicator on the Band 1 Pattern row.
+ * Surfaces a brief "+N" tag after the Pattern button when
+ * the selected object's labelled block is shared with
+ * other objects on the same chain (section 9). N is the
+ * count of other objects sharing the chain. Muted tone
+ * because the indicator is metadata about the button
+ * rather than primary content; small font matches the
+ * inspector's other inline annotations (.insp-units).
+ * The right margin doubles as the spacer that keeps the
+ * indicator from crowding into the Repeats label that
+ * follows on the same row without widening the row when
+ * the indicator is absent (the rule applies only when
+ * the element is rendered, which only happens for shared
+ * chains). */
+.insp-co-label-count {
+    color: #a8a8a8;
+    font-size: 10pt;
+    flex-shrink: 0;
+    margin-right: 8px;
+}
+
+/* Inline single-letter label that sits immediately before a
+ * field, used by the Cursor Size row's R/L prefixes. Tighter
+ * spacing than a regular label so it reads as belonging to
+ * the field that follows. */
+.insp-inline-letter {
+    color: #ffffff;
+    font-size: 11pt;
+    flex-shrink: 0;
+    margin-right: -4px;
+}
+
+.insp-inline-letter.disabled {
+    color: #a8a8a8;
+}
+
+/* Numeric field wrapper: holds an editable contenteditable
+ * field plus a two-button spinner band on the right. The
+ * wrapper takes the width that opts.width sets via inline
+ * style; the field inside flex-fills the remaining space
+ * after the spinner band's fixed width. Visually the field
+ * + spinner read as one bordered control because the
+ * wrapper carries the green border and the lighter-grey
+ * fill, and the field inside has its border and fill
+ * suppressed so it inherits the wrapper's chrome.
+ *
+ * The wrapper exists so the spinner's pointer events sit
+ * on a sibling element rather than inside the
+ * contenteditable field, which would risk the browser
+ * placing the caret at the spinner's position on click. */
+.insp-field-num-wrap {
+    display: inline-flex;
+    align-items: stretch;
+    flex-shrink: 0;
+    height: 24px;
+    border: 2px solid #d8d4cc;
+    border-radius: 3px;
+    background-color: #6b6b6b;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+/* Field inside the wrapper: drop its own border, fill, and
+ * radius (the wrapper provides them) and flex-fill the
+ * remaining horizontal space. min-width: 0 lets the field
+ * shrink below its content width so the surrounding
+ * overflow / ellipsis behaviour kicks in on long values
+ * rather than pushing the spinner off the right edge.
+ * height: auto so the field doesn't fight the wrapper's
+ * height. The 4px right padding keeps the value from
+ * touching the spinner band without taking enough space
+ * to feel cramped. */
+.insp-field-num-wrap > .insp-field {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    border: none;
+    border-radius: 0;
+    background-color: transparent;
+    padding-right: 4px;
+    height: auto;
+}
+
+/* Spinner band: a fixed-width column to the right of the
+ * field, split into upper (increment) and lower
+ * (decrement) halves. The whole half is the click target;
+ * the visible green button graphics are CSS pseudo-
+ * elements centred in each half so the hit area extends
+ * well beyond the visible button — important for the
+ * eyesight-friendly hit-target sizing GeoSonix used
+ * implicitly via the same trick. user-select: none
+ * prevents accidental text selection if the user drags
+ * during a long press. */
+.insp-spinner {
+    flex: 0 0 14px;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+}
+
+.insp-spinner-up,
+.insp-spinner-down {
+    flex: 1;
+    position: relative;
+    cursor: pointer;
+    touch-action: none;
+}
+
+/* Upper half slightly larger than the lower half so the
+ * up direction reads as the dominant of the two buttons,
+ * matching the GeoSonix visual signature. The two halves
+ * together fill the wrapper's inner height. The taller-
+ * on-top quirk is purely stylistic — the increment size
+ * is the same in both directions. */
+.insp-spinner-up {
+    flex: 1.25;
+}
+
+.insp-spinner-up::after,
+.insp-spinner-down::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #5fc858;
+    border-radius: 1px;
+}
+
+.insp-spinner-up::after {
+    width: 8px;
+    height: 6px;
+}
+
+.insp-spinner-down::after {
+    width: 8px;
+    height: 4px;
+}
+
+/* Pressing state: brighter lime green on the active half
+ * so the user sees the press landing, particularly
+ * helpful during a long auto-repeat hold where the only
+ * other feedback is the value changing. The class is
+ * toggled by inspector.js's wireSpinnerHalf on
+ * pointerdown / pointerup / pointercancel. */
+.insp-spinner-up.pressing::after,
+.insp-spinner-down.pressing::after {
+    background-color: #a0f098;
+}
+
+/* Disabled state on the wrapper: drop the green border to
+ * match .insp-field.disabled, and mute the spinner
+ * graphics so the inactive direction reads as part of
+ * the disabled control. The pointer cursor goes back to
+ * default since clicks are no-ops. In practice the
+ * disabled path doesn't reach the wrapper today — non-
+ * editable fields short-circuit before wrap construction
+ * — but the rules cover any future change that does. */
+.insp-field-num-wrap.disabled {
+    border-color: transparent;
+}
+
+.insp-field-num-wrap.disabled .insp-spinner-up,
+.insp-field-num-wrap.disabled .insp-spinner-down {
+    cursor: default;
+}
+
+.insp-field-num-wrap.disabled .insp-spinner-up::after,
+.insp-field-num-wrap.disabled .insp-spinner-down::after {
+    background-color: #707070;
+}
+
+/* Bottom spacer at the end of the inspector content. Pushes
+ * the last band's fields up by roughly two row heights so
+ * the macOS dock doesn't pop over the bottom-most editable
+ * fields when the user mouses near the screen edge while
+ * editing. Lives inside .inspector-panel so it scrolls with
+ * the rest of the form rather than docking to the pane
+ * bottom; that way scrolling all the way down still reveals
+ * the spacer's empty space and the pane never feels as if
+ * it ends abruptly at a field edge. */
+.insp-bottom-spacer {
+    height: 48px;
+    flex-shrink: 0;
+}

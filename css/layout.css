@@ -1,0 +1,136 @@
+/* Layout regions.
+ *
+ * Body (editor pane on the left, canvas pane on the right),
+ * canvas-area and message-area inside the canvas pane, and
+ * the shared slot-container rules for the three sibling
+ * areas inside the editor pane (#editor-area, #inspector-area,
+ * #canvas-inspector-area), which take turns being visible
+ * based on the active tab.
+ */
+
+/* Flex layout rather than fixed grid so the draggable divider
+ * can set each pane's flex-basis at runtime. Editor on the left
+ * (code reads first), canvas on the right (result second),
+ * matching the natural left-to-right mental flow. */
+#body {
+    display: flex;
+    overflow: hidden;
+}
+
+/* Editor pane width is set at runtime by the body-divider's
+ * installDivider call: it measures the inspector's natural
+ * content width as a hard floor and applies either the
+ * persisted user-drag size (clamped to that floor) or the
+ * floor itself if no size has been persisted. The CSS here
+ * starts with flex-basis: max-content as a defensive default
+ * — if for any reason the divider doesn't install (initial
+ * paint before main.js runs, or an unexpected error path)
+ * the pane still renders at its natural inspector width
+ * rather than collapsing. The runtime value overrides this
+ * the moment the divider is wired. */
+#editor-pane {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background-color: #141414;
+    flex: 0 0 max-content;
+    min-width: 0;
+}
+
+#canvas-pane {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background-color: #2a2a2a;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#canvas-area {
+    flex: 1 1 auto;
+    background-color: #2a2a2a;
+    overflow: hidden;
+    position: relative;
+    min-height: 0;
+}
+
+/* When canvas-area gains focus (via the mousedown handler in
+ * main.js that makes it focusable for the Spacebar transport
+ * shortcut), the browser would normally draw a focus ring
+ * around it. Suppress that ring so the canvas stays clean
+ * looking; the focus-receiving behaviour is purely about
+ * keyboard event routing, not about visible focus state. */
+#canvas-area:focus {
+    outline: none;
+}
+
+#message-area {
+    flex: 0 0 56px;
+    background-color: #262626;
+    color: #c8c0b0;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 12pt;
+    overflow: auto;
+    padding: 8px 12px;
+    min-height: 56px;
+}
+
+.message-placeholder {
+    color: #a0a0a0;
+    font-style: italic;
+}
+
+.message-entry {
+    color: #c8c0b0;
+    padding: 1px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Error messages share the warm-gray colour of info messages
+ * and differ only by the "! " prefix inserted in
+ * MessageArea.write. This avoids relying on a colour shift
+ * that's hard for brightness-sensitive readers to parse. */
+.message-entry.message-error {
+    color: #c8c0b0;
+}
+
+/* --- Editor-pane slot containers ---
+ *
+ * Three sibling areas occupy the same flex slot under the
+ * tab bar; only one is visible at a time. The .hidden helper
+ * toggles which. The canvas-inspector-area is the Section
+ * 13.5 sibling of the property inspector — selection-
+ * independent scene-level chrome (canvas dimensions,
+ * background-image controls, image-transformation sliders,
+ * recent-image gallery) reached through the Canvas tab.
+ */
+
+#editor-area,
+#inspector-area,
+#canvas-inspector-area {
+    flex: 1 1 auto;
+    overflow: hidden;
+    min-height: 0;
+    position: relative;
+}
+
+#editor-area.hidden,
+#inspector-area.hidden,
+#canvas-inspector-area.hidden {
+    display: none;
+}
+
+#editor-area {
+    background-color: #141414;
+}
+
+#inspector-area {
+    background-color: #2a2a2a;
+    overflow-y: auto;
+}
+
+#canvas-inspector-area {
+    background-color: #2a2a2a;
+    overflow-y: auto;
+}

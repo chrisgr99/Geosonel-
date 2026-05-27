@@ -1,0 +1,244 @@
+/* AI batch confirm-to-apply dialog (Section 15 Phase 1B commit 4b).
+ *
+ * Small dialog anchored to the bottom of #canvas-area just
+ * above the message divider, with a fixed centred horizontal
+ * position. Visible whenever mirrorPush's state is non-idle.
+ * Per-state classes change the visual treatment of the
+ * primary indicator (pulsating yellow Thinking, green
+ * Accept, or hidden behind an "AI edit issue" label) without
+ * changing the layout. The accompanying large error dialog
+ * expands from a small footprint via scale + opacity when
+ * the user clicks Details on the rejected state.
+ */
+
+.ai-batch-dialog {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background-color: #3a3a3a;
+    border: 1px solid #777777;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+    z-index: 50;
+    font-size: 12pt;
+    color: #f0f0f0;
+}
+
+.ai-batch-dialog.hidden,
+.ai-batch-dialog .hidden {
+    display: none;
+}
+
+.ai-batch-label {
+    color: #f0f0f0;
+    padding: 0 4px;
+    font-weight: 500;
+}
+
+.ai-batch-dialog button {
+    font-size: 12pt;
+    font-family: inherit;
+    padding: 6px 16px;
+    border-radius: 4px;
+    border: 2px solid #777777;
+    background-color: #555555;
+    color: #f0f0f0;
+    cursor: pointer;
+    font-weight: 500;
+    line-height: 1.2;
+}
+
+.ai-batch-dialog button:focus {
+    outline: 2px solid #ffffff;
+    outline-offset: 1px;
+}
+
+.ai-batch-dialog button:disabled {
+    cursor: default;
+}
+
+.ai-batch-primary {
+    min-width: 100px;
+}
+
+/* Thinking state: yellowish-orange outline plus matching
+ * text on the neutral grey fill. The pulse runs on opacity
+ * across the whole button so the user perceives ongoing
+ * work without the indicator becoming visually noisy at
+ * the edge of vision. The primary is disabled in this
+ * state (set via the disabled attribute in
+ * aiBatchDialog.js); the pulse signals that the AI is
+ * still working and Accept is not yet available.
+ */
+.ai-batch-dialog-thinking .ai-batch-primary {
+    border-color: #d68a2c;
+    color: #d68a2c;
+    animation: ai-batch-thinking-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ai-batch-thinking-pulse {
+    0%   { opacity: 1.0; }
+    50%  { opacity: 0.55; }
+    100% { opacity: 1.0; }
+}
+
+/* Ready state: green outline plus matching text on the
+ * neutral grey fill, no pulse — the work is done; the
+ * user can act now.
+ */
+.ai-batch-dialog-ready .ai-batch-primary {
+    border-color: #3aa84a;
+    color: #3aa84a;
+}
+
+.ai-batch-dialog-ready .ai-batch-primary:hover {
+    background-color: #6a6a6a;
+}
+
+/* Cancel (Dismiss in rejected) button: red outline plus
+ * red text on the neutral fill, across all three visible
+ * states. Always clickable; mirrorPush's cancelApply
+ * method handles per-state semantics so the visual
+ * contract here is just "this discards or dismisses".
+ */
+.ai-batch-cancel {
+    border-color: #c84a4a;
+    color: #c84a4a;
+}
+
+.ai-batch-cancel:hover {
+    background-color: #6a6a6a;
+}
+
+/* Details button (rejected only). Muted blue outline plus
+ * matching text, secondary to the Dismiss action: the
+ * user can choose to see the full error or just
+ * acknowledge and move on.
+ */
+.ai-batch-details {
+    border-color: #4a6a9c;
+    color: #4a6a9c;
+}
+
+.ai-batch-details:hover {
+    background-color: #6a6a6a;
+}
+
+/* Large error dialog. Centred over #canvas-area
+ * (which is position: relative). Does not dim the
+ * canvas; floats over it as an accent surface. Hidden
+ * by default; the .ai-batch-error-dialog-expanding
+ * class drives the scale-and-opacity transition from
+ * a small footprint to full size when the user clicks
+ * Details. The transition runs over 250ms which feels
+ * responsive without being abrupt. The starting scale
+ * (0.4) gives enough room for the eye to register the
+ * growth as growth rather than as a sudden full-size
+ * pop.
+ *
+ * Sits at a higher z-index than the small dialog so a
+ * freshly-shown large always paints above any small-
+ * dialog remnants during the brief overlap (the small
+ * dialog itself is hidden by _showLargeError; the
+ * z-index ordering is defensive).
+ */
+.ai-batch-error-dialog {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0;
+    background-color: #3a3a3a;
+    border: 1px solid #777777;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    padding: 20px 24px;
+    min-width: 380px;
+    max-width: 560px;
+    color: #f0f0f0;
+    z-index: 60;
+    transition: transform 250ms ease-out, opacity 250ms ease-out;
+    pointer-events: none;
+}
+
+.ai-batch-error-dialog.hidden {
+    display: none;
+}
+
+.ai-batch-error-dialog.ai-batch-error-dialog-expanding {
+    transform: translate(-50%, -50%) scale(1.0);
+    opacity: 1.0;
+    pointer-events: auto;
+}
+
+.ai-batch-error-header {
+    color: #e64a4a;
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 0 0 12px 0;
+}
+
+.ai-batch-error-file {
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 11pt;
+    color: #c8c8c8;
+    margin-bottom: 8px;
+}
+
+.ai-batch-error-message {
+    background-color: #2a2a2a;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 10px;
+    margin: 0 0 12px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 11pt;
+    max-height: 220px;
+    overflow: auto;
+    color: #f0f0f0;
+}
+
+.ai-batch-error-reassurance {
+    margin-bottom: 6px;
+    color: #f0f0f0;
+}
+
+.ai-batch-error-action {
+    margin-bottom: 16px;
+    color: #c8c8c8;
+    font-style: italic;
+}
+
+.ai-batch-error-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.ai-batch-error-button {
+    font-size: 12pt;
+    font-family: inherit;
+    padding: 6px 14px;
+    border-radius: 4px;
+    border: 1px solid #777777;
+    background-color: #555555;
+    color: #f0f0f0;
+    cursor: pointer;
+    line-height: 1.2;
+}
+
+.ai-batch-error-button:hover {
+    background-color: #666666;
+}
+
+.ai-batch-error-button:focus {
+    outline: none;
+    border-color: #ffffff;
+}

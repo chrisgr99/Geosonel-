@@ -1,0 +1,198 @@
+/* Mode overrides.
+ *
+ * Body-class state changes that swap layout or visibility:
+ *
+ *   - body.focus-canvas: View → Focus Canvas (or Cmd-Shift-F,
+ *     or the sidebar-toggle button at the toolbar's far
+ *     left) collapses the editor pane, body divider, message
+ *     divider, and message area together so the canvas fills
+ *     the body and reaches both the top divider and the
+ *     window bottom.
+ *
+ *   - body.electron-mode: Electron build replaces the in-page
+ *     menubar with the native macOS menu bar; main.js sets
+ *     the class on startup, and the rules below hide the
+ *     entire #top-row and its divider and collapse the grid's
+ *     top two tracks so the canvas-toolbar sits flush at the
+ *     very top of the window.
+ *
+ * Also carries the pane-flex transition that animates the
+ * Focus Canvas toggle in both directions, and the
+ * body.dragging-divider counterpart that suppresses that
+ * transition during user divider drags so the panes track
+ * the cursor rather than chase it with easing.
+ */
+
+/* Transition the editor pane and the body divider's flex so
+ * the Focus Canvas toggle (button, View menu, or
+ * Cmd-Shift-F) animates rather than jumping. The canvas
+ * pane has the same transition so its expansion animates
+ * in lockstep with the editor pane's collapse. The
+ * message area and its divider get the same treatment
+ * because Focus Canvas collapses them too so the canvas
+ * fills the body all the way to the window bottom. The
+ * transition applies in both directions; exiting Focus
+ * Canvas animates back to the persisted user width. */
+#editor-pane,
+#body-divider.divider-draggable,
+#canvas-pane,
+#message-area,
+#message-divider.divider-draggable {
+    transition: flex 220ms ease-out;
+}
+
+/* Suppress the Focus Canvas flex transition during user
+ * divider drags. The transition above interpolates flex
+ * over 220ms, which is right for a one-shot Focus Canvas
+ * toggle but causes visible lag during a drag (paneDivider
+ * sets style.flex 60+ times per second and each update
+ * kicks off a fresh easing animation, so the pane width
+ * chases the cursor with easing rather than tracking it).
+ * paneDivider adds .dragging-divider to document.body on
+ * drag start and removes it on drag end. */
+body.dragging-divider #editor-pane,
+body.dragging-divider #canvas-pane,
+body.dragging-divider #message-area,
+body.dragging-divider #body-divider.divider-draggable,
+body.dragging-divider #message-divider.divider-draggable {
+    transition: none;
+}
+
+/* --- Focus Canvas mode ---
+ *
+ * Collapses the editor pane, the body divider, the message
+ * divider, and the message area together so the canvas
+ * fills the body and reaches both the top divider and the
+ * window bottom — useful when the user wants every pixel
+ * for canvas-driven composition. Reached from three entry
+ * points: the sidebar button in the canvas-toolbar, View →
+ * Focus Canvas, and Cmd-Shift-F. The !important on flex
+ * overrides the inline flex-basis the body divider sets on
+ * the editor pane; overflow: hidden suppresses each
+ * region's contents from peeking out during the transition.
+ */
+body.focus-canvas #editor-pane {
+    flex: 0 0 0 !important;
+    min-width: 0;
+    overflow: hidden;
+}
+
+body.focus-canvas #body-divider {
+    flex: 0 0 0 !important;
+    overflow: hidden;
+}
+
+body.focus-canvas #message-area,
+body.focus-canvas #message-divider {
+    flex: 0 0 0 !important;
+    min-height: 0;
+    overflow: hidden;
+}
+
+body.focus-canvas #canvas-pane {
+    flex: 1 1 100% !important;
+}
+
+/* --- Electron-build native menu takeover ---
+ *
+ * When running under Electron, the macOS native menu bar at
+ * the top of the screen replaces the in-page menubar.
+ * main.js sets body.electron-mode on startup; these rules
+ * then hide the entire #top-row (which on Electron contains
+ * only the menubar) along with the divider beneath it, and
+ * collapse the grid's top two tracks so the canvas-toolbar
+ * sits flush at the very top of the window. The web build
+ * never sets the class, so its menubar and divider remain
+ * visible and functional.
+ */
+body.electron-mode #top-row,
+body.electron-mode #top-divider {
+    display: none;
+}
+
+body.electron-mode #app {
+    grid-template-rows: 1fr;
+}
+
+/* --- Focus Canvas toolbar spacer ---
+ *
+ * When body.focus-canvas is active, the editor pane
+ * collapses to zero width and the canvas pane (which hosts
+ * the toolbar) expands to fill the body. Without the
+ * compensation below, every toolbar item shifts leftward by
+ * the editor pane's previous width, breaking muscle memory
+ * for where each button lives on screen. The padding-left
+ * here re-introduces exactly that width, so the Focus
+ * Canvas button at the toolbar's far left stays at its
+ * normal absolute screen position and every downstream item
+ * follows. main.js keeps the --editor-pane-width variable
+ * (declared in base.css) in sync with the divider's onDrag
+ * and the initial-width restore, so the compensation tracks
+ * the user's current pane size.
+ */
+body.focus-canvas #canvas-toolbar {
+    padding-left: var(--editor-pane-width);
+}
+
+/* --- AI batch dialog edit blocking (Phase 1B commit 4b.2) ---
+ *
+ * When the AI batch confirm-to-apply dialog is visible
+ * (mirrorPush state is non-idle: thinking, ready, or
+ * rejected), block the user from editing score content
+ * so a held batch's apply doesn't silently overwrite
+ * in-flight edits. aiBatchDialog toggles
+ * body.ai-batch-active on dialog visibility and clears
+ * it when the dialog closes.
+ *
+ * What gets blocked: every editable surface that mutates
+ * scene.json, behaviours.js, or bundle binaries —
+ * inspector form fields, canvas-inspector controls, the
+ * canvas surface itself (so tool clicks don't fire), the
+ * toolbar's object-creation tools and image-import
+ * action, the BPM and canvas W/H fields, and the in-page
+ * menubar. CodeMirror read-only is handled separately in
+ * editor.js via setReadOnly, since the read-only state
+ * needs a state-effect dispatch rather than a CSS rule.
+ *
+ * What stays live: transport buttons (per the 4b.2
+ * spec — transport stays unaffected), the sidebar-toggle
+ * (Focus Canvas is a view-state change, not a score
+ * edit), the Play Selected toggle (changes what plays,
+ * not score data), display-only indicators (musical
+ * position, MIDI indicator, field-readonly), and the
+ * dialog surfaces themselves so the user can click
+ * Accept, Cancel, Dismiss, or Details.
+ *
+ * Visual feedback: opacity 0.5 dims blocked surfaces so
+ * the lock is visible at a glance, not just felt as
+ * unresponsive controls.
+ */
+
+body.ai-batch-active .insp-field,
+body.ai-batch-active .insp-combo,
+body.ai-batch-active .insp-dropdown,
+body.ai-batch-active .insp-checkbox,
+body.ai-batch-active .insp-color,
+body.ai-batch-active .insp-spinner,
+body.ai-batch-active .insp-btn-create,
+body.ai-batch-active .insp-field-num-wrap,
+body.ai-batch-active .canvas-insp-button,
+body.ai-batch-active .canvas-insp-thumb,
+body.ai-batch-active .canvas-insp-brightness-slider,
+body.ai-batch-active .toolbar-tool,
+body.ai-batch-active .toolbar-action-button,
+body.ai-batch-active .toolbar-canvas-field,
+body.ai-batch-active .field-input,
+body.ai-batch-active .menu-item {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+/* Canvas surface: block tool-layer clicks so armed or
+ * residual tool dispatch can't fire while the lock is
+ * on. The dialog sits as a sibling of the canvas inside
+ * #canvas-area, so the canvas-only selector here leaves
+ * the dialog interactive. */
+body.ai-batch-active #canvas-area canvas {
+    pointer-events: none;
+}
