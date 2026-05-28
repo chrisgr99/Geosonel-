@@ -2908,31 +2908,171 @@ async function main() {
     };
 
     /**
-     * Toggle the `mute` field on every object in the
-     * canvas selection. Tri-state semantics matching the
-     * inspector's Mute checkbox: if every selected object
-     * is currently muted, unmute all; otherwise mute all.
-     * A mixed selection (some muted, some not) goes to
-     * fully muted on first toggle and then unmuted on the
-     * second — the standard DAW Mute keystroke behaviour
-     * that lets a user normalise mixed states with one
-     * press.
+     * Toggle the `mute` field on the cursor-derived
+     * target or the canvas selection. Two entry points
+     * share one toggle action:
      *
-     * The existing `mute` field on sprites, triggers, and
-     * curves already gates pattern firing at the runtime,
-     * so this perform just flips the field and lets the
-     * trailing runScene (driven by applyCanvasEdit) pick
-     * up the change. Visual rendering of muted state
-     * (cursor hiding, grayed-out treatment, code-tab
-     * label gray-out) is the scope of a follow-up commit;
-     * this commit just establishes the keystroke and the
-     * toggle action.
+     * Cursor path. When the editor has focus on a Code
+     * tab and the cursor sits on a labelled pattern
+     * block's label (within `[label.start, colonPos + 1]`),
+     * the target is that specific label's object id
+     * alone. For chained labels like `$CRV5: $CRV1:`
+     * the cursor's position picks ONE label; the orange
+     * "$mute:" marker then appears only after the
+     * muted label, so the chain reads as "CRV5 muted,
+     * CRV1 not" or vice versa. Single-id toggle
+     * semantics: if currently muted, unmute; else mute
+     * — no tri-state logic. Orphan labels (id no
+     * longer in the scene) silently no-op rather than
+     * falling through to the canvas path. See editor.js's
+     * deriveCursorMuteTarget for the exact "on a label"
+     * boundary.
      *
-     * Goes through applyCanvasEdit so the toggle lands on
-     * the undo stack. No-op on an empty selection or when
-     * no scene is loaded.
+     * Canvas path. When the cursor isn't on a label
+     * (anywhere in the block body, a comment, a function
+     * declaration, whitespace between chained labels, a
+     * non-Code tab, or the editor isn't focused), the
+     * target is the canvas selection. Tri-state
+     * semantics matching the inspector's Mute checkbox:
+     * if every selected object is currently muted,
+     * unmute all; otherwise mute all. A mixed selection
+     * goes to fully muted on first toggle and unmuted
+     * on the second — the standard DAW Mute keystroke
+     * behaviour for normalising mixed states.
+     *
+     * The existing `mute` field on sprites, triggers,
+     * and curves already gates pattern firing at the
+     * runtime, so the toggle just flips the field and
+     * lets the trailing runScene (driven by
+     * applyCanvasEdit) pick up the change. Visual
+     * rendering of muted state (canvas desaturation,
+     * Code-tab marker) is driven by the same
+     * dispatchMutedObjectIds flow on every successful
+     * scene reload.
+     *
+     * Both paths go through applyCanvasEdit so the
+     * toggle lands on the undo stack. The canvas path
+     * is a no-op on an empty selection or when no
+     * scene is loaded.
      */
     const performToggleMute = async () => {
+        // Check first whether the editor has the cursor
+        // positioned on a labelled-block label in the
+        // Code tab. When it does, the keystroke targets
+        // that specific label's object id rather than
+        // the canvas selection; this is the cursor-mute
+        // entry point introduced alongside the visual
+        // mute feedback so the composer can mute or
+        // unmute a single curve from the Code tab
+        // without leaving the keyboard. Returns null when
+        // the cursor isn't on a label (in the block body,
+        // in a comment, in a function decl, in whitespace
+        // between chained labels, on a non-Code tab, or
+        // when the editor isn't focused) so the caller
+        // falls through to the canvas-selection path
+        // below. See editor.js's deriveCursorMuteTarget
+        // for the exact "on a label" boundary.
+        //
+        // For chained labels (e.g. `$CRV5: $CRV1: note(...)`)
+        // the cursor's specific label is the target,
+        // never the whole chain — a single member of a
+        // shared-pattern chain can be muted independently
+        // and the orange "$mute:" marker then appears
+        // after that label alone, reading the chain as
+        // "CRV5 muted, CRV1 not". This is different from
+        // Cmd-Enter promote which targets every label in
+        // the chain together.
+        const cursorTargetId = editor.deriveCursorMuteTarget();
+        if (cursorTargetId !== null && currentScene !== null) {
+            // Find the cursor target in currentScene to
+            // determine its current mute state. The
+            // single-id toggle simplifies to "if muted,
+            // unmute; else mute" — no tri-state logic
+            // since there's only one object. When the id
+            // doesn't resolve to any scene object (an
+            // orphan label that survived a delete or a
+            // rename), the cursor-mute path silently
+            // no-ops rather than falling through to the
+            // canvas selection: the user pressed Cmd-
+            // Shift-M with the cursor on a specific
+            // label, which is a clear intent to toggle
+            // that label's object, and falling back to
+            // canvas selection in that case would be
+            // surprising.
+            let currentMuted = false;
+            let found = false;
+            for (const obj of currentScene.sprites) {
+                if (obj.id === cursorTargetId) {
+                    currentMuted = obj.mute === true;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                for (const obj of currentScene.triggers) {
+                    if (obj.id === cursorTargetId) {
+                        currentMuted = obj.mute === true;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                for (const obj of currentScene.curves) {
+                    if (obj.id === cursorTargetId) {
+                        currentMuted = obj.mute === true;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) return;
+            const newValue = !currentMuted;
+            // The id-to-index lookup happens inside the
+            // mutator against the freshly-parsed scene
+            // data, since applyCanvasEdit re-parses
+            // scene.json from the bundle's current text
+            // and array indices are only meaningful
+            // against that parse. Building the selection
+            // here from currentScene would risk an index
+            // mismatch if anything had touched scene.json
+            // between the runScene that produced
+            // currentScene and this edit.
+            await applyCanvasEdit((data) => {
+                /** @type {{sprites: number[], triggers: number[], curves: number[]}} */
+                const sel = { sprites: [], triggers: [], curves: [] };
+                if (Array.isArray(data.sprites)) {
+                    for (let i = 0; i < data.sprites.length; i++) {
+                        const e = data.sprites[i];
+                        if (e !== null && typeof e === "object" && e.id === cursorTargetId) {
+                            sel.sprites.push(i);
+                            break;
+                        }
+                    }
+                }
+                if (Array.isArray(data.triggers)) {
+                    for (let i = 0; i < data.triggers.length; i++) {
+                        const e = data.triggers[i];
+                        if (e !== null && typeof e === "object" && e.id === cursorTargetId) {
+                            sel.triggers.push(i);
+                            break;
+                        }
+                    }
+                }
+                if (Array.isArray(data.curves)) {
+                    for (let i = 0; i < data.curves.length; i++) {
+                        const e = data.curves[i];
+                        if (e !== null && typeof e === "object" && e.id === cursorTargetId) {
+                            sel.curves.push(i);
+                            break;
+                        }
+                    }
+                }
+                setMuteOnSelection(data, sel, newValue);
+            });
+            return;
+        }
+
         const sel = canvas.getSelection();
         const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
         if (total === 0 || currentScene === null) return;

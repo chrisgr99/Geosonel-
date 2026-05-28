@@ -283,49 +283,87 @@ function computeDecorations(view, selectedObjectIds, knownObjectIds, mutedObject
     // explicit sorting.
     for (const node of ast.body) {
         if (node.type === "LabeledStatement") {
-            const label = node.label;
-            if (label === null ||
-                label.type !== "Identifier" ||
-                typeof label.name !== "string") continue;
-            if (!label.name.startsWith("$")) continue;
-            const objectId = label.name.slice(1);
-            // Find the colon between the label and the body
-            // explicitly so any whitespace between them does
-            // not become part of the styled range. The colon
-            // must exist between label.end and the
-            // LabelledStatement body's start by the JavaScript
-            // grammar; the -1 guard is defence against a
-            // malformed AST.
-            const colonPos = source.indexOf(":", label.end);
-            if (colonPos === -1) continue;
-            // Active-tag and orphan-tag are mutually
-            // exclusive (a selected object exists in the
-            // scene, so its id is in knownObjectIds), so
-            // a single class name suffices per label.
-            let className = null;
-            if (selectedObjectIds !== null && selectedObjectIds.has(objectId)) {
-                className = ACTIVE_TAG_CLASS;
-            } else if (knownObjectIds !== null && !knownObjectIds.has(objectId)) {
-                className = ORPHAN_TAG_CLASS;
-            }
-            if (className !== null) {
-                builder.add(
-                    label.start,
-                    colonPos + 1,
-                    Decoration.mark({ class: className }),
-                );
-            }
-            // Mute badge widget. Position is colonPos + 1
-            // (immediately after the label's colon), which
-            // is the end of the active/orphan mark range
-            // so the widget renders as a sibling of the
-            // mark rather than inside it. The widget shows
-            // for muted bindings regardless of selection
-            // or known-id state; a muted-and-selected
-            // binding gets both the green identifier and
-            // the amber badge.
-            if (mutedObjectIds !== null && mutedObjectIds.has(objectId)) {
-                builder.add(colonPos + 1, colonPos + 1, muteBadgeDecoration);
+            // Walk the chain of nested LabeledStatements
+            // inward. A chained block like $A: $B: note(...)
+            // parses as one outer LabeledStatement
+            // (label = $A) whose body is another
+            // LabeledStatement (label = $B) whose body
+            // is the expression. Processing each $-
+            // prefixed label individually means a
+            // selected, orphaned, or muted inner label
+            // gets its own active/orphan/mute treatment
+            // independent of the outer label, which is
+            // what makes per-label cursor mute (Cmd-
+            // Shift-M on a specific label in a chain)
+            // read correctly with the badge appearing
+            // after the muted label alone. Non-$ labels
+            // (regular JS labels mixed into a chain —
+            // uncommon but possible) are skipped
+            // without decoration but the walk continues
+            // to inner labels. Labels are in strictly
+            // increasing source position as we walk
+            // inward (each label's body starts after
+            // the outer label's colon), so the per-
+            // label decoration adds satisfy
+            // RangeSetBuilder's non-decreasing-from
+            // requirement naturally.
+            let current = node;
+            while (current !== null &&
+                   typeof current === "object" &&
+                   current.type === "LabeledStatement") {
+                const label = current.label;
+                if (label === null ||
+                    label.type !== "Identifier" ||
+                    typeof label.name !== "string") {
+                    break;
+                }
+                if (label.name.startsWith("$")) {
+                    const objectId = label.name.slice(1);
+                    // Find the colon between this label
+                    // and its body explicitly so any
+                    // whitespace between them does not
+                    // become part of the styled range.
+                    const colonPos = source.indexOf(":", label.end);
+                    if (colonPos !== -1) {
+                        // Active-tag and orphan-tag are
+                        // mutually exclusive (a selected
+                        // object exists in the scene, so
+                        // its id is in knownObjectIds),
+                        // so a single class name suffices
+                        // per label.
+                        let className = null;
+                        if (selectedObjectIds !== null && selectedObjectIds.has(objectId)) {
+                            className = ACTIVE_TAG_CLASS;
+                        } else if (knownObjectIds !== null && !knownObjectIds.has(objectId)) {
+                            className = ORPHAN_TAG_CLASS;
+                        }
+                        if (className !== null) {
+                            builder.add(
+                                label.start,
+                                colonPos + 1,
+                                Decoration.mark({ class: className }),
+                            );
+                        }
+                        // Mute badge widget. Position is
+                        // colonPos + 1 (immediately
+                        // after the label's colon),
+                        // which is the end of the
+                        // active/orphan mark range so
+                        // the widget renders as a
+                        // sibling of the mark rather
+                        // than inside it. The widget
+                        // shows for muted bindings
+                        // regardless of selection or
+                        // known-id state; a muted-and-
+                        // selected binding gets both
+                        // the green identifier and the
+                        // orange badge.
+                        if (mutedObjectIds !== null && mutedObjectIds.has(objectId)) {
+                            builder.add(colonPos + 1, colonPos + 1, muteBadgeDecoration);
+                        }
+                    }
+                }
+                current = current.body;
             }
         } else if (node.type === "FunctionDeclaration") {
             const id = node.id;

@@ -2214,6 +2214,110 @@ export class TabbedEditor {
     }
 
     /**
+     * Detect whether the cursor in the active tab is
+     * positioned on a top-level labelled pattern block's
+     * label, and return the object id that label binds.
+     * Returns null when the cursor is anywhere else — in
+     * the block's expression body, in whitespace between
+     * labels of a chain, in a comment, in a callback
+     * function declaration, or outside any labelled block
+     * — or when the active tab is not a Code tab.
+     *
+     * "On a label" means the cursor position is within
+     * the inclusive range [label.start, colonPos + 1] of
+     * a dollar-prefixed labelled-block label. The colon
+     * counts as part of the label range, and the position
+     * immediately after the colon also counts so a click
+     * that lands just past the colon still resolves to
+     * the label. Whitespace between two chained labels
+     * (after the previous label's colon, before the next
+     * label's dollar) matches neither label and returns
+     * null.
+     *
+     * Chains are walked inward and EACH dollar-prefixed
+     * label is checked individually — unlike
+     * _tryPromoteLabelledBlock which treats a chain as a
+     * unit and returns every id along it. The per-label
+     * semantics let the composer mute a single curve in a
+     * shared-pattern chain (e.g. cursor on $CRV5 in
+     * `$CRV5: $CRV1: note(...)` returns CRV5 alone) so a
+     * shared block can have one member silenced without
+     * affecting the others. Non-$-prefixed labels in a
+     * chain (uncommon but legal) are skipped without
+     * matching but the walk continues to inner labels.
+     *
+     * Used by main.js's performToggleMute to give the
+     * Cmd-Shift-M keystroke a cursor-derived target when
+     * the editor has focus on the Code tab; when this
+     * method returns null the keystroke falls through to
+     * the canvas-selection path.
+     *
+     * Returns null in any failure case (view not
+     * mounted, active tab not Code, whole-file parse
+     * failure, no matching label under the cursor), so
+     * the caller can treat null as "no cursor target"
+     * without distinguishing reasons.
+     *
+     * @returns {string | null}
+     */
+    deriveCursorMuteTarget() {
+        if (this.view === null) return null;
+        if (this.activeName !== "behaviors.js" &&
+            this.activeName !== "behaviours.js") return null;
+        const source = this.view.state.doc.toString();
+        const cursorPos = this.view.state.selection.main.head;
+
+        let ast;
+        try {
+            ast = acorn.parse(source, {
+                ecmaVersion: 2022,
+                sourceType: "script",
+                allowReturnOutsideFunction: true,
+                locations: false,
+            });
+        } catch (err) {
+            // Whole-file syntax error: no cursor target
+            // until the file parses cleanly. Falls
+            // through to the canvas-selection path on
+            // the caller side, which is the right
+            // behaviour — a broken file shouldn't trap
+            // Cmd-Shift-M into a no-op.
+            return null;
+        }
+        if (ast === null || !Array.isArray(ast.body)) return null;
+
+        // Walk top-level LabeledStatements. For each, walk
+        // its chain inward and probe every $-prefixed
+        // label individually for cursor containment.
+        // First match wins (cursor has a single position,
+        // so at most one label's range contains it).
+        for (const node of ast.body) {
+            if (node.type !== "LabeledStatement") continue;
+            let current = node;
+            while (current !== null &&
+                   typeof current === "object" &&
+                   current.type === "LabeledStatement") {
+                const label = current.label;
+                if (label === null ||
+                    label.type !== "Identifier" ||
+                    typeof label.name !== "string") {
+                    break;
+                }
+                if (label.name.startsWith("$")) {
+                    const colonPos = source.indexOf(":", label.end);
+                    if (colonPos !== -1 &&
+                        cursorPos >= label.start &&
+                        cursorPos <= colonPos + 1) {
+                        return label.name.slice(1);
+                    }
+                }
+                current = current.body;
+            }
+        }
+        return null;
+    }
+
+    /**
      * @param {string} content
      */
     _onDocChanged(content) {
