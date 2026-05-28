@@ -155,6 +155,7 @@ import {
     setSceneBpm,
 } from "./src/sceneEditor.js";
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
+import { getPreference, subscribePreference } from "./src/preferences.js";
 
 main();
 
@@ -574,6 +575,26 @@ async function main() {
     const firingEngine = new PatternFiringEngine(strudelRuntime, midiSender, simulation, transport);
     canvas.setFiringEngine(firingEngine);
     firingEngine.setCanvas(canvas);
+
+    // Audio output routing. The firing engine dispatches
+    // each scheduled event through one of two paths
+    // depending on its _outputMode: midiSender for the
+    // "midi" mode (the default) or runtime.play (superdough)
+    // for the "superdough" mode. The choice lives in the
+    // audioOutput preference so it persists across sessions
+    // and survives score changes; reading it here pushes
+    // the initial mode in before runScene's first dispatch
+    // can fire, and subscribing pushes any change made via
+    // Settings immediately without waiting for the next
+    // bootstrap. The setOutputMode setter itself handles the
+    // cleanup on each switch (MIDI panic when leaving the
+    // midi mode, per-source pendingEvents and populatedCycles
+    // cleared on every switch so the next tick re-bootstraps
+    // cleanly under the new output).
+    firingEngine.setOutputMode(getPreference("audioOutput"));
+    subscribePreference("audioOutput", (mode) => {
+        firingEngine.setOutputMode(mode);
+    });
 
     // --- Dividers ---
     //

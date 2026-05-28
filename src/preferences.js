@@ -36,11 +36,20 @@ const KEY_PREFIX = "gxw.prefs.";
  * @property {string} key       The name used by callers and stored under KEY_PREFIX + key.
  * @property {string} label     Human-readable label for the settings dialog.
  * @property {string} description Short help text shown beneath the control.
- * @property {"number" | "boolean" | "string"} type
+ * @property {"number" | "boolean" | "string" | "enum"} type
  * @property {number | boolean | string} default
  * @property {number} [min]
  * @property {number} [max]
  * @property {number} [step]
+ * @property {string[]} [options]  For type "enum": the allowed stored values
+ *   in the order they should appear in the dropdown. Each entry is stored
+ *   verbatim in localStorage and returned by getPreference; the parseValue
+ *   path rejects any stored string not in this list and falls back to the
+ *   schema default. Required for enum, ignored for other types.
+ * @property {string[]} [optionLabels]  For type "enum": parallel array of
+ *   display labels shown to the user in the dropdown. Must be the same
+ *   length as options when provided. When omitted, the option strings
+ *   themselves are used as labels.
  * @property {string} [category]  Settings dialog category. Defaults to "Display".
  * @property {boolean} [electronOnly]  When true, the preference is hidden from
  *   the Settings dialog under the web build. The schema entry still exists
@@ -171,6 +180,17 @@ export const PREFERENCES = [
         category: "Backups",
         electronOnly: true,
     },
+    {
+        key: "audioOutput",
+        label: "Audio Output",
+        description:
+            "Where pattern events are sent for playback. MIDI sends note events to your MIDI output devices; Superdough plays them through the built-in Web Audio engine, which is required for sample patterns like sound(\"bd sn\"). Only one output is active at a time; switching modes panics any notes already in flight on the previous output and resumes cleanly on the next cycle boundary under the new one.",
+        type: "enum",
+        default: "midi",
+        options: ["midi", "superdough"],
+        optionLabels: ["MIDI", "Superdough (Web Audio)"],
+        category: "Audio",
+    },
 ];
 
 /**
@@ -205,7 +225,7 @@ export function getPreference(key) {
     }
     const stored = readRaw(key);
     if (stored === null) return def.default;
-    const parsed = parseValue(stored, def.type);
+    const parsed = parseValue(stored, def.type, def);
     if (parsed === null) return def.default;
     return clampToBounds(parsed, def);
 }
@@ -224,7 +244,7 @@ export function setPreference(key, value) {
         console.warn(`GXW: unknown preference "${key}".`);
         return;
     }
-    const coerced = coerceValue(value, def.type);
+    const coerced = coerceValue(value, def.type, def);
     if (coerced === null) {
         console.warn(`GXW: cannot set preference "${key}" to ${value} (type ${def.type}).`);
         return;
@@ -285,9 +305,14 @@ function writeRaw(key, value) {
 /**
  * @param {string} raw
  * @param {string} type
+ * @param {PreferenceDef} [def]  Optional, required only for enum validation:
+ *   the parser checks the raw value against def.options and returns null
+ *   for any value not in the list so a stale or hand-edited localStorage
+ *   entry doesn't propagate out as a live preference value. Other types
+ *   ignore the def argument.
  * @returns {any}
  */
-function parseValue(raw, type) {
+function parseValue(raw, type, def) {
     if (type === "number") {
         const n = parseFloat(raw);
         return Number.isFinite(n) ? n : null;
@@ -298,15 +323,24 @@ function parseValue(raw, type) {
         return null;
     }
     if (type === "string") return raw;
+    if (type === "enum") {
+        if (def === undefined || !Array.isArray(def.options)) return null;
+        if (def.options.indexOf(raw) === -1) return null;
+        return raw;
+    }
     return null;
 }
 
 /**
  * @param {any} value
  * @param {string} type
+ * @param {PreferenceDef} [def]  Optional, required only for enum validation:
+ *   the coercer rejects values not in def.options so setPreference with a
+ *   bogus argument doesn't pollute localStorage. Other types ignore the
+ *   def argument.
  * @returns {any}
  */
-function coerceValue(value, type) {
+function coerceValue(value, type, def) {
     if (type === "number") {
         const n = typeof value === "number" ? value : parseFloat(String(value));
         return Number.isFinite(n) ? n : null;
@@ -318,6 +352,12 @@ function coerceValue(value, type) {
         return null;
     }
     if (type === "string") return String(value);
+    if (type === "enum") {
+        if (def === undefined || !Array.isArray(def.options)) return null;
+        const s = String(value);
+        if (def.options.indexOf(s) === -1) return null;
+        return s;
+    }
     return null;
 }
 

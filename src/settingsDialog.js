@@ -233,6 +233,31 @@ function makeControl(def) {
         });
         return input;
     }
+    if (def.type === "enum") {
+        // Dropdown for an enum preference. The schema's
+        // options array gives the stored values in order;
+        // optionLabels (when present) gives the parallel
+        // display strings. With no optionLabels the option
+        // strings themselves are used as labels.
+        const select = document.createElement("select");
+        select.className = "settings-input settings-input-enum";
+        const options = Array.isArray(def.options) ? def.options : [];
+        const labels = Array.isArray(def.optionLabels) &&
+            def.optionLabels.length === options.length
+            ? def.optionLabels
+            : options;
+        for (let i = 0; i < options.length; i++) {
+            const opt = document.createElement("option");
+            opt.value = options[i];
+            opt.textContent = labels[i];
+            select.appendChild(opt);
+        }
+        select.value = String(getPreference(def.key));
+        select.addEventListener("change", () => {
+            setPreference(def.key, select.value);
+        });
+        return select;
+    }
     return null;
 }
 

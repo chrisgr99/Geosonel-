@@ -3,9 +3,16 @@
  *
  * Drives audio output for continuous-firing sources (curves
  * and sprites) by scheduling their per-source cycle wraps
- * into MIDI events sent through MIDISender. The engine
- * stays output-agnostic; flipping back to superdough audio
- * is a one-line change at the commit walker.
+ * into one of two output paths, selected by the audioOutput
+ * preference at runtime: MIDI events sent through
+ * MIDISender, or superdough audio events sent through the
+ * runtime's play() wrapper. Only one output is active at a
+ * time — the preference toggle is exclusive, so a user
+ * playing through MIDI and switching to Superdough panics
+ * the MIDI sender and clears all pending events on every
+ * source before resuming under the new output. The engine
+ * remains output-agnostic in its core scheduling logic;
+ * the routing decision is one branch at the commit walker.
  *
  * Sits between three existing modules:
  *
@@ -304,6 +311,25 @@ export class PatternFiringEngine {
          */
         this._canvas = null;
 
+        /**
+         * Audio output routing mode. "midi" (the default)
+         * sends events through this._midiSender.send;
+         * "superdough" sends them through this._runtime.play.
+         * Set by main.js from the audioOutput preference on
+         * startup and on every preference change. The mode
+         * is read fresh at every late-refresh dispatch in
+         * tick(), so a change takes effect on the next tick
+         * without any per-source reset — the setOutputMode
+         * setter itself handles the cleanup (MIDI panic on
+         * any switch that involved MIDI; per-source
+         * pendingEvents and populatedCycles cleared on
+         * every switch so the next tick re-bootstraps under
+         * the new output cleanly, mirroring the BPM-change
+         * and rewind paths).
+         * @type {"midi" | "superdough"}
+         */
+        this._outputMode = "midi";
+
         /** @type {Map<string, SourceFiringState>} */
         this._sources = new Map();
 
@@ -419,6 +445,62 @@ export class PatternFiringEngine {
                 this._midiSender.panic();
             }
         });
+    }
+
+    /**
+     * Set the audio output routing mode. Called by main.js
+     * from the audioOutput preference on startup and on
+     * every change of that preference. Two modes:
+     *
+     *   - "midi": every event dispatches through
+     *     this._midiSender.send. The Web MIDI sender
+     *     translates the strudel hap value (typically a
+     *     {note: ...} from a note() or n() pattern) into
+     *     a noteOn/noteOff pair on the configured MIDI
+     *     port.
+     *
+     *   - "superdough": every event dispatches through
+     *     this._runtime.play. Superdough is strudel's
+     *     built-in Web Audio engine; it handles sample
+     *     playback ({s: "bd"} from sound() or s()
+     *     patterns) and synthesised tones ({note: ...}
+     *     fed to its default oscillator) on the shared
+     *     AudioContext.
+     *
+     * Mode switch cleanup. Every switch (regardless of
+     * direction) clears every source's pendingEvents and
+     * populatedCycles so the next tick re-bootstraps
+     * cleanly under the new output. A switch away from
+     * MIDI also panics the MIDI sender so any noteOns
+     * already dispatched but whose noteOffs were still
+     * queued in the sender's scheduler get silenced
+     * immediately rather than ringing indefinitely. A
+     * switch to MIDI doesn't need a superdough panic
+     * because superdough events are fire-and-forget at
+     * dispatch time with no separate noteOff scheduling.
+     * The cleanup shape mirrors the existing BPM-change
+     * and rewind paths in tick().
+     *
+     * Unknown mode strings are ignored (silent no-op) so a
+     * stale or hand-edited localStorage value can't leave
+     * the engine in an undefined state.
+     *
+     * @param {string} mode
+     */
+    setOutputMode(mode) {
+        if (mode !== "midi" && mode !== "superdough") return;
+        if (mode === this._outputMode) return;
+        const wasMidi = this._outputMode === "midi";
+        this._outputMode = mode;
+        for (const state of this._sources.values()) {
+            state.pendingEvents = [];
+            state.populatedCycles.clear();
+            state.patternDirty = false;
+            state.timingDirty = false;
+        }
+        if (wasMidi) {
+            this._midiSender.panic();
+        }
     }
 
     /**
@@ -1095,7 +1177,22 @@ export class PatternFiringEngine {
                     // stale — drop without dispatch.
                 } else {
                     const refreshedValue = this._pass2RefreshValue(state, ev, snapshot);
-                    this._midiSender.send(refreshedValue, ev.audioTime, ev.duration);
+                    if (this._outputMode === "superdough") {
+                        // Superdough path. Fire through the
+                        // runtime's play wrapper, which gates
+                        // internally on the runtime being
+                        // loaded and the audio context being
+                        // present; events arriving before
+                        // the engine has finished init are
+                        // silently dropped rather than
+                        // queued. Duration is the strudel
+                        // hap's part length in wall-clock
+                        // seconds, which superdough uses to
+                        // bound sample playback length.
+                        this._runtime.play(refreshedValue, ev.audioTime, ev.duration);
+                    } else {
+                        this._midiSender.send(refreshedValue, ev.audioTime, ev.duration);
+                    }
                 }
             }
             state.pendingEvents = remaining;
