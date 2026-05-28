@@ -106,6 +106,41 @@
  * Block isn't handled; concise arrow function bodies (the
  * common case in behaviors.js) work correctly.
  *
+ * Commit 5 (this commit) adds four user-visible
+ * affordances. (1) A CodeMirror hover tooltip surfaces
+ * parameter names for known functions: hovering on an
+ * argument shows "functionName: parameter name";
+ * hovering on the callee identifier shows the full
+ * one-line signature. Tooltip content is sourced from
+ * src/codeSpeechSignatures.js, a Claude-maintained
+ * file mapping function names to ordered arrays of
+ * parameter names. The lookup key is the rightmost
+ * identifier of the callee, so plain calls and method
+ * calls share the dispatch. Functions without an entry
+ * surface no tooltip and read unchanged. (2) Escape
+ * stops speech and clears the highlight when speech is
+ * in flight; when speech is not playing, Escape falls
+ * through to whatever else handles it (closing
+ * completion popups, etc.). (3) Spacebar toggles
+ * pause/resume during playback, gated on speech being
+ * active or paused so when speech isn't playing
+ * Spacebar types a space normally in the editor. The
+ * highlight stays in place while paused so the user
+ * sees where they stopped. (4) Reading starts from the
+ * pointer position rather than always at the beginning
+ * of the enclosing statement. The walker still produces
+ * the full chunk queue for the enclosing statement,
+ * but readEnclosingStatement skips chunks whose source
+ * range ends before the pointer before handing the
+ * queue to playChunks. Pointing at the start of a
+ * statement still produces the full reading; pointing
+ * deeper skips ahead. Synthesized keyword chunks
+ * ("if", "function", "object") that fall before the
+ * start index are skipped along with their content,
+ * but ones that fall after are kept so e.g. "then" /
+ * "else" still appear when the start lands inside a
+ * ternary's consequent.
+ *
  * Highlights live in a CodeMirror StateField holding a
  * DecorationSet of mark decorations. A StateEffect updates
  * the field with the active chunk's ranges; an empty
@@ -129,10 +164,10 @@
  * (voiceschanged listener, rapid-trigger stutter
  * mitigation).
  *
- * Subsequent commits land JSDoc signature annotations for
- * argument grouping, the full pronunciation dictionary and
- * operator speech table, the highlight visual styling
- * pass, and the SpeechSynthesis interruption robustness.
+ * Subsequent commits land the full pronunciation
+ * dictionary and operator speech table, the highlight
+ * visual styling pass, and the remaining SpeechSynthesis
+ * interruption robustness work.
  *
  * The extension factory codeSpeechExtension takes an
  * isCodeTab callback that returns true iff the active tab
@@ -147,9 +182,10 @@
 
 // @ts-check
 
-import { EditorView, keymap, Decoration } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
+import { EditorView, keymap, Decoration, hoverTooltip } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
 import { StateField, StateEffect } from "https://esm.sh/@codemirror/state@6.5.2";
 import { syntaxTree } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
+import { FUNCTION_SIGNATURES } from "./codeSpeechSignatures.js";
 
 /**
  * StateEffect carrying the array of [from, to] tuples that
@@ -240,6 +276,45 @@ const codeSpeechHighlightTheme = EditorView.theme({
         color: "#000",
         outline: "2px solid #ffffff",
         borderRadius: "2px",
+    },
+    // Parameter-tooltip styling. Targets the inner div
+    // created by the paramTooltip factory; the outer
+    // cm-tooltip wrapper CodeMirror provides handles
+    // positioning. Sizing is generous because the
+    // composer reads under macOS Zoom magnification;
+    // colours are high contrast against the editor's
+    // dark theme. user-select is text so Apple Speak
+    // Selection can be triggered on the tooltip via the
+    // macro pad.
+    ".cm-codeSpeech-tooltip": {
+        backgroundColor: "#1f1f1f",
+        color: "#bfb878",
+        border: "1px solid #888888",
+        borderRadius: "4px",
+        padding: "2px 6px",
+        fontSize: "12px",
+        fontFamily: "monospace",
+        lineHeight: "1.2",
+        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.5)",
+        userSelect: "text",
+        maxWidth: "600px",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    // Strip the default cm-tooltip background and
+    // padding so the inner cm-codeSpeech-tooltip
+    // styling shows through cleanly without a
+    // box-in-box look. translateX(-50%) shifts the
+    // wrapper left by half its own width so the
+    // tooltip centres horizontally on the hover anchor
+    // point (which sits at the character under the
+    // mouse) rather than spilling to its lower right.
+    ".cm-tooltip.cm-tooltip-hover": {
+        backgroundColor: "transparent",
+        border: "none",
+        padding: "0",
+        transform: "translateX(-50%)",
     },
 });
 
@@ -1228,20 +1303,244 @@ export function codeSpeechExtension({ isCodeTab }) {
         }
 
         const source = view.state.doc.toString();
-        /** @type {Array<{text: string, ranges: Array<[number, number]>}>} */
+        /** @type {Array<{text: string, ranges: Array<[number, number]>, keepHighlight?: boolean}>} */
         const chunks = [];
         walkNode(targetNode, source, chunks);
 
-        console.log("[codeSpeech] chunks:", chunks);
-        playChunks(view, chunks);
+        // Pointer-positioned start. Find the first chunk
+        // whose source range ends at or after the
+        // pointer position, and slice the queue from
+        // there. This lets the composer hear an
+        // expression starting from any point inside it
+        // rather than always from the beginning. Pointing
+        // at the start of the statement keeps all chunks
+        // (the first chunk's range end is already >=
+        // pointer); pointing deeper skips chunks before
+        // the pointer. Synthesized keyword chunks have
+        // empty ranges so they're invisible to the scan;
+        // they're kept in the playable queue if they fall
+        // after the start index (e.g. "then" / "else" in
+        // a ternary still appear when the start lands
+        // inside the consequent), and dropped if they
+        // fall before.
+        let startIdx = 0;
+        for (let i = 0; i < chunks.length; i++) {
+            const ranges = chunks[i].ranges;
+            if (ranges.length === 0) continue;
+            let maxEnd = 0;
+            for (const range of ranges) {
+                if (range[1] > maxEnd) maxEnd = range[1];
+            }
+            if (maxEnd >= lastPointerOffset) {
+                startIdx = i;
+                break;
+            }
+        }
+        const playableChunks = startIdx > 0
+            ? chunks.slice(startIdx)
+            : chunks;
+
+        console.log(
+            "[codeSpeech] chunks:", chunks,
+            "start at index:", startIdx,
+        );
+        playChunks(view, playableChunks);
         return true;
     };
+
+    /**
+     * Stop speech and clear the highlight. Gated on
+     * speech being active or paused so the Escape
+     * binding falls through cleanly to other handlers
+     * (closing completion popups, dismissing dialogs)
+     * when speech isn't in flight. Bumping
+     * playbackGeneration invalidates any pending onend
+     * handlers from the cancelled queue so they no-op
+     * silently rather than driving the cleared queue
+     * forward.
+     *
+     * @param {any} view
+     * @returns {boolean}
+     */
+    const stopSpeech = (view) => {
+        if (!isCodeTab()) return false;
+        if (typeof window === "undefined") return false;
+        if (typeof window.speechSynthesis === "undefined") return false;
+        const synth = window.speechSynthesis;
+        if (!synth.speaking && !synth.paused) return false;
+        synth.cancel();
+        playbackGeneration++;
+        view.dispatch({ effects: setCodeSpeechHighlight.of([]) });
+        return true;
+    };
+
+    /**
+     * Toggle pause/resume on the current speech. Gated
+     * on speech being active or paused so the Space
+     * binding falls through to normal type-a-space
+     * behaviour when speech isn't playing. The
+     * highlight stays in place while paused so the
+     * composer sees where they stopped; on resume the
+     * playback continues from the same chunk's onend
+     * handler that was already queued before the
+     * pause, so the generation counter doesn't need to
+     * change.
+     *
+     * @param {any} _view
+     * @returns {boolean}
+     */
+    const togglePause = (_view) => {
+        if (!isCodeTab()) return false;
+        if (typeof window === "undefined") return false;
+        if (typeof window.speechSynthesis === "undefined") return false;
+        const synth = window.speechSynthesis;
+        if (synth.paused) {
+            synth.resume();
+            return true;
+        }
+        if (synth.speaking) {
+            synth.pause();
+            return true;
+        }
+        return false;
+    };
+
+    /**
+     * CodeMirror hover-tooltip extension surfacing
+     * parameter names from FUNCTION_SIGNATURES. The
+     * callback fires on every hover; it walks up the
+     * Lezer tree from the hover position to find an
+     * enclosing CallExpression, extracts the rightmost
+     * identifier of the callee as the lookup key, and
+     * returns either the full signature (when hovering
+     * on the callee) or the per-argument name (when
+     * hovering inside the ArgList). Returns null on
+     * anything else — hovers outside a known call,
+     * functions without a signatures entry, the tab
+     * being something other than Code.
+     */
+    const paramTooltip = hoverTooltip((view, pos, side) => {
+        if (!isCodeTab()) return null;
+
+        const tree = syntaxTree(view.state);
+        const node = tree.resolveInner(pos, side);
+
+        // Walk up to find the enclosing CallExpression.
+        /** @type {any} */
+        let callExpr = null;
+        /** @type {any} */
+        let walker = node;
+        while (walker !== null) {
+            if (walker.name === "CallExpression") {
+                callExpr = walker;
+                break;
+            }
+            walker = walker.parent;
+        }
+        if (callExpr === null) return null;
+
+        // Get the callee's rightmost identifier. For a
+        // plain VariableName callee that's the callee
+        // itself; for a MemberExpression callee it's the
+        // last PascalCase child (a chain like a.b.c.d has
+        // last-child PropertyName d).
+        const callee = callExpr.firstChild;
+        if (callee === null) return null;
+        /** @type {any} */
+        let nameNode = null;
+        if (callee.name === "VariableName") {
+            nameNode = callee;
+        } else if (callee.name === "MemberExpression") {
+            /** @type {any} */
+            let c = callee.firstChild;
+            while (c !== null) {
+                if (/^[A-Z]/.test(c.name)) nameNode = c;
+                c = c.nextSibling;
+            }
+        }
+        if (nameNode === null) return null;
+        const fnName = view.state.sliceDoc(nameNode.from, nameNode.to);
+
+        const signature = FUNCTION_SIGNATURES[fnName];
+        if (!signature) return null;
+
+        // Hovering on the callee — show the full
+        // signature on one line. The callee's range covers
+        // both the plain-identifier case and the
+        // member-expression case; for a member chain like
+        // pxLt.range, hovering anywhere on the full
+        // pxLt.range span (including the dot) counts as a
+        // callee hover.
+        /** @type {string} */
+        let text;
+        if (callee.from <= pos && pos <= callee.to) {
+            text = `${fnName}(${signature.join(", ")})`;
+        } else {
+            // Hovering somewhere after the callee — must
+            // be inside ArgList for an arg hover.
+            /** @type {any} */
+            let argList = null;
+            /** @type {any} */
+            let c = callExpr.firstChild;
+            while (c !== null) {
+                if (c.name === "ArgList") {
+                    argList = c;
+                    break;
+                }
+                c = c.nextSibling;
+            }
+            if (argList === null) return null;
+
+            let idx = 0;
+            let foundIdx = -1;
+            /** @type {any} */
+            let arg = argList.firstChild;
+            while (arg !== null) {
+                if (/^[A-Z]/.test(arg.name)) {
+                    if (arg.from <= pos && pos <= arg.to) {
+                        foundIdx = idx;
+                        break;
+                    }
+                    idx++;
+                }
+                arg = arg.nextSibling;
+            }
+            if (foundIdx < 0 || foundIdx >= signature.length) return null;
+            text = `${fnName}: ${signature[foundIdx]}`;
+        }
+
+        return {
+            pos: pos,
+            above: false,
+            create: () => {
+                const dom = document.createElement("div");
+                dom.className = "cm-codeSpeech-tooltip";
+                dom.textContent = text;
+                return { dom };
+            },
+        };
+    });
 
     const speechKeymap = keymap.of([
         {
             key: "Mod-Shift-'",
             run: readEnclosingStatement,
             preventDefault: true,
+        },
+        {
+            key: "Escape",
+            run: stopSpeech,
+            // No preventDefault: when speech isn't
+            // active stopSpeech returns false and the
+            // key falls through to whatever else handles
+            // Escape (autocomplete close, etc.).
+        },
+        {
+            key: "Space",
+            run: togglePause,
+            // No preventDefault: when speech isn't
+            // active togglePause returns false and the
+            // key falls through to typing a space.
         },
     ]);
 
@@ -1250,5 +1549,6 @@ export function codeSpeechExtension({ isCodeTab }) {
         speechKeymap,
         codeSpeechHighlightField,
         codeSpeechHighlightTheme,
+        paramTooltip,
     ];
 }
