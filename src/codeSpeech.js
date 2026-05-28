@@ -38,8 +38,8 @@
  * carries the text to speak plus an array of source ranges
  * to highlight while that text is being read.
  *
- * Commit 3a (this commit) adds method-chain unfolding and
- * LabeledStatement support. The MemberExpression case now
+ * Commit 3a adds method-chain unfolding and
+ * LabeledStatement support. The MemberExpression case
  * checks whether its object is itself a CallExpression; if
  * so, it recurses into the object first and then emits just
  * the property name as its own chunk, so a chained
@@ -66,6 +66,46 @@
  * labelled pattern statement read the same chunks in the
  * same order: label first, then expression chunks.
  *
+ * Commit 4 (this commit) adds walker cases for the
+ * remaining core syntactic forms listed in the design's
+ * build phasing: AssignmentExpression, BinaryExpression,
+ * ConditionalExpression (ternary), ReturnStatement,
+ * ArrowFunction, and ObjectExpression. A Property case
+ * is added as a helper for ObjectExpression, and a
+ * ParenthesizedExpression case is folded in as a quality-
+ * of-life addition so a parenthesised sub-expression
+ * inside one of the new forms walks its inner expression
+ * instead of falling to the raw-text default. Operators
+ * are spoken as words via a small OPERATOR_WORDS map
+ * covering the common arithmetic, comparison, logical, and
+ * assignment operators; the full operator speech table
+ * arrives in Commit 6. Synthesized keyword chunks (the
+ * "if" of a ternary, the "function" of an arrow function,
+ * the "object" of an object literal) carry a
+ * keepHighlight: true flag that tells playChunks to skip
+ * the highlight dispatch for that chunk, so the previous
+ * chunk's highlight stays in place during the keyword
+ * reading rather than the highlight flashing off and on.
+ * Keyword chunks that DO have a natural source anchor
+ * (the "then" / "else" of a ternary anchored to the "?"
+ * and ":" tokens, the "yields" of an arrow function
+ * anchored to the "=>" token, the "is" of an object
+ * property anchored to the ":" token) use that anchor's
+ * range so the highlight moves to the punctuation while
+ * the keyword is read. The enclosing-statement finder
+ * also now accepts ReturnStatement so a return line read
+ * directly (e.g. inside an arrow function with a block
+ * body) reads just the return rather than walking up to
+ * the outer enclosing statement.
+ *
+ * VariableDeclaration is not in Commit 4's scope; a line
+ * like const x = 5 will still hit the no-match diagnostic.
+ * If that pattern is common in real behaviors.js code, a
+ * follow-up commit can add it. Block bodies in arrow
+ * functions also still fall to raw-text default since
+ * Block isn't handled; concise arrow function bodies (the
+ * common case in behaviors.js) work correctly.
+ *
  * Highlights live in a CodeMirror StateField holding a
  * DecorationSet of mark decorations. A StateEffect updates
  * the field with the active chunk's ranges; an empty
@@ -89,12 +129,10 @@
  * (voiceschanged listener, rapid-trigger stutter
  * mitigation).
  *
- * Subsequent commits land the rest of the walker rules
- * (assignment, binary expression, ternary, return, arrow
- * function, object literal), the pronunciation dictionary
- * and operator speech table, the JSDoc signature
- * annotations, the highlight visual styling pass, and the
- * SpeechSynthesis interruption robustness.
+ * Subsequent commits land JSDoc signature annotations for
+ * argument grouping, the full pronunciation dictionary and
+ * operator speech table, the highlight visual styling
+ * pass, and the SpeechSynthesis interruption robustness.
  *
  * The extension factory codeSpeechExtension takes an
  * isCodeTab callback that returns true iff the active tab
@@ -204,6 +242,92 @@ const codeSpeechHighlightTheme = EditorView.theme({
         borderRadius: "2px",
     },
 });
+
+/**
+ * Operator-symbol-to-spoken-word lookup. Covers the
+ * common arithmetic, comparison, logical, and assignment
+ * operators that the AssignmentExpression and
+ * BinaryExpression walker cases need in Commit 4. The
+ * full operator speech table arrives in Commit 6, where
+ * it will live alongside the pronunciation dictionary
+ * in its own module.
+ *
+ * Lookup is by the operator's exact source text, so the
+ * walker doesn't need to know how Lezer names each
+ * operator token (ArithOp vs CompareOp vs bare token).
+ * Whatever the operator's source.slice text is, this map
+ * either has a spoken form for it or it falls through to
+ * operatorToWord's fallback.
+ *
+ * @type {Record<string, string>}
+ */
+const OPERATOR_WORDS = {
+    "=": "equals",
+    "+=": "plus equals",
+    "-=": "minus equals",
+    "*=": "times equals",
+    "/=": "divided by equals",
+    "%=": "modulo equals",
+    "**=": "to the power of equals",
+    "+": "plus",
+    "-": "minus",
+    "*": "times",
+    "/": "divided by",
+    "%": "modulo",
+    "**": "to the power of",
+    "<": "less than",
+    "<=": "less than or equal",
+    ">": "greater than",
+    ">=": "greater than or equal",
+    "==": "equals",
+    "===": "strictly equals",
+    "!=": "not equal",
+    "!==": "strictly not equal",
+    "&&": "and",
+    "||": "or",
+    "??": "or nullish",
+    "!": "not",
+};
+
+/**
+ * Look up an operator symbol's spoken word, falling back
+ * to the symbol's raw text if not in the table. The
+ * fallback keeps the pipeline producing audible output
+ * for operators we haven't catalogued yet (the speech
+ * synthesizer will read the raw punctuation, which sounds
+ * bad but is unambiguous).
+ *
+ * @param {string} opText
+ * @returns {string}
+ */
+function operatorToWord(opText) {
+    return Object.prototype.hasOwnProperty.call(OPERATOR_WORDS, opText)
+        ? OPERATOR_WORDS[opText]
+        : opText;
+}
+
+/**
+ * Test whether a child node's source text is one of the
+ * known operator symbols. Used by AssignmentExpression,
+ * BinaryExpression, and the new walker cases to identify
+ * operator children among the siblings. The check is by
+ * source text, NOT by node name: Lezer JS wraps many
+ * operators in PascalCase nodes (CompareOp for >, <, ==,
+ * etc.; LogicOp for ?, :, &&, ||; ArithOp for +, -, *,
+ * /; AssignOp for =, +=, etc.), so the PascalCase-means-
+ * expression heuristic used by the structural walker
+ * cases is wrong for operator detection. Checking source
+ * text is safe because OPERATOR_WORDS keys are all
+ * punctuation strings; no real identifier matches.
+ *
+ * @param {any} child
+ * @param {string} source
+ * @returns {boolean}
+ */
+function isOperatorChild(child, source) {
+    const text = source.slice(child.from, child.to);
+    return Object.prototype.hasOwnProperty.call(OPERATOR_WORDS, text);
+}
 
 /**
  * Walk a Lezer SyntaxNode and append chunks to the given
@@ -366,6 +490,283 @@ function walkNode(node, source, chunks) {
             }
             break;
         }
+        case "ReturnStatement": {
+            // The "return" keyword followed by an
+            // optional returned expression. The keyword
+            // is the first non-PascalCase child whose
+            // source text is "return"; the returned
+            // expression is the first PascalCase child.
+            // Emit "return" anchored to the keyword
+            // token's source range so the highlight
+            // sits on the keyword while it's read, then
+            // walk the expression (which produces its
+            // own chunks with their own ranges).
+            let child = node.firstChild;
+            while (child !== null) {
+                if (/^[A-Z]/.test(child.name)) {
+                    walkNode(child, source, chunks);
+                } else if (source.slice(child.from, child.to) === "return") {
+                    chunks.push({
+                        text: "return",
+                        ranges: [[child.from, child.to]],
+                    });
+                }
+                child = child.nextSibling;
+            }
+            break;
+        }
+        case "AssignmentExpression":
+        case "BinaryExpression": {
+            // Iterate children in source order. Check
+            // isOperatorChild FIRST so a child whose
+            // source text is an operator gets emitted as
+            // the spoken word for that operator, even if
+            // Lezer wraps it in a PascalCase node
+            // (CompareOp, ArithOp, AssignOp, etc.). A
+            // PascalCase child that is NOT an operator
+            // is an operand and is walked recursively.
+            // The source-order iteration means the
+            // chunks come out in natural reading order:
+            // for `a + b` we get a, plus, b; for `x = 5`
+            // we get x, equals, 5; for `t > 0.5` we get
+            // t, greater than, 0.5.
+            let child = node.firstChild;
+            while (child !== null) {
+                if (isOperatorChild(child, source)) {
+                    const opText = source.slice(child.from, child.to);
+                    chunks.push({
+                        text: operatorToWord(opText),
+                        ranges: [[child.from, child.to]],
+                    });
+                } else if (/^[A-Z]/.test(child.name)) {
+                    walkNode(child, source, chunks);
+                }
+                child = child.nextSibling;
+            }
+            break;
+        }
+        case "ConditionalExpression": {
+            // Ternary: test ? consequent : alternate.
+            // Read as "if [test] then [consequent] else
+            // [alternate]". Iterate children and pull
+            // out the three PascalCase operands plus the
+            // "?" and ":" tokens. Then emit chunks in
+            // reading order:
+            //   - "if" with keepHighlight (no source
+            //     anchor before test)
+            //   - walk test
+            //   - "then" anchored to the "?" token
+            //   - walk consequent
+            //   - "else" anchored to the ":" token
+            //   - walk alternate
+            // If the punctuation tokens can't be
+            // identified (grammar variant), "then" and
+            // "else" fall back to keepHighlight so the
+            // user still hears the keyword even though
+            // the highlight doesn't anchor to it.
+            /** @type {any[]} */
+            const exprs = [];
+            /** @type {any} */ let questionTok = null;
+            /** @type {any} */ let colonTok = null;
+            let child = node.firstChild;
+            while (child !== null) {
+                // Check source text FIRST: Lezer JS
+                // wraps the ternary's "?" and ":" in
+                // PascalCase LogicOp nodes, so the
+                // "PascalCase means expression"
+                // heuristic would misclassify them as
+                // operands without this guard. Once the
+                // punctuation is filtered out, any
+                // remaining PascalCase child is one of
+                // the three expression operands.
+                const text = source.slice(child.from, child.to);
+                if (text === "?") {
+                    questionTok = child;
+                } else if (text === ":") {
+                    colonTok = child;
+                } else if (/^[A-Z]/.test(child.name)) {
+                    exprs.push(child);
+                }
+                child = child.nextSibling;
+            }
+            if (exprs.length >= 1) {
+                chunks.push({
+                    text: "if",
+                    ranges: [],
+                    keepHighlight: true,
+                });
+                walkNode(exprs[0], source, chunks);
+            }
+            if (exprs.length >= 2) {
+                if (questionTok !== null) {
+                    chunks.push({
+                        text: "then",
+                        ranges: [[questionTok.from, questionTok.to]],
+                    });
+                } else {
+                    chunks.push({
+                        text: "then",
+                        ranges: [],
+                        keepHighlight: true,
+                    });
+                }
+                walkNode(exprs[1], source, chunks);
+            }
+            if (exprs.length >= 3) {
+                if (colonTok !== null) {
+                    chunks.push({
+                        text: "else",
+                        ranges: [[colonTok.from, colonTok.to]],
+                    });
+                } else {
+                    chunks.push({
+                        text: "else",
+                        ranges: [],
+                        keepHighlight: true,
+                    });
+                }
+                walkNode(exprs[2], source, chunks);
+            }
+            break;
+        }
+        case "ArrowFunction": {
+            // (params) => body, or single-param-no-parens
+            // form: param => body. The parameter(s)
+            // arrive either as a ParamList child (whose
+            // PascalCase children are the individual
+            // params) or as a single PascalCase child
+            // before the "=>" arrow. The body comes
+            // after the arrow as the next PascalCase
+            // child. Reads as "function [params...]
+            // yields [body]".
+            /** @type {any[]} */
+            const params = [];
+            /** @type {any} */ let arrowTok = null;
+            /** @type {any} */ let body = null;
+            let child = node.firstChild;
+            while (child !== null) {
+                if (child.name === "ParamList") {
+                    let p = child.firstChild;
+                    while (p !== null) {
+                        if (/^[A-Z]/.test(p.name)) params.push(p);
+                        p = p.nextSibling;
+                    }
+                } else if (source.slice(child.from, child.to) === "=>") {
+                    arrowTok = child;
+                } else if (/^[A-Z]/.test(child.name)) {
+                    if (arrowTok === null) {
+                        // Single bare parameter before
+                        // the arrow (parenless form).
+                        params.push(child);
+                    } else {
+                        // First PascalCase child after
+                        // the arrow is the body.
+                        body = child;
+                    }
+                }
+                child = child.nextSibling;
+            }
+            chunks.push({
+                text: "function",
+                ranges: [],
+                keepHighlight: true,
+            });
+            for (const p of params) {
+                walkNode(p, source, chunks);
+            }
+            if (arrowTok !== null) {
+                chunks.push({
+                    text: "yields",
+                    ranges: [[arrowTok.from, arrowTok.to]],
+                });
+            } else {
+                chunks.push({
+                    text: "yields",
+                    ranges: [],
+                    keepHighlight: true,
+                });
+            }
+            if (body !== null) {
+                walkNode(body, source, chunks);
+            }
+            break;
+        }
+        case "ObjectExpression": {
+            // { key1: value1, key2: value2 }
+            // Emit a leading "object" chunk
+            // (keepHighlight, no anchor) and then walk
+            // each Property child. The Property case
+            // below handles the key/value pair reading.
+            chunks.push({
+                text: "object",
+                ranges: [],
+                keepHighlight: true,
+            });
+            let child = node.firstChild;
+            while (child !== null) {
+                if (child.name === "Property") {
+                    walkNode(child, source, chunks);
+                }
+                child = child.nextSibling;
+            }
+            break;
+        }
+        case "Property": {
+            // key : value, or shorthand (just key, where
+            // the key is also the value). Iterate
+            // children; the ":" token (checked by source
+            // text FIRST in case Lezer wraps it in a
+            // PascalCase node) anchors the "is" keyword
+            // chunk between key and value. The first
+            // non-punctuation PascalCase child is the
+            // key; the second is the value (if present).
+            /** @type {any} */ let key = null;
+            /** @type {any} */ let value = null;
+            /** @type {any} */ let colonTok = null;
+            let child = node.firstChild;
+            while (child !== null) {
+                if (source.slice(child.from, child.to) === ":") {
+                    colonTok = child;
+                } else if (/^[A-Z]/.test(child.name)) {
+                    if (key === null) key = child;
+                    else if (value === null) value = child;
+                }
+                child = child.nextSibling;
+            }
+            if (key !== null) walkNode(key, source, chunks);
+            if (value !== null) {
+                if (colonTok !== null) {
+                    chunks.push({
+                        text: "is",
+                        ranges: [[colonTok.from, colonTok.to]],
+                    });
+                } else {
+                    chunks.push({
+                        text: "is",
+                        ranges: [],
+                        keepHighlight: true,
+                    });
+                }
+                walkNode(value, source, chunks);
+            }
+            break;
+        }
+        case "ParenthesizedExpression": {
+            // (expression) - parens are grouping only,
+            // no semantic content of their own. Walk
+            // the inner expression directly so the
+            // user hears the contents without the
+            // distracting "open paren" / "close paren"
+            // that a raw-text fallback would produce.
+            let child = node.firstChild;
+            while (child !== null) {
+                if (/^[A-Z]/.test(child.name)) {
+                    walkNode(child, source, chunks);
+                }
+                child = child.nextSibling;
+            }
+            break;
+        }
         case "VariableName":
         case "PropertyName":
         case "Number":
@@ -439,10 +840,15 @@ function playChunks(view, chunks) {
     if (typeof window.speechSynthesis === "undefined") return;
 
     window.speechSynthesis.cancel();
+    // Clear any stale highlight from a previous queue
+    // before starting the new one. Without this, if the
+    // first chunk of the new queue carries keepHighlight,
+    // the previous queue's highlight would remain visible
+    // until a non-keepHighlight chunk lands.
+    view.dispatch({ effects: setCodeSpeechHighlight.of([]) });
     const gen = ++playbackGeneration;
 
     if (chunks.length === 0) {
-        view.dispatch({ effects: setCodeSpeechHighlight.of([]) });
         return;
     }
 
@@ -454,9 +860,19 @@ function playChunks(view, chunks) {
             return;
         }
         const chunk = chunks[i];
-        view.dispatch({
-            effects: setCodeSpeechHighlight.of(chunk.ranges),
-        });
+        // Skip the highlight dispatch when the chunk
+        // carries keepHighlight: synthesized keyword
+        // chunks without a natural source anchor (the
+        // "if" of a ternary, the "function" of an arrow
+        // function, the "object" of an object literal)
+        // use this so the previous chunk's highlight
+        // stays in place during the keyword reading,
+        // rather than the highlight flashing off and on.
+        if (!chunk.keepHighlight) {
+            view.dispatch({
+                effects: setCodeSpeechHighlight.of(chunk.ranges),
+            });
+        }
         const utterance = new window.SpeechSynthesisUtterance(chunk.text);
         utterance.onend = () => {
             if (gen !== playbackGeneration) return;
@@ -587,11 +1003,27 @@ export function codeSpeechExtension({ isCodeTab }) {
                 }
                 break;
             }
+            if (cursor.name === "ReturnStatement") {
+                // Return is its own statement form.
+                // Accepting it here lets the user point
+                // at a `return expr;` line inside a
+                // function and hear just that return,
+                // rather than walking up to the outer
+                // enclosing statement (which could be
+                // huge, e.g. the whole function
+                // declaration). Walker has a
+                // ReturnStatement case that emits the
+                // "return" keyword anchored to its own
+                // source token and walks the returned
+                // expression.
+                found = cursor.node;
+                break;
+            }
         } while (cursor.parent());
 
         if (found === null) {
             console.log(
-                "[codeSpeech] no enclosing ExpressionStatement at offset",
+                "[codeSpeech] no enclosing statement at offset",
                 lastPointerOffset,
             );
             return true;
@@ -599,11 +1031,12 @@ export function codeSpeechExtension({ isCodeTab }) {
 
         /** @type {any} */
         let targetNode;
-        if (found.name === "LabeledStatement") {
-            // Pass the LabeledStatement directly to the
-            // walker, whose LabeledStatement case emits
-            // the label as a leading chunk and walks the
-            // body's inner expression.
+        if (found.name === "LabeledStatement" || found.name === "ReturnStatement") {
+            // Pass directly to the walker; the
+            // LabeledStatement and ReturnStatement
+            // cases handle their own structure (label
+            // + body, or "return" keyword + expression
+            // respectively).
             targetNode = found;
         } else {
             // ExpressionStatement: dig into the
