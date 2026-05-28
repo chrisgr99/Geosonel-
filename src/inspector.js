@@ -203,7 +203,8 @@ const W = {
 
     // Inline labels next to the row's leftmost field group,
     // sized to the shortest text that fits at 10pt.
-    hideCursor: 90,    // "Hide Cursor" — wide enough to fit the two-word label on one line at 10pt
+    hideCursor: 90,    // "Hide Cursor" — deprecated width key, kept for any legacy reference; the Band 1 mute row now uses W.mute instead
+    mute: 40,          // "Mute" — the universal mute label on Band 1's row 1, renamed from "Hide Cursor" once mute consolidated across curves, sprites, and triggers (Commit 2 of the pattern-correspondence invariant work)
     curveThick: 60,    // "Curve\nThickness" multiline
     cursorThick: 60,   // "Cursor\nThickness" multiline
 
@@ -509,7 +510,7 @@ export class Inspector {
 
         const objs = selectedObjects(this._scene, this._selection);
         const idEditable = ctx.isSingle;
-        const hideCursorActive = ctx.total > 0;
+        const muteActive = ctx.total > 0;
         // Cycle duration row gate. The row is universal
         // across kinds: curves, sprites, and triggers all
         // carry beatsPerCycle and beatInterval on the
@@ -532,17 +533,20 @@ export class Inspector {
             idValue = typeof obj.id === "string" ? obj.id : "";
         }
 
-        // Hide Cursor aggregates across every selected
-        // object (any kind). The schema field is `mute` and
-        // the edit kind stays setMute; only the inspector
-        // label has been renamed to reflect what the boolean
-        // controls under the cursor-as-collider model
-        // (suppressing the cursor, which in turn suppresses
-        // firing). The aggregate returns true / false /
+        // Mute aggregates across every selected object
+        // (any kind). The aggregate returns true / false /
         // "varies" so a tri-state checkbox can render the
         // mixed case as a visually distinct "divergent"
-        // state.
-        const hideCursorState = aggregateBoolean(objs.all, "mute");
+        // state. Label was "Hide Cursor" in earlier inspector
+        // versions when the control was curve-shaped; with
+        // mute consolidated across all three kinds in
+        // Commit 1 of the pattern-correspondence invariant
+        // work and visual feedback for muted sprites and
+        // triggers added in Commit 2, the label now reads
+        // simply "Mute" to match the schema field name, the
+        // Cmd-Shift-M keyboard toggle, and the Mute menu
+        // item under Edit.
+        const muteState = aggregateBoolean(objs.all, "mute");
 
         // beatsPerCycle aggregates across the whole selection
         // since the schema field is universal. The row greys
@@ -586,13 +590,13 @@ export class Inspector {
             disabled: !idEditable,
             width: W.idField,
         }));
-        r1.appendChild(mkLabel("Hide Cursor", { width: W.hideCursor, disabled: !hideCursorActive }));
+        r1.appendChild(mkLabel("Mute", { width: W.mute, disabled: !muteActive }));
         r1.appendChild(mkCheckbox({
-            checked: hideCursorState === true,
-            varies: hideCursorState === "varies",
-            disabled: !hideCursorActive,
-            onClick: hideCursorActive
-                ? () => this._onBooleanCheckboxClick("setMute", hideCursorState)
+            checked: muteState === true,
+            varies: muteState === "varies",
+            disabled: !muteActive,
+            onClick: muteActive
+                ? () => this._onBooleanCheckboxClick("setMute", muteState)
                 : undefined,
         }));
         band.appendChild(r1);
@@ -2111,8 +2115,9 @@ function selectedObjects(scene, selection) {
  * every object's field is falsy, or the string "varies" if
  * the values disagree. Empty list returns false (the field
  * has no representative value). Used by Band 1 for Mute and
- * Hide so multi-select can render a tri-state checkbox
- * indicating divergence.
+ * by Band 3 for the canHit / canBeHit / canTick checkboxes
+ * so multi-select can render a tri-state checkbox indicating
+ * divergence.
  *
  * @param {any[]} objects
  * @param {string} fieldName

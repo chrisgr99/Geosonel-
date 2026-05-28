@@ -31,7 +31,7 @@ import * as acorn from "https://esm.sh/acorn@8";
 import { Inspector } from "./inspector.js";
 import { CanvasInspector } from "./canvasInspector.js";
 import { customDarkTheme } from "./cmTheme.js";
-import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect } from "./patternHighlight.js";
+import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect, setMutedObjectIdsEffect } from "./patternHighlight.js";
 import { isAutoCompletionEnabled } from "./strudel/codemirror/autocomplete.mjs";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
@@ -1014,6 +1014,40 @@ export class TabbedEditor {
         if (this.view === null) return;
         this.view.dispatch({
             effects: setKnownObjectIdsEffect.of(knownObjectIds),
+        });
+    }
+
+    /**
+     * Update the editor's muted-object-id state so the
+     * mute-badge widget in patternHighlight.js renders
+     * an inline "$mute:" marker in saturated orange
+     * immediately after the binding identifier
+     * (labelled-block label or callback function name)
+     * of every source whose `mute` field is true. The
+     * marker is a virtual DOM element (Decoration.widget),
+     * not source text, so behaviors.js stays untouched
+     * on mute toggles. Composes with active-tag and
+     * orphan-tag at the decoration layer: a selected-
+     * and-muted binding reads as the bright accent
+     * green identifier with the orange marker to its
+     * right. Dispatched to the underlying CodeMirror
+     * view as a setMutedObjectIdsEffect; the ViewPlugin
+     * reads the new set and recomputes its DecorationSet
+     * immediately.
+     *
+     * Called by main.js after each successful runScene
+     * and after any mute-state change (toggle via
+     * Cmd-Shift-M, inspector checkbox, AI edit through
+     * the mirror) so the markers track the live mute
+     * state. Safe to call before the view has mounted:
+     * the call is a no-op in that case.
+     *
+     * @param {Set<string>} mutedObjectIds
+     */
+    setMutedObjectIds(mutedObjectIds) {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: setMutedObjectIdsEffect.of(mutedObjectIds),
         });
     }
 

@@ -843,6 +843,7 @@ async function main() {
             editor.setScene(result.scene);
             dispatchSelectedObjectIds(canvas.getSelection());
             dispatchKnownObjectIds();
+            dispatchMutedObjectIds();
             messages.write("Scene updated.");
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
@@ -2067,6 +2068,43 @@ async function main() {
             }
         }
         editor.setKnownObjectIds(ids);
+    };
+
+    /**
+     * Build the set of object ids in the current scene
+     * whose `mute` field is true, and dispatch it to the
+     * editor so the muted-tag decoration in behaviors.js
+     * fades the binding identifiers (labelled-block
+     * labels and callback function names) of every muted
+     * source. The fade composes with the active-tag and
+     * orphan-tag decorations so a selected-and-muted
+     * binding reads as faded green and an unselected-
+     * and-muted one reads as gray.
+     *
+     * Called after each successful runScene, alongside
+     * dispatchKnownObjectIds. The muted set is
+     * independent of the known and selected sets: known
+     * tracks existence (added / removed / renamed),
+     * selected tracks canvas focus (clicks), muted tracks
+     * the per-object mute field (toggled via Cmd-Shift-M,
+     * the inspector checkbox, or an AI edit through the
+     * mirror).
+     */
+    const dispatchMutedObjectIds = () => {
+        /** @type {Set<string>} */
+        const ids = new Set();
+        if (currentScene !== null) {
+            for (const obj of currentScene.sprites) {
+                if (obj.mute === true && typeof obj.id === "string") ids.add(obj.id);
+            }
+            for (const obj of currentScene.triggers) {
+                if (obj.mute === true && typeof obj.id === "string") ids.add(obj.id);
+            }
+            for (const obj of currentScene.curves) {
+                if (obj.mute === true && typeof obj.id === "string") ids.add(obj.id);
+            }
+        }
+        editor.setMutedObjectIds(ids);
     };
 
     /**

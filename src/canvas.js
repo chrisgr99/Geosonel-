@@ -1608,13 +1608,20 @@ export class Canvas {
     _drawCurveCursor(curve) {
         // Cursor-as-collider gate: a curve has a visible
         // cursor only when it has a non-zero extent AND is
-        // not muted. Both extents zero, or mute checked,
+        // not muted. Both extents zero, or `mute` checked,
         // means no cursor on the canvas. Per section 27's
         // cursor-as-collider model, cursor presence is what
         // makes the curve a collider and an audio source;
         // the visual gate matches the operational one.
+        //
+        // The legacy `hide` field (curve-only, deprecated
+        // in favour of the universal `mute` — see
+        // sceneSchema.js) is honoured alongside `mute` so
+        // existing scores that used hide as an ad-hoc mute
+        // keep their cursor-hidden behaviour. New work
+        // should use `mute`.
         if (curve.cursorR === 0 && curve.cursorL === 0) return;
-        if (curve.mute) return;
+        if (curve.mute || curve.hide) return;
 
         const ctx = this.ctx;
         // Cursor parameter t comes from the simulation's
@@ -1668,6 +1675,19 @@ export class Canvas {
             const cx = this.toPixelX(t.x);
             const cy = this.toPixelY(t.y);
             const r = Math.max(3, t.size * scale * this.pixelsPerUnit);
+            // Muted triggers render desaturated to gray via
+            // a canvas-level grayscale filter applied for the
+            // duration of this trigger's draw. The filter
+            // desaturates both the image-sampled fill and
+            // the boundary stroke (including the hover-
+            // lightened variant), keeping lightness contrast
+            // against the canvas background while removing
+            // colour as the muted-state signal.
+            const muted = t.mute === true;
+            if (muted) {
+                ctx.save();
+                ctx.filter = "grayscale(100%)";
+            }
             // Diamond: a square rotated 45° around (cx, cy)
             // with vertices at distance r from the centre.
             // Going top → right → bottom → left in pixel space
@@ -1702,6 +1722,7 @@ export class Canvas {
                 ? 1.5 + HOVER_LINE_WIDTH_BONUS
                 : 1.5;
             ctx.stroke();
+            if (muted) ctx.restore();
         }
     }
 
@@ -1726,6 +1747,19 @@ export class Canvas {
             const cx = this.toPixelX(pos.x);
             const cy = this.toPixelY(pos.y);
             const r = Math.max(4, (s.displayDiameter / 2) * scale * this.pixelsPerUnit);
+            // Muted sprites render desaturated to gray via
+            // a canvas-level grayscale filter applied for the
+            // duration of this sprite's draw. The filter
+            // desaturates both the image-sampled fill and
+            // the boundary stroke (including the hover-
+            // lightened variant), keeping lightness contrast
+            // against the canvas background while removing
+            // colour as the muted-state signal.
+            const muted = s.mute === true;
+            if (muted) {
+                ctx.save();
+                ctx.filter = "grayscale(100%)";
+            }
             // Filled disc with a light-blue boundary — the fill
             // takes the colour of the image pixel under the
             // centre, the boundary keeps the sprite visible
@@ -1756,6 +1790,7 @@ export class Canvas {
                 ? 1.5 + HOVER_LINE_WIDTH_BONUS
                 : 1.5;
             ctx.stroke();
+            if (muted) ctx.restore();
         }
     }
 

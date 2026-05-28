@@ -140,12 +140,27 @@ export const SCENE_FIELDS = [
 /**
  * Curve-specific fields, followed by the shared callback-slot
  * fields and the harmony overrides.
+ *
+ * Deprecation note on `hide`: this curve-only field predates
+ * the universal `mute` control. It still hides the curve's
+ * cursor when true, and the runtime continues to honour
+ * `hide || mute` for cursor visibility so existing scores
+ * keep their behaviour. New work should use `mute` instead,
+ * which gates pattern firing as well as cursor rendering and
+ * applies uniformly across curves, triggers, and sprites.
+ * The Hide row was removed from the curve inspector in the
+ * Commit 2 visual-feedback pass; the field stays in the
+ * schema for backward compatibility with existing scene.json
+ * files.
  * @type {FieldDef[]}
  */
 export const CURVE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
     { key: "mute", label: "Mute", type: "boolean", default: false },
+    // Deprecated; see the CURVE_FIELDS JSDoc above. Honoured
+    // by the runtime for backward compatibility; not surfaced
+    // in the inspector.
     { key: "hide", label: "Hide", type: "boolean", default: false },
     { key: "shape", label: "Shape", type: "shape", default: null },
     { key: "vx", label: "VX", type: "number", default: 0 },

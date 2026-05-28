@@ -1051,6 +1051,60 @@ body.dragging-canvas-insp-thumb * {
     text-decoration-thickness: 2px;
 }
 
+/* Mute badge widget. patternHighlight.js renders an
+ * inline "$mute:" marker immediately after the binding
+ * identifier (labelled-block colon or callback function
+ * name) of any source whose object is currently muted
+ * in the scene. The marker is a CodeMirror widget
+ * decoration — a virtual DOM element rendered inline
+ * via Decoration.widget, not source text — so
+ * behaviors.js stays untouched on mute toggles and the
+ * bundle doesn't dirty when an object gets muted via
+ * Cmd-Shift-M or the inspector checkbox.
+ *
+ * Iteration history. Earlier passes tried (1)
+ * desaturation plus opacity fade on the identifier
+ * itself, too subtle for low-vision reading; (2)
+ * text-decoration line-through, which CodeMirror's
+ * inner syntax-highlighter spans suppressed at the
+ * styling layer; (3) the widget rendered as an amber
+ * pill with background fill and dark text, where the
+ * background-color and color were overridden by
+ * CodeMirror's theme cascade and only the bare
+ * "$mute:" text in the editor's default off-white
+ * came through against the dark editor background.
+ * The current pass strips the pill chrome entirely and
+ * relies on a saturated bright-orange foreground colour
+ * plus bold weight — just text styling, no background
+ * to fight CodeMirror's cascade.
+ *
+ * Bright orange (#ff9933) reads clearly against the
+ * editor's near-black background at any zoom level and
+ * is distinct from GXW's other foreground accents:
+ * green is selection / active state, red is error /
+ * orphan, yellow-amber (#d4a05a) is the toolbar's
+ * Play Selected toggle. Saturated orange sits between
+ * the toolbar amber and the lint-error red, in the
+ * same family as DAW mute indicators (Ableton, Pro
+ * Tools, Cubase all use yellow/orange).
+ *
+ * !important on color is required: CodeMirror's theme
+ * sets a cascade of colour rules on every element
+ * inside .cm-content, and the previous attempt without
+ * !important lost the colour battle and rendered as
+ * the editor's default off-white. Bold weight and the
+ * horizontal margin don't need !important since
+ * nothing in CodeMirror's theme contests them. user-
+ * select: none excludes the marker from text selection
+ * so Cmd-A and drag-select on the line don't pick up
+ * the virtual-only marker text. */
+#editor-area .cm-pattern-mute-badge {
+    color: #ff9933 !important;
+    font-weight: bold;
+    margin: 0 6px;
+    user-select: none;
+}
+
 /* --- Property inspector --- */
 
 /* The inspector replicates the GeoSonix property editor's look
