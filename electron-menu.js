@@ -265,6 +265,11 @@ function buildTemplate() {
           accelerator: 'CmdOrCtrl+D',
           click: () => send('duplicate-canvas-edit'),
         },
+        {
+          label: 'Mute',
+          accelerator: 'Shift+CmdOrCtrl+M',
+          click: () => send('mute-canvas-edit'),
+        },
       ],
     },
 

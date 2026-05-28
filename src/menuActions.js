@@ -73,6 +73,7 @@ import { relativeDateLabel } from "./relativeDate.js";
  * @property {() => void} performCopy
  * @property {() => void} performPaste
  * @property {() => void} performSelectAll
+ * @property {() => void} performToggleMute
  * @property {() => void} runScene
  * @property {() => void} toggleFocusCanvas
  * @property {() => void} toggleAutoZoom
@@ -252,6 +253,19 @@ export function installMenuActions(ctx) {
                 break;
             case "select-all-canvas-edit":
                 if (!ctx.editor.trySelectAllInFocus()) ctx.performSelectAll();
+                break;
+
+            // Mute toggle on the canvas selection (Cmd-Shift-M).
+            // No editor-focus delegation: Cmd-Shift-M has no
+            // text-editing analogue, so this always runs the
+            // canvas-level toggle regardless of focus. The
+            // text-context filter on the editMenu.js keymap
+            // handler (web build) keeps it from firing while
+            // the user is typing; the Electron build's menu
+            // accelerator only triggers when the menu item
+            // is enabled.
+            case "mute-canvas-edit":
+                ctx.performToggleMute();
                 break;
 
             // --- View ---

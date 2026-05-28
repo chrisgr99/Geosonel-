@@ -38,6 +38,7 @@ import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
  * @property {() => void} performCopy
  * @property {() => void} performPaste
  * @property {() => void} performSelectAll
+ * @property {() => void} performToggleMute
  */
 
 /**
@@ -105,6 +106,11 @@ export function installEditMenu(ctx) {
             label: "Duplicate",
             shortcut: "\u2318D",
             action: () => ctx.performDuplicate(),
+        },
+        {
+            label: "Mute",
+            shortcut: "\u21E7\u2318M",
+            action: () => ctx.performToggleMute(),
         },
     ]);
 
@@ -176,5 +182,25 @@ export function installEditMenu(ctx) {
         else if (key === "c") ctx.performCopy();
         else if (key === "v") ctx.performPaste();
         else if (key === "a") ctx.performSelectAll();
+    });
+
+    // Cmd-Shift-M (Mute toggle). Same focus filter as the
+    // other canvas-level shortcuts: in a text-editing
+    // context we return without preventDefault so the
+    // browser's default behaviour (no-op for this chord)
+    // stands; outside a text context the keystroke
+    // toggles mute on every object in the canvas
+    // selection. Bound here only for the web build; the
+    // Electron build routes through the native menu's
+    // custom Mute item with the same accelerator.
+    window.addEventListener("keydown", (e) => {
+        const meta = e.metaKey || e.ctrlKey;
+        if (!meta) return;
+        if (!e.shiftKey) return;
+        if (e.altKey) return;
+        if (e.key.toLowerCase() !== "m") return;
+        if (inTextEditingContext(e)) return;
+        e.preventDefault();
+        ctx.performToggleMute();
     });
 }

@@ -2869,6 +2869,62 @@ async function main() {
         canvas.setSelection({ sprites, triggers, curves });
     };
 
+    /**
+     * Toggle the `mute` field on every object in the
+     * canvas selection. Tri-state semantics matching the
+     * inspector's Mute checkbox: if every selected object
+     * is currently muted, unmute all; otherwise mute all.
+     * A mixed selection (some muted, some not) goes to
+     * fully muted on first toggle and then unmuted on the
+     * second — the standard DAW Mute keystroke behaviour
+     * that lets a user normalise mixed states with one
+     * press.
+     *
+     * The existing `mute` field on sprites, triggers, and
+     * curves already gates pattern firing at the runtime,
+     * so this perform just flips the field and lets the
+     * trailing runScene (driven by applyCanvasEdit) pick
+     * up the change. Visual rendering of muted state
+     * (cursor hiding, grayed-out treatment, code-tab
+     * label gray-out) is the scope of a follow-up commit;
+     * this commit just establishes the keystroke and the
+     * toggle action.
+     *
+     * Goes through applyCanvasEdit so the toggle lands on
+     * the undo stack. No-op on an empty selection or when
+     * no scene is loaded.
+     */
+    const performToggleMute = async () => {
+        const sel = canvas.getSelection();
+        const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
+        if (total === 0 || currentScene === null) return;
+
+        // Determine if every selected object is currently
+        // muted. A single non-muted object flips the toggle
+        // target to "mute all".
+        let allMuted = true;
+        /** @type {Array<[number[], any[]]>} */
+        const checks = [
+            [sel.sprites, currentScene.sprites],
+            [sel.triggers, currentScene.triggers],
+            [sel.curves, currentScene.curves],
+        ];
+        for (const [indexes, arr] of checks) {
+            if (!allMuted) break;
+            for (const i of indexes) {
+                if (i < 0 || i >= arr.length) continue;
+                const obj = arr[i];
+                if (obj === null || obj === undefined || !obj.mute) {
+                    allMuted = false;
+                    break;
+                }
+            }
+        }
+
+        const newValue = !allMuted;
+        await applyCanvasEdit((data) => setMuteOnSelection(data, sel, newValue));
+    };
+
     canvas.setEditCallback(async (edit) => {
         if (edit.kind === "addSprite") {
             await applyCanvasEdit((data) => addSpriteAt(data, edit.x, edit.y));
@@ -3690,6 +3746,7 @@ async function main() {
             performCopy,
             performPaste,
             performSelectAll,
+            performToggleMute,
         });
         installRunMenu({ runScene });
         installAppMenu({ diskMirror, messages });
@@ -3720,6 +3777,7 @@ async function main() {
         performCopy,
         performPaste,
         performSelectAll,
+        performToggleMute,
         runScene: () => { void runScene(); },
         toggleFocusCanvas,
         toggleAutoZoom,
