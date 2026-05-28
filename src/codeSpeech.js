@@ -109,10 +109,10 @@
  * Commit 5 (this commit) adds four user-visible
  * affordances. (1) A CodeMirror hover tooltip surfaces
  * parameter names for known functions: hovering on an
- * argument shows "functionName: parameter name";
+ * argument shows the parameter name for that argument;
  * hovering on the callee identifier shows the full
- * one-line signature. Tooltip content is sourced from
- * src/codeSpeechSignatures.js, a Claude-maintained
+ * one-line signature with the function name. Tooltip
+ * content is sourced from src/codeSpeechSignatures.js, a Claude-maintained
  * file mapping function names to ordered arrays of
  * parameter names. The lookup key is the rightmost
  * identifier of the callee, so plain calls and method
@@ -1049,6 +1049,85 @@ if (typeof window !== "undefined" && window.speechSynthesis) {
 let playbackGeneration = 0;
 
 /**
+ * Speech state for tooltip reading. Only set when the
+ * composer holds Option to request that hovered tooltips
+ * be spoken aloud. The mechanism: hoverTooltip's create()
+ * sets currentTooltipText to the tooltip's text and
+ * speaks it if isOptionHeld is true at that moment; the
+ * destroy() clears currentTooltipText if it still
+ * matches. A window-level Option keydown listener also
+ * speaks the current tooltip text (if any) the moment
+ * Option is first pressed, covering the hover-then-press
+ * case in addition to the hold-then-hover case.
+ *
+ * isTooltipUtteranceInFlight distinguishes tooltip speech
+ * from code-speech (playChunks). When code speech is in
+ * flight the tooltip request is ignored so Option-hover
+ * doesn't accidentally interrupt a Cmd-Shift-' reading;
+ * the composer must press Escape first to stop code
+ * speech before requesting tooltip speech. Between
+ * consecutive tooltips while Option is held, the new
+ * speakTooltip call cancels the previous tooltip
+ * utterance so each tooltip cleanly replaces the last.
+ */
+let currentTooltipText = null;
+let isOptionHeld = false;
+let isTooltipUtteranceInFlight = false;
+
+/**
+ * Speak a single tooltip's text aloud through the same
+ * SpeechSynthesis voice the chunk-queue playback uses.
+ * Refuses to interrupt code speech in flight; cancels any
+ * previous tooltip utterance so consecutive tooltips
+ * (continuous Option-hover across multiple arguments)
+ * each replace the previous reading cleanly.
+ *
+ * @param {string} text
+ */
+function speakTooltip(text) {
+    if (typeof window === "undefined") return;
+    if (typeof window.speechSynthesis === "undefined") return;
+    const synth = window.speechSynthesis;
+    if ((synth.speaking || synth.paused) && !isTooltipUtteranceInFlight) {
+        return;
+    }
+    synth.cancel();
+    isTooltipUtteranceInFlight = true;
+    const utterance = new window.SpeechSynthesisUtterance(text);
+    if (selectedVoice !== null) {
+        utterance.voice = selectedVoice;
+    }
+    utterance.onend = () => { isTooltipUtteranceInFlight = false; };
+    utterance.onerror = () => { isTooltipUtteranceInFlight = false; };
+    synth.speak(utterance);
+}
+
+// Window-level Option (Alt) key listeners for tooltip
+// speech. event.repeat is checked so auto-repeat fires
+// don't re-speak; the speak triggers exactly once on the
+// released-to-held transition. Speech only fires if
+// currentTooltipText is non-null, which is true only when
+// a tooltip is currently visible — and tooltips only
+// appear when isCodeTab() is true (gated in the
+// hoverTooltip callback) — so these listeners are
+// implicitly inactive on tabs other than Code.
+if (typeof window !== "undefined") {
+    window.addEventListener("keydown", (event) => {
+        if (event.key === "Alt" && !event.repeat) {
+            isOptionHeld = true;
+            if (currentTooltipText !== null) {
+                speakTooltip(currentTooltipText);
+            }
+        }
+    });
+    window.addEventListener("keyup", (event) => {
+        if (event.key === "Alt") {
+            isOptionHeld = false;
+        }
+    });
+}
+
+/**
  * Play a chunk queue: for each chunk, dispatch the
  * highlight effect with that chunk's ranges, create a
  * SpeechSynthesisUtterance with the chunk's text, attach
@@ -1506,7 +1585,16 @@ export function codeSpeechExtension({ isCodeTab }) {
                 arg = arg.nextSibling;
             }
             if (foundIdx < 0 || foundIdx >= signature.length) return null;
-            text = `${fnName}: ${signature[foundIdx]}`;
+            // Per-argument tooltip shows the parameter
+            // name only, without the function-name
+            // prefix. The function name is available on
+            // the callee hover (which shows the full
+            // signature) so it doesn't need to repeat in
+            // every argument tooltip; omitting it also
+            // keeps the tooltip narrow enough to fit
+            // inside the screen-zoom viewport without
+            // being clipped on either side.
+            text = signature[foundIdx];
         }
 
         return {
@@ -1516,9 +1604,42 @@ export function codeSpeechExtension({ isCodeTab }) {
                 const dom = document.createElement("div");
                 dom.className = "cm-codeSpeech-tooltip";
                 dom.textContent = text;
-                return { dom };
+                // Register this tooltip as the
+                // currently visible one so the Option
+                // keydown listener can find it; speak it
+                // immediately if Option is already held
+                // (the hold-then-hover case).
+                currentTooltipText = text;
+                if (isOptionHeld) {
+                    speakTooltip(text);
+                }
+                return {
+                    dom,
+                    destroy: () => {
+                        // Only clear if this tooltip is
+                        // still the current one.
+                        // CodeMirror's lifecycle can
+                        // call the next tooltip's
+                        // create before the previous
+                        // tooltip's destroy, so an
+                        // unconditional clear would
+                        // wipe the new tooltip's text
+                        // out from under the keydown
+                        // listener.
+                        if (currentTooltipText === text) {
+                            currentTooltipText = null;
+                        }
+                    },
+                };
             },
         };
+    }, {
+        // 600ms gives the composer time to settle on a
+        // hover target without tooltips firing for every
+        // mouse-drift across the line. CodeMirror's
+        // default of 300ms is too jumpy under macOS Zoom
+        // where small movements feel more deliberate.
+        hoverTime: 600,
     });
 
     const speechKeymap = keymap.of([
