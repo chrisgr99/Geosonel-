@@ -151,7 +151,7 @@ macOS Speak Selection itself is not usable as the engine for this layer because 
 
 CodeMirror 6 decorations cover the highlighting machinery. A decoration set with multiple disjoint ranges supports the non-contiguous case where one chunk highlights two or more separate spans, for example the "input range" chunk highlighting both inputMin and inputMax positions.
 
-Highlight visibility under macOS Zoom magnification with dark mode demands more than a subtle background tint. The intended default is aggressive: a saturated background colour plus a contrasting border or outline around each range. Non-contiguous ranges share their styling so the user reads them as one chunk; a faint connecting underline or a synchronous pulse may help reinforce the grouping. The exact visual styling is to be settled once implementation begins.
+Highlight visibility under macOS Zoom magnification in dark mode is handled by matching Apple Speak Selection's appearance: a medium-saturated purple background (#6E4F8E, in the violet family) with cream/wheat text (#E0D4B8) on top, no outline or border, slightly rounded corners (2px radius). This palette was chosen for two reasons. First, it is purpose-designed by Apple for macOS accessibility under Zoom, which is exactly the user's reading context. Second, it matches the visual the user already associates with system-level speech reading (via Speak Selection), so the GXW speech layer reads as a familiar surface rather than competing with the user's existing accessibility muscle memory. Non-contiguous ranges share the same palette so the user reads them as one chunk; if the convention proves insufficient for grouping disjoint ranges in practice, a connecting underline or synchronous pulse can be added later.
 
 ### Known challenges
 
@@ -187,7 +187,7 @@ Commit 6, JSDoc signature annotations. Parse @group and @arg from comments above
 
 For v0.1 this commit was replaced with the simpler tooltip surface described in Parameter name tooltips above: a signatures file carrying just per-argument names that powers a CodeMirror hover tooltip, with no change to the spoken reading. The original JSDoc design is retained for a future version if speech-side argument grouping proves desirable in practice.
 
-Commit 7, highlight visual styling. Iterate on saturation, border, opacity until the highlight is obviously visible under macOS Zoom in dark mode. Non-contiguous grouping convention for chunks whose ranges are disjoint.
+Commit 7, highlight visual styling. The highlight palette matches Apple Speak Selection (purple background #6E4F8E, cream/wheat text #E0D4B8, no outline, 2px rounded corners) so the speech layer is visually consistent with the system-level speech reading the user already uses elsewhere on macOS. See the Visual highlighting subsection above for the full rationale. Non-contiguous grouping convention for chunks whose ranges are disjoint is deferred until a chunk type that actually produces disjoint ranges lands; the simple v0.1 walker produces only contiguous ranges per chunk.
 
 Commit 8, interruption robustness and voice load handling. Defensive code around the known SpeechSynthesis quirks (cancel races, asynchronous voice loading, stutter on rapid consecutive triggers).
 

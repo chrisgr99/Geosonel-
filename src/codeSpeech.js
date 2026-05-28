@@ -106,7 +106,7 @@
  * Block isn't handled; concise arrow function bodies (the
  * common case in behaviors.js) work correctly.
  *
- * Commit 5 (this commit) adds four user-visible
+ * Commit 5 (this commit) adds three user-visible
  * affordances. (1) A CodeMirror hover tooltip surfaces
  * parameter names for known functions: hovering on an
  * argument shows the parameter name for that argument;
@@ -117,16 +117,12 @@
  * parameter names. The lookup key is the rightmost
  * identifier of the callee, so plain calls and method
  * calls share the dispatch. Functions without an entry
- * surface no tooltip and read unchanged. (2) Escape
- * stops speech and clears the highlight when speech is
- * in flight; when speech is not playing, Escape falls
- * through to whatever else handles it (closing
- * completion popups, etc.). (3) Spacebar toggles
- * pause/resume during playback, gated on speech being
- * active or paused so when speech isn't playing
+ * surface no tooltip and read unchanged. (2) Spacebar
+ * toggles pause/resume during playback, gated on speech
+ * being active or paused so when speech isn't playing
  * Spacebar types a space normally in the editor. The
  * highlight stays in place while paused so the user
- * sees where they stopped. (4) Reading starts from the
+ * sees where they stopped. (3) Reading starts from the
  * pointer position rather than always at the beginning
  * of the enclosing statement. The walker still produces
  * the full chunk queue for the enclosing statement,
@@ -140,6 +136,16 @@
  * but ones that fall after are kept so e.g. "then" /
  * "else" still appear when the start lands inside a
  * ternary's consequent.
+ *
+ * Cmd-Shift-' is the cancel key as well as the start
+ * key: pressing it during an in-flight reading cancels
+ * the reading and clears the highlight rather than
+ * restarting at the current pointer position. This
+ * consolidates start and cancel onto one keystroke so
+ * the composer doesn't need a separate Escape press
+ * for the common stop case. Restarting at a new
+ * pointer position takes two presses (cancel, then
+ * read).
  *
  * Highlights live in a CodeMirror StateField holding a
  * DecorationSet of mark decorations. A StateEffect updates
@@ -259,22 +265,23 @@ const codeSpeechHighlightField = StateField.define({
 });
 
 /**
- * Theme rule for the highlight. Placeholder styling
- * intended for Commit 7 to refine: a saturated yellow
- * background carries the eye to the active chunk under
- * macOS Zoom magnification, black text rides on top for
- * legibility against the yellow regardless of the
- * underlying syntax-highlight colour, and a white
- * outline edges each range crisply so the boundary is
- * unambiguous against the dark editor background. The
- * outline is used rather than a border so adding it
- * doesn't shift the surrounding text's layout.
+ * Theme rule for the highlight. Visual style matches
+ * Apple Speak Selection's appearance under macOS: a
+ * medium-saturated purple background (in the violet
+ * family, #6E4F8E) with cream/wheat text (#E0D4B8) on
+ * top, no outline or border. This palette is purpose-
+ * designed for macOS accessibility under Zoom
+ * magnification and matches the visual the composer
+ * already associates with system-level speech reading,
+ * so the GXW speech layer reads as a familiar surface
+ * rather than its own thing. The subtle 2px border
+ * radius gives the highlight Apple's slightly-rounded
+ * selection edges without making the boundary unclear.
  */
 const codeSpeechHighlightTheme = EditorView.theme({
     ".cm-codeSpeechHighlight": {
-        backgroundColor: "#ffd000",
-        color: "#000",
-        outline: "2px solid #ffffff",
+        backgroundColor: "#6E4F8E",
+        color: "#E0D4B8",
         borderRadius: "2px",
     },
     // Parameter-tooltip styling. Targets the inner div
@@ -1300,6 +1307,14 @@ export function codeSpeechExtension({ isCodeTab }) {
      */
     const readEnclosingStatement = (view) => {
         if (!isCodeTab()) return false;
+        // Cancel-on-repeat: if speech is currently in
+        // flight (speaking or paused), this press is
+        // interpreted as a stop request and the reading
+        // is cancelled with no new reading started. The
+        // composer wanting to read a different statement
+        // presses the key once to cancel, then again to
+        // start the new reading.
+        if (stopSpeech(view)) return true;
         if (lastPointerOffset === null) {
             console.log("[codeSpeech] no pointer position tracked yet");
             return true;
@@ -1647,14 +1662,6 @@ export function codeSpeechExtension({ isCodeTab }) {
             key: "Mod-Shift-'",
             run: readEnclosingStatement,
             preventDefault: true,
-        },
-        {
-            key: "Escape",
-            run: stopSpeech,
-            // No preventDefault: when speech isn't
-            // active stopSpeech returns false and the
-            // key falls through to whatever else handles
-            // Escape (autocomplete close, etc.).
         },
         {
             key: "Space",
