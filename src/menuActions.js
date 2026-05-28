@@ -69,6 +69,10 @@ import { relativeDateLabel } from "./relativeDate.js";
  * @property {() => void} performUndo
  * @property {() => void} performRedo
  * @property {() => void} performDuplicate
+ * @property {() => void} performCut
+ * @property {() => void} performCopy
+ * @property {() => void} performPaste
+ * @property {() => void} performSelectAll
  * @property {() => void} runScene
  * @property {() => void} toggleFocusCanvas
  * @property {() => void} toggleAutoZoom
@@ -214,6 +218,40 @@ export function installMenuActions(ctx) {
                 break;
             case "duplicate-canvas-edit":
                 ctx.performDuplicate();
+                break;
+
+            // Canvas Cut / Copy / Paste / Select All
+            // (Stage 5 commit follow-up). Custom items
+            // in electron-menu.js with accelerators
+            // Cmd-X/C/V/A replace Electron's built-in
+            // role: 'cut'/'copy'/'paste'/'selectAll' so
+            // canvas-focused keystrokes can act on the
+            // canvas selection. Text-editing contexts
+            // (CodeMirror, INPUT, TEXTAREA,
+            // contenteditable) are handled by the
+            // editor's tryX_in_focus methods, which
+            // re-implement the clipboard work the
+            // built-in roles used to provide. Falling
+            // through to performCut / performCopy /
+            // performPaste / performSelectAll runs the
+            // canvas-level action. Paste is async
+            // because clipboard reads return promises
+            // in modern Chromium; the void IIFE keeps
+            // the switch synchronous while awaiting
+            // the dispatch correctly.
+            case "cut-canvas-edit":
+                if (!ctx.editor.tryCutInFocus()) ctx.performCut();
+                break;
+            case "copy-canvas-edit":
+                if (!ctx.editor.tryCopyInFocus()) ctx.performCopy();
+                break;
+            case "paste-canvas-edit":
+                void (async () => {
+                    if (!(await ctx.editor.tryPasteInFocus())) ctx.performPaste();
+                })();
+                break;
+            case "select-all-canvas-edit":
+                if (!ctx.editor.trySelectAllInFocus()) ctx.performSelectAll();
                 break;
 
             // --- View ---

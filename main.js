@@ -110,6 +110,7 @@ import {
     addTriggerAt,
     addCurveAt,
     duplicateSelection,
+    pasteObjects,
     removeObjects,
     fillMissingIds,
     fillEmptyNames,
@@ -153,6 +154,7 @@ import {
     setCanvasH,
     setSceneBpm,
 } from "./src/sceneEditor.js";
+import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
 
 main();
 
@@ -2586,6 +2588,287 @@ async function main() {
         }
     };
 
+    // --- Clipboard for canvas Cut/Copy/Paste/Select All ---
+    //
+    // In-app clipboard holding deep-cloned scene entries.
+    // Set by performCopy and performCut; consumed by
+    // performPaste. Not the system clipboard: cut/copy do
+    // not write to the OS clipboard and paste does not
+    // read from it, so canvas objects don't round-trip
+    // through other apps. This keeps the model simple
+    // (no serialization format to maintain) and avoids
+    // permission prompts for clipboard access; the
+    // system clipboard's text Cut/Copy/Paste continue to
+    // work for text-editing surfaces because the four
+    // tryCutInFocus / tryCopyInFocus / tryPasteInFocus /
+    // trySelectAllInFocus methods on TabbedEditor sit
+    // ahead of these performs in the menuActions.js
+    // dispatcher and handle text-context gestures.
+    //
+    // The clipboard outlives a score switch, so paste
+    // works across scores. Pasted objects get fresh ids
+    // from the destination scene's id counter via
+    // pasteObjects, so cross-score id collisions are
+    // avoided automatically. The clipboard is in-memory
+    // only and resets on app restart; not persisted by
+    // design.
+    //
+    // The three arrays mirror the scene's positional
+    // arrays so pasteObjects in sceneEditor.js can map
+    // each entry to its kind without per-entry tagging.
+    /** @type {{sprites: any[], triggers: any[], curves: any[]} | null} */
+    let clipboard = null;
+
+    /**
+     * Compute the unweighted centroid of the clipboard's
+     * objects in canvas coordinates, or null when no
+     * object yields a usable position. Used by
+     * performPaste to translate the pasted group so its
+     * centroid lands at the most-recent click position
+     * when one is available. Sprites and triggers
+     * contribute (x, y); curves contribute their shape's
+     * bounding-box centroid via the shared inspector
+     * helper. Per-object weights are equal so a multi-
+     * object paste centres on the group's geometric
+     * middle rather than biasing toward one kind.
+     * @param {{sprites: any[], triggers: any[], curves: any[]}} clip
+     * @returns {{x: number, y: number} | null}
+     */
+    function computeClipboardCentroid(clip) {
+        let sumX = 0;
+        let sumY = 0;
+        let count = 0;
+        for (const s of clip.sprites) {
+            if (typeof s.x === "number" && typeof s.y === "number") {
+                sumX += s.x;
+                sumY += s.y;
+                count++;
+            }
+        }
+        for (const t of clip.triggers) {
+            if (typeof t.x === "number" && typeof t.y === "number") {
+                sumX += t.x;
+                sumY += t.y;
+                count++;
+            }
+        }
+        for (const c of clip.curves) {
+            const cen = computeShapeBboxCentroid(c.shape);
+            if (cen !== null) {
+                sumX += cen.x;
+                sumY += cen.y;
+                count++;
+            }
+        }
+        if (count === 0) return null;
+        return { x: sumX / count, y: sumY / count };
+    }
+
+    /**
+     * Copy the current canvas selection into the in-app
+     * clipboard. Reads each selected entry from scene.json
+     * (parsed fresh so the captured shape is the canonical
+     * JSON form, not the runtime Scene's constructor-
+     * decorated form), deep-clones it via JSON roundtrip,
+     * and stores by kind. No-op on an empty selection or
+     * a scene.json parse error. Does NOT touch the system
+     * clipboard.
+     *
+     * The selection itself stays put on the canvas; copy
+     * is a read-only operation as far as the scene is
+     * concerned.
+     */
+    const performCopy = () => {
+        const sel = canvas.getSelection();
+        const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
+        if (total === 0) return;
+        const sceneFile = session.bundle.getFile("scene.json");
+        if (sceneFile === null) return;
+        const parsed = parseScene(sceneFile.content);
+        if (!parsed.ok) return;
+        const data = parsed.data;
+        /** @type {any[]} */
+        const cs = [];
+        /** @type {any[]} */
+        const ct = [];
+        /** @type {any[]} */
+        const cc = [];
+        if (Array.isArray(data.sprites)) {
+            for (const i of sel.sprites) {
+                if (i >= 0 && i < data.sprites.length) {
+                    cs.push(JSON.parse(JSON.stringify(data.sprites[i])));
+                }
+            }
+        }
+        if (Array.isArray(data.triggers)) {
+            for (const i of sel.triggers) {
+                if (i >= 0 && i < data.triggers.length) {
+                    ct.push(JSON.parse(JSON.stringify(data.triggers[i])));
+                }
+            }
+        }
+        if (Array.isArray(data.curves)) {
+            for (const i of sel.curves) {
+                if (i >= 0 && i < data.curves.length) {
+                    cc.push(JSON.parse(JSON.stringify(data.curves[i])));
+                }
+            }
+        }
+        if (cs.length + ct.length + cc.length === 0) return;
+        clipboard = { sprites: cs, triggers: ct, curves: cc };
+    };
+
+    /**
+     * Cut the current canvas selection: copy it into the
+     * clipboard, then delete the selection from the scene
+     * via performDeleteSelection. Standard semantics (not
+     * Finder-style move). The deletion goes through
+     * applyCanvasEdit so it lands on the undo stack;
+     * Cmd-Z restores the deleted objects but leaves the
+     * clipboard populated, so the user can also paste
+     * them back without undoing.
+     *
+     * No-op on an empty selection or a scene.json parse
+     * error (performCopy returns silently in either case
+     * and leaves the clipboard untouched). When copy
+     * succeeds but the clipboard ends up empty (no valid
+     * entries survived index filtering), the delete also
+     * skips to avoid removing objects without a clipboard
+     * record of them.
+     */
+    const performCut = async () => {
+        const previousClipboard = clipboard;
+        performCopy();
+        // Detect whether performCopy actually wrote a new
+        // clipboard by comparing references; if it didn't,
+        // the selection produced no valid captures and
+        // there's nothing to cut.
+        if (clipboard === previousClipboard) return;
+        await performDeleteSelection();
+    };
+
+    /**
+     * Paste the clipboard's objects into the current
+     * scene. Each object gets a fresh id from the
+     * destination scene's id counter (so cross-score
+     * pastes don't collide) and a position derived from
+     * the most-recent canvas click: when a click position
+     * is recorded, the pasted group's centroid lands at
+     * that point; otherwise a fallback offset of
+     * (+1, -1) matches Duplicate's behaviour. After a
+     * successful paste the click position is cleared via
+     * canvas.clearLastClickPosition so a second paste
+     * without an intervening click falls back to the
+     * offset model rather than stacking pastes at the
+     * same point.
+     *
+     * The new objects are auto-selected, replacing the
+     * previous selection. Goes through applyCanvasEdit so
+     * the paste lands on the undo stack. No-op on an
+     * empty or null clipboard.
+     *
+     * Pattern blocks are NOT extended on paste (unlike
+     * Duplicate, which extends the source's labelled
+     * chain via addLabelToBlock). cyclePattern carries
+     * over verbatim from each clipboard source so inline
+     * patterns and variable references still play; users
+     * wanting shared labelled blocks for pasted objects
+     * can scaffold one through the inspector's Pattern
+     * row Create button after paste.
+     */
+    const performPaste = async () => {
+        if (clipboard === null) return;
+        const total = clipboard.sprites.length +
+            clipboard.triggers.length +
+            clipboard.curves.length;
+        if (total === 0) return;
+
+        // Compute the (dx, dy) offset. Click-based hint
+        // takes precedence; missing click position or
+        // missing centroid (degenerate shapes only) falls
+        // back to (+1, -1) to match Duplicate.
+        let dx = 1;
+        let dy = -1;
+        const clickPos = canvas.getLastClickPosition();
+        if (clickPos !== null) {
+            const centroid = computeClipboardCentroid(clipboard);
+            if (centroid !== null) {
+                dx = clickPos.x - centroid.x;
+                dy = clickPos.y - centroid.y;
+            }
+        }
+
+        // Capture pre-mutation array lengths so the new
+        // selection can be computed from append positions
+        // (pasteObjects always appends, mirroring
+        // duplicateSelection).
+        const oldSpriteLen = currentScene !== null ? currentScene.sprites.length : 0;
+        const oldTriggerLen = currentScene !== null ? currentScene.triggers.length : 0;
+        const oldCurveLen = currentScene !== null ? currentScene.curves.length : 0;
+
+        /** @type {Array<{kind: "sprite" | "trigger" | "curve", oldId: string | null, newId: string}>} */
+        let mappings = [];
+        await applyCanvasEdit((data) => {
+            mappings = pasteObjects(data, clipboard, dx, dy);
+        });
+        if (mappings.length === 0) return;
+
+        let newSpriteCount = 0;
+        let newTriggerCount = 0;
+        let newCurveCount = 0;
+        for (const m of mappings) {
+            if (m.kind === "sprite") newSpriteCount++;
+            else if (m.kind === "trigger") newTriggerCount++;
+            else if (m.kind === "curve") newCurveCount++;
+        }
+        /** @type {number[]} */
+        const newSprites = [];
+        for (let i = 0; i < newSpriteCount; i++) newSprites.push(oldSpriteLen + i);
+        /** @type {number[]} */
+        const newTriggers = [];
+        for (let i = 0; i < newTriggerCount; i++) newTriggers.push(oldTriggerLen + i);
+        /** @type {number[]} */
+        const newCurves = [];
+        for (let i = 0; i < newCurveCount; i++) newCurves.push(oldCurveLen + i);
+
+        canvas.setSelection({
+            sprites: newSprites,
+            triggers: newTriggers,
+            curves: newCurves,
+        });
+
+        // Consume the click position so a second paste
+        // without an intervening click falls back to the
+        // offset model. See canvas.js's doc on
+        // _lastClickCanvasPos.
+        canvas.clearLastClickPosition();
+    };
+
+    /**
+     * Select every object on the canvas: every sprite,
+     * trigger, and curve in the current scene. No-op when
+     * no scene is loaded or the scene is empty. Used by
+     * Cmd-A when focus is on the canvas (or anywhere
+     * outside a text-editing context).
+     */
+    const performSelectAll = () => {
+        if (currentScene === null) return;
+        const spriteCount = currentScene.sprites.length;
+        const triggerCount = currentScene.triggers.length;
+        const curveCount = currentScene.curves.length;
+        if (spriteCount + triggerCount + curveCount === 0) return;
+        /** @type {number[]} */
+        const sprites = [];
+        for (let i = 0; i < spriteCount; i++) sprites.push(i);
+        /** @type {number[]} */
+        const triggers = [];
+        for (let i = 0; i < triggerCount; i++) triggers.push(i);
+        /** @type {number[]} */
+        const curves = [];
+        for (let i = 0; i < curveCount; i++) curves.push(i);
+        canvas.setSelection({ sprites, triggers, curves });
+    };
+
     canvas.setEditCallback(async (edit) => {
         if (edit.kind === "addSprite") {
             await applyCanvasEdit((data) => addSpriteAt(data, edit.x, edit.y));
@@ -3399,7 +3682,15 @@ async function main() {
             toggleAutoZoom,
         });
         installFileMenu({ session, messages, imageImporter, editor, isElectron });
-        installEditMenu({ performUndo, performRedo, performDuplicate });
+        installEditMenu({
+            performUndo,
+            performRedo,
+            performDuplicate,
+            performCut,
+            performCopy,
+            performPaste,
+            performSelectAll,
+        });
         installRunMenu({ runScene });
         installAppMenu({ diskMirror, messages });
     }
@@ -3425,6 +3716,10 @@ async function main() {
         performUndo,
         performRedo,
         performDuplicate,
+        performCut,
+        performCopy,
+        performPaste,
+        performSelectAll,
         runScene: () => { void runScene(); },
         toggleFocusCanvas,
         toggleAutoZoom,

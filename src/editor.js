@@ -21,7 +21,7 @@
 
 import { EditorView, keymap, lineNumbers, drawSelection, ViewPlugin, Decoration, WidgetType } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
 import { EditorState, Compartment, RangeSetBuilder } from "https://esm.sh/@codemirror/state@6.5.2";
-import { defaultKeymap, history, historyKeymap, indentWithTab, undo as cmUndo, redo as cmRedo } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
+import { defaultKeymap, history, historyKeymap, indentWithTab, undo as cmUndo, redo as cmRedo, selectAll as cmSelectAll } from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.5.2";
 import { indentOnInput, indentUnit, bracketMatching } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
 import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6?deps=@codemirror/state@6.5.2";
 import { json } from "https://esm.sh/@codemirror/lang-json@6?deps=@codemirror/state@6.5.2";
@@ -1141,6 +1141,188 @@ export class TabbedEditor {
             focused.tagName === "TEXTAREA" ||
             focused.isContentEditable) {
             document.execCommand("redo");
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Try to handle a Cut gesture against the currently-
+     * focused element. Called by the native macOS menu's
+     * Cmd-X dispatcher (src/menuActions.js) so the
+     * accelerator does the right thing depending on where
+     * focus is. CodeMirror, INPUT, TEXTAREA, and
+     * contenteditable all share one path: invoke the
+     * browser's native cut via document.execCommand("cut").
+     * That fires the cut event which CodeMirror's content
+     * area listens for, and triggers the standard text-
+     * field cut for native inputs. Any other focus context
+     * (canvas, body, menu chrome) returns false so the
+     * dispatcher falls through to the canvas performCut.
+     *
+     * execCommand("cut") is technically deprecated in the
+     * spec but remains supported in Chromium (and
+     * therefore Electron). The newer Clipboard API
+     * alternative (navigator.clipboard.writeText after
+     * reading the selection manually) doesn't trigger
+     * CodeMirror's own cut-event handlers and would
+     * require a per-surface re-implementation, which
+     * isn't worth the layering complexity here.
+     *
+     * @returns {boolean}
+     */
+    tryCutInFocus() {
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement)) return false;
+        if (focused.closest(".cm-editor") !== null ||
+            focused.tagName === "INPUT" ||
+            focused.tagName === "TEXTAREA" ||
+            focused.isContentEditable) {
+            document.execCommand("cut");
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Symmetric with tryCutInFocus for Cmd-C. See that
+     * method's comment for the dispatch logic and the
+     * execCommand rationale.
+     *
+     * @returns {boolean}
+     */
+    tryCopyInFocus() {
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement)) return false;
+        if (focused.closest(".cm-editor") !== null ||
+            focused.tagName === "INPUT" ||
+            focused.tagName === "TEXTAREA" ||
+            focused.isContentEditable) {
+            document.execCommand("copy");
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Try to handle a Paste gesture against the currently-
+     * focused element. Called by the native macOS menu's
+     * Cmd-V dispatcher (src/menuActions.js); async because
+     * navigator.clipboard.readText returns a promise.
+     * Returns true iff the gesture was handled here
+     * (regardless of whether the paste actually succeeded;
+     * a clipboard read failure logs to console and still
+     * returns true so the canvas performPaste doesn't run
+     * over a text-focused element).
+     *
+     * Unlike tryCutInFocus / tryCopyInFocus, paste can't
+     * use document.execCommand("paste") because modern
+     * Chromium silently rejects it from non-extension
+     * contexts as a security measure (the API can read
+     * clipboard text without explicit permission, which
+     * is considered a privacy risk). The Clipboard API's
+     * readText is the supported alternative; in Electron
+     * renderers it works without permission prompts
+     * because Electron grants clipboard access by default.
+     *
+     * Per-surface insertion: CodeMirror gets a view
+     * dispatch with the read text replacing the current
+     * selection range, mirroring what its native paste
+     * event handler would do. INPUT and TEXTAREA splice
+     * the text into .value at the current selection and
+     * fire an input event so any onInput listeners pick
+     * up the change. contenteditable falls back to
+     * document.execCommand("insertText", false, text),
+     * which is the most reliable cursor-position insert
+     * for editable regions.
+     *
+     * @returns {Promise<boolean>}
+     */
+    async tryPasteInFocus() {
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement)) return false;
+        const isCm = focused.closest(".cm-editor") !== null;
+        const isInput = focused.tagName === "INPUT" || focused.tagName === "TEXTAREA";
+        const isCE = focused.isContentEditable;
+        if (!isCm && !isInput && !isCE) return false;
+
+        let text;
+        try {
+            text = await navigator.clipboard.readText();
+        } catch (err) {
+            console.error("GXW: clipboard read failed:", err);
+            return true;
+        }
+
+        if (isCm && this.view !== null) {
+            const sel = this.view.state.selection.main;
+            this.view.dispatch({
+                changes: { from: sel.from, to: sel.to, insert: text },
+                selection: { anchor: sel.from + text.length },
+                userEvent: "input.paste",
+            });
+            return true;
+        }
+
+        if (isInput) {
+            const inputEl = /** @type {HTMLInputElement | HTMLTextAreaElement} */ (focused);
+            const start = inputEl.selectionStart ?? inputEl.value.length;
+            const end = inputEl.selectionEnd ?? inputEl.value.length;
+            inputEl.value = inputEl.value.slice(0, start) + text + inputEl.value.slice(end);
+            const cursor = start + text.length;
+            inputEl.selectionStart = inputEl.selectionEnd = cursor;
+            inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+            return true;
+        }
+
+        if (isCE) {
+            document.execCommand("insertText", false, text);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Try to handle a Select All gesture against the
+     * currently-focused element. Called by the native
+     * macOS menu's Cmd-A dispatcher (src/menuActions.js).
+     * Three branches:
+     *
+     *   - CodeMirror focus: invoke cm6's selectAll
+     *     command, which selects the full document and
+     *     keeps the editor's history coherent.
+     *   - INPUT or TEXTAREA focus: call the element's
+     *     own .select() method, which selects the entire
+     *     value (single-line for INPUT, all lines for
+     *     TEXTAREA).
+     *   - contenteditable focus: fall back to
+     *     document.execCommand("selectAll"), which
+     *     extends the document selection across the
+     *     editable region.
+     *
+     * Any other focus context returns false so the
+     * dispatcher falls through to the canvas
+     * performSelectAll.
+     *
+     * @returns {boolean}
+     */
+    trySelectAllInFocus() {
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement)) return false;
+        if (focused.closest(".cm-editor") !== null) {
+            if (this.view !== null) {
+                cmSelectAll(this.view);
+                return true;
+            }
+            return false;
+        }
+        if (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA") {
+            /** @type {HTMLInputElement | HTMLTextAreaElement} */ (focused).select();
+            return true;
+        }
+        if (focused.isContentEditable) {
+            document.execCommand("selectAll");
             return true;
         }
         return false;

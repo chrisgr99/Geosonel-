@@ -207,15 +207,23 @@ function buildTemplate() {
       ],
     },
 
-    // Edit menu. Undo, Redo, and Duplicate are custom
-    // (click-only in 5a; they have canvas-specific
-    // behaviour that needs focus-aware dispatch from the
-    // renderer when accelerators land in 5c). Cut, Copy,
-    // Paste, Paste and Match Style, Delete, and Select
-    // All use Electron's built-in roles so they get the
-    // standard text-editing accelerators and behaviour
-    // (works automatically in INPUT, TEXTAREA,
-    // contenteditable, and CodeMirror) without any IPC.
+    // Edit menu. Undo, Redo, Duplicate, Cut, Copy,
+    // Paste, and Select All are all custom items that
+    // send IPC actions to the renderer (the renderer-side
+    // dispatcher in src/menuActions.js routes each to a
+    // focus-aware handler that delegates to CodeMirror /
+    // text fields when appropriate, or to the canvas
+    // perform function otherwise). Cut/Copy/Paste/Select
+    // All used to be Electron's built-in roles (which
+    // handle text-editing surfaces automatically), but
+    // the canvas selection also needs to participate in
+    // these gestures, so the roles are replaced with
+    // custom items and the renderer re-implements the
+    // text-context fallbacks via the editor's
+    // tryCutInFocus / tryCopyInFocus / tryPasteInFocus /
+    // trySelectAllInFocus methods. Delete keeps its
+    // built-in role since it has no accelerator and no
+    // canvas-level analogue under the current model.
     {
       label: 'Edit',
       submenu: [
@@ -230,11 +238,27 @@ function buildTemplate() {
           click: () => send('redo'),
         },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
+        {
+          label: 'Cut',
+          accelerator: 'CmdOrCtrl+X',
+          click: () => send('cut-canvas-edit'),
+        },
+        {
+          label: 'Copy',
+          accelerator: 'CmdOrCtrl+C',
+          click: () => send('copy-canvas-edit'),
+        },
+        {
+          label: 'Paste',
+          accelerator: 'CmdOrCtrl+V',
+          click: () => send('paste-canvas-edit'),
+        },
         { role: 'delete' },
-        { role: 'selectAll' },
+        {
+          label: 'Select All',
+          accelerator: 'CmdOrCtrl+A',
+          click: () => send('select-all-canvas-edit'),
+        },
         { type: 'separator' },
         {
           label: 'Duplicate',

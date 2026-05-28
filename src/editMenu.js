@@ -34,6 +34,10 @@ import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
  * @property {() => void} performUndo
  * @property {() => void} performRedo
  * @property {() => void} performDuplicate
+ * @property {() => void} performCut
+ * @property {() => void} performCopy
+ * @property {() => void} performPaste
+ * @property {() => void} performSelectAll
  */
 
 /**
@@ -74,6 +78,27 @@ export function installEditMenu(ctx) {
             label: "Redo",
             shortcut: "\u21E7\u2318Z",
             action: () => ctx.performRedo(),
+        },
+        { separator: true },
+        {
+            label: "Cut",
+            shortcut: "\u2318X",
+            action: () => ctx.performCut(),
+        },
+        {
+            label: "Copy",
+            shortcut: "\u2318C",
+            action: () => ctx.performCopy(),
+        },
+        {
+            label: "Paste",
+            shortcut: "\u2318V",
+            action: () => ctx.performPaste(),
+        },
+        {
+            label: "Select All",
+            shortcut: "\u2318A",
+            action: () => ctx.performSelectAll(),
         },
         { separator: true },
         {
@@ -120,5 +145,36 @@ export function installEditMenu(ctx) {
         e.preventDefault();
         if (inTextEditingContext(e)) return;
         ctx.performDuplicate();
+    });
+
+    // Cmd-X / Cmd-C / Cmd-V / Cmd-A (Cut, Copy, Paste,
+    // Select All). In text-editing contexts we return
+    // WITHOUT preventDefault so the browser's native
+    // clipboard handling and select-all behaviour fire
+    // normally (INPUT and TEXTAREA selection, CodeMirror's
+    // own cut/copy/paste, contenteditable selection).
+    // Outside text contexts the keystroke acts on the
+    // canvas selection, mirroring the same focus filter
+    // used by Cmd-Z above.
+    //
+    // Bound here only for the web build; the Electron
+    // build skips installEditMenu entirely (see main.js)
+    // and routes the four shortcuts through the native
+    // menu's custom items in electron-menu.js. The
+    // renderer-side dispatcher in menuActions.js then
+    // delegates to the editor's text-context handlers or
+    // the canvas performs, mirroring this branch's logic.
+    window.addEventListener("keydown", (e) => {
+        const meta = e.metaKey || e.ctrlKey;
+        if (!meta) return;
+        if (e.shiftKey || e.altKey) return;
+        const key = e.key.toLowerCase();
+        if (key !== "x" && key !== "c" && key !== "v" && key !== "a") return;
+        if (inTextEditingContext(e)) return;
+        e.preventDefault();
+        if (key === "x") ctx.performCut();
+        else if (key === "c") ctx.performCopy();
+        else if (key === "v") ctx.performPaste();
+        else if (key === "a") ctx.performSelectAll();
     });
 }

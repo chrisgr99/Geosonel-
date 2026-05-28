@@ -753,6 +753,89 @@ export function duplicateSelection(data, selection, dx, dy) {
 }
 
 /**
+ * Paste a clipboard's worth of pre-cloned scene objects
+ * into the parsed scene with an XY offset, fresh ids, and
+ * append-to-array semantics. The clipboard's sprites,
+ * triggers, and curves arrays each hold deep-clones of
+ * scene entries captured at copy or cut time; this
+ * function takes them, gives each a fresh id from the
+ * scene's id counter, applies (dx, dy) to position
+ * (sprite and trigger x/y, curve shape geometry), and
+ * appends to the matching scene array. Mutates `data` in
+ * place. Returns the same {kind, oldId, newId} mapping
+ * array shape as duplicateSelection so the caller can
+ * compute the resulting selection indexes from the pre-
+ * mutation array lengths.
+ *
+ * Each pasted object gets a second JSON-roundtrip deep
+ * clone from its clipboard source so a clipboard can
+ * paste repeatedly without the second paste sharing
+ * references with the first. cyclePattern carries over
+ * verbatim, matching the duplicate semantics, so pasted
+ * objects fire the same pattern as their sources from the
+ * moment they appear.
+ *
+ * No behaviors.js edits fire from this function. Pasted
+ * objects do NOT join their source's labelled-block chain
+ * (the way duplicates do via addLabelToBlock); the caller
+ * intentionally keeps paste simpler than duplicate, so a
+ * paste across scores or after a cut produces independent
+ * objects rather than implicitly extending some chain.
+ * Inline patterns and variable-reference patterns in the
+ * cyclePattern field still work because they don't depend
+ * on a labelled block existing.
+ *
+ * @param {any} data
+ * @param {{sprites?: any[], triggers?: any[], curves?: any[]}} clipboard
+ * @param {number} dx
+ * @param {number} dy
+ * @returns {Array<{kind: "sprite" | "trigger" | "curve", oldId: string | null, newId: string}>}
+ */
+export function pasteObjects(data, clipboard, dx, dy) {
+    ensureIdCounters(data);
+    /** @type {Array<{kind: "sprite" | "trigger" | "curve", oldId: string | null, newId: string}>} */
+    const mappings = [];
+    /** @type {Array<["sprite" | "trigger" | "curve", "sprites" | "triggers" | "curves"]>} */
+    const kindAndKey = [
+        ["sprite", "sprites"],
+        ["trigger", "triggers"],
+        ["curve", "curves"],
+    ];
+    for (const [kind, arrayKey] of kindAndKey) {
+        const sources = Array.isArray(clipboard[arrayKey])
+            ? clipboard[arrayKey]
+            : [];
+        if (sources.length === 0) continue;
+        if (!Array.isArray(data[arrayKey])) {
+            data[arrayKey] = [];
+        }
+        const arr = data[arrayKey];
+        for (const source of sources) {
+            if (source === null ||
+                typeof source !== "object" ||
+                Array.isArray(source)) continue;
+            /** @type {any} */
+            const dup = JSON.parse(JSON.stringify(source));
+            const newId = generateId(kind, data);
+            dup.id = newId;
+            if (kind === "sprite" || kind === "trigger") {
+                dup.x = roundCoord((typeof dup.x === "number" ? dup.x : 0) + dx);
+                dup.y = roundCoord((typeof dup.y === "number" ? dup.y : 0) + dy);
+            } else if (kind === "curve") {
+                translateShape(dup.shape, dx, dy);
+            }
+            arr.push(dup);
+            mappings.push({
+                kind,
+                oldId: typeof source.id === "string" ? source.id : null,
+                newId,
+            });
+        }
+    }
+    return mappings;
+}
+
+/**
  * Remove objects from the scene by kind and index. Indexes
  * refer to positions in the original arrays at the time of
  * the call; the function filters them out and the resulting

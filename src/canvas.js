@@ -512,6 +512,28 @@ export class Canvas {
         };
 
         /**
+         * Most recent canvas-space position (x, y) captured
+         * from a mousedown anywhere on the canvas element,
+         * or null when no click has been observed yet (or
+         * the position has been cleared explicitly). Used
+         * by the Paste command in main.js as a position
+         * hint: when non-null, a paste centres the
+         * incoming objects at this point; when null, paste
+         * falls back to a fixed offset from the originals.
+         * The position is captured for every mousedown
+         * regardless of what action follows (selection,
+         * marquee, drag start, tool placement, double-
+         * click), because any of those gestures
+         * communicates the user's locus of attention. The
+         * Paste path clears the position after consuming
+         * it via clearLastClickPosition(), so a second
+         * paste falls back to the offset model unless the
+         * user clicks again first.
+         * @type {{x: number, y: number} | null}
+         */
+        this._lastClickCanvasPos = null;
+
+        /**
          * Set of object ids that should render with the
          * cursor-target magenta highlight. Driven by the
          * editor through setCursorTargetIds whenever the
@@ -696,6 +718,18 @@ export class Canvas {
             passive: false,
         });
         this.canvasEl.addEventListener("mousedown", (e) => this._onMouseDown(e));
+        // Capture the canvas-space position of every
+        // mousedown for the Paste command's position hint.
+        // Runs alongside _onMouseDown rather than inside
+        // it so the capture doesn't depend on which
+        // branch _onMouseDown takes; any mousedown
+        // communicates locus of attention. See
+        // _lastClickCanvasPos's doc for the consume-and-
+        // clear contract main.js follows.
+        this.canvasEl.addEventListener("mousedown", (e) => {
+            const pos = this._eventToCanvas(e);
+            this._lastClickCanvasPos = { x: pos.x, y: pos.y };
+        });
         this.canvasEl.addEventListener("dblclick", (e) => this._onDoubleClick(e));
 
         // Hover tracking. mousemove on the canvas element
@@ -1081,6 +1115,32 @@ export class Canvas {
             triggers: Array.from(this._selection.triggers),
             curves: Array.from(this._selection.curves),
         };
+    }
+
+    /**
+     * Return the most recent canvas-space mousedown
+     * position, or null when no click has been observed
+     * yet (or the position has been cleared via
+     * clearLastClickPosition). Used by main.js's Paste
+     * command as a position hint: when non-null, the
+     * pasted objects are centred at this point; when
+     * null, paste falls back to a fixed offset from the
+     * originals.
+     * @returns {{x: number, y: number} | null}
+     */
+    getLastClickPosition() {
+        return this._lastClickCanvasPos;
+    }
+
+    /**
+     * Clear the most recent mousedown position so a
+     * subsequent getLastClickPosition() returns null.
+     * main.js's Paste command calls this after consuming
+     * the position so a second paste without an
+     * intervening click falls back to the offset model.
+     */
+    clearLastClickPosition() {
+        this._lastClickCanvasPos = null;
     }
 
     /**
