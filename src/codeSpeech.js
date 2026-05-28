@@ -767,11 +767,33 @@ function walkNode(node, source, chunks) {
             }
             break;
         }
+        case "String":
+        case "TemplateString": {
+            // Strip the surrounding delimiter characters
+            // (", ', or `) from the spoken text. Without
+            // this the speech engine interprets the
+            // double quote as the unit-of-inches symbol
+            // (so "c5" reads as "C5 inches") and the
+            // single quote as the unit-of-feet symbol.
+            // The highlight range still covers the full
+            // quoted string including the delimiters,
+            // so the visual presentation is unchanged.
+            // Internal escape sequences (\", \', \n,
+            // etc.) are spoken as raw text for v0.1;
+            // the pronunciation dictionary in Commit 6
+            // can refine this if it becomes a problem in
+            // practice.
+            const text = source.slice(node.from, node.to);
+            const inner = text.length >= 2 ? text.slice(1, -1) : text;
+            chunks.push({
+                text: inner,
+                ranges: [[node.from, node.to]],
+            });
+            break;
+        }
         case "VariableName":
         case "PropertyName":
         case "Number":
-        case "String":
-        case "TemplateString":
         case "BooleanLiteral":
             chunks.push({
                 text: source.slice(node.from, node.to),
@@ -787,6 +809,149 @@ function walkNode(node, source, chunks) {
                 ranges: [[node.from, node.to]],
             });
     }
+}
+
+/**
+ * Module-level cache of the currently selected
+ * SpeechSynthesisVoice. Null until the browser's voice
+ * list has been populated and selectVoice has had a
+ * chance to pick from it. Set in playChunks on every
+ * utterance so the speech engine uses the chosen voice
+ * rather than whatever Chromium defaults to (which on
+ * Electron is a flat low-quality voice that bears no
+ * resemblance to the macOS Speak Selection system
+ * voice the composer hears elsewhere).
+ *
+ * @type {any}
+ */
+let selectedVoice = null;
+
+/**
+ * Pick the best available voice from the browser's voice
+ * list and cache it in selectedVoice. Called once at
+ * module load and again whenever the SpeechSynthesis API
+ * fires its voiceschanged event (the voice list is
+ * populated asynchronously after page load, and may
+ * change later if voice packs are installed at runtime).
+ *
+ * Selection preference, from most-preferred to least:
+ *   1. Karen Premium / Enhanced / standard — the
+ *      composer's chosen macOS voice (Australian
+ *      English), in decreasing order of synthesis
+ *      quality.
+ *   2. Samantha Premium / Enhanced / standard — the
+ *      US English fallback if Karen isn't installed.
+ *   3. Any English local voice with "Premium" or
+ *      "Enhanced" in its name — covers Ava (Premium),
+ *      Allison (Enhanced), etc.
+ *   4. Any local English voice flagged as default by
+ *      the browser.
+ *   5. Any local English voice.
+ *   6. Any English voice (including non-local).
+ *   7. First voice in the list.
+ *
+ * Logs the selection to the console so the composer can
+ * see what voice is being used and request a different
+ * preference if desired. The full voice list is also
+ * logged on the first selection so the available
+ * options are visible.
+ */
+function selectVoice() {
+    if (typeof window === "undefined") return;
+    if (typeof window.speechSynthesis === "undefined") return;
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length === 0) return;
+
+    const wasNull = selectedVoice === null;
+
+    const preferredNames = [
+        "Karen (Premium)",
+        "Karen (Enhanced)",
+        "Karen",
+        "Samantha (Premium)",
+        "Samantha (Enhanced)",
+        "Samantha",
+    ];
+    for (const name of preferredNames) {
+        const found = voices.find((v) => v.name === name);
+        if (found) {
+            selectedVoice = found;
+            logVoiceSelection(voices, wasNull);
+            return;
+        }
+    }
+
+    const englishLocal = voices.filter(
+        (v) => v.localService && v.lang.startsWith("en"),
+    );
+    const premiumOrEnhanced = englishLocal.find(
+        (v) => /\(Premium\)|\(Enhanced\)/.test(v.name),
+    );
+    if (premiumOrEnhanced) {
+        selectedVoice = premiumOrEnhanced;
+        logVoiceSelection(voices, wasNull);
+        return;
+    }
+
+    const englishLocalDefault = englishLocal.find((v) => v.default);
+    if (englishLocalDefault) {
+        selectedVoice = englishLocalDefault;
+        logVoiceSelection(voices, wasNull);
+        return;
+    }
+
+    if (englishLocal.length > 0) {
+        selectedVoice = englishLocal[0];
+        logVoiceSelection(voices, wasNull);
+        return;
+    }
+
+    const anyEnglish = voices.find((v) => v.lang.startsWith("en"));
+    if (anyEnglish) {
+        selectedVoice = anyEnglish;
+        logVoiceSelection(voices, wasNull);
+        return;
+    }
+
+    selectedVoice = voices[0];
+    logVoiceSelection(voices, wasNull);
+}
+
+/**
+ * Log the current voice selection. On the first call
+ * (firstTime true) also log the full available-voices
+ * list so the composer can see what other options exist
+ * and request a different preference if they'd like.
+ *
+ * @param {any[]} voices
+ * @param {boolean} firstTime
+ */
+function logVoiceSelection(voices, firstTime) {
+    if (firstTime) {
+        console.log(
+            "[codeSpeech] available voices:",
+            voices.map((v) => ({
+                name: v.name,
+                lang: v.lang,
+                local: v.localService,
+                default: v.default,
+            })),
+        );
+    }
+    console.log(
+        "[codeSpeech] selected voice:",
+        selectedVoice ? `${selectedVoice.name} (${selectedVoice.lang})` : "none",
+    );
+}
+
+// Initialise the voice selection at module load. The
+// voices list may be empty at this point (the browser
+// populates it asynchronously), in which case selectVoice
+// no-ops and the voiceschanged listener below will fire
+// once voices are available and rerun the selection.
+if (typeof window !== "undefined" && window.speechSynthesis) {
+    selectVoice();
+    window.speechSynthesis.addEventListener("voiceschanged", selectVoice);
 }
 
 /**
@@ -874,6 +1039,17 @@ function playChunks(view, chunks) {
             });
         }
         const utterance = new window.SpeechSynthesisUtterance(chunk.text);
+        if (selectedVoice !== null) {
+            // Set the chosen voice explicitly so the
+            // engine doesn't fall back to Chromium's
+            // flat default. selectVoice keeps
+            // selectedVoice in sync with the browser's
+            // voice list via the voiceschanged listener
+            // at module load, so this is always the
+            // current best-available voice when the
+            // utterance is created.
+            utterance.voice = selectedVoice;
+        }
         utterance.onend = () => {
             if (gen !== playbackGeneration) return;
             i++;
