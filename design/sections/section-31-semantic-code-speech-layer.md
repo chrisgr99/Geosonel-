@@ -107,6 +107,18 @@ function mapClip(source, inputMin, inputMax, outputMin, outputMax) { ... }
 
 A small parser extracts these annotations at load time and produces an in-memory signature dictionary. The user never edits that dictionary directly; the source of truth is the JSDoc above each function. The discipline is to annotate functions as they are authored, so the speech layer is correct from the first reading session that includes the new function.
 
+### Parameter name tooltips (v0.1)
+
+Decision settled during v0.1 implementation: the JSDoc-annotation machinery in Function signature annotations above is not built. Argument grouping in the spoken reading is set aside as too verbose for everyday use; every multi-argument call would gain seconds of named-argument speech, which would dominate the reading rather than supplementing it. Instead, parameter names surface as CodeMirror hover tooltips so the user can read them visually when they want detail on a specific argument, without lengthening the speech. The speech reading itself remains structural-only as the walker produces it in Commit 4: each argument reads as its value with no name prefix.
+
+The tooltip behaviour. Hovering on an argument inside a function call surfaces a small tooltip below the argument showing the function name and the parameter name for that argument, e.g. `mapClip: input min`. Hovering on the callee identifier of a call surfaces the full signature on one line, e.g. `mapClip(signal, input min, input max, output min, output max)`, giving a quick scan of all parameter names without per-argument hovering. Hovering outside a known call surfaces nothing. Tooltip text is styled for legibility under macOS Zoom (large font, high contrast against the editor's dark theme) and is selectable so the user can drive Apple Speak Selection over it via the macro pad if they prefer hearing the name to reading it.
+
+Source of tooltip content. A project-level signatures file at `src/codeSpeechSignatures.js` exports an object mapping function name to an ordered array of parameter names. For mapClip the entry is the array `["signal", "input min", "input max", "output min", "output max"]`; tooltips index into the array by argument position. The lookup key is the rightmost identifier of the callee, so both plain calls (`mapClip(...)`) and method calls (`pxLt.range(...)`) use the same dispatch, accepting that method-name collisions are possible across objects and tolerable for v0.1. If a collision matters in practice the key format can grow to `Object.method` qualifiers later.
+
+Maintenance. The signatures file is Claude-maintained, not user-written. When a new helper function is added to the codebase, the user asks Claude to add a corresponding signature entry; Claude appends the entry with parameter names taken from the function declaration. Functions without an entry surface no tooltip, the same as everything outside a known call, so the file grows additively and never breaks reading of unsupported calls.
+
+Relation to the full JSDoc design above. The JSDoc-annotation design remains the long-term target for the spoken side; nothing in the v0.1 tooltip surface precludes that work. If speech-side grouping proves useful in practice in later versions, the signatures file's per-argument names can grow into the JSDoc shape (groups of arguments with shared labels), the walker can emit per-group chunks rather than per-argument, and the tooltip can render from either the simple array or the grouped structure.
+
 ### Convention inference and overrides
 
 For functions the user does not own (library calls, host APIs, third-party packages), JSDoc annotations are not available. The walker falls back to convention inference based on parameter naming.
@@ -172,6 +184,8 @@ Commit 5, dictionary and operator table. Pronunciation substitution, elision for
 At this point the system speaks reasonably on most lines.
 
 Commit 6, JSDoc signature annotations. Parse @group and @arg from comments above functions. Annotate the helper library (mapClip, scaleNotes, chordNotes, midiNote, the signal transforms) in the same commit so the speech compresses correctly from the moment the parser lands.
+
+For v0.1 this commit was replaced with the simpler tooltip surface described in Parameter name tooltips above: a signatures file carrying just per-argument names that powers a CodeMirror hover tooltip, with no change to the spoken reading. The original JSDoc design is retained for a future version if speech-side argument grouping proves desirable in practice.
 
 Commit 7, highlight visual styling. Iterate on saturation, border, opacity until the highlight is obviously visible under macOS Zoom in dark mode. Non-contiguous grouping convention for chunks whose ranges are disjoint.
 
