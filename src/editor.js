@@ -36,6 +36,7 @@ import { isAutoCompletionEnabled } from "./strudel/codemirror/autocomplete.mjs";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
 import { getPreference, subscribePreference } from "./preferences.js";
+import { codeSpeechExtension } from "./codeSpeech.js";
 
 /**
  * Sentinel name for the virtual Properties tab. The
@@ -1293,6 +1294,20 @@ export class TabbedEditor {
                     ...defaultKeymap,
                     ...historyKeymap,
                 ]),
+                // Semantic Code Speech Layer (Section 31).
+                // Returns a DOM event handler tracking the
+                // last pointer offset and a keymap binding
+                // Mod-Shift-' to read the enclosing
+                // ExpressionStatement at that offset. The
+                // isCodeTab callback gates the keymap
+                // command to behaviors.js / behaviours.js;
+                // on any other tab the command returns
+                // false so the keystroke falls through.
+                ...codeSpeechExtension({
+                    isCodeTab: () =>
+                        this.activeName === "behaviors.js" ||
+                        this.activeName === "behaviours.js",
+                }),
                 this._langCompartment.of(javascript()),
                 ...customDarkTheme(),
                 patternHighlightExtension(),
