@@ -1181,6 +1181,57 @@ body.dragging-canvas-insp-thumb * {
     border-bottom: none;
 }
 
+/* Structural separator between band groups in the
+ * inspector. Heavier than the 2px #777 inter-band border
+ * that .insp-band carries so the structural break reads
+ * as a deliberate section boundary rather than as one
+ * more band edge. Used between the per-object bands
+ * above (Identity, Geometry, Callback Slots) and the
+ * engine-driven bands below (the future per-object voice
+ * band in the middle area, and the always-visible global
+ * band with the Sound Engine dropdown). The 4px vertical
+ * margin gives the separator breathing room from the
+ * band borders on either side; without it the separator
+ * would sit flush against the previous band's own
+ * border-bottom and read as one fat 6px line rather
+ * than as two distinct visual elements. */
+.insp-separator {
+    height: 4px;
+    background-color: #999999;
+    margin: 4px 0;
+}
+
+/* Heavy variant of .insp-separator used for the
+ * divider above the global band. Marks the boundary
+ * between per-object content and global controls
+ * strongly enough that the global band reads as a
+ * distinct section regardless of where in the
+ * inspector it sits vertically. Composes with
+ * .insp-separator (which sets background-color and
+ * margin); only the height changes. */
+.insp-separator-heavy {
+    height: 8px;
+}
+
+/* Section header inside a band, used at the top of
+ * the global band to title it "Global Settings". Sits
+ * above the band's first row of fields and reads as a
+ * structural label rather than a field label.
+ * Uppercase with letter-spacing distinguishes it from
+ * .insp-label (which is right-aligned, normal-case,
+ * 10pt) and from the inspector's main title bar
+ * (which is 18pt). The bottom margin separates the
+ * header from the first row that follows. */
+.insp-band-header {
+    color: #f0f0f0;
+    font-size: 11pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 0 0 6px 0;
+    line-height: 1.2;
+}
+
 .insp-row {
     display: flex;
     align-items: center;

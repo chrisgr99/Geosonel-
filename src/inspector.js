@@ -274,6 +274,16 @@ const W = {
     // Band 3 Create / Go-to button. Wide enough for the
     // longer "Go to" label (and "Create") at 10pt.
     slotButton: 56,
+
+    // Global band's Sound Engine dropdown. Wide enough for
+    // the longest enum label ("Superdough (Web Audio)") at
+    // 11pt with the custom green chevron chrome on the
+    // right edge. The dropdown lives at the bottom of the
+    // inspector in the always-visible global band, which
+    // controls which engine the rest of the audio surfaces
+    // reshape around.
+    soundEngine: 180,
+    soundEngineLabel: 90,
 };
 
 export class Inspector {
@@ -385,6 +395,25 @@ export class Inspector {
         panel.appendChild(this._buildBandIdentity(ctx));
         panel.appendChild(this._buildBandGeometry(ctx));
         panel.appendChild(this._buildBandCallbackSlots(ctx));
+
+        // Structural break separating the per-object
+        // bands above from the engine-driven bands below.
+        // The middle area is currently empty and reserved
+        // for the per-object voice band the multi-engine
+        // design lands later (sound / bank dropdowns under
+        // superdough, port / channel / program under MIDI,
+        // synth-class fields under Tone.js); the global
+        // band carries the always-visible Sound Engine
+        // dropdown that controls which engine the rest of
+        // the audio surfaces reshape around.
+        const sep1 = document.createElement("div");
+        sep1.className = "insp-separator";
+        panel.appendChild(sep1);
+        panel.appendChild(this._buildBandMiddleArea(ctx));
+        const sep2 = document.createElement("div");
+        sep2.className = "insp-separator insp-separator-heavy";
+        panel.appendChild(sep2);
+        panel.appendChild(this._buildBandGlobal(ctx));
 
         // Bottom spacer. Pushes the last band's fields up by
         // about two row heights so the macOS dock doesn't
@@ -1991,6 +2020,102 @@ export class Inspector {
         return Object.prototype.hasOwnProperty.call(
             this._scene.functionMap, name,
         );
+    }
+
+    /**
+     * Middle area band. Currently empty; reserved for the
+     * per-object voice band that the multi-engine audio
+     * design lands as a follow-up commit. Under superdough
+     * this band will carry sound / bank dropdowns and the
+     * per-object orbit-shared character knobs; under MIDI
+     * it will carry port / channel / program rows; under
+     * Tone.js it will carry synth-class and parameter
+     * rows. The band reshapes based on the active engine
+     * (read from this._scene.engine), so the per-object
+     * voice fields stay specific to whichever engine is
+     * playing rather than presenting a union of every
+     * engine's vocabulary at once.
+     *
+     * Rendered as a plain .insp-band div with no rows yet.
+     * The empty band still picks up the band's vertical
+     * padding and bottom border so the structural shape
+     * of the inspector reads correctly even before the
+     * voice fields land.
+     *
+     * @param {ReturnType<typeof buildSelectionContext>} _ctx
+     */
+    _buildBandMiddleArea(_ctx) {
+        const band = document.createElement("div");
+        band.className = "insp-band insp-band-middle";
+        return band;
+    }
+
+    /**
+     * Global band. Sits at the bottom of the inspector,
+     * always visible regardless of selection. Carries the
+     * Sound Engine dropdown that controls which engine
+     * the rest of the audio surfaces reshape around. The
+     * dropdown reads scene.engine (null falls back to
+     * "midi" for the brief startup window before the
+     * loader's migration pass fills the field); changes
+     * emit a setSceneEngine edit that main.js routes
+     * through applySceneEdit, which writes the new value
+     * to scene.json, marks the bundle dirty, and re-runs
+     * the scene so firingEngine.setOutputMode picks up
+     * the change.
+     *
+     * Future global-band content (per-engine score-wide
+     * effect controls — superdough's reverb and delay
+     * character knobs, Tone.js's score-wide layer if
+     * added) layers below the engine dropdown when those
+     * features land. The dropdown stays at the top of
+     * the band as the parent control the rest of the
+     * audio surfaces depend on.
+     *
+     * @param {ReturnType<typeof buildSelectionContext>} _ctx
+     */
+    _buildBandGlobal(_ctx) {
+        const band = document.createElement("div");
+        band.className = "insp-band";
+
+        // Section header titling the band as "Global
+        // Settings". The header plus the heavier
+        // separator above the band together do the work
+        // of marking the global section as distinct from
+        // the per-object bands, without depending on a
+        // layout mechanism to push the band to the
+        // bottom of the pane. Future per-object voice
+        // fields in the middle band will naturally
+        // space the global section lower as content
+        // populates the middle area.
+        const header = document.createElement("div");
+        header.className = "insp-band-header";
+        header.textContent = "Global Settings";
+        band.appendChild(header);
+
+        const engineValue =
+            (this._scene !== null && typeof this._scene.engine === "string")
+                ? this._scene.engine
+                : "midi";
+
+        const r = mkRow();
+        r.appendChild(mkLabel("Sound\nEngine", {
+            width: W.soundEngineLabel,
+            multiline: true,
+        }));
+        r.appendChild(this._buildDropdownField({
+            options: [
+                { value: "midi", label: "MIDI" },
+                { value: "superdough", label: "Superdough (Web Audio)" },
+            ],
+            value: engineValue,
+            width: W.soundEngine,
+            editable: true,
+            editKind: "setSceneEngine",
+        }));
+        band.appendChild(r);
+
+        return band;
     }
 }
 

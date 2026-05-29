@@ -32,6 +32,7 @@
 
 import { generateId, ensureIdCounters } from "./idGen.js";
 import { isValidBeatInterval } from "./beatIntervals.js";
+import { getPreference } from "./preferences.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
@@ -439,6 +440,53 @@ export function fillMissingCanvasSize(data) {
     }
     // Replace data's keys in place so callers holding a
     // reference to the same object see the new layout.
+    for (const k of Object.keys(data)) delete data[k];
+    for (const k of Object.keys(newData)) data[k] = newData[k];
+    return true;
+}
+
+/**
+ * Fill in a default engine field for scores that predate
+ * the multi-engine audio architecture. Scores loaded
+ * without an engine field get the value of the user's
+ * audioOutput preference (the per-user default engine for
+ * new scores) so the migrated score behaves identically
+ * to how it played before the migration. After commit 2
+ * of the multi-engine migration the audioOutput
+ * preference is removed and this fallback collapses to a
+ * hardcoded "midi" default — the same value the
+ * preference seeded as its own default.
+ *
+ * Insertion position. The new field lands directly before
+ * the first array key (curves, triggers, or sprites),
+ * which is the conventional place for top-level scalars
+ * in a scene.json. If no array keys are present the field
+ * appends at the end of the object. Mirrors
+ * fillMissingCanvasSize's shape so engine sits alongside
+ * canvasW / canvasH in the top-of-file scalar block.
+ *
+ * Returns true iff the field was added; the caller uses
+ * that signal to decide whether to write the mutated
+ * scene back to the bundle.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function fillMissingEngine(data) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+    if ("engine" in data && typeof data.engine === "string") return false;
+    const seed = getPreference("audioOutput") ?? "midi";
+    /** @type {Record<string, any>} */
+    const newData = {};
+    let inserted = false;
+    for (const k of Object.keys(data)) {
+        if (!inserted && ARRAY_KEYS.has(k)) {
+            newData.engine = seed;
+            inserted = true;
+        }
+        newData[k] = data[k];
+    }
+    if (!inserted) newData.engine = seed;
     for (const k of Object.keys(data)) delete data[k];
     for (const k of Object.keys(newData)) data[k] = newData[k];
     return true;
@@ -1393,6 +1441,29 @@ export function setSceneBpm(data, value) {
     const n = clampBpm(value);
     if (n === null) return;
     data.bpm = n;
+}
+
+/**
+ * Set the engine field at the top level of scene.json.
+ * Used by the property inspector's global band's Sound
+ * Engine dropdown. The engine choice is per-score: it
+ * lives in scene.json alongside bpm and the harmony
+ * settings, and runScene's success branch pushes it into
+ * firingEngine.setOutputMode so the active scene's
+ * engine wins over any other source of truth. Invalid
+ * values are silently no-ops, matching setSceneBpm's
+ * defensive shape; the inspector's dropdown only emits
+ * known tokens so this is just belt-and-braces against
+ * a hand-edited scene.json or a future programmatic
+ * call site.
+ * @param {any} data
+ * @param {string} value
+ */
+export function setSceneEngine(data, value) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    if (typeof value !== "string") return;
+    if (value !== "midi" && value !== "superdough") return;
+    data.engine = value;
 }
 
 /**

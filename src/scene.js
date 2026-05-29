@@ -121,6 +121,23 @@ export class Scene {
         /** @type {{target: string, port: string | null} | null} */
         this.output = null;
 
+        // --- Audio engine ---
+        // Per-score choice of pattern-firing engine. Currently
+        // "midi" (events go to the MIDI output device chosen at
+        // app level) or "superdough" (events render through
+        // Strudel's built-in Web Audio engine). The field is
+        // the source of truth for the playing engine: runScene
+        // pushes it into firingEngine.setOutputMode on every
+        // successful reload. Null in the constructor; the
+        // loader copies the value from scene.json, and the
+        // migration pass fillMissingEngine seeds it from the
+        // audioOutput preference for legacy scores without
+        // the field. After commit 2 of the multi-engine
+        // migration the preference is gone and the migration
+        // pass falls back to a hardcoded "midi" default.
+        /** @type {string | null} */
+        this.engine = null;
+
         // --- Canvas size ---
         // Width and height of the rectangular play area in
         // canvas units, centred on the origin. The image

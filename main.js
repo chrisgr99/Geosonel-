@@ -117,6 +117,7 @@ import {
     cleanLegacyShapeFields,
     cleanLegacySceneFields,
     fillMissingCanvasSize,
+    fillMissingEngine,
     stripObsoleteFields,
     migrateBehaviorsFilename,
     setMuteOnSelection,
@@ -153,9 +154,10 @@ import {
     setCanvasW,
     setCanvasH,
     setSceneBpm,
+    setSceneEngine,
 } from "./src/sceneEditor.js";
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
-import { getPreference, subscribePreference } from "./src/preferences.js";
+import { getPreference } from "./src/preferences.js";
 
 main();
 
@@ -580,21 +582,20 @@ async function main() {
     // each scheduled event through one of two paths
     // depending on its _outputMode: midiSender for the
     // "midi" mode (the default) or runtime.play (superdough)
-    // for the "superdough" mode. The choice lives in the
-    // audioOutput preference so it persists across sessions
-    // and survives score changes; reading it here pushes
-    // the initial mode in before runScene's first dispatch
-    // can fire, and subscribing pushes any change made via
-    // Settings immediately without waiting for the next
-    // bootstrap. The setOutputMode setter itself handles the
-    // cleanup on each switch (MIDI panic when leaving the
-    // midi mode, per-source pendingEvents and populatedCycles
-    // cleared on every switch so the next tick re-bootstraps
-    // cleanly under the new output).
-    firingEngine.setOutputMode(getPreference("audioOutput"));
-    subscribePreference("audioOutput", (mode) => {
-        firingEngine.setOutputMode(mode);
-    });
+    // for the "superdough" mode. The choice is per-score:
+    // it lives as the engine field in scene.json, and
+    // runScene's success branch pushes it into
+    // firingEngine.setOutputMode on every successful reload
+    // so the active scene's engine wins. The setOutputMode
+    // setter itself handles the cleanup on each switch (MIDI
+    // panic when leaving the midi mode, per-source
+    // pendingEvents and populatedCycles cleared on every
+    // switch so the next tick re-bootstraps cleanly under
+    // the new output). No initial setOutputMode call here
+    // because runScene fires before any pattern can
+    // dispatch; the firing engine stays in its zero-value
+    // pending state until runScene's first call lands the
+    // scene's engine.
 
     // --- Dividers ---
     //
@@ -823,6 +824,14 @@ async function main() {
             canvas.setScene(result.scene);
             simulation.setScene(result.scene);
             firingEngine.setScene(result.scene);
+            // Push the scene's engine choice into the firing
+            // engine. The scene's engine field is the source
+            // of truth; this call lands it on every successful
+            // reload (including score open, score switch, and
+            // every Run Scene / Cmd-Enter) so the active
+            // scene's engine wins regardless of how it was
+            // edited.
+            firingEngine.setOutputMode(result.scene.engine ?? "midi");
             applySceneParamsToTransport(result.scene, transport);
             // Composition mirror runtime-state push (Phase 1A
             // commit 3). Every successful scene reload
@@ -956,12 +965,14 @@ async function main() {
         const shapesChanged = cleanLegacyShapeFields(parsed.data);
         const sceneFieldsChanged = cleanLegacySceneFields(parsed.data);
         const canvasSizeChanged = fillMissingCanvasSize(parsed.data);
+        const engineChanged = fillMissingEngine(parsed.data);
         const obsoleteStripped = stripObsoleteFields(parsed.data);
         if (!idsChanged &&
             !namesChanged &&
             !shapesChanged &&
             !sceneFieldsChanged &&
             !canvasSizeChanged &&
+            !engineChanged &&
             !obsoleteStripped) return;
         const newText = stringifyScene(parsed.data);
         session.bundle.updateContent("scene.json", newText);
@@ -3417,6 +3428,17 @@ async function main() {
             } else if (edit.kind === "setOnTickFunction") {
                 await applySceneEdit((data) =>
                     setOnTickFunctionOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setSceneEngine") {
+                // Inspector global band's Sound Engine
+                // dropdown. Selection is ignored — engine
+                // is a top-level scene field. Routed
+                // through applySceneEdit so the change
+                // marks the bundle dirty, joins the undo
+                // stack, and runs runScene to push the new
+                // engine into firingEngine.setOutputMode.
+                await applySceneEdit((data) =>
+                    setSceneEngine(data, edit.value),
                 );
             } else if (edit.kind === "createFunctionStub") {
                 // Band 3 Create button. Three steps:
