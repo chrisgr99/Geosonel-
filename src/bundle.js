@@ -836,14 +836,15 @@ export function makeEmptyBundle(name) {
       "cursorR": 2,
       "cursorL": 0,
       "cyclePattern": "sound(\\"bd sn bd sn\\")",
-      "cycleSpeeds": "1 2"
+      "cycleSpeeds": "1 -2"
     },
     {
       "id": "CRV2",
       "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 20, "h": 20 },
       "cursorR": 2,
       "cursorL": 0,
-      "cyclePattern": "note(\\"c4  e4 d4 f4  e4  g4  f4 a4\\")"
+      "cyclePattern": "note(\\"c4  e4 d4 f4  e4  g4  f4 a4\\")",
+      "cycleSpeeds": "1 -1"
     }
   ],
 
