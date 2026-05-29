@@ -827,13 +827,23 @@ export function makeEmptyBundle(name) {
   "scaleName": "C major",
   "triggerScale": ${triggerScale},
   "spriteScale": ${spriteScale},
+  "engine": "superdough",
 
   "curves": [
     {
       "id": "CRV1",
       "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 12, "h": 12 },
       "cursorR": 2,
-      "cursorL": 0
+      "cursorL": 0,
+      "cyclePattern": "sound(\\"bd sn bd sn\\")",
+      "cycleSpeeds": "1 2"
+    },
+    {
+      "id": "CRV2",
+      "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 20, "h": 20 },
+      "cursorR": 2,
+      "cursorL": 0,
+      "cyclePattern": "note(\\"c4  e4 d4 f4  e4  g4  f4 a4\\")"
     }
   ],
 
@@ -848,7 +858,7 @@ export function makeEmptyBundle(name) {
     { "id": "SPR1", "x": 0, "y": 0, "vx": 1, "vy": 0 }
   ],
 
-  "idCounters": { "sprite": 2, "trigger": 5, "curve": 2 }
+  "idCounters": { "sprite": 2, "trigger": 5, "curve": 3 }
 }
 `,
         "application/json"
@@ -856,7 +866,10 @@ export function makeEmptyBundle(name) {
 
     bundle.addTextFile(
         "behaviors.js",
-        "",
+        `$CRV1: sound("bd sn bd sn");
+
+$CRV2: note("c4  e4 d4 f4  e4  g4  f4 a4");
+`,
     );
 
     return bundle;
