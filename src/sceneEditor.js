@@ -32,7 +32,6 @@
 
 import { generateId, ensureIdCounters } from "./idGen.js";
 import { isValidBeatInterval } from "./beatIntervals.js";
-import { getPreference } from "./preferences.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
@@ -448,14 +447,14 @@ export function fillMissingCanvasSize(data) {
 /**
  * Fill in a default engine field for scores that predate
  * the multi-engine audio architecture. Scores loaded
- * without an engine field get the value of the user's
- * audioOutput preference (the per-user default engine for
- * new scores) so the migrated score behaves identically
- * to how it played before the migration. After commit 2
- * of the multi-engine migration the audioOutput
- * preference is removed and this fallback collapses to a
- * hardcoded "midi" default — the same value the
- * preference seeded as its own default.
+ * without an engine field get a hardcoded "midi" default,
+ * the same engine those scores would have used before the
+ * migration (midi was the legacy default for the
+ * audioOutput preference that surfaced this choice as a
+ * global setting). New scores created under the multi-
+ * engine architecture pick up "midi" the same way via
+ * sceneSchema's SCENE_FIELDS default; this migration
+ * pass is the equivalent for already-existing scores.
  *
  * Insertion position. The new field lands directly before
  * the first array key (curves, triggers, or sprites),
@@ -475,7 +474,7 @@ export function fillMissingCanvasSize(data) {
 export function fillMissingEngine(data) {
     if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
     if ("engine" in data && typeof data.engine === "string") return false;
-    const seed = getPreference("audioOutput") ?? "midi";
+    const seed = "midi";
     /** @type {Record<string, any>} */
     const newData = {};
     let inserted = false;

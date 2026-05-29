@@ -157,7 +157,6 @@ import {
     setSceneEngine,
 } from "./src/sceneEditor.js";
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
-import { getPreference } from "./src/preferences.js";
 
 main();
 
