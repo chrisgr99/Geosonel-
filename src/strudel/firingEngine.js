@@ -89,24 +89,30 @@
  * sounded messier than the clean boundary transition.
  *
  * Late-refresh dispatch (Phase 3 substrate). Pending events
- * stay in the queue until they are within
- * lateRefreshWindowSeconds of their audio time, rather than
+ * stay in the queue until they are within the active
+ * late-refresh window of their audio time, rather than
  * being dispatched up to a full commit-window in advance.
- * At dispatch time, the commit walker passes a per-tick
- * snapshot of simulation state and a firing-context pointer
- * (set via withFiringContext from firingContext.js, a
- * try-finally helper that cannot strand the pointer if
- * queryArc throws) into a re-query of the pattern for a
- * tiny range around the event's fractional position. Pass
- * 1 (at population time) established the event's structure
- * (audioTime, duration, channel, note number, and any
- * static-signal value fields); Pass 2 here refreshes any
- * value fields that read dynamic signals through the
- * firing-context pointer. If Pass 2 returns exactly one
- * Hap, its value replaces the population-time value;
- * anything else (no Hap, multiple Haps, queryArc throw)
- * falls back to the Pass 1 value, keeping the schedule
- * deterministic relative to cycle-start state. In Phase 3
+ * The window is mode-dependent: 30ms for MIDI (Web MIDI
+ * fires events at dispatch time, so a wider window would
+ * only delay firing) and 100ms for superdough (Web Audio
+ * schedules events sample-accurately at their audioTime,
+ * so a wider window buys tighter audible timing rather
+ * than later firing). At dispatch time, the commit walker
+ * passes a per-tick snapshot of simulation state and a
+ * firing-context pointer (set via withFiringContext from
+ * firingContext.js, a try-finally helper that cannot
+ * strand the pointer if queryArc throws) into a re-query
+ * of the pattern for a tiny range around the event's
+ * fractional position. Pass 1 (at population time)
+ * established the event's structure (audioTime, duration,
+ * channel, note number, and any static-signal value
+ * fields); Pass 2 here refreshes any value fields that
+ * read dynamic signals through the firing-context
+ * pointer. If Pass 2 returns exactly one Hap, its value
+ * replaces the population-time value; anything else (no
+ * Hap, multiple Haps, queryArc throw) falls back to the
+ * Pass 1 value, keeping the schedule deterministic
+ * relative to cycle-start state. In Phase 3
  * no dynamic signals exist yet so Pass 2 is functionally a
  * no-op for every pattern — but the path runs unconditionally
  * so any substrate regression is debuggable independently
@@ -140,21 +146,27 @@ import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "../beatIntervals.js
 /** @typedef {import("../scene.js").Scene} Scene */
 
 /**
- * Late-refresh window in seconds. Pending events with
- * audio times further in the future than audioNow plus
- * this value stay queued; events within the window get a
- * Pass 2 refresh (queryArc with the firing-context pointer
- * active) and dispatch to Web MIDI on this tick. Section
- * 27's one-cycle-ahead-scheduling-and-dynamic-signal-late-
- * refresh subsection picked roughly 20ms as the design
- * starting value; 30ms here gives the window comfortably
- * more room than the typical 16ms inter-frame interval so
- * a single dropped frame does not push an event past the
- * dispatch window before the next tick reaches it. The
- * cost of widening the window is that Pass 2 reads
+ * Late-refresh window in seconds for MIDI output. Pending
+ * events with audio times further in the future than
+ * audioNow plus this value stay queued; events within the
+ * window get a Pass 2 refresh (queryArc with the firing-
+ * context pointer active) and dispatch to Web MIDI on this
+ * tick. Section 27's one-cycle-ahead-scheduling-and-dynamic-
+ * signal-late-refresh subsection picked roughly 20ms as the
+ * design starting value; 30ms here gives the window
+ * comfortably more room than the typical 16ms inter-frame
+ * interval so a single dropped frame does not push an event
+ * past the dispatch window before the next tick reaches it.
+ * The cost of widening the window is that Pass 2 reads
  * simulation state up to 30ms before the event's audio
  * time, which is well below the audible threshold for the
  * dynamic signals planned for Phase 4.
+ *
+ * MIDI keeps this window narrow because Web MIDI fires
+ * events at dispatch time, not at the audioTime argument:
+ * dispatching late means firing late. A larger window
+ * would not buy MIDI any precision, it would just hold
+ * events in the queue longer.
  *
  * The pre-Phase-3 name for this constant was DEFAULT_-
  * COMMIT_WINDOW_SECONDS and the value was 0.1; the rename
@@ -163,6 +175,41 @@ import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "../beatIntervals.js
  * dispatch with refreshed values".
  */
 const DEFAULT_LATE_REFRESH_WINDOW_SECONDS = 0.03;
+
+/**
+ * Late-refresh window in seconds for superdough output.
+ * Wider than the MIDI window because superdough's
+ * scheduling semantics are fundamentally different: it
+ * accepts an absolute audio-context timestamp and lets
+ * the Web Audio API schedule the event sample-accurately
+ * at that time, regardless of when the dispatch call
+ * happens. Dispatching a superdough event 100ms before
+ * its audioTime is not late — the audio engine schedules
+ * it for exactly its audioTime and plays it precisely
+ * there. Dispatching a superdough event AT its audioTime
+ * with no lookahead, on the other hand, gives the audio
+ * engine zero scheduling headroom and forces the event
+ * to compete with whatever jitter is in the JavaScript
+ * scheduler at that instant, which is the audible
+ * imprecision the composer remembered from the earlier
+ * superdough run.
+ *
+ * 100ms here gives superdough generous scheduling
+ * headroom: each event leaves the firing engine well
+ * before its audioTime and gets queued in the Web Audio
+ * scheduler, which fires it at audio-rate precision
+ * (sample-accurate within the audio buffer block). The
+ * Pass 2 dynamic-signal substrate now reads snapshot
+ * state up to 100ms before the event fires, but that
+ * staleness is still well below the audible threshold
+ * for any signal that varies at musical rates (the
+ * sprite-position and curve-cursor signals planned for
+ * Phase 4 change at on the order of 10-100Hz, and a
+ * 100ms lookahead is one to two periods of that range,
+ * which is the typical lookahead any DAW automation
+ * lane operates with).
+ */
+const DEFAULT_LATE_REFRESH_WINDOW_SECONDS_SUPERDOUGH = 0.1;
 
 /**
  * Debug flag for Pass 2 logging. When true, each Pass 2
@@ -413,16 +460,36 @@ export class PatternFiringEngine {
         this._lastBpm = null;
 
         /**
-         * Late-refresh window in seconds. Public property so
-         * callers can adjust without recompiling the engine.
-         * See DEFAULT_LATE_REFRESH_WINDOW_SECONDS at module
+         * Late-refresh window in seconds for the MIDI
+         * output path. Public property so callers can
+         * adjust without recompiling the engine. See
+         * DEFAULT_LATE_REFRESH_WINDOW_SECONDS at module
          * top for the rationale. Set larger to tolerate
          * dropped frames at the cost of slightly staler
-         * dynamic-signal reads at Pass 2 time; set smaller
-         * for tighter Pass 2 freshness at the cost of needing
-         * tick to run reliably between event audioTimes.
+         * dynamic-signal reads at Pass 2 time; set
+         * smaller for tighter Pass 2 freshness at the
+         * cost of needing tick to run reliably between
+         * event audioTimes. Read only when _outputMode
+         * is "midi".
          */
         this.lateRefreshWindowSeconds = DEFAULT_LATE_REFRESH_WINDOW_SECONDS;
+
+        /**
+         * Late-refresh window in seconds for the
+         * superdough output path. Public property so
+         * callers can adjust without recompiling the
+         * engine. See
+         * DEFAULT_LATE_REFRESH_WINDOW_SECONDS_SUPERDOUGH
+         * at module top for the rationale. Wider than
+         * the MIDI value because superdough schedules
+         * events sample-accurately at their audioTime
+         * regardless of when the dispatch call happens,
+         * so a larger lookahead translates directly into
+         * tighter audible timing rather than later firing.
+         * Read only when _outputMode is "superdough".
+         */
+        this.lateRefreshWindowSecondsSuperdough =
+            DEFAULT_LATE_REFRESH_WINDOW_SECONDS_SUPERDOUGH;
 
         // Subscribe to transport play-state changes so we
         // can panic the MIDI sender immediately when the
@@ -904,7 +971,22 @@ export class PatternFiringEngine {
         // that survives until the next rewind.
         this._simulation.forceTimingSnapAll();
 
-        const lateRefreshHorizon = audioNow + this.lateRefreshWindowSeconds;
+        // Active late-refresh window depends on the
+        // current output mode. MIDI uses a narrow 30ms
+        // window because Web MIDI fires events at
+        // dispatch time and a larger lookahead would only
+        // delay firing; superdough uses a wider 100ms
+        // window because Web Audio schedules events
+        // sample-accurately at their audioTime regardless
+        // of when the dispatch call happens, so a larger
+        // lookahead buys tighter audible timing rather
+        // than later firing. See the two
+        // DEFAULT_LATE_REFRESH_WINDOW_SECONDS* constants
+        // at module top for the rationale on each value.
+        const activeWindow = this._outputMode === "superdough"
+            ? this.lateRefreshWindowSecondsSuperdough
+            : this.lateRefreshWindowSeconds;
+        const lateRefreshHorizon = audioNow + activeWindow;
         const snapshot = this._captureSnapshot(audioNow);
 
         for (const state of this._sources.values()) {
@@ -1152,22 +1234,31 @@ export class PatternFiringEngine {
 
             // Late-refresh dispatch (Phase 3 substrate).
             // Pending events whose audio time is further
-            // than lateRefreshWindowSeconds in the future
-            // stay pending; events within the window get a
-            // Pass 2 refresh of any dynamic-signal-dependent
-            // value fields (the firing-context pointer is
-            // active during the re-query so signal
-            // implementations can read snapshot state) and
-            // dispatch to Web MIDI immediately afterward.
-            // Events older than the past-slack window get
-            // dropped silently — those are genuinely stale,
-            // typically a resume from pause where the
-            // simulation's cycleProgress is well past the
-            // event's fractional position. Events slightly
-            // in the past dispatch through Web MIDI's
-            // send-now semantics with no forward clamp
-            // needed; Web MIDI does not reject past
-            // timestamps the way superdough does.
+            // than the active late-refresh window in the
+            // future stay pending; events within the window
+            // get a Pass 2 refresh of any dynamic-signal-
+            // dependent value fields (the firing-context
+            // pointer is active during the re-query so
+            // signal implementations can read snapshot
+            // state) and dispatch immediately afterward.
+            // The active window is 30ms for MIDI and 100ms
+            // for superdough, reflecting the two output
+            // paths' different scheduling semantics: MIDI
+            // fires events at dispatch time so a larger
+            // window would only delay firing, while
+            // superdough schedules events sample-accurately
+            // at their audioTime so a larger window buys
+            // tighter audible timing. Events older than the
+            // past-slack window get dropped silently —
+            // those are genuinely stale, typically a resume
+            // from pause where the simulation's cycleProgress
+            // is well past the event's fractional position.
+            // Events slightly in the past still dispatch:
+            // MIDI fires them immediately via Web MIDI's
+            // send-now semantics; superdough fires them at
+            // "now" via the runtime.play wrapper's past-time
+            // clamp (without which superdough would silently
+            // drop past-timed events).
             /** @type {Array<{audioTime: number, value: any, duration: number, cycleIndex: number, fractional: number}>} */
             const remaining = [];
             for (const ev of state.pendingEvents) {

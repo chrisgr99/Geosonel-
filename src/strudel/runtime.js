@@ -194,6 +194,28 @@ export class StrudelRuntime {
      * compute `audioTime - this._audioContext.currentTime`
      * here.
      *
+     * Past-time clamp. Superdough silently drops events
+     * whose audioTime is in the past relative to the audio
+     * context's currentTime — unlike Web MIDI, which fires
+     * past-timed events immediately with send-now
+     * semantics. The firing engine's late-refresh dispatch
+     * is allowed to dispatch events up to 200ms in the
+     * past (its past-slack window) because most events
+     * lagging that little are still musically meaningful;
+     * MIDI handles them fine. For superdough, dispatching
+     * a past-time event without clamping reads as silence:
+     * the event reaches superdough, superdough sees a past
+     * timestamp, and the note never sounds. Clamping
+     * audioTime to max(audioTime, currentTime) lets
+     * slightly-late events fire at "now" instead of
+     * getting dropped, matching the way MIDI handles the
+     * same case. The audible cost is that an event
+     * originally scheduled for, say, 8 ms ago fires now
+     * instead of 8 ms ago — a small late-arrival jitter
+     * that's preferable to silence. Events further in the
+     * past than the firing engine's stale-event guard (200
+     * ms) are dropped before they ever reach this wrapper.
+     *
      * No-op when the engine is not yet loaded, when
      * superdough was not captured during init (some older
      * strudel versions don't expose it on the umbrella),
@@ -209,11 +231,12 @@ export class StrudelRuntime {
         if (this._status !== "loaded") return;
         if (this._superdough === null) return;
         if (this._audioContext === null) return;
+        const clampedTime = Math.max(audioTime, this._audioContext.currentTime);
         try {
             if (typeof duration === "number" && Number.isFinite(duration)) {
-                this._superdough(value, audioTime, duration);
+                this._superdough(value, clampedTime, duration);
             } else {
-                this._superdough(value, audioTime);
+                this._superdough(value, clampedTime);
             }
         } catch (err) {
             console.warn(`${LOG_PREFIX} superdough failed:`, err);
