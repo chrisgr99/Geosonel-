@@ -577,6 +577,31 @@ async function main() {
     canvas.setFiringEngine(firingEngine);
     firingEngine.setCanvas(canvas);
 
+    // Wire the firing-event subscription so the canvas
+    // flashes the relevant colored element yellow each
+    // time the engine dispatches an audio event. Curves
+    // route to markFiredCurveBeat with the event's
+    // absoluteFractional so the specific beat-point
+    // diamond (one of the patternRepeats*N visible on
+    // the curve) becomes yellow; sprites route to
+    // markFiredSprite with just the sourceId. The
+    // trigger flash path on the canvas
+    // (markFiredTrigger) is wired in anticipation but
+    // has no driver here yet — sprite-trigger
+    // collision firing isn't implemented, and when it
+    // lands later the right place to call
+    // canvas.markFiredTrigger is from inside that
+    // collision handler rather than from this firing-
+    // engine subscriber, since triggers don't dispatch
+    // through the cursor-as-collider firing engine.
+    firingEngine.onFiring((event) => {
+        if (event.kind === "curve") {
+            canvas.markFiredCurveBeat(event.sourceId, event.absoluteFractional);
+        } else if (event.kind === "sprite") {
+            canvas.markFiredSprite(event.sourceId);
+        }
+    });
+
     // Audio output routing. The firing engine dispatches
     // each scheduled event through one of two paths
     // depending on its _outputMode: midiSender for the

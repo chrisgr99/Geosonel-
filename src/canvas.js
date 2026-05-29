@@ -187,6 +187,60 @@ const OBJECT_BOUNDARY_COLOUR = "#7db8d6";
 const CURSOR_TARGET_COLOUR = "#ff44ff";
 const NO_IMAGE_FILL_COLOUR = "#404040";
 
+// Firing-event flash colour and timing. When the firing
+// engine dispatches an audio event for a curve or sprite
+// (or, in future, a trigger via beenHit), the corresponding
+// canvas object turns bright red as a visual confirmation
+// of the event firing. The flash replaces both the
+// interior fill (normally an image-sampled colour) and
+// the outline stroke (normally the object's stored colour
+// or the trigger-boundary blue for curve markers) so the
+// object reads as a solid red shape — a stronger visual
+// hit than the earlier outline-only flash, which got lost
+// against high-contrast image backgrounds.
+//
+// Two distinct flash semantics live behind this colour:
+//
+//   - Curve beat-point diamonds: persistent-until-superseded.
+//     The most recently fired diamond on a given curve
+//     stays red until the next diamond on that curve
+//     fires, at which point the new diamond becomes red
+//     and the previous one reverts. At most one diamond
+//     per curve is red at any moment, and it chases the
+//     cursor as it sweeps. No time-based fade; the visual
+//     replacement happens at the moment of the next
+//     firing event. State lives in
+//     _curveFlashAbsoluteFractional as a per-curve
+//     absoluteFractional value.
+//
+//   - Sprite outlines and trigger diamonds: short-fade
+//     flash. The object turns red on each fire, then
+//     naturally reverts after FIRING_FLASH_DURATION_MS
+//     via the render path's elapsed-time check. State
+//     lives in _spriteFlashTimestamp and
+//     _triggerFlashTimestamp as per-object
+//     performance.now() timestamps. Rapid successive
+//     fires within the window extend the on-state
+//     (last-write-wins on the timestamp) rather than
+//     producing on/off stutter.
+const FIRING_FLASH_COLOUR = "#ff0000";
+const FIRING_FLASH_DURATION_MS = 150;
+
+// Tolerance for matching a stored absoluteFractional
+// against a marker position when deciding which curve
+// diamond is currently yellow. The stored value comes
+// from the firing engine at populate time and the marker
+// position comes from parsePatternToPositions; both
+// derive from the same strudel queryArc output and
+// arithmetic, so the values match to floating-point
+// precision in practice. The epsilon is a defensive
+// guard against any rounding-error drift, kept tight
+// enough that two distinct beats can never collide (the
+// smallest gap between two beats in a 256-beat pattern
+// at patternRepeats=4 is 1/1024 ≈ 0.001, comfortably
+// above this).
+const FIRING_FLASH_MATCH_EPS = 1e-6;
+
 // Resolution of the pixel-sampling array built from the
 // background image. Matches GeoSonix's 1000×1000 sampling
 // grid — at this size, two adjacent units of canvas space
@@ -546,6 +600,78 @@ export class Canvas {
          * @type {Set<string>}
          */
         this._cursorTargetIds = new Set();
+
+        /**
+         * Per-curve flash state for the firing-event visual
+         * feedback. Keyed by curve id; value is the
+         * absoluteFractional position in [0, 1) of the
+         * currently-yellow beat-point diamond on that curve.
+         * Persistent-until-superseded semantics: the next
+         * firing event on the same curve replaces the
+         * value (effectively chasing the cursor with
+         * exactly one yellow diamond per curve at a time),
+         * and the entry stays until either the next fire
+         * arrives or the transport rewinds (which clears
+         * every curve's entry). Distinct from the sprite
+         * and trigger registries because curve flashes
+         * have no time component — the yellow stays
+         * regardless of how much wall-clock time has
+         * passed since the last fire, including across a
+         * Pause — so a timestamp would be misleading state.
+         *
+         * Driven by Canvas.markFiredCurveBeat from the
+         * firing-engine subscriber wired in main.js. Read
+         * by _drawCurveMarkers's match check against each
+         * marker's stored position with
+         * FIRING_FLASH_MATCH_EPS tolerance.
+         *
+         * @type {Map<string, number>}
+         */
+        this._curveFlashAbsoluteFractional = new Map();
+
+        /**
+         * Per-sprite flash state for the firing-event visual
+         * feedback. Keyed by sprite id; value is the
+         * performance.now() timestamp of the last firing
+         * event on that sprite. Short-fade semantics: the
+         * render path applies the yellow flash colour when
+         * (now − timestamp) is less than
+         * FIRING_FLASH_DURATION_MS, and the sprite reverts
+         * to its normal stroke colour naturally on the next
+         * frame past the window. Last-write-wins on rapid
+         * successive fires so the flash extends rather than
+         * stuttering.
+         *
+         * A setTimeout in markFiredSprite schedules one
+         * follow-up scheduleDraw shortly after the flash
+         * window so the post-flash state paints even when
+         * the transport's render loop isn't actively
+         * driving frames (typically post-pause cleanup
+         * when the last firing event landed late in the
+         * cycle and the transport stopped before the
+         * window closed naturally).
+         *
+         * @type {Map<string, number>}
+         */
+        this._spriteFlashTimestamp = new Map();
+
+        /**
+         * Per-trigger flash state for the firing-event
+         * visual feedback. Keyed by trigger id; value is
+         * performance.now() of the last firing event,
+         * identical shape to _spriteFlashTimestamp.
+         * Driven by Canvas.markFiredTrigger, which is the
+         * hook the future sprite-trigger collision firing
+         * path will call when beenHit dispatches; no
+         * driver exists yet, so the registry stays empty
+         * in practice. The render branch in _drawTriggers
+         * is wired so the visual lands the moment the
+         * collision firing implementation arrives. Short-
+         * fade semantics matching sprites.
+         *
+         * @type {Map<string, number>}
+         */
+        this._triggerFlashTimestamp = new Map();
 
         /**
          * Currently brightened hover target, or null. Tracks
@@ -1171,6 +1297,67 @@ export class Canvas {
     }
 
     /**
+     * Record that a curve fired an audio event at the
+     * given GXW-cycle absoluteFractional position. Sets
+     * the curve's flash registry entry, replacing any
+     * prior value, and schedules a redraw so the new
+     * yellow diamond paints. The previous yellow diamond
+     * on the same curve reverts on the same frame via
+     * the render-path match check; persistent-until-
+     * superseded semantics with at most one yellow per
+     * curve. Wired from main.js to the firing engine's
+     * onFiring subscriber.
+     *
+     * @param {string} curveId
+     * @param {number} absoluteFractional  GXW-cycle position in [0, 1).
+     */
+    markFiredCurveBeat(curveId, absoluteFractional) {
+        this._curveFlashAbsoluteFractional.set(curveId, absoluteFractional);
+        this.scheduleDraw();
+    }
+
+    /**
+     * Record that a sprite fired an audio event. Sets the
+     * sprite's flash timestamp to now and schedules a
+     * redraw so the yellow outline paints on the next
+     * frame. A follow-up scheduleDraw fires shortly after
+     * the flash window so the post-flash revert paints
+     * even when the transport's render loop isn't actively
+     * driving frames (typically a sprite that fired right
+     * before transport pause). Last-write-wins on the
+     * timestamp so rapid successive fires extend the
+     * yellow rather than flickering off-and-on. Wired
+     * from main.js to the firing engine's onFiring
+     * subscriber.
+     *
+     * @param {string} spriteId
+     */
+    markFiredSprite(spriteId) {
+        this._spriteFlashTimestamp.set(spriteId, performance.now());
+        this.scheduleDraw();
+        setTimeout(() => this.scheduleDraw(), FIRING_FLASH_DURATION_MS + 16);
+    }
+
+    /**
+     * Record that a trigger fired an audio event
+     * (canonically, the trigger's beenHit callback ran).
+     * Sets the trigger's flash timestamp to now and
+     * schedules a redraw. Mirror of markFiredSprite for
+     * the trigger render path. No driver exists yet —
+     * sprite-trigger collision firing isn't implemented
+     * — so this method is wired in anticipation; once
+     * the collision firing lands and calls into it the
+     * yellow flash on trigger diamonds works for free.
+     *
+     * @param {string} triggerId
+     */
+    markFiredTrigger(triggerId) {
+        this._triggerFlashTimestamp.set(triggerId, performance.now());
+        this.scheduleDraw();
+        setTimeout(() => this.scheduleDraw(), FIRING_FLASH_DURATION_MS + 16);
+    }
+
+    /**
      * React to a transport play/pause state change. Starts
      * the continuous render loop on play, tears it down on
      * pause. Idempotent in either direction so a redundant
@@ -1196,6 +1383,17 @@ export class Canvas {
      * redraw that will happen.
      */
     _onTransportRewind() {
+        // Clear every firing-event flash registry so the
+        // canvas doesn't carry a stale yellow diamond or
+        // a stale sprite/trigger outline forward from
+        // pre-rewind playback. The simulation has already
+        // reset cycleCount and cycleProgress at this
+        // point, so the next firing event after Play
+        // resumes will be the new cycle's first beat
+        // arriving fresh.
+        this._curveFlashAbsoluteFractional.clear();
+        this._spriteFlashTimestamp.clear();
+        this._triggerFlashTimestamp.clear();
         this.scheduleDraw();
     }
 
@@ -1531,7 +1729,19 @@ export class Canvas {
         const halfPx = 5;
 
         ctx.lineWidth = 1.5;
-        ctx.strokeStyle = OBJECT_BOUNDARY_COLOUR;
+
+        // Firing-event flash. The persistent-until-superseded
+        // semantics for curves mean at most one marker on
+        // this curve carries the yellow stroke at any time;
+        // the value lives in _curveFlashAbsoluteFractional
+        // and equals the GXW-cycle position of the most
+        // recently fired beat. Per-marker match against the
+        // stored value drives the stroke override, with the
+        // FIRING_FLASH_MATCH_EPS tolerance guarding against
+        // any rounding-error drift. Curves with no entry in
+        // the registry (never fired, or just rewound) draw
+        // every marker in the regular boundary colour.
+        const flashAbsFrac = this._curveFlashAbsoluteFractional.get(curve.id);
 
         for (const t of positions) {
             const sample = sampleCurve(curve.shape, t);
@@ -1547,8 +1757,15 @@ export class Canvas {
             ctx.lineTo(px - axes.px * halfPx, py - axes.py * halfPx);
             ctx.closePath();
 
-            ctx.fillStyle = this._sampleImageAt(sample.x, sample.y);
+            const isFlashing = flashAbsFrac !== undefined &&
+                Math.abs(t - flashAbsFrac) < FIRING_FLASH_MATCH_EPS;
+            ctx.fillStyle = isFlashing
+                ? FIRING_FLASH_COLOUR
+                : this._sampleImageAt(sample.x, sample.y);
             ctx.fill();
+            ctx.strokeStyle = isFlashing
+                ? FIRING_FLASH_COLOUR
+                : OBJECT_BOUNDARY_COLOUR;
             ctx.stroke();
         }
     }
@@ -1698,7 +1915,19 @@ export class Canvas {
             ctx.lineTo(cx, cy + r);
             ctx.lineTo(cx - r, cy);
             ctx.closePath();
-            ctx.fillStyle = this._sampleImageAt(t.x, t.y);
+            // Firing-event flash check, computed up front so
+            // it can override both the interior fill and the
+            // boundary stroke. When the trigger is currently
+            // flashing (beenHit just fired), the entire
+            // diamond paints solid red — fill plus stroke
+            // — for FIRING_FLASH_DURATION_MS, then reverts
+            // naturally on the next frame past the window.
+            const triggerFlashAt = this._triggerFlashTimestamp.get(t.id);
+            const triggerFlashing = triggerFlashAt !== undefined &&
+                (performance.now() - triggerFlashAt) < FIRING_FLASH_DURATION_MS;
+            ctx.fillStyle = triggerFlashing
+                ? FIRING_FLASH_COLOUR
+                : this._sampleImageAt(t.x, t.y);
             ctx.fill();
             // Hover-brighten: bump the stroke colour toward
             // white and add a bit of line width. The fill
@@ -1712,9 +1941,17 @@ export class Canvas {
             // so a hovered + cursor-target trigger reads
             // as lightened magenta rather than lightened
             // boundary blue.
-            const baseColor = this._cursorTargetIds.has(t.id)
-                ? CURSOR_TARGET_COLOUR
-                : t.color;
+            //
+            // Firing-event flash takes top precedence so the
+            // red boundary matches the red fill above for
+            // the flash window's duration, then the normal
+            // cursor-target/stored-colour precedence
+            // reasserts.
+            const baseColor = triggerFlashing
+                ? FIRING_FLASH_COLOUR
+                : (this._cursorTargetIds.has(t.id)
+                    ? CURSOR_TARGET_COLOUR
+                    : t.color);
             ctx.strokeStyle = hovered
                 ? lightenColor(baseColor, HOVER_LIGHTEN_RATIO)
                 : baseColor;
@@ -1766,7 +2003,19 @@ export class Canvas {
             // against any background.
             ctx.beginPath();
             ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.fillStyle = this._sampleImageAt(pos.x, pos.y);
+            // Firing-event flash check, computed up front so
+            // it can override both the interior fill and the
+            // boundary stroke. When the sprite is currently
+            // flashing (a pattern event just fired), the
+            // whole disc paints solid red — fill plus stroke
+            // — for FIRING_FLASH_DURATION_MS, then reverts
+            // naturally on the next frame past the window.
+            const spriteFlashAt = this._spriteFlashTimestamp.get(s.id);
+            const spriteFlashing = spriteFlashAt !== undefined &&
+                (performance.now() - spriteFlashAt) < FIRING_FLASH_DURATION_MS;
+            ctx.fillStyle = spriteFlashing
+                ? FIRING_FLASH_COLOUR
+                : this._sampleImageAt(pos.x, pos.y);
             ctx.fill();
             // Hover-brighten: stroke uses a lightened colour
             // and a wider line width when this sprite is the
@@ -1780,9 +2029,17 @@ export class Canvas {
             // so a hovered + cursor-target sprite reads
             // as lightened magenta rather than lightened
             // boundary blue.
-            const baseColor = this._cursorTargetIds.has(s.id)
-                ? CURSOR_TARGET_COLOUR
-                : s.color;
+            //
+            // Firing-event flash takes top precedence so the
+            // red boundary matches the red fill above for
+            // the flash window's duration, then the normal
+            // cursor-target/stored-colour precedence
+            // reasserts.
+            const baseColor = spriteFlashing
+                ? FIRING_FLASH_COLOUR
+                : (this._cursorTargetIds.has(s.id)
+                    ? CURSOR_TARGET_COLOUR
+                    : s.color);
             ctx.strokeStyle = hovered
                 ? lightenColor(baseColor, HOVER_LIGHTEN_RATIO)
                 : baseColor;

@@ -491,6 +491,40 @@ export class PatternFiringEngine {
         this.lateRefreshWindowSecondsSuperdough =
             DEFAULT_LATE_REFRESH_WINDOW_SECONDS_SUPERDOUGH;
 
+        /**
+         * Firing-event subscriber, or null. Called once per
+         * successful dispatch (MIDI or superdough) with a
+         * payload describing the event just fired:
+         *
+         *   { sourceId, kind, absoluteFractional, audioTime }
+         *
+         * The canvas wires through main.js to drive the
+         * yellow-flash visual feedback on beat-point
+         * diamonds (curves) and outlined edges (sprites);
+         * see Canvas.markFiredCurveBeat /
+         * Canvas.markFiredSprite. The absoluteFractional
+         * field is the GXW-cycle position in [0, 1) of the
+         * event within the cycle, computed at populate time
+         * as (repeatIndex + strudelFractional) / repeats so
+         * patternRepeats > 1 produces a unique value per
+         * diamond on the curve. For sprites the field is
+         * the same shape (still in [0, 1) within the GXW
+         * cycle) but the canvas does not use it; the sprite
+         * flash is a short timestamped fade keyed by
+         * sourceId alone.
+         *
+         * Exceptions thrown by the subscriber are caught
+         * and logged so a buggy visual subscriber can never
+         * destabilise the firing engine itself; the audio
+         * dispatch already completed before the subscriber
+         * ran, so an unhandled throw would only have
+         * dropped the visual update for this event without
+         * affecting subsequent ones.
+         *
+         * @type {((event: {sourceId: string, kind: "curve" | "sprite", absoluteFractional: number, audioTime: number}) => void) | null}
+         */
+        this._onFiring = null;
+
         // Subscribe to transport play-state changes so we
         // can panic the MIDI sender immediately when the
         // user pauses. The pause-path inside tick() also
@@ -637,6 +671,20 @@ export class PatternFiringEngine {
      */
     setCanvas(canvas) {
         this._canvas = canvas;
+    }
+
+    /**
+     * Subscribe to firing events. Replaces any prior
+     * subscriber. Called from main.js once at startup to
+     * route the engine's per-dispatch signal into the
+     * canvas's yellow-flash visual feedback path. See the
+     * _onFiring field doc for the event payload shape and
+     * the exception-handling contract.
+     *
+     * @param {((event: {sourceId: string, kind: "curve" | "sprite", absoluteFractional: number, audioTime: number}) => void) | null} cb
+     */
+    onFiring(cb) {
+        this._onFiring = typeof cb === "function" ? cb : null;
     }
 
     /**
@@ -1284,6 +1332,31 @@ export class PatternFiringEngine {
                     } else {
                         this._midiSender.send(refreshedValue, ev.audioTime, ev.duration);
                     }
+                    // Emit the firing-event signal for the
+                    // canvas's yellow-flash visual feedback.
+                    // Runs after the audio dispatch so a
+                    // subscriber throw cannot leave the audio
+                    // half-fired; the per-call try/catch
+                    // isolates subscriber faults to the visual
+                    // path. No-op when no subscriber is
+                    // attached, which is the default state
+                    // before main.js wires the canvas in.
+                    if (this._onFiring !== null) {
+                        try {
+                            this._onFiring({
+                                sourceId: state.id,
+                                kind: state.kind,
+                                absoluteFractional: ev.absoluteFractional,
+                                audioTime: ev.audioTime,
+                            });
+                        } catch (err) {
+                            console.warn(
+                                "[firing] onFiring subscriber threw for " +
+                                state.id + " cycle " + ev.cycleIndex + ":",
+                                err,
+                            );
+                        }
+                    }
                 }
             }
             state.pendingEvents = remaining;
@@ -1406,6 +1479,20 @@ export class PatternFiringEngine {
                     duration,
                     cycleIndex,
                     fractional,
+                    // GXW-cycle position in [0, 1). For
+                    // patternRepeats=1 this equals
+                    // fractional; for N > 1 each repeat
+                    // copy gets a distinct value so the
+                    // canvas's firing-event subscriber can
+                    // pick out the specific beat-point
+                    // diamond that fired (each diamond's
+                    // own position in _curveMarkerPositions
+                    // is laid out as (i + p) / N). Carried
+                    // on the event rather than recomputed
+                    // at dispatch because dispatch sees only
+                    // the event, not the populate-time
+                    // i and repeats.
+                    absoluteFractional: (i + fractional) / repeats,
                 });
             }
         }
