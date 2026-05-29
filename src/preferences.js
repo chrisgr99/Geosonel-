@@ -180,17 +180,6 @@ export const PREFERENCES = [
         category: "Backups",
         electronOnly: true,
     },
-    {
-        key: "audioOutput",
-        label: "Audio Output",
-        description:
-            "Where pattern events are sent for playback. MIDI sends note events to your MIDI output devices; Superdough plays them through the built-in Web Audio engine, which is required for sample patterns like sound(\"bd sn\"). Only one output is active at a time; switching modes panics any notes already in flight on the previous output and resumes cleanly on the next cycle boundary under the new one.",
-        type: "enum",
-        default: "midi",
-        options: ["midi", "superdough"],
-        optionLabels: ["MIDI", "Superdough (Web Audio)"],
-        category: "Audio",
-    },
 ];
 
 /**
