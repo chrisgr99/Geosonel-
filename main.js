@@ -134,13 +134,13 @@ import {
     setCursorROnSelection,
     setCursorLOnSelection,
     setCurveThicknessOnCurves,
-    setCursorThicknessOnCurves,
+    setCursorThicknessOnSelection,
     setColorOnSelection,
     setCyclePatternOnSelection,
     setBeatsPerCycleOnSelection,
     setBeatIntervalOnSelection,
     setPatternRepeatsOnCurves,
-    setCycleSpeedsOnCurves,
+    setCycleSpeedsOnSelection,
     setCanHitOnSelection,
     setHasHitFunctionOnSelection,
     setCanBeHitOnSelection,
@@ -3410,7 +3410,7 @@ async function main() {
                 );
             } else if (edit.kind === "setCursorThickness") {
                 await applySceneEdit((data) =>
-                    setCursorThicknessOnCurves(data, edit.selection, edit.value),
+                    setCursorThicknessOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setColor") {
                 await applySceneEdit((data) =>
@@ -3430,7 +3430,7 @@ async function main() {
                 );
             } else if (edit.kind === "setCycleSpeeds") {
                 await applySceneEdit((data) =>
-                    setCycleSpeedsOnCurves(data, edit.selection, edit.value),
+                    setCycleSpeedsOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCanHit") {
                 await applySceneEdit((data) =>

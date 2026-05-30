@@ -60,11 +60,11 @@
  * or curve, greyed for trigger-only selections since
  * triggers don't move under physics); Curve Size W/H and
  * Curve Thickness activate when curves are in the
- * selection; Cursor R/L extends to curves and sprites
- * under the cursor-as-collider model and greys when all
- * selected curves and sprites are muted; Cursor
- * Thickness stays curve-only since sprite cursor
- * visualisation is deferred; Sprite/Trigger Size
+ * selection; Cursor R/L and Cursor Thickness extend to
+ * curves and sprites under the cursor-as-collider model
+ * and grey when all selected curves and sprites are
+ * muted (the sprite cursor line itself is drawn in a
+ * later commit); Sprite/Trigger Size
  * activates when the selection is exclusively that kind
  * (the row's label tracks which); Color activates for any
  * non-empty selection since curves, sprites, and triggers
@@ -148,9 +148,10 @@
  *   - Sprite/Trigger Size is active only when the selection
  *     is exclusively sprites or exclusively triggers; the
  *     row's label tracks which.
- *   - Curve-only fields (Curve Size, Cursor Size, the two
- *     Thicknesses) are active only when at least one curve
- *     is selected.
+ *   - Curve Size and Curve Thickness are active only when
+ *     at least one curve is selected. Cursor Size (R / L)
+ *     and Cursor Thickness extend to curves and sprites
+ *     and grey when all of them are muted.
  *   - Color is active when any object is present; curves,
  *     sprites, and triggers all carry a per-object
  *     colour.
@@ -256,9 +257,9 @@ const W = {
     // its pre-decimal footprint, which is acceptable
     // since the Starting State row in Band 2 is similarly
     // wide. The label sits to the left of the field on
-    // a single line. Curve-only since the direction-
-    // reversal effect of negative entries only has
-    // visible meaning where a cursor moves along a path.
+    // a single line. Applies to curves and sprites; both
+    // carry the cycleSpeeds field with the same shape and
+    // meaning (a per-cycle multiplier list).
     cycleSpeeds: 80,
     cycleSpeedsLabel: 50,
 
@@ -607,17 +608,19 @@ export class Inspector {
                 ? ""
                 : beatIntervalAgg;
 
-        // cycleSpeeds aggregates across the curve slice
-        // only — sprites and triggers don't carry the
-        // field, so including them in the aggregate would
-        // always read undefined and clutter the "varies"
-        // check. The Speeds field gate (cycleSpeedsActive
-        // below) keeps the field greyed for selections
-        // with no curves; multi-curve selections show
-        // "varies" as a blank field, and a typed value
-        // applies uniformly across every selected curve.
-        const cycleSpeedsActive = ctx.hasCurves;
-        const cycleSpeedsAgg = aggregateString(objs.curves, "cycleSpeeds");
+        // cycleSpeeds aggregates across the curve and
+        // sprite slices — both kinds carry the field with
+        // the same shape and meaning (a per-cycle speed
+        // multiplier list); triggers don't, so they're
+        // excluded. The Speeds field gate (cycleSpeedsActive
+        // below) keeps the field greyed for selections with
+        // no curve or sprite; mixed or multi-object
+        // selections show "varies" as a blank field, and a
+        // typed value applies uniformly across every
+        // selected curve and sprite.
+        const cycleSpeedsActive = ctx.hasCurves || ctx.hasSprites;
+        const cycleSpeedsAgg = aggregateString(
+            [...objs.curves, ...objs.sprites], "cycleSpeeds");
 
         const r1 = mkRow();
         r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !idEditable }));
@@ -681,14 +684,15 @@ export class Inspector {
             editable: cycleDurationActive,
             editKind: "setBeatInterval",
         }));
-        // Speeds label and field. Curve-only: greyed when
-        // the selection has no curves. The field is a
-        // whitespace-separated integer list with validation
-        // through validateCycleSpeeds (hard error on non-
-        // integer entries). Multi-curve selections aggregate
-        // through objs.curves, so "varies" renders as blank
+        // Speeds label and field. Curves and sprites:
+        // greyed when the selection has no curve or sprite.
+        // The field is a whitespace-separated number list
+        // (integers or decimals, possibly negative) with
+        // validation through validateCycleSpeeds. Mixed and
+        // multi-object selections aggregate across the curve
+        // and sprite slices, so "varies" renders as blank
         // and a typed value commits uniformly across every
-        // selected curve.
+        // selected curve and sprite.
         r2.appendChild(mkLabel("Speeds", {
             width: W.cycleSpeedsLabel,
             disabled: !cycleSpeedsActive,
@@ -1398,9 +1402,10 @@ export class Inspector {
      * write to the object's starting position; vX and vY
      * apply to sprites and curves and grey for trigger-only
      * selections since triggers don't move under physics
-     * and carry no vx/vy fields. Curve dimensions, cursor
-     * extents, and the two thicknesses activate when curves
-     * are in the selection; sprite/trigger size activates
+     * and carry no vx/vy fields. Curve dimensions and Curve
+     * Thickness activate when curves are in the selection;
+     * cursor extents and Cursor Thickness extend to curves
+     * and sprites; sprite/trigger size activates
      * when the selection is exclusively that kind; colour
      * activates for any non-empty selection (curves, sprites,
      * and triggers all carry a per-object colour).
@@ -1612,21 +1617,21 @@ export class Inspector {
         }));
         band.appendChild(r2);
 
-        // Cursor R/L + Cursor Thickness. Cursor R and L
-        // apply to curves and sprites under the cursor-as-
-        // collider model; cursor presence is the gate for
-        // self-firing and collision capability. Cursor
-        // Thickness stays curve-only since sprite cursor
-        // visualisation is deferred. The R and L extent
-        // fields grey when the selection contains no
-        // curves or sprites, or when all selected curves
-        // and sprites are muted (mute is the operational
-        // toggle that hides the cursor without losing the
-        // extent settings).
+        // Cursor R/L + Cursor Thickness. All three apply to
+        // curves and sprites under the cursor-as-collider
+        // model; cursor presence is the gate for self-firing
+        // and collision capability. The fields grey when the
+        // selection contains no curve or sprite, or when all
+        // selected curves and sprites are muted (mute is the
+        // operational toggle that hides the cursor without
+        // losing the extent settings). The sprite cursor
+        // line itself is drawn in a later commit; this row
+        // stores the authored thickness now so the control
+        // is in place when the rendering lands.
         const cursorObjs = [...objs.curves, ...objs.sprites];
         const cursorRAgg = aggregateString(cursorObjs, "cursorR");
         const cursorLAgg = aggregateString(cursorObjs, "cursorL");
-        const cursorThicknessAgg = aggregateString(objs.curves, "cursorThickness");
+        const cursorThicknessAgg = aggregateString(cursorObjs, "cursorThickness");
         const cursorMuteAgg = aggregateBoolean(cursorObjs, "mute");
         const cursorExtentDisabled =
             cursorObjs.length === 0 || cursorMuteAgg === true;
@@ -1653,12 +1658,12 @@ export class Inspector {
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorL",
         }));
-        r3.appendChild(mkLabel("Cursor\nThickness", { width: W.cursorThick, disabled: curveDisabled, multiline: true }));
+        r3.appendChild(mkLabel("Cursor\nThickness", { width: W.cursorThick, disabled: cursorExtentDisabled, multiline: true }));
         r3.appendChild(this._buildEditableField({
             value: cursorThicknessAgg === "varies" ? "" : cursorThicknessAgg,
             numeric: true,
             width: W.thickness,
-            editable: !curveDisabled,
+            editable: !cursorExtentDisabled,
             spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorThickness",

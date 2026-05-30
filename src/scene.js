@@ -807,6 +807,31 @@ export class Sprite {
         this.cursorR = opts.cursorR ?? 0;
         /** @type {number} */
         this.cursorL = opts.cursorL ?? 0;
+        /**
+         * Stroke thickness for the sprite's cursor segment,
+         * in CSS pixels. Independent of the body outline so a
+         * sprite can carry a thick cursor for visibility.
+         * Matches the curve cursorThickness field's default
+         * of 2. The cursor line itself is drawn in a later
+         * commit; this stores the authored thickness.
+         * @type {number}
+         */
+        this.cursorThickness = opts.cursorThickness ?? 2;
+
+        /**
+         * Per-cycle speed multiplier list, as a whitespace-
+         * separated string of numbers (integers or decimals,
+         * possibly negative, e.g. "1 0.5 -2"). Same shape and
+         * meaning as the curve cycleSpeeds field: each entry
+         * multiplies one cycle's speed in order, the index
+         * wrapping back to 0 after the last entry, with a
+         * negative value reversing direction. The runtime
+         * application to sprite motion lands in a later
+         * commit; this stores the authored string. Default
+         * "1" preserves existing single-speed behaviour.
+         * @type {string}
+         */
+        this.cycleSpeeds = opts.cycleSpeeds ?? "1";
 
         // --- Callback slots ---
         // Section-27 model. See Curve for the full

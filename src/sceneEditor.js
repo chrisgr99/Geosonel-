@@ -1348,16 +1348,21 @@ export function setCurveThicknessOnCurves(data, selection, value) {
 }
 
 /**
- * Set cursorThickness on every selected curve. Sprites and
- * triggers in the selection are ignored. Mutates `data` in
- * place.
+ * Set cursorThickness on every selected curve and sprite.
+ * Triggers in the selection are ignored since triggers
+ * cannot have cursors under the cursor-as-collider model.
+ * Scoped to curves and sprites to match setCursorROnSelection
+ * and setCursorLOnSelection. Mutates `data` in place.
  *
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string | number} value
  */
-export function setCursorThicknessOnCurves(data, selection, value) {
-    setFieldOnSelection(data, { curves: selection.curves }, "cursorThickness", Number(value));
+export function setCursorThicknessOnSelection(data, selection, value) {
+    setFieldOnSelection(data, {
+        sprites: selection.sprites,
+        curves: selection.curves,
+    }, "cursorThickness", Number(value));
 }
 
 /**
@@ -1741,20 +1746,21 @@ export function setPatternRepeatsOnCurves(data, selection, value) {
 }
 
 /**
- * Set the cycleSpeeds field across the curve selection.
- * Sprites and triggers in the selection are ignored —
- * cycleSpeeds is curve-only, since the direction-reversal
- * effect of negative entries only has visible meaning where
- * a cursor moves along a path. Stored verbatim as the
- * whitespace-separated string the user typed; the runtime
- * parser in simulation.js is responsible for converting to
- * an integer list and dropping entries after a first zero.
+ * Set the cycleSpeeds field across the curve and sprite
+ * selection. Triggers in the selection are ignored —
+ * triggers have no cursor or motion for a per-cycle speed
+ * to act on. Stored verbatim as the whitespace-separated
+ * string the user typed; the runtime parsers are
+ * responsible for converting to a number list. The field
+ * has the same shape and meaning for curves and sprites
+ * (a per-cycle multiplier list, negative entries reversing
+ * direction); only the runtime consumer differs.
  *
  * Validation lives at the inspector edge
  * (validateCycleSpeeds in curveFieldValidation.js): a hard
  * error there refuses the commit, so by the time this
  * setter runs the value has been syntactically vetted as a
- * non-empty whitespace-separated integer list. Hand-edited
+ * non-empty whitespace-separated number list. Hand-edited
  * scenes that get here with malformed strings stay
  * malformed in scene.json and the runtime parser falls
  * back to [1] on load.
@@ -1762,8 +1768,11 @@ export function setPatternRepeatsOnCurves(data, selection, value) {
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
  */
-export function setCycleSpeedsOnCurves(data, selection, value) {
-    setFieldOnSelection(data, { curves: selection.curves }, "cycleSpeeds", String(value));
+export function setCycleSpeedsOnSelection(data, selection, value) {
+    setFieldOnSelection(data, {
+        sprites: selection.sprites,
+        curves: selection.curves,
+    }, "cycleSpeeds", String(value));
 }
 
 /**

@@ -257,6 +257,8 @@ export const SPRITE_FIELDS = [
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
+    { key: "cursorThickness", label: "Cursor Thickness", type: "number", default: 2 },
+    { key: "cycleSpeeds", label: "Speeds", type: "string", default: "1" },
     ...CALLBACK_SLOT_FIELDS,
     ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
