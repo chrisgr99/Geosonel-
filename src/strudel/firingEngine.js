@@ -1595,7 +1595,23 @@ export class PatternFiringEngine {
             const fractional = begin - cycleIndex;
             const fractionalEnd = end - cycleIndex;
             if (fractional < 0 || fractional >= 1) continue;
-            const duration = Math.max(0, (fractionalEnd - fractional) * segmentDuration);
+            // Duration in cycle units. Prefer the hap's own
+            // duration field when present, since that is what
+            // .clip() / .legato() modify for articulation
+            // (staccato shortens it, legato lengthens it and
+            // can overlap the next note); fall back to the
+            // whole-span length for haps that carry no
+            // explicit duration. Either way the cycle-unit
+            // length scales to wall-clock by segmentDuration.
+            // audioTime (the note's start) is unaffected and
+            // still comes from the whole-span begin below, so
+            // clip changes only how long each note sounds, not
+            // when it fires.
+            const clipDur = hapDuration(hap);
+            const cycleUnitDur = Number.isFinite(clipDur)
+                ? clipDur
+                : (fractionalEnd - fractional);
+            const duration = Math.max(0, cycleUnitDur * segmentDuration);
             // Lay out one event per repeat. The stored
             // fractional stays at the strudel-cycle position
             // so Pass 2's queryArc(cycleIndex + fractional,
@@ -1883,6 +1899,41 @@ function hapBegin(hap) {
     }
     if (hap.part && typeof hap.part === "object" && "begin" in hap.part) {
         return Number(hap.part.begin);
+    }
+    return NaN;
+}
+
+/**
+ * Read the clip-aware duration of a strudel Hap, in cycle
+ * units, or NaN when the hap carries no usable duration
+ * field. This is the field the .clip() / .legato() pattern
+ * operators modify: strudel's clip writes the articulated
+ * length into hap.duration (and hap.endClipped) while
+ * deliberately leaving the whole timespan at the full grid
+ * length so visualisations can still show the underlying
+ * structure. Strudel's own scheduler uses hap.duration for
+ * note length (it schedules stop at whole.begin +
+ * hap.duration), so reading it here is what makes clip
+ * audible in GXW: without it, the duration computed from
+ * the whole span is always the unclipped grid length and
+ * clip has no effect.
+ *
+ * Returned in cycle units (a fraction of a cycle), the same
+ * units as (whole.end - whole.begin), so the caller scales
+ * it to wall-clock by the same segmentDuration factor. NaN
+ * when the field is absent or non-finite, so the caller
+ * falls back to the whole-span computation for haps that
+ * carry no explicit duration (the default, unclipped case
+ * for any pattern without clip).
+ *
+ * @param {any} hap
+ * @returns {number}
+ */
+function hapDuration(hap) {
+    if (hap === null || typeof hap !== "object") return NaN;
+    if ("duration" in hap) {
+        const d = Number(hap.duration);
+        if (Number.isFinite(d)) return d;
     }
     return NaN;
 }
