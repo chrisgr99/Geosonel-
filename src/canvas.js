@@ -319,6 +319,35 @@ const TOOLTIP_DELAY_MS = 450;
 const TOOLTIP_CURSOR_HIT_PX = 6;
 const TOOLTIP_MARKER_HIT_PX = 7;
 
+// Sprite directional-body rendering. The sprite is drawn as
+// a teardrop: a circle of radius r forms the rounded back
+// and two tangent lines converge to a nose at a fixed
+// 90-degree apex, r*sqrt(2) from the centre, so the nose
+// points along the sprite's heading. The fill (the image
+// colour sampled at the centre) and the outline (the
+// sprite's colour) both paint at full opacity.
+// SPRITE_FILL_ALPHA is the fill's alpha multiplier, kept as
+// a tunable knob: lowering it would let whatever sits
+// beneath the sprite (a trigger it is about to reach, say)
+// show faintly through the body.
+const SPRITE_FILL_ALPHA = 1.0;
+
+// Heading tracking for the directional body. The nose faces
+// the authored starting velocity while the transport is
+// stopped (so editing the velocity rotates a resting sprite
+// live), the live on-screen motion direction during
+// playback, and holds the last non-zero heading through any
+// momentary stop. Motion is read as the frame-to-frame
+// change in the sprite's canvas position: a change below
+// SPRITE_HEADING_MOTION_EPS counts as "not moving" and one
+// above SPRITE_HEADING_TELEPORT_LIMIT (canvas units) is
+// treated as a cycle-reset teleport rather than travel, so
+// both hold the last heading rather than snapping the nose.
+// A sprite with no heading source yet points left.
+const SPRITE_HEADING_MOTION_EPS = 1e-3;
+const SPRITE_HEADING_TELEPORT_LIMIT = 6;
+const SPRITE_DEFAULT_HEADING = Math.PI; // left (-x) in canvas space
+
 export class Canvas {
     /**
      * @param {HTMLElement} container  The element the canvas mounts into.
@@ -672,6 +701,22 @@ export class Canvas {
          * @type {Map<string, number>}
          */
         this._triggerFlashTimestamp = new Map();
+
+        /**
+         * Per-sprite heading history for the directional
+         * teardrop body. _spriteHeading maps a sprite id to
+         * its last heading angle in canvas space (Y up,
+         * +x = 0, counter-clockwise positive);
+         * _spritePrevPos maps a sprite id to its canvas-space
+         * position on the previous frame, used to derive the
+         * live motion direction during playback. See
+         * _spriteHeadingPixelAngle for how the two combine
+         * with the transport state to choose a heading.
+         * @type {Map<string, number>}
+         */
+        this._spriteHeading = new Map();
+        /** @type {Map<string, {x: number, y: number}>} */
+        this._spritePrevPos = new Map();
 
         /**
          * Currently brightened hover target, or null. Tracks
@@ -1984,6 +2029,14 @@ export class Canvas {
             const cx = this.toPixelX(pos.x);
             const cy = this.toPixelY(pos.y);
             const r = Math.max(4, (s.displayDiameter / 2) * scale * this.pixelsPerUnit);
+            // Pixel-space heading angle the nose points along.
+            // Faces the authored starting velocity at rest,
+            // the live motion direction during playback, and
+            // holds the last heading through a momentary stop;
+            // defaults to left when there is no source. The
+            // method also advances the per-sprite heading and
+            // previous-position history each frame.
+            const phi = this._spriteHeadingPixelAngle(s, pos);
             // Muted sprites render desaturated to gray via
             // a canvas-level grayscale filter applied for the
             // duration of this sprite's draw. The filter
@@ -1997,26 +2050,39 @@ export class Canvas {
                 ctx.save();
                 ctx.filter = "grayscale(100%)";
             }
-            // Filled disc with a light-blue boundary — the fill
-            // takes the colour of the image pixel under the
-            // centre, the boundary keeps the sprite visible
-            // against any background.
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            // Directional teardrop body: a circle of radius r
+            // forms the rounded back, two tangent lines
+            // converge to a nose at a 90-degree apex pointing
+            // along phi. The fill takes the colour of the
+            // image pixel under the centre; the boundary keeps
+            // the sprite legible against any background.
+            buildSpriteTeardropPath(ctx, cx, cy, r, phi);
             // Firing-event flash check, computed up front so
             // it can override both the interior fill and the
             // boundary stroke. When the sprite is currently
             // flashing (a pattern event just fired), the
-            // whole disc paints solid red — fill plus stroke
+            // whole body paints solid red — fill plus stroke
             // — for FIRING_FLASH_DURATION_MS, then reverts
             // naturally on the next frame past the window.
             const spriteFlashAt = this._spriteFlashTimestamp.get(s.id);
             const spriteFlashing = spriteFlashAt !== undefined &&
                 (performance.now() - spriteFlashAt) < FIRING_FLASH_DURATION_MS;
+            // Fill. The sampled-colour fill paints at
+            // SPRITE_FILL_ALPHA (the fill's alpha multiplier,
+            // currently full opacity); the flash fill always
+            // paints solid at full alpha so the firing hit
+            // stays a strong signal. globalAlpha is restored
+            // before the stroke so the outline is always
+            // fully opaque.
+            const prevAlpha = ctx.globalAlpha;
             ctx.fillStyle = spriteFlashing
                 ? FIRING_FLASH_COLOUR
                 : this._sampleImageAt(pos.x, pos.y);
+            ctx.globalAlpha = spriteFlashing
+                ? prevAlpha
+                : prevAlpha * SPRITE_FILL_ALPHA;
             ctx.fill();
+            ctx.globalAlpha = prevAlpha;
             // Hover-brighten: stroke uses a lightened colour
             // and a wider line width when this sprite is the
             // current hover target. Fill stays unchanged so
@@ -2049,6 +2115,90 @@ export class Canvas {
             ctx.stroke();
             if (muted) ctx.restore();
         }
+    }
+
+    /**
+     * Compute the pixel-space angle (radians) the sprite's
+     * nose should point along this frame, and advance the
+     * per-sprite heading and previous-position history.
+     *
+     * The heading source depends on the transport state.
+     * While the transport is stopped (editor at rest) the
+     * sprite faces its authored starting velocity
+     * (sprite.vx, sprite.vy), so editing the velocity in the
+     * inspector rotates a resting sprite immediately; a zero
+     * starting velocity faces left. While playing, the
+     * heading tracks the sprite's actual motion, read as the
+     * frame-to-frame change in canvas position: a change
+     * below SPRITE_HEADING_MOTION_EPS counts as not moving
+     * and holds the last heading, and one above
+     * SPRITE_HEADING_TELEPORT_LIMIT is treated as a cycle-
+     * reset teleport rather than travel and also holds the
+     * last heading. A sprite with no heading source yet
+     * points left (SPRITE_DEFAULT_HEADING).
+     *
+     * Headings are stored in canvas space (Y up, +x = 0,
+     * counter-clockwise positive) keyed by sprite id, then
+     * converted to a pixel-space angle on return by flipping
+     * the forward vector's Y component (pixel Y is down).
+     *
+     * @param {any} sprite
+     * @param {{x: number, y: number}} pos  Current canvas-space position.
+     * @returns {number}  Pixel-space heading angle in radians.
+     */
+    _spriteHeadingPixelAngle(sprite, pos) {
+        const id = typeof sprite.id === "string" ? sprite.id : null;
+        const playing = this._transport !== null && this._transport.isPlaying;
+        const vx = typeof sprite.vx === "number" ? sprite.vx : 0;
+        const vy = typeof sprite.vy === "number" ? sprite.vy : 0;
+
+        /** @type {number | undefined} */
+        let theta;
+        let moved = false;
+
+        if (playing && id !== null) {
+            const prev = this._spritePrevPos.get(id);
+            if (prev !== undefined) {
+                const dx = pos.x - prev.x;
+                const dy = pos.y - prev.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist > SPRITE_HEADING_MOTION_EPS && dist < SPRITE_HEADING_TELEPORT_LIMIT) {
+                    theta = Math.atan2(dy, dx);
+                    moved = true;
+                }
+            }
+        }
+
+        if (!moved) {
+            if (playing) {
+                // Momentary stop (or first playing frame):
+                // hold the last heading, seeding from the
+                // authored velocity then left if none exists.
+                theta = id !== null ? this._spriteHeading.get(id) : undefined;
+                if (theta === undefined) {
+                    theta = (vx !== 0 || vy !== 0)
+                        ? Math.atan2(vy, vx)
+                        : SPRITE_DEFAULT_HEADING;
+                }
+            } else {
+                // At rest in the editor: face the authored
+                // starting velocity so editing it rotates the
+                // sprite live; default left when it is zero.
+                theta = (vx !== 0 || vy !== 0)
+                    ? Math.atan2(vy, vx)
+                    : SPRITE_DEFAULT_HEADING;
+            }
+        }
+
+        if (id !== null) {
+            this._spriteHeading.set(id, theta);
+            this._spritePrevPos.set(id, { x: pos.x, y: pos.y });
+        }
+
+        // Convert the canvas-space heading (Y up) to a pixel-
+        // space angle (Y down) by flipping the forward unit
+        // vector's Y component.
+        return Math.atan2(-Math.sin(theta), Math.cos(theta));
     }
 
     /**
@@ -4512,6 +4662,62 @@ function pixelPerpendicularUnit(tx, ty) {
     const len = Math.hypot(tx, ty);
     if (len === 0) return { x: 0, y: 0 };
     return { x: ty / len, y: tx / len };
+}
+
+/**
+ * Build the directional sprite teardrop as a closed path on
+ * the given context, ready to fill and stroke. The body is a
+ * circle of radius r centred at (cx, cy) in pixel space; two
+ * straight sides tangent to that circle converge to a sharp
+ * nose at a fixed 90-degree apex pointing along phi (a
+ * pixel-space angle). The apex sits at distance r*sqrt(2)
+ * from the centre and the two tangent contact points lie 45
+ * degrees off the heading on either side, so the rounded
+ * back spans the 270-degree arc between them. The path runs
+ * the two nose lines (contact A -> apex -> contact B) and
+ * closes with that back arc.
+ *
+ * Tangency: with the apex at r*sqrt(2) and the contacts at
+ * +/-45 degrees, each nose line meets the circle at a right
+ * angle to the radius, so the straight sides join the arc
+ * smoothly (no kink) and the half-angle at the apex is 45
+ * degrees, i.e. a 90-degree nose. Because the canvas uses an
+ * equal metric (one unit in X equals one unit in Y in
+ * pixels), the tangency and angles hold in pixel space too.
+ *
+ * Issues its own beginPath / closePath, so the caller fills
+ * and strokes the current path directly after calling.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} cx
+ * @param {number} cy
+ * @param {number} r
+ * @param {number} phi  Pixel-space heading angle in radians.
+ */
+function buildSpriteTeardropPath(ctx, cx, cy, r, phi) {
+    const quarter = Math.PI / 4;
+    // Tangent contact points sit 45 degrees off the heading
+    // on each side; the apex is straight ahead along phi at
+    // r*sqrt(2) from the centre.
+    const angleA = phi + quarter;
+    const angleB = phi - quarter;
+    const taX = cx + r * Math.cos(angleA);
+    const taY = cy + r * Math.sin(angleA);
+    const tbX = cx + r * Math.cos(angleB);
+    const tbY = cy + r * Math.sin(angleB);
+    const apexX = cx + r * Math.SQRT2 * Math.cos(phi);
+    const apexY = cy + r * Math.SQRT2 * Math.sin(phi);
+    ctx.beginPath();
+    ctx.moveTo(taX, taY);
+    ctx.lineTo(apexX, apexY);
+    ctx.lineTo(tbX, tbY);
+    // Back arc: sweep from contact B the long way (270
+    // degrees) around the rear of the circle to contact A,
+    // skipping the 90-degree front arc the nose replaces.
+    // anticlockwise = true takes the decreasing-angle
+    // direction, which from B reaches A through the rear.
+    ctx.arc(cx, cy, r, angleB, angleA, true);
+    ctx.closePath();
 }
 
 /**
