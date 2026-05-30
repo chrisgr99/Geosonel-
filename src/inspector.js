@@ -284,6 +284,14 @@ const W = {
     // reshape around.
     soundEngine: 180,
     soundEngineLabel: 90,
+
+    // Middle band voice-field dropdowns under superdough.
+    // Wide enough for the longest pitched-sound entry
+    // (the "... (noise)" and "... (VCSL)" suffixed labels)
+    // and the longest drum-machine bank name at 11pt with
+    // the custom green chevron chrome on the right edge,
+    // with comfortable margin.
+    voiceField: 200,
 };
 
 export class Inspector {
@@ -2023,30 +2031,80 @@ export class Inspector {
     }
 
     /**
-     * Middle area band. Currently empty; reserved for the
-     * per-object voice band that the multi-engine audio
-     * design lands as a follow-up commit. Under superdough
-     * this band will carry sound / bank dropdowns and the
-     * per-object orbit-shared character knobs; under MIDI
-     * it will carry port / channel / program rows; under
-     * Tone.js it will carry synth-class and parameter
-     * rows. The band reshapes based on the active engine
-     * (read from this._scene.engine), so the per-object
-     * voice fields stay specific to whichever engine is
-     * playing rather than presenting a union of every
-     * engine's vocabulary at once.
+     * Middle area band. Populated when the active sound
+     * engine is superdough: two dropdowns let the user
+     * override the strudel sound and bank used for any
+     * pattern event that doesn't carry an explicit one,
+     * with a "Default" sentinel at the top of each list
+     * meaning "no injection — let the pattern's own
+     * values (or strudel's no-s defaults) win". The
+     * pitched-sound dropdown applies to events from
+     * note() and n() patterns (no s field on the event);
+     * the unpitched-bank dropdown applies to events from
+     * sound() patterns whose s field is a raw drum name
+     * with no underscore. Soft-injection happens in the
+     * firing engine right before dispatch, so explicit
+     * pattern values like sound("bd").bank("RolandTR808")
+     * always win. The right side of the band is left
+     * empty as a reservation for future per-object
+     * effects controls.
      *
-     * Rendered as a plain .insp-band div with no rows yet.
-     * The empty band still picks up the band's vertical
-     * padding and bottom border so the structural shape
-     * of the inspector reads correctly even before the
-     * voice fields land.
+     * Empty when the active engine is MIDI (no per-object
+     * MIDI voice fields in this commit — see IN_FLIGHT for
+     * the rationale, briefly: Electron mode exposes a
+     * single virtual GeoSonel CoreMIDI source and per-
+     * track routing happens inside the DAW). Future
+     * engines (tone, csound, dough) will reshape the
+     * band based on this._scene.engine the same way the
+     * superdough branch does today.
      *
-     * @param {ReturnType<typeof buildSelectionContext>} _ctx
+     * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
-    _buildBandMiddleArea(_ctx) {
+    _buildBandMiddleArea(ctx) {
         const band = document.createElement("div");
         band.className = "insp-band insp-band-middle";
+
+        const engine =
+            (this._scene !== null && typeof this._scene.engine === "string")
+                ? this._scene.engine
+                : "midi";
+        if (engine !== "superdough") return band;
+
+        const objs = selectedObjects(this._scene, this._selection);
+        const voiceActive = ctx.total > 0;
+        const soundAgg = aggregateVoiceField(objs.all, "superdough", "sound");
+        const bankAgg = aggregateVoiceField(objs.all, "superdough", "bank");
+
+        const r1 = mkRow();
+        r1.appendChild(mkLabel("Pitched\nSound", {
+            width: W.leftLabel,
+            disabled: !voiceActive,
+            multiline: true,
+        }));
+        r1.appendChild(this._buildDropdownField({
+            options: PITCHED_SOUND_OPTIONS,
+            value: soundAgg === "varies" ? "" : soundAgg,
+            width: W.voiceField,
+            editable: voiceActive,
+            editKind: "setVoiceSuperdoughSound",
+        }));
+        band.appendChild(r1);
+
+        const r2 = mkRow();
+        r2.appendChild(mkLabel("Unpitched\nBank", {
+            width: W.leftLabel,
+            disabled: !voiceActive,
+            multiline: true,
+        }));
+        r2.appendChild(this._buildDropdownField({
+            options: UNPITCHED_BANK_OPTIONS,
+            value: bankAgg === "varies" ? "" : bankAgg,
+            width: W.voiceField,
+            editable: voiceActive,
+            editKind: "setVoiceSuperdoughBank",
+        }));
+        band.appendChild(r2);
+
         return band;
     }
 
@@ -2120,6 +2178,76 @@ export class Inspector {
 }
 
 // --- Selection-context helpers ---
+
+/**
+ * Pitched-sound dropdown options for the superdough
+ * middle-band voice control. The "Default" sentinel sits
+ * at the top with an empty-string value, so a fresh
+ * selection (or an active "Default" choice) writes
+ * nothing into scene.json and the firing engine performs
+ * no soft-injection, letting the pattern's own values
+ * win. Below it: the four built-in oscillators, the four
+ * noise sources, the startup-loaded Salamander grand
+ * piano, and seven VCSL (Versilian Community Sample
+ * Library) pitched instruments lazy-loaded from the VCSL
+ * sample map on first selection. The VCSL set replaced an
+ * earlier list of gm_ General MIDI entries: the
+ * @strudel/web umbrella this build uses ships no soundfont
+ * code, so gm_ names produced no sound, whereas the VCSL
+ * instruments resolve through the same samples() path that
+ * already serves the drum banks and piano. The runtime's
+ * VCSL_SOUND_NAMES set must stay in sync with the VCSL
+ * entries here so ensureSamplesForVoice loads the map when
+ * one is chosen. No trumpet or other brass appears because
+ * the VCSL map contains none; a real trumpet would need
+ * the soundfont path (gm_trumpet) that this build lacks.
+ */
+const PITCHED_SOUND_OPTIONS = [
+    { value: "", label: "Default" },
+    { value: "sine", label: "sine" },
+    { value: "sawtooth", label: "sawtooth" },
+    { value: "square", label: "square" },
+    { value: "triangle", label: "triangle" },
+    { value: "white", label: "white (noise)" },
+    { value: "pink", label: "pink (noise)" },
+    { value: "brown", label: "brown (noise)" },
+    { value: "crackle", label: "crackle (noise)" },
+    { value: "piano", label: "piano" },
+    { value: "steinway", label: "steinway (VCSL)" },
+    { value: "vibraphone", label: "vibraphone (VCSL)" },
+    { value: "marimba", label: "marimba (VCSL)" },
+    { value: "kalimba", label: "kalimba (VCSL)" },
+    { value: "harp", label: "harp (VCSL)" },
+    { value: "sax", label: "sax (VCSL)" },
+];
+
+/**
+ * Unpitched bank dropdown options for the superdough
+ * middle-band voice control. 13 alphabetised drum-machine
+ * bank names from the tidal-drum-machines catalogue plus
+ * the "Default" sentinel at the top. The names match the
+ * bank prefixes superdough applies via strudel's .bank()
+ * function: a value of "RolandTR909" means an event with
+ * s="bd" (no underscore) becomes RolandTR909_bd at
+ * dispatch. The sentinel works the same way as the
+ * pitched dropdown's: empty-string value, no soft-
+ * injection, pattern's own values win.
+ */
+const UNPITCHED_BANK_OPTIONS = [
+    { value: "", label: "Default" },
+    { value: "AceToneRhythmAce", label: "AceToneRhythmAce" },
+    { value: "AkaiMPC60", label: "AkaiMPC60" },
+    { value: "EmuSP12", label: "EmuSP12" },
+    { value: "KorgKR55", label: "KorgKR55" },
+    { value: "LinnDrum", label: "LinnDrum" },
+    { value: "LinnLM1", label: "LinnLM1" },
+    { value: "OberheimDMX", label: "OberheimDMX" },
+    { value: "RolandCR78", label: "RolandCR78" },
+    { value: "RolandTR606", label: "RolandTR606" },
+    { value: "RolandTR707", label: "RolandTR707" },
+    { value: "RolandTR808", label: "RolandTR808" },
+    { value: "RolandTR909", label: "RolandTR909" },
+];
 
 /**
  * Compute derived state from a raw selection. Centralised
@@ -2288,6 +2416,48 @@ function aggregateString(objects, fieldName) {
     }
     if (firstRaw === null || firstRaw === undefined) return "";
     return String(firstRaw);
+}
+
+/**
+ * Aggregate a per-object voice subfield (e.g.
+ * voice.superdough.sound) across a list of objects.
+ * Returns the common value as a string when every
+ * object's nested field matches, the literal "varies"
+ * when values disagree, or empty string for an empty
+ * list or a uniformly-missing field. Missing nesting at
+ * any level (no voice key, no engine subkey, no field
+ * subkey) reads as the empty-string "Default" sentinel
+ * so an object that never customised its voice
+ * aggregates cleanly alongside one that explicitly set
+ * the field to its default. Used by the middle band's
+ * dropdown read bindings.
+ *
+ * @param {any[]} objects
+ * @param {string} engine  Engine name (e.g. "superdough").
+ * @param {string} field   Field name within the engine subobject (e.g. "sound").
+ * @returns {string | "varies"}
+ */
+function aggregateVoiceField(objects, engine, field) {
+    if (objects.length === 0) return "";
+    let common = null;
+    let initialised = false;
+    for (const obj of objects) {
+        const voice = (obj === null || typeof obj !== "object") ? null : obj.voice;
+        const sub = (voice === null || typeof voice !== "object" || Array.isArray(voice))
+            ? null
+            : voice[engine];
+        const raw = (sub === null || typeof sub !== "object" || Array.isArray(sub))
+            ? undefined
+            : sub[field];
+        const normalised = (raw === null || raw === undefined) ? "" : String(raw);
+        if (!initialised) {
+            common = normalised;
+            initialised = true;
+        } else if (normalised !== common) {
+            return "varies";
+        }
+    }
+    return common ?? "";
 }
 
 /**

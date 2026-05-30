@@ -230,6 +230,19 @@ const DEFAULT_LATE_REFRESH_WINDOW_SECONDS_SUPERDOUGH = 0.1;
 const LOG_PASS2 = true;
 
 /**
+ * Debug flag for per-object voice injection. When true,
+ * applyVoiceInjection logs a one-line message each time it
+ * fills an s or bank field on an outgoing event, naming the
+ * resulting sound/bank so it is visible whether the chosen
+ * voice reaches superdough in the expected shape. Mirrors
+ * LOG_PASS2's role for the dynamic-signal substrate. Default
+ * true while the per-object voice work is being verified;
+ * flip to false once the lazy-load fix is confirmed audibly
+ * so normal playback is not noisy.
+ */
+const LOG_VOICE = true;
+
+/**
  * Per-source firing state. Keyed by source id in the
  * PatternFiringEngine's _sources map.
  *
@@ -546,6 +559,20 @@ export class PatternFiringEngine {
                 this._midiSender.panic();
             }
         });
+
+        // When the strudel engine finishes loading, ensure
+        // any per-object superdough voices in the current
+        // scene have their sample maps / soundfonts requested.
+        // setScene also runs this scan, but a score usually
+        // loads (and setScene runs) before the user clicks
+        // Load Engine, so this covers the common ordering
+        // where the scene's voices were known before
+        // window.samples existed. onStatusChange fires
+        // immediately with the current status on subscribe;
+        // at construction that is "idle", which no-ops.
+        this._runtime.onStatusChange((status) => {
+            if (status === "loaded") this._ensureVoiceSamplesForScene();
+        });
     }
 
     /**
@@ -725,6 +752,35 @@ export class PatternFiringEngine {
         }
         for (const id of [...this._sources.keys()]) {
             if (!seenIds.has(id)) this._sources.delete(id);
+        }
+        this._ensureVoiceSamplesForScene();
+    }
+
+    /**
+     * Scan the current scene's curves and sprites for
+     * per-object superdough voices and ask the runtime to
+     * lazy-load whatever sample map or soundfont each voice
+     * needs. Cheap and idempotent: the runtime tracks which
+     * resources it has already requested, so re-scanning on
+     * every setScene (and again when the engine finishes
+     * loading) costs a Set lookup per voiced object. No-op
+     * when no scene is loaded. Triggers are intentionally
+     * skipped to match the firing engine's scope — they
+     * carry the voice schema slot but have no firing path
+     * yet, so loading their samples now would be premature;
+     * this scan extends to them naturally when that path
+     * lands.
+     */
+    _ensureVoiceSamplesForScene() {
+        if (this._scene === null) return;
+        const sources = [...this._scene.curves, ...this._scene.sprites];
+        for (const obj of sources) {
+            if (obj === null || typeof obj !== "object") continue;
+            const voice = obj.voice;
+            if (voice === null || typeof voice !== "object") continue;
+            const sd = voice.superdough;
+            if (sd === null || typeof sd !== "object") continue;
+            this._runtime.ensureSamplesForVoice(sd.sound, sd.bank);
         }
     }
 
@@ -1317,18 +1373,38 @@ export class PatternFiringEngine {
                 } else {
                     const refreshedValue = this._pass2RefreshValue(state, ev, snapshot);
                     if (this._outputMode === "superdough") {
-                        // Superdough path. Fire through the
-                        // runtime's play wrapper, which gates
-                        // internally on the runtime being
-                        // loaded and the audio context being
-                        // present; events arriving before
-                        // the engine has finished init are
-                        // silently dropped rather than
-                        // queued. Duration is the strudel
-                        // hap's part length in wall-clock
-                        // seconds, which superdough uses to
-                        // bound sample playback length.
-                        this._runtime.play(refreshedValue, ev.audioTime, ev.duration);
+                        // Superdough path. Apply per-object
+                        // voice soft-injection first so
+                        // events from note() / n() patterns
+                        // pick up the source's pitched-sound
+                        // override (via the s field) and
+                        // events from sound() patterns with
+                        // raw drum names pick up the
+                        // bank override. Explicit pattern
+                        // values always win because the
+                        // injection only fills missing
+                        // fields; see applyVoiceInjection's
+                        // docstring at the bottom of this
+                        // file for the precise rules.
+                        // Injection is a no-op when the
+                        // source carries no voice.superdough
+                        // subblock, returning the original
+                        // value unchanged so events without
+                        // an override keep their reference
+                        // identity. Fire through the
+                        // runtime's play wrapper, which
+                        // gates internally on the runtime
+                        // being loaded and the audio context
+                        // being present; events arriving
+                        // before the engine has finished
+                        // init are silently dropped rather
+                        // than queued. Duration is the
+                        // strudel hap's part length in
+                        // wall-clock seconds, which
+                        // superdough uses to bound sample
+                        // playback length.
+                        const injectedValue = applyVoiceInjection(refreshedValue, source);
+                        this._runtime.play(injectedValue, ev.audioTime, ev.duration);
                     } else {
                         this._midiSender.send(refreshedValue, ev.audioTime, ev.duration);
                     }
@@ -1772,4 +1848,85 @@ function hapEnd(hap) {
         return Number(hap.part.end);
     }
     return NaN;
+}
+
+/**
+ * Soft-inject the per-object superdough voice fields into
+ * an outgoing Hap value. Two injection paths, both gated
+ * on the field being absent in the source value so
+ * explicit pattern values always win:
+ *
+ *   - Pitched sound: when the value has no `s` field and
+ *     the source carries voice.superdough.sound, fill
+ *     value.s with the sound. Targets events from note()
+ *     and n() patterns, which produce values like
+ *     {note: "c4"} or {n: 0} without an s field. Once
+ *     filled, superdough renders the note through the
+ *     named sample/synth (e.g. "piano" for the Salamander
+ *     Grand, "gm_marimba" for the GM marimba patch,
+ *     "sawtooth" for the built-in oscillator).
+ *
+ *   - Unpitched bank: when the value's `s` field is a
+ *     raw drum name without an underscore and the source
+ *     carries voice.superdough.bank, set value.bank to
+ *     the bank. Targets events from sound() patterns like
+ *     sound("bd sn") whose s field is a raw drum name;
+ *     the bank field then makes superdough resolve
+ *     "bd" to "RolandTR909_bd" (etc.) at sample lookup
+ *     time. An s field that already contains an
+ *     underscore ("RolandTR808_bd") is treated as a
+ *     pre-banked name and left alone, matching strudel's
+ *     own .bank() operator semantics.
+ *
+ * Returns the value unchanged (by reference) when no
+ * injection applies, so events without an override keep
+ * their reference identity. Returns a shallow-copied new
+ * object only when at least one field is injected, so
+ * the original value Hap from strudel's queryArc is
+ * never mutated.
+ *
+ * Called from the superdough dispatch branch in tick().
+ * Not called on the MIDI path because MIDI events use
+ * value.note / value.midichan and not value.s or
+ * value.bank; the per-object MIDI voice fields will land
+ * as a separate path in a later commit.
+ *
+ * @param {any} value   The strudel Hap value about to dispatch.
+ * @param {any} source  The per-object scene source (Curve, Trigger, or Sprite).
+ * @returns {any}
+ */
+function applyVoiceInjection(value, source) {
+    if (source === null || typeof source !== "object") return value;
+    const voice = source.voice;
+    if (voice === null || typeof voice !== "object" || Array.isArray(voice)) return value;
+    const superdough = voice.superdough;
+    if (superdough === null || typeof superdough !== "object" || Array.isArray(superdough)) return value;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+
+    let out = value;
+    let copied = false;
+
+    const sound = superdough.sound;
+    if (typeof sound === "string" && sound.length > 0 && !("s" in out)) {
+        out = { ...out, s: sound };
+        copied = true;
+    }
+
+    const bank = superdough.bank;
+    if (typeof bank === "string" && bank.length > 0
+        && typeof out.s === "string" && !out.s.includes("_")) {
+        if (!copied) { out = { ...out }; copied = true; }
+        out.bank = bank;
+    }
+
+    if (LOG_VOICE && copied) {
+        const sStr = typeof out.s === "string" ? out.s : "(none)";
+        const bankStr = typeof out.bank === "string" ? out.bank : "(none)";
+        console.log(
+            "[voice] " + (typeof source.id === "string" ? source.id : "?") +
+            " injected s=" + sStr + " bank=" + bankStr,
+        );
+    }
+
+    return out;
 }

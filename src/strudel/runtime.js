@@ -94,6 +94,64 @@ const GLOBALS_TIMEOUT_MS = 5000;
  */
 const GLOBALS_POLL_MS = 20;
 
+/**
+ * Sample map for the tidal-drum-machines collection, lazy-
+ * loaded on demand the first time a per-object voice selects
+ * an unpitched drum-machine bank (RolandTR909, LinnDrum, ...)
+ * in the inspector. superdough's .bank() lookup resolves
+ * names like RolandTR909_bd against this map, so without it
+ * loaded a banked drum event finds no sample and stays
+ * silent. Confirmed as the standard bank source by the
+ * felixroos/dough-samples README. Only the name-to-URL map
+ * loads here; the audio files lazy-load per-name on first
+ * play.
+ */
+const TIDAL_DRUM_MACHINES_URL =
+    "https://raw.githubusercontent.com/felixroos/dough-samples/main/tidal-drum-machines.json";
+
+/**
+ * Sample map for the VCSL (Versilian Community Sample
+ * Library) collection, lazy-loaded on demand the first
+ * time a per-object voice selects a VCSL pitched
+ * instrument (steinway, vibraphone, ...) in the
+ * inspector. Plays the role for pitched sample
+ * instruments that TIDAL_DRUM_MACHINES_URL plays for
+ * unpitched drum kits: the chosen sound name only
+ * resolves to audio once this name-to-URL map is loaded.
+ * The map is a single felixroos/dough-samples JSON of
+ * 128 CC0 instruments by Versilian Studios; the audio
+ * files themselves lazy-load per-instrument on first
+ * play, so a freshly chosen instrument can be silent on
+ * its very first hit then sound from then on. This is
+ * the option-one path that avoids the soundfonts package
+ * the @strudel/web umbrella omits, so it needs no engine
+ * architecture change.
+ */
+const VCSL_URL =
+    "https://raw.githubusercontent.com/felixroos/dough-samples/main/vcsl.json";
+
+/**
+ * The VCSL instrument names surfaced in the inspector's
+ * pitched-sound dropdown. ensureSamplesForVoice loads the
+ * VCSL map when the chosen sound is one of these, the
+ * pitched-sample analogue of the bank check. Kept in sync
+ * with the PITCHED_SOUND_OPTIONS VCSL entries in
+ * inspector.js by hand; the set is small and changes
+ * rarely. A name not in this set and not gm_-prefixed and
+ * not a built-in synth (e.g. piano, which loads at
+ * startup) simply triggers no lazy load, which is the
+ * correct behaviour for the startup-loaded and built-in
+ * sounds.
+ */
+const VCSL_SOUND_NAMES = new Set([
+    "steinway",
+    "vibraphone",
+    "marimba",
+    "kalimba",
+    "harp",
+    "sax",
+]);
+
 export class StrudelRuntime {
     /**
      * @param {Transport} transport
@@ -145,6 +203,46 @@ export class StrudelRuntime {
          * the runtime status before invoking play().
          */
         this._superdough = null;
+
+        /**
+         * @type {any}
+         * The @strudel/web umbrella module, captured during
+         * init. Held so the lazy soundfont path can probe the
+         * umbrella for a registration function (e.g.
+         * registerSoundfonts) that shares the umbrella's own
+         * bundled @strudel/core instance. Importing the
+         * separate @strudel/soundfonts package instead would
+         * risk the duplicate-copies-of-core problem documented
+         * in _doInit, registering gm_ sounds into a core
+         * registry the running engine never consults.
+         */
+        this._web = null;
+
+        /**
+         * @type {Set<string>}
+         * Sample-map URLs already requested this session.
+         * Seeded in _doInit with the startup collections so
+         * ensureSamplesForVoice's lazy loads never re-request
+         * a map that init already loaded; each lazy collection
+         * (currently the tidal-drum-machines bank map) is
+         * requested at most once. A failed load removes its
+         * URL so a later pick can retry.
+         */
+        this._loadedSampleUrls = new Set();
+
+        /**
+         * @type {boolean}
+         * Guards the one-time soundfont registration probe so
+         * a gm_ voice selected on many objects (or re-scanned
+         * on every setScene) triggers the registration attempt
+         * just once. Reset to false only when an attempt
+         * actively fails (threw or rejected) so a later pick
+         * can retry; left true after a successful registration
+         * or after a probe that found no registration function
+         * on the umbrella (which logs the available exports
+         * once for diagnosis).
+         */
+        this._soundfontsRequested = false;
 
         /**
          * @type {Promise<void> | null}
@@ -293,6 +391,7 @@ export class StrudelRuntime {
         // strudel's scheduler. Section 27 and GXSTR's Phase 3
         // both record this finding.
         const web = await import("@strudel/web");
+        this._web = web;
 
         // initStrudel sets up strudel's globals (note, s, hush,
         // stack, samples, ...) on window. It returns before
@@ -365,6 +464,13 @@ export class StrudelRuntime {
                 ),
             ];
             await Promise.all(loads);
+            // Record the startup collections so the lazy
+            // ensureSamplesForVoice path treats them as
+            // already-loaded and never re-requests them.
+            this._loadedSampleUrls.add("github:tidalcycles/dirt-samples");
+            this._loadedSampleUrls.add(
+                "https://raw.githubusercontent.com/felixroos/dough-samples/main/piano.json",
+            );
         } else {
             console.warn(`${LOG_PREFIX} samples() not found on window; sample banks not loaded`);
         }
@@ -435,6 +541,172 @@ export class StrudelRuntime {
         if (bpm === null || !Number.isFinite(bpm) || bpm <= 0) return;
         const cps = bpm / 60 / DEFAULT_CYCLE_BEATS;
         /** @type {any} */ (window).cps = cps;
+    }
+
+    /**
+     * Lazy-load the sample/soundfont resources a per-object
+     * superdough voice needs, on demand when the voice is
+     * chosen or when a score carrying the voice loads. The
+     * firing engine calls this for every source's
+     * voice.superdough block on setScene and again when the
+     * engine finishes loading, so a chosen voice's samples
+     * are requested as soon as the pick re-runs the scene
+     * and a disk-loaded score's voices are requested once
+     * the engine is up.
+     *
+     * Three routes, matching the two inspector dropdowns:
+     *
+     *   - bank (unpitched drum kit, e.g. "RolandTR909"):
+     *     loads the tidal-drum-machines sample map, which
+     *     superdough's .bank() lookup needs to resolve names
+     *     like RolandTR909_bd. The map is small (name-to-URL
+     *     entries only); the audio files themselves still
+     *     lazy-load on first hit, so a freshly chosen kit can
+     *     be silent on its very first beat then sound from
+     *     then on.
+     *
+     *   - VCSL pitched instrument (e.g. "vibraphone"):
+     *     loads the VCSL sample map, which superdough needs
+     *     to resolve the instrument name to audio. Same
+     *     mechanism as the bank path; the per-instrument
+     *     audio still lazy-loads on first hit. This is the
+     *     working pitched-sample route that does not depend
+     *     on the soundfonts package the umbrella omits.
+     *
+     *   - gm_ pitched sound (e.g. "gm_marimba"): attempts to
+     *     register the General MIDI soundfonts via the
+     *     umbrella. Currently a dead end on this build — the
+     *     @strudel/web umbrella ships no soundfont code (see
+     *     _ensureSoundfonts) — so gm_ entries stay silent.
+     *     The pitched dropdown uses VCSL instruments instead;
+     *     this branch is retained so a future engine change
+     *     that brings real soundfonts in needs no firing-path
+     *     edits.
+     *
+     *   - built-in synth/noise sounds (sawtooth, sine,
+     *     square, triangle, white, pink, brown, crackle) and
+     *     the startup-loaded piano: no-op. These need no
+     *     extra resource — the synths are superdough
+     *     built-ins and piano's map loads at init.
+     *
+     * Safe to call before the engine is loaded (no-op until
+     * status is "loaded" and window.samples exists) and safe
+     * to call repeatedly (each underlying load happens at
+     * most once per session).
+     *
+     * @param {any} sound  voice.superdough.sound, or undefined.
+     * @param {any} bank   voice.superdough.bank, or undefined.
+     */
+    ensureSamplesForVoice(sound, bank) {
+        if (this._status !== "loaded") return;
+        if (typeof bank === "string" && bank.length > 0) {
+            this._ensureSamplesUrl(TIDAL_DRUM_MACHINES_URL);
+        }
+        if (typeof sound === "string") {
+            if (VCSL_SOUND_NAMES.has(sound)) {
+                this._ensureSamplesUrl(VCSL_URL);
+            } else if (sound.startsWith("gm_")) {
+                this._ensureSoundfonts();
+            }
+        }
+    }
+
+    /**
+     * Request a strudel sample map by URL exactly once per
+     * session. Marks the URL as loaded before awaiting so a
+     * burst of calls (e.g. setScene scanning several objects
+     * that share a bank) dispatches a single samples() call;
+     * a failed load un-marks the URL so a later pick can
+     * retry. This method does not await — window.samples
+     * registers the name-to-URL map and the per-name audio
+     * files lazy-load on first play, so the brief first-hit
+     * silence is superdough's normal lazy-sample behaviour
+     * rather than anything this code blocks on.
+     *
+     * @param {string} url
+     */
+    _ensureSamplesUrl(url) {
+        if (this._loadedSampleUrls.has(url)) return;
+        const samplesFn = /** @type {((url: string) => Promise<void>) | undefined} */ (
+            /** @type {any} */ (window).samples
+        );
+        if (typeof samplesFn !== "function") return;
+        this._loadedSampleUrls.add(url);
+        Promise.resolve(samplesFn(url)).then(
+            () => console.log(`${LOG_PREFIX} lazy-loaded sample map: ${url}`),
+            (err) => {
+                this._loadedSampleUrls.delete(url);
+                console.warn(`${LOG_PREFIX} lazy sample-map load failed: ${url}`, err);
+            },
+        );
+    }
+
+    /**
+     * Register the General MIDI soundfonts so gm_-prefixed
+     * pitched sounds resolve. The @strudel/web umbrella does
+     * not load soundfonts by default — the four built-in
+     * oscillators (sawtooth/sine/square/triangle) and the
+     * noise sources are synth built-ins that work without any
+     * registration, which is why those already sound, but
+     * gm_ patches come from the separate soundfonts package
+     * and stay silent until something registers them.
+     *
+     * The registration has to run against the umbrella's OWN
+     * bundled @strudel/core instance, so this probes the
+     * captured umbrella module for a registration function
+     * rather than importing @strudel/soundfonts separately (a
+     * separate import would pull its own copy of core and
+     * register the gm_ map into a registry the running engine
+     * never reads — the same duplicate-copies-of-core trap
+     * _doInit avoids for webaudio).
+     *
+     * Whether the umbrella exposes such a function varies by
+     * strudel version. When found, it is called and the
+     * result (sync or promise) is handled defensively. When
+     * not found, the available umbrella export names are
+     * logged once so the correct entry point can be wired in
+     * a follow-up; gm_ sounds stay silent until then, but
+     * nothing else is affected.
+     */
+    _ensureSoundfonts() {
+        if (this._soundfontsRequested) return;
+        this._soundfontsRequested = true;
+        const web = this._web;
+        if (web === null || typeof web !== "object") {
+            this._soundfontsRequested = false;
+            return;
+        }
+        // Log the umbrella's export names once so the available
+        // registration entry points are visible for diagnosis.
+        // registerSynthSounds is deliberately NOT used here: it
+        // registers the basic oscillators (which already work),
+        // not the GM soundfonts, so calling it logs a
+        // misleading success while gm_ stays silent.
+        const exportNames = Object.keys(web);
+        console.log(`${LOG_PREFIX} @strudel/web exports: ${exportNames.join(", ")}`);
+        const fn = /** @type {any} */ (web).registerSoundfonts;
+        if (typeof fn === "function") {
+            try {
+                Promise.resolve(fn()).then(
+                    () => console.log(`${LOG_PREFIX} soundfonts registered via registerSoundfonts()`),
+                    (err) => {
+                        this._soundfontsRequested = false;
+                        console.warn(`${LOG_PREFIX} registerSoundfonts() rejected:`, err);
+                    },
+                );
+            } catch (err) {
+                this._soundfontsRequested = false;
+                console.warn(`${LOG_PREFIX} registerSoundfonts() threw:`, err);
+            }
+            return;
+        }
+        // No registerSoundfonts on the umbrella. The export
+        // list above is the diagnostic for choosing the right
+        // soundfont path; gm_ stays silent until that lands.
+        console.warn(
+            `${LOG_PREFIX} no registerSoundfonts on @strudel/web umbrella; ` +
+            `gm_ pitched sounds need a soundfont registration path (see exports above).`,
+        );
     }
 }
 
