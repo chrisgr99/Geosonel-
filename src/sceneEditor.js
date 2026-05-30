@@ -1466,6 +1466,90 @@ export function setSceneEngine(data, value) {
 }
 
 /**
+ * Set or remove a single per-object voice subfield across
+ * every object in the selection. Used by the property
+ * inspector's middle-band voice dropdowns (pitched sound,
+ * unpitched bank under superdough). The voice field is
+ * nested by engine name, e.g. voice.superdough.sound, so
+ * a call carries the engine name and field name separately
+ * and the helper builds the nesting on demand. Mutates
+ * `data` in place.
+ *
+ * Empty-string, null, or undefined values are treated as
+ * the "Default" sentinel: the field is deleted, and the
+ * engine subobject and the voice object are pruned in turn
+ * if they end up empty. The result is that an object whose
+ * voice was never customised has no voice key in scene.json,
+ * matching the schema default of null and keeping the JSON
+ * clean. A real string value is stored verbatim, creating
+ * the voice and engine subobjects on demand.
+ *
+ * Universal across kinds: curves, triggers, and sprites
+ * all carry a voice field per the schema. Triggers store
+ * the field even though their beenHit firing path isn't
+ * wired yet, so the schema slot is in place when that
+ * path arrives.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} engine  Engine name, e.g. "superdough".
+ * @param {string} field   Field name within the engine subobject, e.g. "sound" or "bank".
+ * @param {string} value   New value; empty string deletes the field.
+ */
+export function setSceneObjectVoiceField(data, selection, engine, field, value) {
+    if (typeof engine !== "string" || engine.length === 0) return;
+    if (typeof field !== "string" || field.length === 0) return;
+    const remove =
+        value === null ||
+        value === undefined ||
+        value === "";
+    /** @type {Array<[string, Iterable<number> | undefined]>} */
+    const arrays = [
+        ["sprites", selection.sprites],
+        ["triggers", selection.triggers],
+        ["curves", selection.curves],
+    ];
+    for (const [arrayKey, indexes] of arrays) {
+        if (indexes === undefined) continue;
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (const idx of indexes) {
+            if (idx < 0 || idx >= arr.length) continue;
+            const entry = arr[idx];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            if (remove) {
+                const voice = entry.voice;
+                if (voice === null || typeof voice !== "object" || Array.isArray(voice)) continue;
+                const sub = voice[engine];
+                if (sub === null || typeof sub !== "object" || Array.isArray(sub)) continue;
+                if (!(field in sub)) continue;
+                delete sub[field];
+                if (Object.keys(sub).length === 0) {
+                    delete voice[engine];
+                }
+                if (Object.keys(voice).length === 0) {
+                    delete entry.voice;
+                }
+            } else {
+                if (entry.voice === null ||
+                    entry.voice === undefined ||
+                    typeof entry.voice !== "object" ||
+                    Array.isArray(entry.voice)) {
+                    entry.voice = {};
+                }
+                if (entry.voice[engine] === null ||
+                    entry.voice[engine] === undefined ||
+                    typeof entry.voice[engine] !== "object" ||
+                    Array.isArray(entry.voice[engine])) {
+                    entry.voice[engine] = {};
+                }
+                entry.voice[engine][field] = value;
+            }
+        }
+    }
+}
+
+/**
  * Parse and clamp a BPM value to the documented [1, 1000]
  * range. Returns null on values that can't be coerced to a
  * finite number, which the call site treats as a no-op.

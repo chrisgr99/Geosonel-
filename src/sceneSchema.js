@@ -112,6 +112,25 @@ const CALLBACK_SLOT_FIELDS = [
 ];
 
 /**
+ * Per-object voice field shared by Curve, Trigger, and
+ * Sprite. The `voice` object is nested by engine name
+ * (e.g. `voice: { superdough: { sound, bank } }`) so that
+ * switching engines preserves the inactive engines' voice
+ * settings rather than destructively migrating between
+ * shapes. The inspector's middle band reads only the
+ * active engine's subfield and renders its controls. The
+ * default is null because most objects don't customise
+ * their voice; an absent or empty subfield reads as the
+ * "Default" sentinel in the inspector UI and produces no
+ * soft-injection at firing time, so legacy scores without
+ * the field need no migration.
+ * @type {FieldDef[]}
+ */
+const VOICE_FIELDS = [
+    { key: "voice", label: "Voice", type: "object", default: null },
+];
+
+/**
  * Score-level (piece-wide) fields. These live at the top of
  * scene.json, not inside any object array.
  * @type {FieldDef[]}
@@ -181,6 +200,7 @@ export const CURVE_FIELDS = [
     { key: "patternRepeats", label: "Repeats", type: "integer", default: 1, min: 1 },
     { key: "cycleSpeeds", label: "Speeds", type: "string", default: "1" },
     ...CALLBACK_SLOT_FIELDS,
+    ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 
@@ -200,6 +220,7 @@ export const TRIGGER_FIELDS = [
     { key: "note", label: "Note", type: "integer", default: null },
     { key: "payload", label: "Payload", type: "object", default: null },
     ...CALLBACK_SLOT_FIELDS,
+    ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 
@@ -222,6 +243,7 @@ export const SPRITE_FIELDS = [
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
     ...CALLBACK_SLOT_FIELDS,
+    ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
 ];
 

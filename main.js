@@ -155,6 +155,7 @@ import {
     setCanvasH,
     setSceneBpm,
     setSceneEngine,
+    setSceneObjectVoiceField,
 } from "./src/sceneEditor.js";
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
 
@@ -3463,6 +3464,31 @@ async function main() {
                 // engine into firingEngine.setOutputMode.
                 await applySceneEdit((data) =>
                     setSceneEngine(data, edit.value),
+                );
+            } else if (edit.kind === "setVoiceSuperdoughSound") {
+                // Inspector middle band's pitched-sound
+                // dropdown under superdough. Writes (or
+                // deletes for the "Default" sentinel) the
+                // nested voice.superdough.sound field on
+                // every object in the selection. The
+                // soft-injection at firing time picks up
+                // the new value on the next runScene
+                // cycle through firingEngine.setScene's
+                // source reconciliation.
+                await applySceneEdit((data) =>
+                    setSceneObjectVoiceField(
+                        data, edit.selection, "superdough", "sound", edit.value,
+                    ),
+                );
+            } else if (edit.kind === "setVoiceSuperdoughBank") {
+                // Inspector middle band's unpitched-bank
+                // dropdown under superdough. Sister to
+                // setVoiceSuperdoughSound; same shape,
+                // writes voice.superdough.bank instead.
+                await applySceneEdit((data) =>
+                    setSceneObjectVoiceField(
+                        data, edit.selection, "superdough", "bank", edit.value,
+                    ),
                 );
             } else if (edit.kind === "createFunctionStub") {
                 // Band 3 Create button. Three steps:

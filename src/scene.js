@@ -601,6 +601,20 @@ export class Curve {
         this.rangeLow = opts.rangeLow ?? null;
         /** @type {("Score" | "Scale" | "Chord" | "None") | null} */
         this.mapNotesTo = opts.mapNotesTo ?? null;
+
+        // --- Per-object voice ---
+        // Engine-keyed nested map of voice settings, e.g.
+        // { superdough: { sound: "piano", bank: "RolandTR909" } }.
+        // Null or an empty subfield means "Default": no
+        // soft-injection at firing time, so the pattern's
+        // own values (or strudel's no-s defaults) win.
+        // Switching engines preserves inactive engines'
+        // subfields exactly so a round-trip through another
+        // engine doesn't lose configuration. The inspector's
+        // middle band reads only the active engine's subfield
+        // and renders its controls.
+        /** @type {Object<string, Object<string, any>> | null} */
+        this.voice = opts.voice ?? null;
     }
 }
 
@@ -701,6 +715,11 @@ export class Trigger {
         this.rangeLow = opts.rangeLow ?? null;
         /** @type {("Score" | "Scale" | "Chord" | "None") | null} */
         this.mapNotesTo = opts.mapNotesTo ?? null;
+
+        // --- Per-object voice ---
+        // See the Curve constructor for the full description.
+        /** @type {Object<string, Object<string, any>> | null} */
+        this.voice = opts.voice ?? null;
     }
 }
 
@@ -813,5 +832,10 @@ export class Sprite {
         this.rangeLow = opts.rangeLow ?? null;
         /** @type {("Score" | "Scale" | "Chord" | "None") | null} */
         this.mapNotesTo = opts.mapNotesTo ?? null;
+
+        // --- Per-object voice ---
+        // See the Curve constructor for the full description.
+        /** @type {Object<string, Object<string, any>> | null} */
+        this.voice = opts.voice ?? null;
     }
 }
