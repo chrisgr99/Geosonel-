@@ -138,6 +138,23 @@ export class Scene {
         /** @type {string | null} */
         this.engine = null;
 
+        // --- Global superdough voice ---
+        // Score-wide default Note Voice (sound) and Sound
+        // Bank that per-object voices inherit when their own
+        // setting is the "Global" sentinel (the default for
+        // untouched objects). Shape mirrors the per-object
+        // voice.superdough subobject: { sound, bank }, with
+        // empty-string meaning the global "Default" sentinel
+        // (inject nothing, let the pattern / superdough
+        // default win). Null in the constructor and for a
+        // fresh score, read as both-empty (global Default for
+        // sound and bank). The firing engine reads this as the
+        // middle fallback in the three-level resolution:
+        // explicit pattern value > per-object voice > this
+        // global voice > superdough default.
+        /** @type {{sound?: string, bank?: string} | null} */
+        this.voiceSuperdough = null;
+
         // --- Canvas size ---
         // Width and height of the rectangular play area in
         // canvas units, centred on the origin. The image

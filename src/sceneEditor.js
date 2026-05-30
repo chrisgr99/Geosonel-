@@ -1466,6 +1466,85 @@ export function setSceneEngine(data, value) {
 }
 
 /**
+ * Set the score-wide global superdough Note Voice (sound)
+ * at the top level of scene.json. Used by the property
+ * inspector's global band's Note Voice dropdown when the
+ * active engine is superdough. The value lands in the
+ * scene-level voiceSuperdough object (created on demand),
+ * mirroring the per-object voice.superdough.sound subfield
+ * one level up. Per-object voices inherit this when their
+ * own setting is the "Global" sentinel; the firing engine
+ * reads it as the middle fallback in the three-level
+ * resolution (explicit pattern value > per-object voice >
+ * this global voice > superdough default).
+ *
+ * Empty string is the global "Default" sentinel: it deletes
+ * the sound key, and prunes the voiceSuperdough object if
+ * it ends up empty, so a score with no global override has
+ * no voiceSuperdough key in scene.json and the schema's
+ * null default stays clean. A real string value is stored
+ * verbatim. Mirrors setSceneObjectVoiceField's empty-
+ * deletes-and-prunes semantics at the scene level.
+ *
+ * Defensive no-op on a non-object data root, matching
+ * setSceneEngine.
+ * @param {any} data
+ * @param {string} value
+ */
+export function setSceneVoiceSuperdoughSound(data, value) {
+    setSceneVoiceSuperdoughField(data, "sound", value);
+}
+
+/**
+ * Set the score-wide global superdough Sound Bank at the
+ * top level of scene.json. Symmetric with
+ * setSceneVoiceSuperdoughSound; see that function for the
+ * full description of the scene-level voiceSuperdough
+ * object, the "Default" empty-string sentinel, and the
+ * prune semantics.
+ * @param {any} data
+ * @param {string} value
+ */
+export function setSceneVoiceSuperdoughBank(data, value) {
+    setSceneVoiceSuperdoughField(data, "bank", value);
+}
+
+/**
+ * Shared body for the two global superdough voice setters.
+ * Writes `field` into the scene-level voiceSuperdough
+ * object, creating the object on demand for a real value
+ * and deleting the field (then pruning the object when it
+ * empties) for the empty-string "Default" sentinel.
+ * @param {any} data
+ * @param {"sound" | "bank"} field
+ * @param {string} value
+ */
+function setSceneVoiceSuperdoughField(data, field, value) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    const remove =
+        value === null ||
+        value === undefined ||
+        value === "";
+    if (remove) {
+        const vs = data.voiceSuperdough;
+        if (vs === null || typeof vs !== "object" || Array.isArray(vs)) return;
+        if (!(field in vs)) return;
+        delete vs[field];
+        if (Object.keys(vs).length === 0) {
+            delete data.voiceSuperdough;
+        }
+        return;
+    }
+    if (data.voiceSuperdough === null ||
+        data.voiceSuperdough === undefined ||
+        typeof data.voiceSuperdough !== "object" ||
+        Array.isArray(data.voiceSuperdough)) {
+        data.voiceSuperdough = {};
+    }
+    data.voiceSuperdough[field] = value;
+}
+
+/**
  * Set or remove a single per-object voice subfield across
  * every object in the selection. Used by the property
  * inspector's middle-band voice dropdowns (pitched sound,

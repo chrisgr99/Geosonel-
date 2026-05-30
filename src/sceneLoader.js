@@ -207,6 +207,12 @@ function applyPieceLevelFields(scene, data) {
     if ("engine" in data && typeof data.engine === "string") {
         scene.engine = data.engine;
     }
+    if ("voiceSuperdough" in data
+        && typeof data.voiceSuperdough === "object"
+        && data.voiceSuperdough !== null
+        && !Array.isArray(data.voiceSuperdough)) {
+        scene.voiceSuperdough = data.voiceSuperdough;
+    }
     if ("triggerScale" in data && typeof data.triggerScale === "number") {
         scene.triggerScale = data.triggerScale;
     }

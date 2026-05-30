@@ -159,6 +159,21 @@ export const SCENE_FIELDS = [
         default: "midi",
         enumValues: ["midi", "superdough"],
     },
+    {
+        // Score-wide default superdough voice. Per-object
+        // voices inherit these when their own sound/bank is
+        // unset (the per-object "Global" sentinel). Shape
+        // mirrors the per-object voice.superdough subobject:
+        // { sound, bank } with empty-string meaning the
+        // global "Default" sentinel (no injection at all).
+        // Null default because a fresh score has no global
+        // override; an absent field reads as both-empty,
+        // i.e. global Default for sound and bank.
+        key: "voiceSuperdough",
+        label: "Global Superdough Voice",
+        type: "object",
+        default: null,
+    },
     { key: "triggerScale", label: "Trigger Scale", type: "number", default: 1, min: 0.1, max: 10 },
     { key: "spriteScale", label: "Sprite Scale", type: "number", default: 1, min: 0.1, max: 10 },
 ];

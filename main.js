@@ -155,6 +155,8 @@ import {
     setCanvasH,
     setSceneBpm,
     setSceneEngine,
+    setSceneVoiceSuperdoughSound,
+    setSceneVoiceSuperdoughBank,
     setSceneObjectVoiceField,
 } from "./src/sceneEditor.js";
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
@@ -3464,6 +3466,29 @@ async function main() {
                 // engine into firingEngine.setOutputMode.
                 await applySceneEdit((data) =>
                     setSceneEngine(data, edit.value),
+                );
+            } else if (edit.kind === "setSceneVoiceSuperdoughSound") {
+                // Inspector global band's Note Voice dropdown
+                // (superdough only). Selection is ignored —
+                // this is the score-wide global voice, a top-
+                // level scene field, not a per-object one.
+                // Writes (or deletes for the "Default"
+                // sentinel) the scene-level
+                // voiceSuperdough.sound. Per-object voices set
+                // to the "Global" sentinel inherit this at
+                // firing time; the firing engine reads it as
+                // the middle fallback on the next runScene.
+                await applySceneEdit((data) =>
+                    setSceneVoiceSuperdoughSound(data, edit.value),
+                );
+            } else if (edit.kind === "setSceneVoiceSuperdoughBank") {
+                // Inspector global band's Sound Bank dropdown
+                // (superdough only). Sister to
+                // setSceneVoiceSuperdoughSound; same shape,
+                // writes the scene-level voiceSuperdough.bank
+                // instead.
+                await applySceneEdit((data) =>
+                    setSceneVoiceSuperdoughBank(data, edit.value),
                 );
             } else if (edit.kind === "setVoiceSuperdoughSound") {
                 // Inspector middle band's pitched-sound

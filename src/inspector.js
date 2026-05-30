@@ -2119,7 +2119,7 @@ export class Inspector {
             multiline: true,
         }));
         r1.appendChild(this._buildDropdownField({
-            options: PITCHED_SOUND_OPTIONS,
+            options: PER_OBJECT_SOUND_OPTIONS,
             value: soundAgg === "varies" ? "" : soundAgg,
             width: W.voiceField,
             editable: voiceActive && soundRelevant,
@@ -2134,7 +2134,7 @@ export class Inspector {
             multiline: true,
         }));
         r2.appendChild(this._buildDropdownField({
-            options: UNPITCHED_BANK_OPTIONS,
+            options: PER_OBJECT_BANK_OPTIONS,
             value: bankAgg === "varies" ? "" : bankAgg,
             width: W.voiceField,
             editable: voiceActive && bankRelevant,
@@ -2159,13 +2159,19 @@ export class Inspector {
      * the scene so firingEngine.setOutputMode picks up
      * the change.
      *
-     * Future global-band content (per-engine score-wide
-     * effect controls — superdough's reverb and delay
-     * character knobs, Tone.js's score-wide layer if
-     * added) layers below the engine dropdown when those
-     * features land. The dropdown stays at the top of
-     * the band as the parent control the rest of the
-     * audio surfaces depend on.
+     * Under superdough the band also carries two voice
+     * rows below the engine dropdown — the score-wide
+     * Note Voice and Sound Bank defaults that per-object
+     * voices left on "Global" inherit (see
+     * _buildBandMiddleArea). Their top sentinel is
+     * "Default" (inject nothing) since the global band
+     * can't inherit from itself. Further global-band
+     * content (per-engine score-wide effect controls —
+     * superdough's reverb and delay character knobs,
+     * Tone.js's score-wide layer if added) would layer
+     * below those when it lands. The engine dropdown
+     * stays at the top of the band as the parent control
+     * the rest of the audio surfaces depend on.
      *
      * @param {ReturnType<typeof buildSelectionContext>} _ctx
      */
@@ -2210,6 +2216,63 @@ export class Inspector {
         }));
         band.appendChild(r);
 
+        // Global voice rows. Visible only under superdough,
+        // matching the middle band's gate. These set the
+        // score-wide default Note Voice and Sound Bank that
+        // every per-object voice left on "Global" inherits.
+        // The top sentinel in each list is "Default" (inject
+        // nothing / superdough's own default) rather than
+        // the per-object band's "Global", since the global
+        // band can't inherit from itself. Read directly
+        // from scene.voiceSuperdough.{sound,bank} with
+        // object guards; an absent or non-string field
+        // reads as the empty-string "Default" sentinel.
+        // Never pattern-greyed — the global voice is score-
+        // wide and not tied to any one object's pattern —
+        // so editable is unconditionally true here, unlike
+        // the middle band's per-object dropdowns.
+        if (engineValue === "superdough") {
+            const vs =
+                (this._scene !== null
+                    && this._scene.voiceSuperdough !== null
+                    && typeof this._scene.voiceSuperdough === "object"
+                    && !Array.isArray(this._scene.voiceSuperdough))
+                    ? this._scene.voiceSuperdough
+                    : null;
+            const globalSoundVal =
+                (vs !== null && typeof vs.sound === "string") ? vs.sound : "";
+            const globalBankVal =
+                (vs !== null && typeof vs.bank === "string") ? vs.bank : "";
+
+            const vr1 = mkRow();
+            vr1.appendChild(mkLabel("Note\nVoice", {
+                width: W.leftLabel,
+                multiline: true,
+            }));
+            vr1.appendChild(this._buildDropdownField({
+                options: GLOBAL_SOUND_OPTIONS,
+                value: globalSoundVal,
+                width: W.voiceField,
+                editable: true,
+                editKind: "setSceneVoiceSuperdoughSound",
+            }));
+            band.appendChild(vr1);
+
+            const vr2 = mkRow();
+            vr2.appendChild(mkLabel("Sound\nBank", {
+                width: W.leftLabel,
+                multiline: true,
+            }));
+            vr2.appendChild(this._buildDropdownField({
+                options: GLOBAL_BANK_OPTIONS,
+                value: globalBankVal,
+                width: W.voiceField,
+                editable: true,
+                editKind: "setSceneVoiceSuperdoughBank",
+            }));
+            band.appendChild(vr2);
+        }
+
         return band;
     }
 }
@@ -2217,13 +2280,21 @@ export class Inspector {
 // --- Selection-context helpers ---
 
 /**
- * Pitched-sound dropdown options for the superdough
- * middle-band voice control. The "Default" sentinel sits
- * at the top with an empty-string value, so a fresh
- * selection (or an active "Default" choice) writes
- * nothing into scene.json and the firing engine performs
- * no soft-injection, letting the pattern's own values
- * win. Below it: the four built-in oscillators, the four
+ * Pitched-sound dropdown options for the superdough voice
+ * controls, shared by both the per-object middle band and
+ * the score-wide global band. The list holds ONLY the
+ * instrument entries — no leading sentinel — because the
+ * two bands need different top sentinels: the per-object
+ * band prepends a "Global" entry (inherit the global
+ * voice), while the global band prepends a "Default" entry
+ * (inject nothing / superdough's own default). Each band
+ * builds its full option list by prepending its own
+ * sentinel to these shared entries (see _buildBandMiddle-
+ * Area and _buildBandGlobal). Both sentinels use the
+ * empty-string value; they differ only in label and in
+ * which level they sit at.
+ *
+ * The entries: the four built-in oscillators, the four
  * noise sources, the startup-loaded Salamander grand
  * piano, and seven VCSL (Versilian Community Sample
  * Library) pitched instruments lazy-loaded from the VCSL
@@ -2240,11 +2311,10 @@ export class Inspector {
  * the soundfont path (gm_trumpet) that this build lacks.
  */
 const PITCHED_SOUND_OPTIONS = [
-    { value: "", label: "Default" },
-    { value: "sine", label: "sine" },
-    { value: "sawtooth", label: "sawtooth" },
-    { value: "square", label: "square" },
-    { value: "triangle", label: "triangle" },
+    { value: "sine", label: "sine wave" },
+    { value: "sawtooth", label: "sawtooth wave" },
+    { value: "square", label: "square wave" },
+    { value: "triangle", label: "triangle wave" },
     { value: "white", label: "white (noise)" },
     { value: "pink", label: "pink (noise)" },
     { value: "brown", label: "brown (noise)" },
@@ -2259,19 +2329,19 @@ const PITCHED_SOUND_OPTIONS = [
 ];
 
 /**
- * Unpitched bank dropdown options for the superdough
- * middle-band voice control. 13 alphabetised drum-machine
- * bank names from the tidal-drum-machines catalogue plus
- * the "Default" sentinel at the top. The names match the
- * bank prefixes superdough applies via strudel's .bank()
- * function: a value of "RolandTR909" means an event with
- * s="bd" (no underscore) becomes RolandTR909_bd at
- * dispatch. The sentinel works the same way as the
- * pitched dropdown's: empty-string value, no soft-
- * injection, pattern's own values win.
+ * Unpitched bank dropdown options for the superdough voice
+ * controls, shared by the per-object middle band and the
+ * score-wide global band. As with PITCHED_SOUND_OPTIONS,
+ * the list holds ONLY the 13 alphabetised drum-machine
+ * bank names from the tidal-drum-machines catalogue — no
+ * leading sentinel — and each band prepends its own:
+ * "Global" for the per-object band, "Default" for the
+ * global band. The names match the bank prefixes
+ * superdough applies via strudel's .bank() function: a
+ * value of "RolandTR909" means an event with s="bd" (no
+ * underscore) becomes RolandTR909_bd at dispatch.
  */
 const UNPITCHED_BANK_OPTIONS = [
-    { value: "", label: "Default" },
     { value: "AceToneRhythmAce", label: "AceToneRhythmAce" },
     { value: "AkaiMPC60", label: "AkaiMPC60" },
     { value: "EmuSP12", label: "EmuSP12" },
@@ -2284,6 +2354,44 @@ const UNPITCHED_BANK_OPTIONS = [
     { value: "RolandTR707", label: "RolandTR707" },
     { value: "RolandTR808", label: "RolandTR808" },
     { value: "RolandTR909", label: "RolandTR909" },
+];
+
+/**
+ * Per-object (middle band) option lists: the shared
+ * instrument/bank entries with a "Global" sentinel
+ * prepended. "Global" (empty-string value) means the
+ * object inherits the score-wide global voice for that
+ * field; it is the default for a new or untouched object
+ * (an absent/empty stored value maps to "Global"). The
+ * firing engine resolves a per-object "Global" by falling
+ * through to scene.voiceSuperdough at dispatch time.
+ */
+const PER_OBJECT_SOUND_OPTIONS = [
+    { value: "", label: "Global" },
+    ...PITCHED_SOUND_OPTIONS,
+];
+const PER_OBJECT_BANK_OPTIONS = [
+    { value: "", label: "Global" },
+    ...UNPITCHED_BANK_OPTIONS,
+];
+
+/**
+ * Global-band option lists: the shared instrument/bank
+ * entries with a "Default" sentinel prepended. "Default"
+ * (empty-string value) means inject nothing at the global
+ * level — superdough's own default — so an object
+ * inheriting "Global" against a "Default" global resolves
+ * to no injection (today's behavior for a fresh score).
+ * The global band can't inherit from itself, so its top
+ * sentinel is "Default", not "Global".
+ */
+const GLOBAL_SOUND_OPTIONS = [
+    { value: "", label: "Default" },
+    ...PITCHED_SOUND_OPTIONS,
+];
+const GLOBAL_BANK_OPTIONS = [
+    { value: "", label: "Default" },
+    ...UNPITCHED_BANK_OPTIONS,
 ];
 
 /**

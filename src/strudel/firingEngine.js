@@ -830,6 +830,14 @@ export class PatternFiringEngine {
      */
     _ensureVoiceSamplesForScene() {
         if (this._scene === null) return;
+        // Score-wide global voice first: a global Note Voice
+        // or Sound Bank applies to every object inheriting
+        // the "Global" sentinel, so its sample map / soundfont
+        // needs loading even when no per-object voice names it.
+        const global = this._scene.voiceSuperdough;
+        if (global !== null && typeof global === "object" && !Array.isArray(global)) {
+            this._runtime.ensureSamplesForVoice(global.sound, global.bank);
+        }
         const sources = [...this._scene.curves, ...this._scene.sprites];
         for (const obj of sources) {
             if (obj === null || typeof obj !== "object") continue;
@@ -1430,37 +1438,42 @@ export class PatternFiringEngine {
                 } else {
                     const refreshedValue = this._pass2RefreshValue(state, ev, snapshot);
                     if (this._outputMode === "superdough") {
-                        // Superdough path. Apply per-object
-                        // voice soft-injection first so
-                        // events from note() / n() patterns
-                        // pick up the source's pitched-sound
+                        // Superdough path. Apply voice
+                        // soft-injection first so events
+                        // from note() / n() patterns pick
+                        // up the resolved pitched-sound
                         // override (via the s field) and
                         // events from sound() patterns with
-                        // raw drum names pick up the
-                        // bank override. Explicit pattern
-                        // values always win because the
-                        // injection only fills missing
-                        // fields; see applyVoiceInjection's
+                        // raw drum names pick up the bank
+                        // override. Each field resolves
+                        // per-object-first, then the score-
+                        // wide global voice (scene.voice-
+                        // Superdough), then nothing; explicit
+                        // pattern values always win because
+                        // the injection only fills missing
+                        // fields. See applyVoiceInjection's
                         // docstring at the bottom of this
-                        // file for the precise rules.
-                        // Injection is a no-op when the
-                        // source carries no voice.superdough
-                        // subblock, returning the original
-                        // value unchanged so events without
+                        // file for the precise three-level
+                        // resolution rules. Injection is a
+                        // no-op (returns the original value
+                        // unchanged) when neither the source
+                        // nor the global supplies an
+                        // effective value, so events without
                         // an override keep their reference
-                        // identity. Fire through the
-                        // runtime's play wrapper, which
-                        // gates internally on the runtime
-                        // being loaded and the audio context
-                        // being present; events arriving
-                        // before the engine has finished
-                        // init are silently dropped rather
-                        // than queued. Duration is the
-                        // strudel hap's part length in
-                        // wall-clock seconds, which
-                        // superdough uses to bound sample
-                        // playback length.
-                        const injectedValue = applyVoiceInjection(refreshedValue, source);
+                        // identity. Fire through the runtime's
+                        // play wrapper, which gates internally
+                        // on the runtime being loaded and the
+                        // audio context being present; events
+                        // arriving before the engine has
+                        // finished init are silently dropped
+                        // rather than queued. Duration is the
+                        // strudel hap's part length in wall-
+                        // clock seconds, which superdough uses
+                        // to bound sample playback length.
+                        const globalVoice = this._scene !== null
+                            ? this._scene.voiceSuperdough
+                            : null;
+                        const injectedValue = applyVoiceInjection(refreshedValue, source, globalVoice);
                         const voicedValue = applyVoiceEnvelope(injectedValue);
                         this._runtime.play(voicedValue, ev.audioTime, ev.duration);
                     } else {
@@ -1960,39 +1973,63 @@ function hapEnd(hap) {
 }
 
 /**
- * Soft-inject the per-object superdough voice fields into
- * an outgoing Hap value. Two injection paths, both gated
- * on the field being absent in the source value so
- * explicit pattern values always win:
+ * Soft-inject the superdough voice fields into an outgoing
+ * Hap value, resolving each field (sound, bank) through the
+ * three-level fallback chain: explicit pattern value (left
+ * untouched, always wins) > per-object voice > score-wide
+ * global voice > nothing. Two injection paths, both gated
+ * on the field being absent in the source value so explicit
+ * pattern values always win:
  *
- *   - Pitched sound: when the value has no `s` field and
- *     the source carries voice.superdough.sound, fill
- *     value.s with the sound. Targets events from note()
- *     and n() patterns, which produce values like
- *     {note: "c4"} or {n: 0} without an s field. Once
- *     filled, superdough renders the note through the
- *     named sample/synth (e.g. "piano" for the Salamander
- *     Grand, "gm_marimba" for the GM marimba patch,
- *     "sawtooth" for the built-in oscillator).
+ *   - Pitched sound: when the value has no `s` field, fill
+ *     value.s with the effective sound — the per-object
+ *     voice.superdough.sound if it is a non-empty string,
+ *     else the global voice's sound if that is a non-empty
+ *     string, else nothing. The per-object "Global"
+ *     sentinel is stored as an empty/absent sound, so an
+ *     object left on Global falls through to the global
+ *     value here. Targets events from note() and n()
+ *     patterns, which produce values like {note: "c4"} or
+ *     {n: 0} without an s field. Once filled, superdough
+ *     renders the note through the named sample/synth
+ *     (e.g. "piano" for the Salamander Grand, "sawtooth"
+ *     for the built-in oscillator).
  *
- *   - Unpitched bank: when the value's `s` field is a
- *     raw drum name without an underscore and the source
- *     carries voice.superdough.bank, set value.bank to
- *     the bank. Targets events from sound() patterns like
- *     sound("bd sn") whose s field is a raw drum name;
- *     the bank field then makes superdough resolve
- *     "bd" to "RolandTR909_bd" (etc.) at sample lookup
- *     time. An s field that already contains an
- *     underscore ("RolandTR808_bd") is treated as a
- *     pre-banked name and left alone, matching strudel's
- *     own .bank() operator semantics.
+ *   - Unpitched bank: when the value's `s` field is a raw
+ *     drum name without an underscore, set value.bank to
+ *     the effective bank (per-object bank if non-empty,
+ *     else global bank if non-empty, else nothing).
+ *     Targets events from sound() patterns like
+ *     sound("bd sn") whose s field is a raw drum name; the
+ *     bank field then makes superdough resolve "bd" to
+ *     "RolandTR909_bd" (etc.) at sample lookup time. An s
+ *     field that already contains an underscore
+ *     ("RolandTR808_bd") is treated as a pre-banked name
+ *     and left alone, matching strudel's own .bank()
+ *     operator semantics. The bank is applied only to an
+ *     event that carried its own s and no note field — a
+ *     genuine sound() drum event. An event whose s was
+ *     injected from the note voice (a note() event with no
+ *     own s) or that carries a note field is melodic, and
+ *     banking it would make superdough look up a
+ *     nonexistent "{bank}_{instrument}" sample and fall
+ *     silent, so the bank is skipped there.
+ *
+ * Resolution detail. The per-object and global voice
+ * blocks are read independently per field: an object can
+ * set its own sound while inheriting the global bank, or
+ * vice versa, because each field falls through to the
+ * global value on its own. The global block is the
+ * scene-level scene.voiceSuperdough ({ sound, bank } with
+ * empty-string meaning the global "Default" sentinel = no
+ * injection), passed in by the caller from this._scene.
  *
  * Returns the value unchanged (by reference) when no
- * injection applies, so events without an override keep
- * their reference identity. Returns a shallow-copied new
- * object only when at least one field is injected, so
- * the original value Hap from strudel's queryArc is
- * never mutated.
+ * injection applies, so events without any effective
+ * override keep their reference identity. Returns a
+ * shallow-copied new object only when at least one field
+ * is injected, so the original value Hap from strudel's
+ * queryArc is never mutated.
  *
  * Called from the superdough dispatch branch in tick().
  * Not called on the MIDI path because MIDI events use
@@ -2002,37 +2039,74 @@ function hapEnd(hap) {
  *
  * @param {any} value   The strudel Hap value about to dispatch.
  * @param {any} source  The per-object scene source (Curve, Trigger, or Sprite).
+ * @param {any} global  The scene-level voiceSuperdough fallback ({sound?, bank?} or null).
  * @returns {any}
  */
-function applyVoiceInjection(value, source) {
-    if (source === null || typeof source !== "object") return value;
-    const voice = source.voice;
-    if (voice === null || typeof voice !== "object" || Array.isArray(voice)) return value;
-    const superdough = voice.superdough;
-    if (superdough === null || typeof superdough !== "object" || Array.isArray(superdough)) return value;
+function applyVoiceInjection(value, source, global) {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+
+    // Per-object voice.superdough block, if present. The
+    // source may carry no voice at all (the common case for
+    // an untouched object), in which case the per-object
+    // values are simply absent and resolution falls through
+    // to the global.
+    let perObject = null;
+    if (source !== null && typeof source === "object") {
+        const voice = source.voice;
+        if (voice !== null && typeof voice === "object" && !Array.isArray(voice)) {
+            const sd = voice.superdough;
+            if (sd !== null && typeof sd === "object" && !Array.isArray(sd)) {
+                perObject = sd;
+            }
+        }
+    }
+    // Scene-level global voice block, if present and well-
+    // shaped. An absent or malformed global reads as no
+    // global override (both fields empty).
+    const globalBlock =
+        (global !== null && typeof global === "object" && !Array.isArray(global))
+            ? global
+            : null;
+
+    // Resolve each field per-object-first, then global.
+    // Empty strings and non-strings count as "unset" at
+    // each level so the per-object "Global" sentinel
+    // (empty string) and the global "Default" sentinel
+    // (empty string) both fall through correctly.
+    const pickString = (a, b) => {
+        if (typeof a === "string" && a.length > 0) return a;
+        if (typeof b === "string" && b.length > 0) return b;
+        return null;
+    };
+    const effectiveSound = pickString(
+        perObject === null ? undefined : perObject.sound,
+        globalBlock === null ? undefined : globalBlock.sound,
+    );
+    const effectiveBank = pickString(
+        perObject === null ? undefined : perObject.bank,
+        globalBlock === null ? undefined : globalBlock.bank,
+    );
 
     let out = value;
     let copied = false;
 
-    const sound = superdough.sound;
-    if (typeof sound === "string" && sound.length > 0 && !("s" in out)) {
-        out = { ...out, s: sound };
+    if (effectiveSound !== null && !("s" in out)) {
+        out = { ...out, s: effectiveSound };
         copied = true;
     }
 
-    const bank = superdough.bank;
-    if (typeof bank === "string" && bank.length > 0
+    if (effectiveBank !== null
+        && "s" in value && !("note" in value)
         && typeof out.s === "string" && !out.s.includes("_")) {
         if (!copied) { out = { ...out }; copied = true; }
-        out.bank = bank;
+        out.bank = effectiveBank;
     }
 
     if (LOG_VOICE && copied) {
         const sStr = typeof out.s === "string" ? out.s : "(none)";
         const bankStr = typeof out.bank === "string" ? out.bank : "(none)";
         console.log(
-            "[voice] " + (typeof source.id === "string" ? source.id : "?") +
+            "[voice] " + (source !== null && typeof source.id === "string" ? source.id : "?") +
             " injected s=" + sStr + " bank=" + bankStr,
         );
     }
