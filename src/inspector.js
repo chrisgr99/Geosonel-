@@ -2075,32 +2075,69 @@ export class Inspector {
         const soundAgg = aggregateVoiceField(objs.all, "superdough", "sound");
         const bankAgg = aggregateVoiceField(objs.all, "superdough", "bank");
 
+        // Per-field relevance. A Note Voice override only
+        // has an effect on events from note() / n() patterns
+        // (which carry no s field for the sound to fill);
+        // a Sound Bank override only matters for events from
+        // sound() / s() patterns (raw drum names the bank
+        // prefixes). When a single object's pattern uses
+        // only one of those forms, the other dropdown is
+        // greyed as a hint that it would do nothing for this
+        // object. The check is textual on the cyclePattern
+        // string (see patternUsesNote / patternUsesSound),
+        // deliberately simple: it can be fooled by unusual
+        // patterns, so it only ever greys a field, never
+        // disables the underlying edit path, and both fields
+        // stay active whenever the relevance is uncertain.
+        // Uncertain cases that leave BOTH active: multi-
+        // select (per-object patterns may differ), an empty
+        // or unparsed-looking pattern, or a pattern that uses
+        // both forms. This mirrors the "never surprise the
+        // user with a disabled control" stance the rest of
+        // the inspector takes.
+        let soundRelevant = true;
+        let bankRelevant = true;
+        if (ctx.isSingle && objs.all.length === 1) {
+            const pat = objs.all[0].cyclePattern;
+            const patText = typeof pat === "string" ? pat : "";
+            const usesNote = patternUsesNote(patText);
+            const usesSound = patternUsesSound(patText);
+            // Only narrow when exactly one form is present.
+            // Neither-present (empty / still-typing / non-
+            // standard) and both-present both leave the
+            // fields as they are.
+            if (usesNote !== usesSound) {
+                soundRelevant = usesNote;
+                bankRelevant = usesSound;
+            }
+        }
+
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Pitched\nSound", {
+        r1.appendChild(mkLabel("Note\nVoice", {
             width: W.leftLabel,
-            disabled: !voiceActive,
+            disabled: !voiceActive || !soundRelevant,
             multiline: true,
         }));
         r1.appendChild(this._buildDropdownField({
             options: PITCHED_SOUND_OPTIONS,
             value: soundAgg === "varies" ? "" : soundAgg,
             width: W.voiceField,
-            editable: voiceActive,
+            editable: voiceActive && soundRelevant,
             editKind: "setVoiceSuperdoughSound",
         }));
         band.appendChild(r1);
 
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Unpitched\nBank", {
+        r2.appendChild(mkLabel("Sound\nBank", {
             width: W.leftLabel,
-            disabled: !voiceActive,
+            disabled: !voiceActive || !bankRelevant,
             multiline: true,
         }));
         r2.appendChild(this._buildDropdownField({
             options: UNPITCHED_BANK_OPTIONS,
             value: bankAgg === "varies" ? "" : bankAgg,
             width: W.voiceField,
-            editable: voiceActive,
+            editable: voiceActive && bankRelevant,
             editKind: "setVoiceSuperdoughBank",
         }));
         band.appendChild(r2);
@@ -2248,6 +2285,50 @@ const UNPITCHED_BANK_OPTIONS = [
     { value: "RolandTR808", label: "RolandTR808" },
     { value: "RolandTR909", label: "RolandTR909" },
 ];
+
+/**
+ * Whether a cyclePattern string appears to use a note-
+ * style generator — note(...) or n(...) — whose events
+ * carry no s field and so are the events the Note Voice
+ * (pitched-sound) override fills. Used only to decide
+ * whether to grey the Note Voice dropdown for a single
+ * selected object as a do-nothing hint; it never gates
+ * the actual injection, which the firing engine applies
+ * per event regardless. Deliberately a cheap textual
+ * match rather than a parse: it looks for the function
+ * name followed by an opening paren (tolerating spaces),
+ * with a preceding-character guard so n( inside a longer
+ * identifier like fn( or seqn( does not count. Being
+ * textual it can misjudge exotic patterns (a name built
+ * dynamically, a string literal containing "note("), so
+ * the caller only ever uses it to grey, never to block.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+function patternUsesNote(text) {
+    if (typeof text !== "string" || text === "") return false;
+    return /(^|[^A-Za-z0-9_$])(note|n)\s*\(/.test(text);
+}
+
+/**
+ * Whether a cyclePattern string appears to use a sound-
+ * style generator — sound(...) or s(...) — whose events
+ * carry a raw drum name in the s field that the Sound
+ * Bank override prefixes. Companion to patternUsesNote
+ * with the same textual-match caveats and the same grey-
+ * only use; see that function's note. The preceding-
+ * character guard keeps the single-letter s( from
+ * matching inside longer identifiers (e.g. cps( or
+ * superimpose-style names).
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+function patternUsesSound(text) {
+    if (typeof text !== "string" || text === "") return false;
+    return /(^|[^A-Za-z0-9_$])(sound|s)\s*\(/.test(text);
+}
 
 /**
  * Compute derived state from a raw selection. Centralised
