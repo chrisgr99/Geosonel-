@@ -856,7 +856,7 @@ export function makeEmptyBundle(name) {
   ],
 
   "sprites": [
-    { "id": "SPR1", "x": 0, "y": 0, "vx": 1, "vy": 0 }
+    { "id": "SPR1", "x": 0, "y": 0, "vx": 1, "vy": 1, "cycleSpeeds": "1 -1" }
   ],
 
   "idCounters": { "sprite": 2, "trigger": 5, "curve": 3 }
