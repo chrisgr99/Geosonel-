@@ -1072,6 +1072,16 @@ export class Inspector {
             } else {
                 el.classList.remove("error-soft");
             }
+            // Canonicalise the visible text to the validated
+            // value so a normalisation that leaves the stored
+            // value unchanged is still reflected in the field.
+            // Without this, a fold the validator applies (the
+            // Speeds field dropping entries past a zero, or
+            // trailing whitespace) would linger on screen,
+            // since no edit emits and so no re-render lands.
+            if ((el.textContent ?? "") !== result.value) {
+                el.textContent = result.value;
+            }
             if (committed) return;
             if (result.value !== opts.value) {
                 committed = true;

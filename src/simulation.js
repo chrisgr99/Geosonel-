@@ -56,16 +56,16 @@
  * pattern firing in a later stage, not phase tracking now.
  *
  * Per-cycle home snap. When a source's cycle phase wraps,
- * the source returns to its home position. For curves the
- * cursor t snaps back to 0 — the visual evidence the cycle
- * has started over. For sprites the live x, y, vx, vy snap
- * back to the authored values, the same fields _rewind()
- * uses, so a moving sprite returns to its starting position
- * and resumes its initial motion at every cycle boundary —
- * the trajectory loops in lockstep with the cycle. Triggers
- * don't currently move (no velocity in the schema) so the
- * snap is a no-op on position, but the cycle counter still
- * advances so future pattern firing has the timing.
+ * curves and triggers behave as before: a curve's cursor t
+ * snaps back to 0 (the visual evidence the cycle has started
+ * over), and a trigger, having no velocity, only advances its
+ * counter. Sprites are now governed by their cycleSpeeds list
+ * instead (see "cycleSpeeds (sprites)" below): each wrap
+ * relaunches the velocity scaled by the cycle's entry and
+ * leaves position continuous, snapping x, y back to the
+ * authored home only when a zero-terminated list wraps to the
+ * start of a new loop repeat. The counter still advances on
+ * every wrap so future pattern firing has the timing.
  *
  * stopAtCycle (curves only). Curves carry a stopAtCycle
  * field giving the cycle count at which the cursor halts;
@@ -182,6 +182,38 @@
  * adjacent cycles snap to the direction's home at the
  * boundary (t=0 for positive, t=1 for negative), the standard
  * cycle-restart behaviour preserved from pre-cycleSpeeds.
+ *
+ * cycleSpeeds (sprites). Sprites carry the same authored
+ * cycleSpeeds list as curves, but interpret it differently.
+ * The list is read as a repeating loop, one entry per cycle,
+ * each entry a multiplier on the sprite's authored velocity
+ * (a negative entry reverses both vx and vy). The cycle CLOCK
+ * is untouched — only the launch velocity scales — so the
+ * sprite travels farther or in reverse within a same-length
+ * cycle. Position is CONTINUOUS across cycles by default:
+ * each cycle resumes from wherever the previous one left the
+ * sprite, so "1 2" drifts out and speeds up, and "1 -1" runs
+ * out then back for a smooth round trip, neither resetting
+ * position. Velocity is continuous too: a cycle boundary
+ * scales the current velocity by the ratio of the new entry
+ * to the previous one, so wall bounces carry across
+ * boundaries and a plain "1" keeps its heading instead of
+ * snapping back to the authored direction each cycle. Only a
+ * home teleport (below) or a rewind re-derives velocity
+ * directly from authored.
+ *
+ * A trailing zero changes that. A zero must be the last entry
+ * (parseCycleSpeeds drops anything after it, and the inspector
+ * greys it), and it is not a cycle of its own: it marks the
+ * loop's end. The non-zero entries before the zero are the
+ * loop body, and on wrapping back to the first entry the
+ * sprite teleports to its authored home position. So "1 0"
+ * runs out for one cycle then snaps home every cycle (the
+ * pre-cycleSpeeds spring behaviour), and "1 2 0" runs out and
+ * speeds up, then snaps home and repeats. maxSpeed remains a
+ * hard ceiling via the per-step velocity clamp. The per-sprite
+ * speedList is cached at construction and re-parsed by setScene
+ * when the authored string changes.
  */
 
 // @ts-check
@@ -661,6 +693,24 @@ class SpriteRuntimeState {
          * @type {number}
          */
         this._lastCycleDuration = 0;
+
+        // Per-cycle speed multiplier list parsed from the
+        // authored cycleSpeeds string. Read as a repeating
+        // loop, one entry per cycle, each a multiplier on the
+        // authored velocity (negative reverses direction).
+        // Position is continuous across cycles; a trailing
+        // zero is not a cycle but a loop terminator that snaps
+        // the sprite home on each repeat (see _spriteCycleSpeed).
+        // parseCycleSpeeds keeps the list up to and including
+        // the first zero, dropping anything after, and falls
+        // back to [1] on malformed input.
+        /** @type {number[]} */
+        this.speedList = parseCycleSpeeds(sprite.cycleSpeeds);
+        // Last-seen authored cycleSpeeds string. setScene
+        // re-parses speedList in place when this changes.
+        /** @type {string} */
+        this._lastCycleSpeedsString =
+            typeof sprite.cycleSpeeds === "string" ? sprite.cycleSpeeds : "1";
     }
 }
 
@@ -881,6 +931,16 @@ export class Simulation {
                     cycleDurationSeconds(bpm, s.beatsPerCycle, s.beatInterval),
                     false,
                 );
+                // Scale the launch velocity by the speed entry
+                // for the snapped cycle. The constructor put
+                // position at the authored home and left vx/vy
+                // at raw authored, so this applies the
+                // multiplier exactly once; any teleport for the
+                // snapped cycle is moot since the position is
+                // already home.
+                const { speed } = this._spriteCycleSpeed(newState, newState.cycleCount);
+                newState.vx = newState._authVx * speed;
+                newState.vy = newState._authVy * speed;
                 this._spriteState.set(s.id, newState);
                 continue;
             }
@@ -907,6 +967,21 @@ export class Simulation {
             if (authVy !== existing._authVy) {
                 existing.vy = authVy;
                 existing._authVy = authVy;
+            }
+            // cycleSpeeds reconciliation. Re-parse the
+            // speedList in place when the authored string
+            // changes; cycleCount stays put so the new list
+            // takes effect against the current cycle index on
+            // the next wrap. The per-axis velocity snaps above
+            // set the raw authored vx/vy; the current cycle's
+            // multiplier re-applies at the next cycle wrap or
+            // rewind, mirroring the curve's "edit lands now,
+            // speed re-derives at the boundary" behaviour.
+            const newCycleSpeedsStr =
+                typeof s.cycleSpeeds === "string" ? s.cycleSpeeds : "1";
+            if (newCycleSpeedsStr !== existing._lastCycleSpeedsString) {
+                existing._lastCycleSpeedsString = newCycleSpeedsStr;
+                existing.speedList = parseCycleSpeeds(newCycleSpeedsStr);
             }
         }
         for (const id of [...this._spriteState.keys()]) {
@@ -1175,11 +1250,18 @@ export class Simulation {
         for (const state of this._spriteState.values()) {
             state.x = state._authX;
             state.y = state._authY;
-            state.vx = state._authVx;
-            state.vy = state._authVy;
             state.cycleProgress = 0;
             state.cycleCount = 0;
             state._lastCycleDuration = 0;
+            // Launch cycle 0 at the authored velocity scaled
+            // by the first speed entry. Rewind always restores
+            // the home position (a full reset), so no teleport
+            // flag is needed here; only the velocity multiplier
+            // applies. A leading-zero list parks the sprite at
+            // home with zero launch velocity.
+            const { speed } = this._spriteCycleSpeed(state, 0);
+            state.vx = state._authVx * speed;
+            state.vy = state._authVy * speed;
         }
     }
 
@@ -1853,6 +1935,59 @@ export class Simulation {
     }
 
     /**
+     * Per-cycle launch parameters for a sprite: the velocity
+     * multiplier for the cycle and whether the sprite should
+     * teleport home entering it.
+     *
+     * The speed list is read as a repeating loop, one entry
+     * per cycle, each a multiplier on the authored velocity
+     * (negative reverses direction). A trailing zero — which
+     * parseCycleSpeeds guarantees is the last entry, dropping
+     * anything after it — is NOT a cycle of its own. It marks
+     * the loop's end: the non-zero entries before it are the
+     * loop body, and on wrapping back to the first entry the
+     * sprite teleports to its authored home position. So a
+     * zero-terminated list cycles its body forever, snapping
+     * home at each repeat, while a list with no zero cycles
+     * its body forever with continuous position (each cycle
+     * resumes from wherever the previous left the sprite).
+     *
+     * loopLen is the count of entries before any zero (or the
+     * full length when there is none). The cycle's entry is
+     * list[cycleCount mod loopLen]; teleport is requested only
+     * for a zero-terminated list at the start of each loop
+     * repeat (index 0 with cycleCount > 0), never on the very
+     * first cycle.
+     *
+     * A leading zero (no non-zero entries) is degenerate — the
+     * inspector validation should reject it — and is handled
+     * defensively here as a parked-at-home sprite (speed 0,
+     * teleport true). An empty list returns speed 1 with no
+     * teleport.
+     *
+     * @param {SpriteRuntimeState} state
+     * @param {number} cycleCount
+     * @returns {{speed: number, teleport: boolean}}
+     */
+    _spriteCycleSpeed(state, cycleCount) {
+        const list = state.speedList;
+        if (!Array.isArray(list) || list.length === 0) {
+            return { speed: 1, teleport: false };
+        }
+        const zeroIdx = list.indexOf(0);
+        const hasZero = zeroIdx !== -1;
+        const loopLen = hasZero ? zeroIdx : list.length;
+        if (loopLen <= 0) {
+            // Leading zero: nothing to play, park at home.
+            return { speed: 0, teleport: true };
+        }
+        const idx = ((cycleCount % loopLen) + loopLen) % loopLen;
+        const speed = list[idx];
+        const teleport = hasZero && idx === 0 && cycleCount > 0;
+        return { speed, teleport };
+    }
+
+    /**
      * Advance every sprite's runtime state by dt seconds.
      * Order per sprite:
      *
@@ -1866,10 +2001,17 @@ export class Simulation {
      *      have crossed). Bounce is perfectly elastic and
      *      treats X and Y axes independently.
      *   4. Cycle phase advancement at rate dt/cycleDuration.
-     *   5. On cycle wrap, snap x/y/vx/vy back to authored
-     *      values and increment the counter — the per-cycle
-     *      home return that loops the sprite's trajectory
-     *      with the cycle.
+     *   5. On cycle wrap, increment the counter and update
+     *      the velocity for the new cycle. A normal (non-
+     *      teleport) wrap scales the CURRENT velocity by the
+     *      ratio of the new cycle's cycleSpeeds entry to the
+     *      previous cycle's, so accumulated wall bounces are
+     *      preserved and position stays continuous (a same-
+     *      speed list like "1" just keeps going). A zero-
+     *      terminated list, when it wraps to the start of a
+     *      new loop repeat, instead teleports x/y back to
+     *      authored home and relaunches from authored
+     *      velocity × the entry.
      *
      * The inside check uses the sprite's full bounding
      * circle (radius = displayDiameter/2 × scene.spriteScale)
@@ -1975,11 +2117,42 @@ export class Simulation {
             //    loop handles that.
             while (state.cycleProgress >= 1) {
                 state.cycleProgress -= 1;
+                const prevSpeed = this._spriteCycleSpeed(
+                    state, state.cycleCount,
+                ).speed;
                 state.cycleCount++;
-                state.x = state._authX;
-                state.y = state._authY;
-                state.vx = state._authVx;
-                state.vy = state._authVy;
+                const { speed, teleport } = this._spriteCycleSpeed(
+                    state, state.cycleCount,
+                );
+                if (teleport) {
+                    // Loop restart on a zero-terminated list:
+                    // snap home and relaunch in the authored
+                    // direction at this cycle's speed, the same
+                    // fresh launch a rewind performs.
+                    state.x = state._authX;
+                    state.y = state._authY;
+                    state.vx = state._authVx * speed;
+                    state.vy = state._authVy * speed;
+                } else {
+                    // Continuous wrap: scale the CURRENT
+                    // velocity by the ratio of this cycle's
+                    // speed to the previous cycle's. This
+                    // preserves any wall bounces accumulated
+                    // during the cycle (a plain re-derive from
+                    // authored would undo them and lurch the
+                    // sprite back toward its authored heading
+                    // every cycle). A same-speed list ("1")
+                    // gives ratio 1 and just keeps going; a
+                    // sign change ("1 -1") flips direction; a
+                    // magnitude change ("1 2") rescales speed.
+                    // The product of ratios telescopes so the
+                    // magnitude stays |authored| × this cycle's
+                    // speed. maxSpeed is enforced by the step-1
+                    // clamp on the next step.
+                    const ratio = prevSpeed !== 0 ? speed / prevSpeed : 0;
+                    state.vx *= ratio;
+                    state.vy *= ratio;
+                }
                 logCycleWrap("sprite", sprite, state.cycleCount);
             }
         }

@@ -137,10 +137,14 @@ export function validateStopAtCycle(candidate) {
  * that cycle's wall-clock duration to baseCycleDuration / N
  * (so 2 doubles speed, 0.5 halves it); a negative value
  * compresses by |N| but reverses the cursor (t goes from 1
- * to 0); a zero halts the curve permanently until the next
- * rewind, and entries after the first zero are unreachable
- * but pass validation here (they're silently dropped at
- * runtime parse).
+ * to 0). For sprites the same list scales the launch
+ * velocity instead (see simulation.js). A zero is a list
+ * terminator — a curve halts on it until the next rewind, a
+ * sprite teleports home and restarts the list — and any
+ * entries after the first zero are unreachable, so the
+ * validator drops them here, keeping the zero as the final
+ * entry. The committed value therefore never carries dead
+ * trailing numbers.
  *
  * Empty input is hard-blocked since the field is required
  * (default "1" applies earlier in the load pipeline). Non-
@@ -171,7 +175,21 @@ export function validateCycleSpeeds(candidate) {
             };
         }
     }
-    const canonical = tokens.join(" ");
+    // A zero entry terminates the list: it ends the loop
+    // (a sprite teleports home and restarts; a curve halts)
+    // and any entries after it are unreachable at runtime.
+    // Drop everything past the first zero so the stored
+    // value matches what actually plays and the field
+    // doesn't keep dead trailing numbers. The zero itself
+    // is kept as the final entry.
+    let cutoff = tokens.length;
+    for (let i = 0; i < tokens.length; i++) {
+        if (Number(tokens[i]) === 0) {
+            cutoff = i + 1;
+            break;
+        }
+    }
+    const canonical = tokens.slice(0, cutoff).join(" ");
     return { kind: "ok", value: canonical };
 }
 
