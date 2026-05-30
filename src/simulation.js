@@ -156,22 +156,35 @@
  * cycleSpeeds (curves only). Each curve carries a whitespace-
  * separated list of numeric per-cycle speed multipliers in
  * the authored cycleSpeeds field (integers or decimals
- * accepted; e.g. "1 0.5 -2"). The simulation walks the list
- * in order, wrapping the index back to 0 after the last
- * entry. A positive value N compresses that cycle's wall-
- * clock duration to baseCycleDuration / N with the cursor
- * advancing from t=0 to t=1; a negative N also compresses
- * by |N| but reverses the cursor (t goes from 1 to 0); a
- * zero halts the curve permanently until the next rewind,
- * and entries after the first zero are unreachable so the
- * runtime parser silently drops them. The simulation's
- * per-curve speedList is cached on the runtime state at
- * construction and re-parsed by the setScene reconciliation
- * when the authored cycleSpeeds string changes. speedIndex
- * isn't tracked directly — it derives from cycleCount
- * modulo speedList.length, so a paste / duplicate / fresh-
- * add mid-play that snaps cycleCount to the score grid
- * lands at the correct speed entry automatically.
+ * accepted; e.g. "1 0.5 -2"). The simulation walks the loop
+ * body in order, wrapping the index back to 0 after the last
+ * body entry. A positive value N compresses that cycle's
+ * wall-clock duration to baseCycleDuration / N with the
+ * cursor advancing from t=0 to t=1; a negative N also
+ * compresses by |N| but reverses the cursor (t goes from 1
+ * to 0). A trailing zero is a loop terminator, matching the
+ * sprite reading: it is not a cycle of its own, the entries
+ * before it are the loop body, and on wrapping past the body
+ * the list restarts from entry 0 with the cursor reset to
+ * the start of that entry — t=0 for a positive first entry,
+ * t=1 (the far end) for a negative first entry, mirroring how
+ * a negative-leading list launches from a rewind. So a zero
+ * loops the body forever rather than halting; stopAtCycle is
+ * the way to actually stop a curve. Because a curve's cursor
+ * already returns to its direction-home at every cycle
+ * boundary, the loop restart's reset is usually
+ * indistinguishable from an ordinary boundary — the audible
+ * change a zero makes is that the body loops instead of the
+ * curve freezing. parseCycleSpeeds drops any entries after
+ * the first zero, and cycleSpeedsLoopLength gives the body
+ * length the index wraps over. The simulation's per-curve
+ * speedList is cached on the runtime state at construction
+ * and re-parsed by the setScene reconciliation when the
+ * authored cycleSpeeds string changes. speedIndex isn't
+ * tracked directly — it derives from cycleCount modulo the
+ * loop-body length, so a paste / duplicate / fresh-add mid-
+ * play that snaps cycleCount to the score grid lands at the
+ * correct speed entry automatically.
  *
  * Direction reversal across the boundary between two adjacent
  * cycles preserves the cursor's position rather than snapping
@@ -283,16 +296,16 @@ function cycleDurationSeconds(bpm, beatsPerCycle, beatInterval) {
  * Parse a cycleSpeeds string into an array of numbers.
  * Permissive runtime parser: any malformed input falls back
  * to [1] (the default single-positive-speed list) so a hand-
- * edited scene.json with a typo doesn't silently halt the
- * curve. Entries after the first zero are dropped because a
- * zero halts the curve permanently until rewind, making
- * anything past it unreachable.
+ * edited scene.json with a typo doesn't silently stall the
+ * source. Entries after the first zero are dropped because a
+ * zero is a loop terminator (it resets the source and
+ * restarts the list), making anything past it unreachable.
  *
  * Speeds can be any finite real number. Positive values
  * advance the cursor forward at that multiplier (so 2 is
  * double speed, 0.5 is half speed); negatives reverse with
- * the same magnitude rule; an exact zero halts. The
- * inspector's validateCycleSpeeds at the edit edge enforces
+ * the same magnitude rule; an exact zero terminates the
+ * loop. The inspector's validateCycleSpeeds at the edit edge enforces
  * a slightly stricter syntactic check (rejects exponential
  * notation for legibility), so values reaching this parser
  * through a user-driven commit are already clean; the
@@ -321,6 +334,27 @@ function parseCycleSpeeds(str) {
 }
 
 /**
+ * Loop-body length of a cycleSpeeds list: the number of
+ * entries before the first zero, or the full length when
+ * there is no zero. A zero is a loop terminator (the source
+ * resets — a sprite teleports home, a curve's cursor returns
+ * to the start — and the list restarts from entry 0), so the
+ * entries that actually play and repeat are those before it.
+ * parseCycleSpeeds guarantees any zero is the last element,
+ * so this is simply the index of that zero. Returns 0 for an
+ * empty list or a leading zero (no body to play); callers
+ * treat 0 as the degenerate parked-at-start case.
+ *
+ * @param {number[]} speedList
+ * @returns {number}
+ */
+function cycleSpeedsLoopLength(speedList) {
+    if (!Array.isArray(speedList) || speedList.length === 0) return 0;
+    const zeroIdx = speedList.indexOf(0);
+    return zeroIdx === -1 ? speedList.length : zeroIdx;
+}
+
+/**
  * Closed-form computation of a source's cycle phase at a
  * given global time. Given the global elapsed time T, the
  * source's base cycleDuration D (in seconds, before any
@@ -346,14 +380,16 @@ function parseCycleSpeeds(str) {
  * speedList once in O(L). Total cost per call is O(L)
  * regardless of how long the session has been running.
  *
- * Zero-speed entries halt the source at that cycle's start
- * with progress = 0 and halted = true. The presence of a zero
- * anywhere in speedList makes the rotation infinitely long,
- * so the rotation-skip shortcut is disabled and the walk runs
- * linearly from cycle 0; in practice this is fine because
- * parseCycleSpeeds drops everything after the first zero, so
- * speedList is at most a handful of entries up to and
- * including the halt.
+ * A trailing zero is a loop terminator, not a halt: only the
+ * entries before it (the loop body, length given by
+ * cycleSpeedsLoopLength) are walked, and the body repeats
+ * forever. The body contains no zero, so the rotation is
+ * always finite and the rotation-skip shortcut applies for
+ * every list. halted is therefore always false in the
+ * returned shape; the field is retained for call-site
+ * compatibility (the stopAtCycle halt is handled in
+ * _stepCurve, not here). A leading zero (empty body) parks
+ * the source at the start.
  *
  * Triggers and sprites carry no cycleSpeeds field; the caller
  * passes [1], which reduces this function to cycleCount =
@@ -383,36 +419,30 @@ function computeCyclePhaseFromGlobalTime(T, D, speedList) {
     if (!(D > 0) || !Array.isArray(speedList) || speedList.length === 0) {
         return { cycleCount: 0, cycleProgress: 0, t: 0, halted: false };
     }
-    // Sum of one full rotation through speedList. A zero entry
-    // makes the rotation infinite, so the rotation-skip
-    // shortcut is disabled when one is present and the walk
-    // runs linearly from cycle 0.
+    const loopLen = cycleSpeedsLoopLength(speedList);
+    if (loopLen <= 0) {
+        return { cycleCount: 0, cycleProgress: 0, t: 0, halted: false };
+    }
+    // Sum of one full loop through the body. The body has no
+    // zero (the zero, if any, is a loop terminator excluded by
+    // loopLen), so the rotation is always finite and the
+    // rotation-skip shortcut applies for any list.
     let sumPerRotation = 0;
-    let hasZero = false;
-    for (const s of speedList) {
-        if (s === 0) { hasZero = true; break; }
-        sumPerRotation += D / Math.abs(s);
+    for (let i = 0; i < loopLen; i++) {
+        sumPerRotation += D / Math.abs(speedList[i]);
     }
     let remainingTime;
     let baseCycleCount;
-    if (hasZero || sumPerRotation <= 0) {
+    if (sumPerRotation <= 0) {
         remainingTime = T;
         baseCycleCount = 0;
     } else {
         const fullRotations = Math.floor(T / sumPerRotation);
         remainingTime = T - fullRotations * sumPerRotation;
-        baseCycleCount = fullRotations * speedList.length;
+        baseCycleCount = fullRotations * loopLen;
     }
-    for (let i = 0; i < speedList.length; i++) {
+    for (let i = 0; i < loopLen; i++) {
         const speed = speedList[i];
-        if (speed === 0) {
-            return {
-                cycleCount: baseCycleCount + i,
-                cycleProgress: 0,
-                t: 0,
-                halted: true,
-            };
-        }
         const cycleDuration = D / Math.abs(speed);
         if (remainingTime < cycleDuration) {
             const cycleProgress = remainingTime / cycleDuration;
@@ -427,10 +457,10 @@ function computeCyclePhaseFromGlobalTime(T, D, speedList) {
         remainingTime -= cycleDuration;
     }
     // Defensive: should be unreachable since remainingTime was
-    // reduced modulo sumPerRotation. Fall back to start of
-    // next rotation.
+    // reduced modulo sumPerRotation. Fall back to start of the
+    // next loop.
     return {
-        cycleCount: baseCycleCount + speedList.length,
+        cycleCount: baseCycleCount + loopLen,
         cycleProgress: 0,
         t: 0,
         halted: false,
@@ -584,14 +614,15 @@ class CurveRuntimeState {
         // authored cycleSpeeds string. The runtime parser
         // (parseCycleSpeeds) drops entries after a first
         // zero since they are unreachable, and falls back
-        // to [1] on any malformed input. Walked by
-        // _stepCurve via speedList[cycleCount %
-        // speedList.length] each step — speedIndex isn't
-        // a separate field because it derives directly
-        // from cycleCount, so a paste / duplicate / fresh-
-        // add mid-play that snaps cycleCount to the score
-        // grid lands at the correct speed entry without
-        // any extra bookkeeping.
+        // to [1] on any malformed input. A trailing zero is
+        // a loop terminator (reset the cursor to the start,
+        // restart the list), not a halt. Walked by _stepCurve
+        // via speedList[cycleCount % cycleSpeedsLoopLength]
+        // each step — speedIndex isn't a separate field
+        // because it derives directly from cycleCount, so a
+        // paste / duplicate / fresh-add mid-play that snaps
+        // cycleCount to the score grid lands at the correct
+        // speed entry without any extra bookkeeping.
         /** @type {number[]} */
         this.speedList = parseCycleSpeeds(curve.cycleSpeeds);
 
@@ -859,36 +890,22 @@ export class Simulation {
             }
             // cycleSpeeds reconciliation. When the authored
             // string changes, re-parse the speedList in
-            // place. cycleCount stays put (the new list
-            // takes effect against the current cycle index
-            // via the modulo speedList.length read in
-            // _stepCurve), so an edit that touches the
-            // current cycle's entry takes effect immediately
-            // on the next step while edits to other entries
-            // take effect at the next wrap that lands on
-            // them. _stepCurve also clears state.halted
-            // before any zero-speed check, so an edit that
-            // removes a halt entry from the active position
-            // resumes play without requiring rewind.
+            // place. cycleCount stays put (the new list takes
+            // effect against the current cycle index via the
+            // modulo-loop-body read in _stepCurve), so an edit
+            // that touches the current cycle's entry takes
+            // effect immediately on the next step while edits
+            // to other entries take effect at the next wrap
+            // that lands on them. state.halted is not touched
+            // here: a zero in cycleSpeeds is a loop terminator
+            // rather than a halt, so editing the list never
+            // needs to clear a halt — only stopAtCycle halts a
+            // curve, and only a rewind clears that.
             const newCycleSpeedsStr =
                 typeof c.cycleSpeeds === "string" ? c.cycleSpeeds : "1";
             if (newCycleSpeedsStr !== existing._lastCycleSpeedsString) {
                 existing._lastCycleSpeedsString = newCycleSpeedsStr;
                 existing.speedList = parseCycleSpeeds(newCycleSpeedsStr);
-                // If the previously-halted curve's current
-                // speed entry is no longer zero, clear
-                // halted so the curve resumes on the next
-                // step. The user editing cycleSpeeds away
-                // from a halt state shouldn't require
-                // rewind to take effect.
-                if (existing.halted && existing.speedList.length > 0) {
-                    const currentSpeed = existing.speedList[
-                        existing.cycleCount % existing.speedList.length
-                    ];
-                    if (currentSpeed !== 0) {
-                        existing.halted = false;
-                    }
-                }
             }
         }
         for (const id of [...this._curveState.keys()]) {
@@ -1177,8 +1194,9 @@ export class Simulation {
             /** @type {any} */
             const curveState = state;
             const speedList = curveState.speedList;
-            if (Array.isArray(speedList) && speedList.length > 0) {
-                const speed = speedList[newCount % speedList.length];
+            const loopLen = cycleSpeedsLoopLength(speedList);
+            if (loopLen > 0) {
+                const speed = speedList[newCount % loopLen];
                 curveState.t = speed < 0
                     ? 1 - state.cycleProgress
                     : state.cycleProgress;
@@ -1227,10 +1245,10 @@ export class Simulation {
             // places the cursor at t=1 on play so the
             // reverse traversal visibly starts from the
             // right end; positive-leading lists keep t=0
-            // (the standard home). Zero-leading is a
-            // permanent halt, but state.halted stays false
-            // here — the first _stepCurve call detects the
-            // zero entry and sets halted on the spot.
+            // (the standard home). A leading zero (no loop
+            // body) is degenerate: _stepCurve parks the
+            // curve at the start without advancing, and
+            // state.halted stays false.
             if (state.speedList.length > 0 && state.speedList[0] < 0) {
                 state.t = 1;
             }
@@ -1313,15 +1331,18 @@ export class Simulation {
      * cycleSpeeds list, parsed into state.speedList at
      * construction and re-parsed by setScene when the
      * authored string changes. The current cycle's speed
-     * is speedList[cycleCount mod length]: positive N
-     * compresses the cycle to baseCycleDuration / N
-     * wall-clock seconds with the cursor advancing forward
-     * (t from 0 toward 1), negative N also compresses by
-     * |N| but reverses the cursor (t from 1 toward 0),
-     * zero halts the curve permanently until rewind clears
-     * state.halted (or until a cycleSpeeds edit moves the
-     * active entry away from zero, which setScene
-     * reconciliation detects and clears halted for).
+     * is speedList[cycleCount mod loopLen], where loopLen is
+     * the loop-body length (cycleSpeedsLoopLength): positive N
+     * compresses the cycle to baseCycleDuration / N wall-clock
+     * seconds with the cursor advancing forward (t from 0
+     * toward 1), negative N also compresses by |N| but
+     * reverses the cursor (t from 1 toward 0). A trailing zero
+     * is a loop terminator, not a halt: the index wraps over
+     * the body and never lands on it, so the body repeats
+     * forever and the cursor resets to the start at each loop
+     * restart. A leading zero (no body) parks the curve at the
+     * start. stopAtCycle remains the way to actually stop a
+     * curve.
      *
      * Cursor: state.t is derived from state.cycleProgress
      * and the current cycle's direction. For positive
@@ -1348,8 +1369,9 @@ export class Simulation {
      * timing stays accurate across boundaries, and the
      * physics state (dx, dy, vx, vy) snaps back to authored
      * for the per-cycle home return that parallels sprite
-     * behaviour. If the next cycle's speed is zero, halted
-     * is set and the simulation stops advancing this curve.
+     * behaviour. When cycleCount reaches stopAtCycle the curve
+     * halts; a cycleSpeeds zero never halts, it just restarts
+     * the loop body.
      *
      * @param {any} curve
      * @param {CurveRuntimeState} state
@@ -1395,21 +1417,21 @@ export class Simulation {
             }
         }
         state._lastCycleDuration = cycleDuration;
-        // Resolve current cycle's speed at the (possibly
-        // snapped) cycleCount. Halt on zero; the curve stops
-        // advancing until rewind clears halted or a cycleSpeeds
-        // edit moves the active entry away from zero.
-        // parseCycleSpeeds already dropped trailing entries
-        // after the first zero, so a zero here is always the
-        // user's intended halt point. effectiveDuration is
-        // computed after the snap so a snap-triggered
-        // cycleCount change picks up the new cycle's effective
-        // rate for this step's cycleProgress accumulation.
-        const currentSpeed = speedList[state.cycleCount % speedList.length];
-        if (currentSpeed === 0) {
-            state.halted = true;
-            return;
-        }
+        // Resolve the current cycle's speed at the (possibly
+        // snapped) cycleCount, wrapping over the loop body (the
+        // entries before any zero). A zero is a loop terminator,
+        // not a halt: the index never lands on it because
+        // loopLen excludes it, so the body repeats forever and
+        // the cursor returns to the start at each loop restart
+        // (handled by the direction-aware t derivation below).
+        // A leading zero (no body) parks the curve at the start.
+        // effectiveDuration is computed after the snap so a
+        // snap-triggered cycleCount change picks up the new
+        // cycle's effective rate for this step's cycleProgress
+        // accumulation.
+        const loopLen = cycleSpeedsLoopLength(speedList);
+        if (loopLen <= 0) return;
+        const currentSpeed = speedList[state.cycleCount % loopLen];
         const speedMagnitude = Math.abs(currentSpeed);
         const effectiveDuration = cycleDuration / speedMagnitude;
         // Magnitude-only progress accumulator. cycleSpeeds
@@ -1442,14 +1464,6 @@ export class Simulation {
                 state.halted = true;
                 return;
             }
-            const nextSpeed = speedList[state.cycleCount % speedList.length];
-            if (nextSpeed === 0) {
-                state.halted = true;
-                // Leave t where it was; the curve halts
-                // visibly at the boundary where the last
-                // advancing cycle's cursor ended.
-                return;
-            }
         }
         // Direction-aware t. cycleProgress is in [0, 1)
         // after the wrap loop; the current cycle's speed
@@ -1463,7 +1477,7 @@ export class Simulation {
         // negative; small ≈ 0 for incoming positive),
         // which is the direction-reversal-preserves-position
         // behaviour.
-        const finalSpeed = speedList[state.cycleCount % speedList.length];
+        const finalSpeed = speedList[state.cycleCount % loopLen];
         state.t = finalSpeed < 0
             ? 1 - state.cycleProgress
             : state.cycleProgress;
@@ -1762,19 +1776,21 @@ export class Simulation {
     }
 
     /**
-     * Look up the integer speed for a curve at a given
-     * cycle index, drawn from the curve's parsed speedList
-     * via cycleIndex modulo length. Returns null when no
+     * Look up the speed for a curve at a given cycle index,
+     * drawn from the curve's parsed speedList via cycleIndex
+     * modulo the loop-body length. Returns null when no
      * runtime state exists for this id (briefly possible
-     * during a scene reload before setScene runs). A
-     * positive return means forward direction at that
-     * speed magnitude, negative means reverse, zero means
-     * the curve will halt at that cycle. The firing engine
-     * uses this for current-cycle gating (skip if zero),
-     * effective-duration calculation
-     * (baseCycleDuration / Math.abs(speed)), and for the
-     * one-cycle-ahead pre-population (cycle C+1's speed
-     * may differ from cycle C's under a multi-entry
+     * during a scene reload before setScene runs). A positive
+     * return means forward direction at that speed magnitude,
+     * negative means reverse. A trailing zero is a loop
+     * terminator, not a speed, so it is excluded from the wrap
+     * and never returned for a well-formed list; 0 comes back
+     * only for the degenerate leading-zero list (no body to
+     * play), which the firing engine's zero-gate parks. The
+     * firing engine uses this for effective-duration
+     * calculation (baseCycleDuration / Math.abs(speed)) and
+     * for the one-cycle-ahead pre-population (cycle C+1's
+     * speed may differ from cycle C's under a multi-entry
      * cycleSpeeds list).
      *
      * cycleIndex may be any integer; the modulo handles
@@ -1798,20 +1814,26 @@ export class Simulation {
         if (state === undefined) return null;
         const list = state.speedList;
         if (!Array.isArray(list) || list.length === 0) return 1;
-        const len = list.length;
+        // Wrap over the loop body (entries before any zero) so a
+        // zero is never returned as a current speed — it is a
+        // loop terminator, not a halt. A leading zero (no body)
+        // has no speed to play, so 0 is returned and the firing
+        // engine's zero-gate parks the degenerate curve.
+        const len = cycleSpeedsLoopLength(list);
+        if (len <= 0) return 0;
         const idx = ((cycleIndex % len) + len) % len;
         return list[idx];
     }
 
     /**
      * Look up whether a curve is currently halted — the
-     * state.halted flag set by _stepCurve when it lands on
-     * a zero entry in speedList or when cycleCount reaches
-     * stopAtCycle. Returns false when no runtime state
-     * exists for this id (briefly possible during a scene
-     * reload). The firing engine uses this to drop pending
-     * events and skip population for a halted source, the
-     * same way it does for muted sources.
+     * state.halted flag set by _stepCurve when cycleCount
+     * reaches stopAtCycle. A zero in cycleSpeeds is a loop
+     * terminator, not a halt, so it no longer sets this flag;
+     * stopAtCycle is the only thing that halts a curve, and
+     * only a rewind clears it. Returns false when no runtime
+     * state exists for this id (briefly possible during a
+     * scene reload).
      *
      * @param {string} curveId
      * @returns {boolean}
@@ -1974,9 +1996,8 @@ export class Simulation {
         if (!Array.isArray(list) || list.length === 0) {
             return { speed: 1, teleport: false };
         }
-        const zeroIdx = list.indexOf(0);
-        const hasZero = zeroIdx !== -1;
-        const loopLen = hasZero ? zeroIdx : list.length;
+        const loopLen = cycleSpeedsLoopLength(list);
+        const hasZero = loopLen < list.length;
         if (loopLen <= 0) {
             // Leading zero: nothing to play, park at home.
             return { speed: 0, teleport: true };
