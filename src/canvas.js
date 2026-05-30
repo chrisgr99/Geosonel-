@@ -2114,6 +2114,36 @@ export class Canvas {
                 : 1.5;
             ctx.stroke();
             if (muted) ctx.restore();
+
+            // Cursor line. A perpendicular segment through the
+            // sprite's centre, extending cursorR to its right
+            // and cursorL to its left of the heading, in the
+            // curve-cursor colour at cursorThickness. Hidden
+            // when both extents are zero or the sprite is muted
+            // (a muted sprite has no firing surface, matching a
+            // muted curve's hidden cursor). Drawn after the body
+            // so it reads on top, and deliberately NOT part of
+            // the firing flash — only the body flashes red while
+            // the cursor keeps its colour. R/L go through the
+            // shared pixelPerpendicularUnit, which expects a
+            // canvas-space tangent; phi is pixel-space, so the
+            // canvas-space heading is recovered by flipping Y
+            // (cos phi, -sin phi). This makes the right-of-motion
+            // sense match the curve cursor exactly.
+            if (!muted && (s.cursorR !== 0 || s.cursorL !== 0)) {
+                const perp = pixelPerpendicularUnit(Math.cos(phi), -Math.sin(phi));
+                const ppu = this.pixelsPerUnit;
+                const xRight = cx + perp.x * s.cursorR * ppu;
+                const yRight = cy + perp.y * s.cursorR * ppu;
+                const xLeft = cx - perp.x * s.cursorL * ppu;
+                const yLeft = cy - perp.y * s.cursorL * ppu;
+                ctx.strokeStyle = CURSOR_COLOUR;
+                ctx.lineWidth = s.cursorThickness;
+                ctx.beginPath();
+                ctx.moveTo(xLeft, yLeft);
+                ctx.lineTo(xRight, yRight);
+                ctx.stroke();
+            }
         }
     }
 
