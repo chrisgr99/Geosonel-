@@ -243,6 +243,63 @@ const LOG_PASS2 = true;
 const LOG_VOICE = true;
 
 /**
+ * Per-instrument amplitude-envelope table for the
+ * superdough output path, keyed by the resolved sound
+ * name (the value's `s` field after per-object voice
+ * injection). Each entry carries decay, sustain, and
+ * release; attack is intentionally omitted (left at
+ * superdough's default, effectively immediate) because
+ * the sampled instruments' own recorded onset already
+ * provides the strike, so an imposed attack would only
+ * soften it.
+ *
+ * Why this exists. Superdough is fire-and-forget: it has
+ * no note-off, so a sampled voice plays for the duration
+ * the firing engine passes and then runs whatever tail
+ * the recording carries. The dough-samples piano in
+ * particular has several seconds of pedal-down ring baked
+ * into the audio, so without an imposed envelope a
+ * sequence of piano notes piles overlapping tails into an
+ * indistinct slur. A high sustain LEVEL (the note holds
+ * at strength for its gated length) plus a short release
+ * TIME (the note damps when its gated time ends) gives
+ * the "hold full for the note's intended length, then
+ * damp" articulation a real instrument's damper or a MIDI
+ * note-off provides. Sustain is a level in [0, 1], not a
+ * time; decay and release are absolute seconds on the Web
+ * Audio clock and so do not scale with tempo, while the
+ * note's hold length is the firing engine's tempo-aware
+ * gated duration — the two come from different places, so
+ * tempo-correct note lengths and tempo-independent
+ * damping fall out naturally.
+ *
+ * Every pitched-sample entry is seeded with the same
+ * values the composer confirmed by ear for piano (decay
+ * 0.1, sustain 0.9, release 0.15); per-instrument tuning
+ * comes later. The four built-in oscillators and the four
+ * noise sources are deliberately absent: they are raw
+ * synth voices whose own shape the composer has not asked
+ * to alter, and a sound with no entry here gets no
+ * imposed envelope and behaves exactly as before. Keyed
+ * by the same names as inspector.js's PITCHED_SOUND_-
+ * OPTIONS sample entries; kept in sync by hand.
+ *
+ * A future articulation commit will tie the release onset
+ * to the note's articulated end (staccato vs legato) via
+ * the gated duration the firing engine passes, without
+ * changing this fixed per-instrument shape.
+ */
+const VOICE_ENVELOPES = {
+    piano: { decay: 0.1, sustain: 0.9, release: 0.15 },
+    steinway: { decay: 0.1, sustain: 0.9, release: 0.15 },
+    vibraphone: { decay: 0.1, sustain: 0.9, release: 0.15 },
+    marimba: { decay: 0.1, sustain: 0.9, release: 0.15 },
+    kalimba: { decay: 0.1, sustain: 0.9, release: 0.15 },
+    harp: { decay: 0.1, sustain: 0.9, release: 0.15 },
+    sax: { decay: 0.1, sustain: 0.9, release: 0.15 },
+};
+
+/**
  * Per-source firing state. Keyed by source id in the
  * PatternFiringEngine's _sources map.
  *
@@ -1404,7 +1461,8 @@ export class PatternFiringEngine {
                         // superdough uses to bound sample
                         // playback length.
                         const injectedValue = applyVoiceInjection(refreshedValue, source);
-                        this._runtime.play(injectedValue, ev.audioTime, ev.duration);
+                        const voicedValue = applyVoiceEnvelope(injectedValue);
+                        this._runtime.play(voicedValue, ev.audioTime, ev.duration);
                     } else {
                         this._midiSender.send(refreshedValue, ev.audioTime, ev.duration);
                     }
@@ -1928,5 +1986,55 @@ function applyVoiceInjection(value, source) {
         );
     }
 
+    return out;
+}
+
+/**
+ * Apply the per-instrument amplitude envelope to an
+ * outgoing superdough Hap value, keyed by the value's
+ * resolved `s` field (the sound name after
+ * applyVoiceInjection has filled any per-object voice
+ * override). Fills decay, sustain, and release from the
+ * VOICE_ENVELOPES entry for that sound, but only for
+ * fields the pattern has not already set itself, so an
+ * explicit `.release(0.4)` (or any envelope control) in
+ * the pattern always wins over the table default. See
+ * VOICE_ENVELOPES for why the envelope is needed and how
+ * the values were chosen.
+ *
+ * Returns the value unchanged (by reference) when the
+ * sound has no envelope entry — the built-in oscillators,
+ * the noise sources, drum samples, and any unrecognised
+ * name all pass through untouched. Returns a shallow-
+ * copied new object only when at least one envelope field
+ * is injected, so the value object from the injection
+ * step (or from strudel's queryArc, when no injection
+ * happened) is never mutated.
+ *
+ * Superdough-path only. The MIDI path does not call this:
+ * a MIDI instrument damps through its own note-off, which
+ * the MIDI sender already drives, so imposing an envelope
+ * there would be both meaningless (MIDI carries no ADSR
+ * in these events) and wrong (it would double the
+ * instrument's own damping).
+ *
+ * @param {any} value  The strudel Hap value about to dispatch (post-injection).
+ * @returns {any}
+ */
+function applyVoiceEnvelope(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const sound = value.s;
+    if (typeof sound !== "string") return value;
+    const env = /** @type {any} */ (VOICE_ENVELOPES)[sound];
+    if (env === undefined) return value;
+
+    let out = value;
+    let copied = false;
+    for (const field of ["attack", "decay", "sustain", "release"]) {
+        if (!(field in env)) continue;
+        if (field in out) continue;
+        if (!copied) { out = { ...out }; copied = true; }
+        out[field] = env[field];
+    }
     return out;
 }
