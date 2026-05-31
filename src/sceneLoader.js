@@ -70,7 +70,7 @@
 
 // @ts-check
 
-import { Scene } from "./scene.js";
+import { Scene, DEFAULT_KINEMATICS } from "./scene.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const SCRIPT_PREFIX = `"use strict";\n`;
@@ -130,8 +130,13 @@ export class SceneLoader {
         // --- 3. Execute the stripped behaviors.js to get a ---
         //        function map. Labelled pattern blocks have
         //        been replaced with whitespace, so they do
-        //        not run at load time.
-        const execResult = executeScript(strippedSource, functionNames);
+        //        not run at load time. A `score` object is
+        //        passed in so behaviours.js can set score-wide
+        //        kinematics (e.g. score.kinematics.jitter = 0.5);
+        //        it is pre-filled with the defaults and read
+        //        back after execution.
+        const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
+        const execResult = executeScript(strippedSource, functionNames, scoreGlobal);
         if (!execResult.ok) {
             return errorResult(execResult.error);
         }
@@ -141,6 +146,7 @@ export class SceneLoader {
         const scene = new Scene();
         scene.functionMap = functionMap;
         scene.labelledBlocks = labelledBlocks;
+        scene.kinematics = sanitizeKinematics(scoreGlobal.kinematics);
 
         try {
             applyPieceLevelFields(scene, sceneData);
@@ -225,6 +231,26 @@ function applyPieceLevelFields(scene, data) {
     if ("canvasH" in data && typeof data.canvasH === "number" && data.canvasH > 0) {
         scene.canvasH = data.canvasH;
     }
+}
+
+/**
+ * Sanitise the kinematics object the composer set on the
+ * `score` global in behaviours.js. Each knob must be a finite
+ * number >= 0; anything else (missing, NaN, string, negative)
+ * falls back to the default. Returns a fresh object so the
+ * Scene does not alias the loader's working copy.
+ * @param {any} kin
+ * @returns {{drag: number, jitter: number, coast: number}}
+ */
+function sanitizeKinematics(kin) {
+    const pick = (v, fallback) =>
+        (typeof v === "number" && Number.isFinite(v) && v >= 0) ? v : fallback;
+    const src = (kin !== null && typeof kin === "object") ? kin : {};
+    return {
+        drag: pick(src.drag, DEFAULT_KINEMATICS.drag),
+        jitter: pick(src.jitter, DEFAULT_KINEMATICS.jitter),
+        coast: pick(src.coast, DEFAULT_KINEMATICS.coast),
+    };
 }
 
 /**
@@ -389,11 +415,17 @@ function splitLabelledStatements(ast, source) {
  * a const reassigned to a non-function) still doesn't crash
  * the wrapper.
  *
+ * The wrapper also receives a `score` object so behaviours.js
+ * can set score-wide config (currently the kinematics knobs);
+ * the object is mutated in place by the user's top-level
+ * assignments and read back by the caller.
+ *
  * @param {string} source
  * @param {string[]} functionNames
+ * @param {any} scoreGlobal  The `score` object exposed to behaviours.js.
  * @returns {{ok: true, functions: Object<string, Function>} | {ok: false, error: string}}
  */
-function executeScript(source, functionNames) {
+function executeScript(source, functionNames, scoreGlobal) {
     const returnObjectEntries = functionNames
         .map((n) => `${JSON.stringify(n)}: typeof ${n} === "function" ? ${n} : null`)
         .join(", ");
@@ -406,7 +438,7 @@ function executeScript(source, functionNames) {
     let fn;
     try {
         // eslint-disable-next-line no-new-func
-        fn = new Function(body);
+        fn = new Function("score", body);
     } catch (err) {
         // Acorn already caught syntax errors at parse time, but
         // belt-and-braces in case the new Function path catches
@@ -419,7 +451,7 @@ function executeScript(source, functionNames) {
 
     let raw;
     try {
-        raw = fn();
+        raw = fn(scoreGlobal);
     } catch (err) {
         return {
             ok: false,

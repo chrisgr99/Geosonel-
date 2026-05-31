@@ -33,8 +33,7 @@
  * Curves additionally carry geometry and a cursor with
  * left/right extents. Triggers additionally carry position,
  * size, colour, and an optional payload. Sprites additionally
- * carry position, velocity, damping, mass, and
- * displayDiameter.
+ * carry position, velocity, mass, and displayDiameter.
  *
  * Function-name fields (hasHitFunction, beenHitFunction,
  * onTickFunction, and cyclePattern in "Code Tab" mode) hold
@@ -60,6 +59,30 @@
 
 import { generateId, ensureIdCounters } from "./idGen.js";
 import { DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
+
+/**
+ * Default score-level kinematics (cinematics) tuning — the global
+ * feel knobs for sprite motion. Set per score from behaviours.js
+ * via the `score.kinematics` object (e.g. `score.kinematics.jitter
+ * = 0.5`) and read by the simulation. Defined here as the single
+ * source of truth: the Scene constructor seeds scene.kinematics
+ * from these, the scene loader pre-fills the `score` global the
+ * composer mutates, and the simulation falls back to them when a
+ * scene has no kinematics.
+ *
+ *   drag   — linear drag rate (1/sec) on the force-driven impulse
+ *            layer; higher settles a force-driven sprite to a
+ *            steady speed faster. 0 disables damping. Score-wide
+ *            (was briefly a per-sprite field; never needed to be).
+ *   jitter — magnitude of the deterministic anti-trap agitation
+ *            force injected in force-active regions to shake a
+ *            sprite out of a colour well. 0 disables it.
+ *   coast  — minimum coast speed (canvas units/sec) the force-
+ *            driven impulse is held at so a weak region can't damp
+ *            a sprite to a crawl. 0 disables the floor.
+ * @type {{drag: number, jitter: number, coast: number}}
+ */
+export const DEFAULT_KINEMATICS = { drag: 2, jitter: 1.0, coast: 0.2 };
 
 /**
  * One $objectId: expression labelled statement extracted from
@@ -229,6 +252,19 @@ export class Scene {
         this.triggerScale = 1;
         /** @type {number} */
         this.spriteScale = 1;
+
+        // --- Kinematics (score-wide motion feel) ---
+        // Global cinematics knobs for sprite motion: drag
+        // (damping), jitter (anti-trap agitation), and coast
+        // (minimum coast speed). Score-wide, not per object.
+        // Set from behaviours.js via the `score.kinematics`
+        // object the loader exposes; seeded here with the
+        // defaults so a scene always has the field, and the
+        // loader overrides from whatever the composer set. The
+        // simulation reads these each step. Travels with the
+        // score in behaviours.js, so playback is portable.
+        /** @type {{drag: number, jitter: number, coast: number}} */
+        this.kinematics = { ...DEFAULT_KINEMATICS };
 
         // --- Function map ---
         // Map of top-level function names in behaviors.js to
@@ -769,25 +805,6 @@ export class Sprite {
         this.y = opts.y ?? 0;
         this.vx = opts.vx ?? 0;
         this.vy = opts.vy ?? 0;
-        /**
-         * Linear drag rate for the force-driven impulse layer,
-         * in units of 1/second. Each simulation sub-step relaxes
-         * the impulse (the part of the velocity beyond the
-         * cycleSpeeds launch/base layer) toward zero by
-         * exp(-damping * dt), leaving the base launch velocity
-         * untouched. Terminal impulse speed under a steady force
-         * F is about F / (mass * damping), so a vivid colour
-         * region settles at a higher steady speed than a subtle
-         * one and a reversal takes effect within about 1/damping
-         * seconds. A value of 0 disables damping — the sprite
-         * then coasts indefinitely under a sustained force, since
-         * there is no longer any hard speed cap. Replaces the
-         * former maxSpeed velocity ceiling; a hard cap can be
-         * reintroduced as a separate field if needed. Part of
-         * the music, so stored per sprite in scene.json.
-         * @type {number}
-         */
-        this.damping = opts.damping ?? 2;
         /**
          * Visual diameter in canvas units. Sprites are points
          * geometrically (DESIGN.md §6), but their display

@@ -252,7 +252,6 @@ export const SPRITE_FIELDS = [
     { key: "y", label: "Y", type: "number", default: 0 },
     { key: "vx", label: "VX", type: "number", default: 0 },
     { key: "vy", label: "VY", type: "number", default: 0 },
-    { key: "damping", label: "Damping", type: "number", default: 2, min: 0 },
     { key: "displayDiameter", label: "Display Diameter", type: "number", default: 1.05 },
     { key: "mass", label: "Mass", type: "number", default: 1, min: 0.1 },
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },

@@ -76,8 +76,8 @@
  * Sprite physics. Each step every sprite's runtime position
  * advances by vx*dt and vy*dt. The force-driven impulse
  * layer is relaxed toward the base launch velocity each step
- * by the sprite's damping (drag) rate; there is no hard
- * speed ceiling. Damping is suspended on any step where the
+ * by the score's drag rate (score.kinematics.drag); there is
+ * no hard speed ceiling. Damping is suspended on any step where the
  * onTick callback applied essentially no force, so a force-
  * only sprite coasts on its current heading through a true
  * force-free region (a black patch, or a flat region with no
@@ -234,16 +234,17 @@
  * runs out for one cycle then snaps home every cycle (the
  * pre-cycleSpeeds spring behaviour), and "1 2 0" runs out and
  * speeds up, then snaps home and repeats. The force-driven
- * impulse is relaxed each step by the sprite's damping (drag)
- * rate; there is no hard speed ceiling. The per-sprite
- * speedList is cached at construction and re-parsed by setScene
- * when the authored string changes.
+ * impulse is relaxed each step by the score's drag rate; there
+ * is no hard speed ceiling. The per-sprite speedList is cached
+ * at construction and re-parsed by setScene when the authored
+ * string changes.
  */
 
 // @ts-check
 
 import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
 import { imageSignalsFromOKLCh } from "./strudel/signals.js";
+import { DEFAULT_KINEMATICS } from "./scene.js";
 
 /**
  * Simulation step in seconds. Determinism requires this to
@@ -267,23 +268,13 @@ const SIM_DT = 1 / 240;
  */
 const FORCE_EPSILON = 1e-6;
 
-/**
- * Minimum speed (canvas units per second) the force-driven
- * impulse layer is held at after damping each sub-step. A force-
- * only sprite settles at a speed proportional to the local force,
- * so a weak region (dark, or low colour contrast) drives the
- * impulse to a near-zero crawl the sprite can linger in for a long
- * time. Lifting the impulse back to this floor each step — heading
- * preserved — keeps the sprite cruising out of weak regions instead
- * of crawling. Acts on the IMPULSE, not the total velocity, so a
- * plain authored-velocity sprite (impulse ~zero) is left untouched;
- * for a force-only sprite (base zero) the impulse is the whole
- * velocity, so this is its travel-speed floor. Only raises speed —
- * vivid regions whose force already exceeds it are untouched, so the
- * force still modulates speed above the floor. Tunable feel knob;
- * could become a per-sprite field alongside damping.
- */
-const MIN_COAST_SPEED = 0.2;
+// The motion feel knobs — drag (damping), jitter (anti-trap
+// agitation), and coast (minimum coast speed) — are score-wide
+// and set from behaviours.js via the `score.kinematics` object;
+// their defaults live in DEFAULT_KINEMATICS (scene.js) and
+// _stepSprites reads them per sub-step from this._scene.kinematics.
+// They moved here from module constants so a score carries its own
+// feel and a shared score plays the same on every machine.
 
 /**
  * Debug flag for cycle-wrap logging. When true, every cycle
@@ -816,6 +807,18 @@ class SpriteRuntimeState {
         /** @type {string} */
         this._lastCycleSpeedsString =
             typeof sprite.cycleSpeeds === "string" ? sprite.cycleSpeeds : "1";
+
+        // Deterministic per-sprite RNG for the anti-trap
+        // agitation. _rngSeed is derived from the id (stable
+        // across runs); _rngState advances each sub-step the
+        // agitation fires and is reset to _rngSeed on rewind and
+        // home-teleport, so a score rewound from the start replays
+        // the identical jitter.
+        /** @type {number} */
+        this._rngSeed = hashStringToUint32(
+            typeof sprite.id === "string" ? sprite.id : "");
+        /** @type {number} */
+        this._rngState = this._rngSeed;
     }
 }
 
@@ -1422,6 +1425,7 @@ export class Simulation {
             state.vy = state.baseVy;
             state.flipX = 1;
             state.flipY = 1;
+            state._rngState = state._rngSeed;
         }
     }
 
@@ -2202,11 +2206,8 @@ export class Simulation {
 
         // mass: dimensionless, default one, floored at 0.1 so a
         // near-zero mass can't divide a force into an unbounded
-        // velocity change.
-        let mass = (typeof sprite.mass === "number" && Number.isFinite(sprite.mass))
-            ? sprite.mass
-            : 1;
-        if (mass < 0.1) mass = 0.1;
+        // velocity change (shared with the agitation via spriteMass).
+        const mass = spriteMass(sprite);
 
         // Sample the image colour beneath the sprite at its
         // current position and derive the ten px reads with the
@@ -2311,15 +2312,19 @@ export class Simulation {
      *
      *   1. Impulse damping: relax the force-driven part of
      *      the velocity (vx - baseVx) toward zero at the
-     *      sprite's damping rate, leaving the base launch
-     *      layer undamped. Suspended on any sub-step where
-     *      the callback applied essentially no force, so the
-     *      sprite coasts through a dead zone on its current
-     *      heading. A minimum-speed floor then holds the
-     *      force-driven impulse at MIN_COAST_SPEED so a weak
-     *      region can't damp it to a crawl. Replaces the
-     *      former maxSpeed ceiling; with damping 0 the
-     *      impulse coasts always.
+     *      score's drag rate (score.kinematics.drag), leaving
+     *      the base launch layer undamped. Suspended on any
+     *      sub-step where the callback applied essentially no
+     *      force, so the sprite coasts through a dead zone on
+     *      its current heading. A minimum-speed floor then
+     *      holds the force-driven impulse at the score's coast
+     *      speed (score.kinematics.coast) so a weak region
+     *      can't damp it to a crawl. Replaces the former
+     *      maxSpeed ceiling; with drag 0 the impulse coasts
+     *      always. A tiny deterministic anti-trap agitation
+     *      (score.kinematics.jitter) is also injected in the
+     *      force-active case to shake a sprite out of a colour
+     *      well it would otherwise orbit.
      *   2. Position integration: x += vx*dt, y += vy*dt.
      *   3. Wall bounce under the inside-only rule (a sprite
      *      that wasn't fully inside the canvas at step
@@ -2365,6 +2370,20 @@ export class Simulation {
         const spriteScale = (typeof this._scene.spriteScale === "number" && this._scene.spriteScale > 0)
             ? this._scene.spriteScale
             : 1;
+        // Score-wide motion feel, read once per sub-step from the
+        // scene's kinematics (set by the composer in behaviours.js
+        // via score.kinematics; falls back to the defaults if a
+        // scene lacks the field). Each is a guarded non-negative
+        // number: drag is the impulse-damping rate, jitter the
+        // anti-trap agitation magnitude, coast the minimum coast
+        // speed floor.
+        const kin = (this._scene.kinematics !== null
+            && typeof this._scene.kinematics === "object")
+            ? this._scene.kinematics
+            : DEFAULT_KINEMATICS;
+        const drag = kinNum(kin.drag, DEFAULT_KINEMATICS.drag);
+        const jitter = kinNum(kin.jitter, DEFAULT_KINEMATICS.jitter);
+        const coast = kinNum(kin.coast, DEFAULT_KINEMATICS.coast);
         for (const sprite of this._scene.sprites) {
             if (typeof sprite.id !== "string") continue;
             const state = this._spriteState.get(sprite.id);
@@ -2381,13 +2400,12 @@ export class Simulation {
             const forceMag = this._runSpriteOnTick(sprite, state, dt, bpm);
             // 1. Impulse damping (drag). Relax the force-driven
             //    impulse layer (vx - baseVx) toward zero at the
-            //    sprite's damping rate, leaving the cycleSpeeds
-            //    base launch velocity undamped. damping is a
-            //    drag rate in 1/sec; 0 disables it (the sprite
-            //    then coasts indefinitely under a sustained
-            //    force, since there is no hard speed cap).
-            //    Terminal impulse speed under a steady force F
-            //    is about F/(mass*damping).
+            //    score's drag rate, leaving the cycleSpeeds base
+            //    launch velocity undamped. drag is a rate in
+            //    1/sec; 0 disables it (the sprite then coasts
+            //    indefinitely under a sustained force, since there
+            //    is no hard speed cap). Terminal impulse speed
+            //    under a steady force F is about F/(mass*drag).
             //
             //    Dead-zone coast: damping is SUSPENDED on any
             //    sub-step where the callback applied essentially
@@ -2403,36 +2421,55 @@ export class Simulation {
             //    ABSENCE OF FORCE, not low speed, so a faint
             //    region that legitimately pushes the sprite slow
             //    still damps normally and keeps its low speed.
-            const damping = (typeof sprite.damping === "number" && sprite.damping > 0)
-                ? sprite.damping
-                : 0;
-            if (damping > 0 && forceMag > FORCE_EPSILON) {
-                const decay = Math.exp(-damping * dt);
+            if (drag > 0 && forceMag > FORCE_EPSILON) {
+                const decay = Math.exp(-drag * dt);
                 state.vx = state.baseVx + (state.vx - state.baseVx) * decay;
                 state.vy = state.baseVy + (state.vy - state.baseVy) * decay;
+                // Anti-trap agitation. A tiny deterministic random
+                // force injected only here, in the force-active /
+                // damping-on case where colour wells form, to nudge
+                // the sprite off a local attractor it would otherwise
+                // orbit. Damping bounds it to a small fidget. Two RNG
+                // draws give the x and y components, each in
+                // [-jitter, jitter]; applied as a force (over mass,
+                // over dt) like applyForce, so no position jump. The
+                // per-sprite state advances only on the steps this
+                // fires — a deterministic condition — so replay
+                // reproduces it exactly.
+                if (jitter > 0) {
+                    const m = spriteMass(sprite);
+                    let draw = rngNext(state._rngState);
+                    const ax = (draw.value * 2 - 1) * jitter;
+                    draw = rngNext(draw.state);
+                    const ay = (draw.value * 2 - 1) * jitter;
+                    state._rngState = draw.state;
+                    state.vx += (ax / m) * dt;
+                    state.vy += (ay / m) * dt;
+                }
             }
             // 1b. Minimum coast speed. A force-only sprite settles
             //     at a speed set by the local force, so a weak (dark
             //     or low-contrast) region drives the force-driven
             //     impulse to a near-zero crawl it can sit in for a
             //     long time. Hold the IMPULSE layer's speed at or
-            //     above MIN_COAST_SPEED, heading preserved, so the
-            //     sprite always cruises out of a weak region. Acting
-            //     on the impulse (not the total velocity) leaves a
-            //     plain authored-velocity sprite untouched — its
-            //     motion isn't force-driven, its impulse is ~zero, so
-            //     the floor is a no-op there. For a force-only sprite
-            //     (base zero) the impulse IS the whole velocity, so
-            //     this is its travel-speed floor. The dead-zone coast
-            //     above already carries a sprite through a true zero-
-            //     force patch at full speed; this catches the weak-
-            //     but-nonzero case the coast misses. No-op above the
-            //     floor and when the impulse is zero (no heading).
+            //     above the score coast speed, heading preserved, so
+            //     the sprite always cruises out of a weak region.
+            //     Acting on the impulse (not the total velocity)
+            //     leaves a plain authored-velocity sprite untouched —
+            //     its motion isn't force-driven, its impulse is ~zero,
+            //     so the floor is a no-op there. For a force-only
+            //     sprite (base zero) the impulse IS the whole
+            //     velocity, so this is its travel-speed floor. The
+            //     dead-zone coast above already carries a sprite
+            //     through a true zero-force patch at full speed; this
+            //     catches the weak-but-nonzero case the coast misses.
+            //     No-op above the floor and when the impulse is zero
+            //     (no heading).
             const ix = state.vx - state.baseVx;
             const iy = state.vy - state.baseVy;
             const ispd = Math.hypot(ix, iy);
-            if (ispd > 0 && ispd < MIN_COAST_SPEED) {
-                const lift = MIN_COAST_SPEED / ispd;
+            if (ispd > 0 && ispd < coast) {
+                const lift = coast / ispd;
                 state.vx = state.baseVx + ix * lift;
                 state.vy = state.baseVy + iy * lift;
             }
@@ -2531,6 +2568,7 @@ export class Simulation {
                     state.vy = state.baseVy;
                     state.flipX = 1;
                     state.flipY = 1;
+                    state._rngState = state._rngSeed;
                 } else {
                     // Continuous wrap: scale only the BASE
                     // layer by the ratio of this cycle's speed
@@ -2575,6 +2613,70 @@ export class Simulation {
  */
 function numberOrZero(v) {
     return (typeof v === "number" && Number.isFinite(v)) ? v : 0;
+}
+
+/**
+ * Effective inertial mass of a sprite: the authored value,
+ * defaulting to 1 and floored at 0.1 so a near-zero mass can't
+ * divide a force into an unbounded velocity change. Single source
+ * of truth shared by the onTick force application and the anti-trap
+ * agitation.
+ * @param {any} sprite
+ * @returns {number}
+ */
+function spriteMass(sprite) {
+    const m = (typeof sprite.mass === "number" && Number.isFinite(sprite.mass))
+        ? sprite.mass
+        : 1;
+    return m < 0.1 ? 0.1 : m;
+}
+
+/**
+ * Coerce a score-wide kinematics knob to a usable value: the value
+ * itself when it is a finite number >= 0, else the fallback default.
+ * The loader already sanitises scene.kinematics, so this is a
+ * defensive read for scenes built without the loader (e.g. tests).
+ * @param {any} v
+ * @param {number} fallback
+ * @returns {number}
+ */
+function kinNum(v, fallback) {
+    return (typeof v === "number" && Number.isFinite(v) && v >= 0) ? v : fallback;
+}
+
+/**
+ * FNV-1a 32-bit hash of a string to an unsigned 32-bit integer.
+ * Used to derive a stable per-sprite RNG seed from the sprite id,
+ * so the anti-trap agitation produces the same sequence for a given
+ * sprite on every run and every replay.
+ * @param {string} str
+ * @returns {number}
+ */
+function hashStringToUint32(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+}
+
+/**
+ * One step of a mulberry32 PRNG. Pure: takes the current 32-bit
+ * state and returns the next float in [0, 1) together with the next
+ * state, so the caller threads state explicitly (the per-sprite
+ * state lives on SpriteRuntimeState and is reset on rewind /
+ * home-teleport). Deterministic, which is what keeps the agitation
+ * reproducible across replays.
+ * @param {number} state
+ * @returns {{value: number, state: number}}
+ */
+function rngNext(state) {
+    let a = (state + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    const value = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    return { value, state: a >>> 0 };
 }
 
 /**
