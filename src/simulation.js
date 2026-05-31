@@ -74,8 +74,18 @@
  * until rewound.
  *
  * Sprite physics. Each step every sprite's runtime position
- * advances by vx*dt and vy*dt. Velocity is clamped to the
- * sprite's authored maxSpeed at the start of each step.
+ * advances by vx*dt and vy*dt. The force-driven impulse
+ * layer is relaxed toward the base launch velocity each step
+ * by the sprite's damping (drag) rate; there is no hard
+ * speed ceiling. Damping is suspended on any step where the
+ * onTick callback applied essentially no force, so a force-
+ * only sprite coasts on its current heading through a true
+ * force-free region (a black patch, or a flat region with no
+ * colour contrast). A minimum-speed floor catches the weak-
+ * but-nonzero case the coast misses: a dim region drives a
+ * small force that would otherwise damp the sprite to a near-
+ * stop crawl, so the floor holds the force-driven motion up
+ * and the sprite cruises out instead of getting hung up.
  * Walls at x = ±canvasW/2 and y = ±canvasH/2 bounce sprites
  * whose full bounding circle was inside the canvas at step
  * start — the inside-only rule. A sprite outside the canvas
@@ -223,8 +233,9 @@
  * sprite teleports to its authored home position. So "1 0"
  * runs out for one cycle then snaps home every cycle (the
  * pre-cycleSpeeds spring behaviour), and "1 2 0" runs out and
- * speeds up, then snaps home and repeats. maxSpeed remains a
- * hard ceiling via the per-step velocity clamp. The per-sprite
+ * speeds up, then snaps home and repeats. The force-driven
+ * impulse is relaxed each step by the sprite's damping (drag)
+ * rate; there is no hard speed ceiling. The per-sprite
  * speedList is cached at construction and re-parsed by setScene
  * when the authored string changes.
  */
@@ -241,6 +252,38 @@ import { imageSignalsFromOKLCh } from "./strudel/signals.js";
  * frame at 60 fps).
  */
 const SIM_DT = 1 / 240;
+
+/**
+ * Force-magnitude threshold below which a sub-step's onTick is
+ * treated as having applied no force (a dead zone). When the net
+ * force a sprite's callback applies in a sub-step is at or below
+ * this, _stepSprites suspends impulse damping for that sub-step so
+ * the sprite coasts on its current velocity instead of dragging to
+ * a halt in a force-free region (a black patch, or a flat region
+ * with no colour contrast to steer by). Small enough that any
+ * region producing a meaningful steering force pushes well above
+ * it, so only genuine dead zones coast; it guards against floating-
+ * point fuzz rather than acting as a tunable speed floor.
+ */
+const FORCE_EPSILON = 1e-6;
+
+/**
+ * Minimum speed (canvas units per second) the force-driven
+ * impulse layer is held at after damping each sub-step. A force-
+ * only sprite settles at a speed proportional to the local force,
+ * so a weak region (dark, or low colour contrast) drives the
+ * impulse to a near-zero crawl the sprite can linger in for a long
+ * time. Lifting the impulse back to this floor each step — heading
+ * preserved — keeps the sprite cruising out of weak regions instead
+ * of crawling. Acts on the IMPULSE, not the total velocity, so a
+ * plain authored-velocity sprite (impulse ~zero) is left untouched;
+ * for a force-only sprite (base zero) the impulse is the whole
+ * velocity, so this is its travel-speed floor. Only raises speed —
+ * vivid regions whose force already exceeds it are untouched, so the
+ * force still modulates speed above the floor. Tunable feel knob;
+ * could become a per-sprite field alongside damping.
+ */
+const MIN_COAST_SPEED = 0.2;
 
 /**
  * Debug flag for cycle-wrap logging. When true, every cycle
@@ -700,9 +743,9 @@ class SpriteRuntimeState {
         // is the implicit difference vx - baseVx. Keeping base
         // explicit lets a cycle-speed change scale only the
         // launch component while the impulse rides through a
-        // boundary untouched, and lets the maxSpeed clamp cap
-        // the effective sum while leaving base pristine for the
-        // boundary ratio math. Initialised equal to vx/vy; the
+        // boundary untouched, and lets damping relax the
+        // impulse while leaving base pristine for the boundary
+        // ratio math. Initialised equal to vx/vy; the
         // per-cycle speed multiplier is applied by rewind and
         // by setScene's launch paths.
         /** @type {number} */
@@ -2142,16 +2185,20 @@ export class Simulation {
      * @param {SpriteRuntimeState} state
      * @param {number} dt  Fixed sub-step seconds (SIM_DT).
      * @param {number | null} bpm
+     * @returns {number}  Magnitude of the net force the callback
+     *     applied this tick, or 0 when no callback ran or none
+     *     was applied. _stepSprites uses this to detect a dead
+     *     zone and suspend damping so the sprite coasts through.
      */
     _runSpriteOnTick(sprite, state, dt, bpm) {
-        if (sprite.canTick !== true) return;
-        if (sprite.mute === true) return;
-        if (this._scene === null) return;
+        if (sprite.canTick !== true) return 0;
+        if (sprite.mute === true) return 0;
+        if (this._scene === null) return 0;
         const name = sprite.onTickFunction;
-        if (typeof name !== "string" || name === "") return;
+        if (typeof name !== "string" || name === "") return 0;
         const fn = this._scene.functionMap[name];
-        if (typeof fn !== "function") return;
-        if (this._onTickDisabled.has(sprite.id)) return;
+        if (typeof fn !== "function") return 0;
+        if (this._onTickDisabled.has(sprite.id)) return 0;
 
         // mass: dimensionless, default one, floored at 0.1 so a
         // near-zero mass can't divide a force into an unbounded
@@ -2175,6 +2222,14 @@ export class Simulation {
         const simTime = this._simTime;
         const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
         const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
+
+        // Net force the callback applies this tick, accumulated by
+        // applyForce. Returned as a magnitude so _stepSprites can
+        // tell a dead zone (no push) from a region that pushes:
+        // damping is suspended when this is ~zero so the sprite
+        // coasts through on its current heading instead of stalling.
+        let netFx = 0;
+        let netFy = 0;
 
         const ctx = {
             id: sprite.id,
@@ -2216,9 +2271,11 @@ export class Simulation {
             applyForce(fx, fy) {
                 if (typeof fx === "number" && Number.isFinite(fx)) {
                     state.vx += (fx / mass) * dt;
+                    netFx += fx;
                 }
                 if (typeof fy === "number" && Number.isFinite(fy)) {
                     state.vy += (fy / mass) * dt;
+                    netFy += fy;
                 }
             },
         };
@@ -2241,14 +2298,28 @@ export class Simulation {
                 }
             }
         }
+        // Magnitude of the net force applied this tick. Zero when
+        // no force was applied (or the callback threw before
+        // applying one), which _stepSprites reads as a dead zone
+        // and responds to by suspending damping for this sub-step.
+        return Math.hypot(netFx, netFy);
     }
 
     /**
      * Advance every sprite's runtime state by dt seconds.
      * Order per sprite:
      *
-     *   1. Velocity ceiling: clamp vx, vy to authored
-     *      maxSpeed.
+     *   1. Impulse damping: relax the force-driven part of
+     *      the velocity (vx - baseVx) toward zero at the
+     *      sprite's damping rate, leaving the base launch
+     *      layer undamped. Suspended on any sub-step where
+     *      the callback applied essentially no force, so the
+     *      sprite coasts through a dead zone on its current
+     *      heading. A minimum-speed floor then holds the
+     *      force-driven impulse at MIN_COAST_SPEED so a weak
+     *      region can't damp it to a crawl. Replaces the
+     *      former maxSpeed ceiling; with damping 0 the
+     *      impulse coasts always.
      *   2. Position integration: x += vx*dt, y += vy*dt.
      *   3. Wall bounce under the inside-only rule (a sprite
      *      that wasn't fully inside the canvas at step
@@ -2304,19 +2375,66 @@ export class Simulation {
             //    helper by canTick, mute, a resolved function
             //    name, and the session-disable set. applyForce
             //    adds into the effective velocity (the impulse
-            //    layer); the step-1 clamp below then caps the
-            //    sum and holds the impulse from winding past
-            //    maxSpeed.
-            this._runSpriteOnTick(sprite, state, dt, bpm);
-            // 1. Velocity ceiling.
-            const maxSpeed = (typeof sprite.maxSpeed === "number" && sprite.maxSpeed > 0)
-                ? sprite.maxSpeed
-                : Infinity;
-            const speed = Math.hypot(state.vx, state.vy);
-            if (speed > maxSpeed && speed > 0) {
-                const factor = maxSpeed / speed;
-                state.vx *= factor;
-                state.vy *= factor;
+            //    layer); the step-1 damping below relaxes that
+            //    impulse toward the base launch velocity at the
+            //    sprite's drag rate.
+            const forceMag = this._runSpriteOnTick(sprite, state, dt, bpm);
+            // 1. Impulse damping (drag). Relax the force-driven
+            //    impulse layer (vx - baseVx) toward zero at the
+            //    sprite's damping rate, leaving the cycleSpeeds
+            //    base launch velocity undamped. damping is a
+            //    drag rate in 1/sec; 0 disables it (the sprite
+            //    then coasts indefinitely under a sustained
+            //    force, since there is no hard speed cap).
+            //    Terminal impulse speed under a steady force F
+            //    is about F/(mass*damping).
+            //
+            //    Dead-zone coast: damping is SUSPENDED on any
+            //    sub-step where the callback applied essentially
+            //    no force (forceMag <= FORCE_EPSILON). With no
+            //    push there is nothing to settle toward, so a
+            //    force-only sprite would otherwise drag to a halt
+            //    in a force-free patch (a black region, or a flat
+            //    region with no colour contrast to steer by) and
+            //    never leave. Suspending damping there lets it
+            //    coast on its current velocity — same heading,
+            //    same speed it carried in — until it reaches a
+            //    region that pushes again. The trigger is the
+            //    ABSENCE OF FORCE, not low speed, so a faint
+            //    region that legitimately pushes the sprite slow
+            //    still damps normally and keeps its low speed.
+            const damping = (typeof sprite.damping === "number" && sprite.damping > 0)
+                ? sprite.damping
+                : 0;
+            if (damping > 0 && forceMag > FORCE_EPSILON) {
+                const decay = Math.exp(-damping * dt);
+                state.vx = state.baseVx + (state.vx - state.baseVx) * decay;
+                state.vy = state.baseVy + (state.vy - state.baseVy) * decay;
+            }
+            // 1b. Minimum coast speed. A force-only sprite settles
+            //     at a speed set by the local force, so a weak (dark
+            //     or low-contrast) region drives the force-driven
+            //     impulse to a near-zero crawl it can sit in for a
+            //     long time. Hold the IMPULSE layer's speed at or
+            //     above MIN_COAST_SPEED, heading preserved, so the
+            //     sprite always cruises out of a weak region. Acting
+            //     on the impulse (not the total velocity) leaves a
+            //     plain authored-velocity sprite untouched — its
+            //     motion isn't force-driven, its impulse is ~zero, so
+            //     the floor is a no-op there. For a force-only sprite
+            //     (base zero) the impulse IS the whole velocity, so
+            //     this is its travel-speed floor. The dead-zone coast
+            //     above already carries a sprite through a true zero-
+            //     force patch at full speed; this catches the weak-
+            //     but-nonzero case the coast misses. No-op above the
+            //     floor and when the impulse is zero (no heading).
+            const ix = state.vx - state.baseVx;
+            const iy = state.vy - state.baseVy;
+            const ispd = Math.hypot(ix, iy);
+            if (ispd > 0 && ispd < MIN_COAST_SPEED) {
+                const lift = MIN_COAST_SPEED / ispd;
+                state.vx = state.baseVx + ix * lift;
+                state.vy = state.baseVy + iy * lift;
             }
             // 2. Integrate.
             const oldX = state.x;
@@ -2430,8 +2548,9 @@ export class Simulation {
                     // rescales speed. The product of ratios
                     // telescopes over a loop so base magnitude
                     // stays |authored| times this cycle's speed.
-                    // maxSpeed caps the effective sum via the
-                    // step-1 clamp; base stays pristine.
+                    // The impulse is relaxed each step by
+                    // damping, not by the wrap; base stays
+                    // pristine.
                     const ratio = prevSpeed !== 0 ? speed / prevSpeed : 0;
                     state.vx += state.baseVx * (ratio - 1);
                     state.vy += state.baseVy * (ratio - 1);

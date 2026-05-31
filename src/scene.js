@@ -33,7 +33,8 @@
  * Curves additionally carry geometry and a cursor with
  * left/right extents. Triggers additionally carry position,
  * size, colour, and an optional payload. Sprites additionally
- * carry position, velocity, maxSpeed, and displayDiameter.
+ * carry position, velocity, damping, mass, and
+ * displayDiameter.
  *
  * Function-name fields (hasHitFunction, beenHitFunction,
  * onTickFunction, and cyclePattern in "Code Tab" mode) hold
@@ -768,8 +769,25 @@ export class Sprite {
         this.y = opts.y ?? 0;
         this.vx = opts.vx ?? 0;
         this.vy = opts.vy ?? 0;
-        /** Velocity ceiling, canvas units per second. */
-        this.maxSpeed = opts.maxSpeed ?? 16;
+        /**
+         * Linear drag rate for the force-driven impulse layer,
+         * in units of 1/second. Each simulation sub-step relaxes
+         * the impulse (the part of the velocity beyond the
+         * cycleSpeeds launch/base layer) toward zero by
+         * exp(-damping * dt), leaving the base launch velocity
+         * untouched. Terminal impulse speed under a steady force
+         * F is about F / (mass * damping), so a vivid colour
+         * region settles at a higher steady speed than a subtle
+         * one and a reversal takes effect within about 1/damping
+         * seconds. A value of 0 disables damping — the sprite
+         * then coasts indefinitely under a sustained force, since
+         * there is no longer any hard speed cap. Replaces the
+         * former maxSpeed velocity ceiling; a hard cap can be
+         * reintroduced as a separate field if needed. Part of
+         * the music, so stored per sprite in scene.json.
+         * @type {number}
+         */
+        this.damping = opts.damping ?? 2;
         /**
          * Visual diameter in canvas units. Sprites are points
          * geometrically (DESIGN.md §6), but their display
