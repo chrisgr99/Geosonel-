@@ -3,12 +3,12 @@
 JavaScript modules in dependency order:
 
 1. Image — 1000x1000 pixel array, colour sampling, file loading, resampling.
-2. Field — vector force at any position, combining sources and optional image-gradient contribution.
+2. Field — deprecated. This module was a precomputed vector force field sampled at any position, combining sources and an optional image-gradient contribution, in the GeoMaestro mould. The onTick callback model (Section 9) replaces it: a force field is now emergent rather than precomputed, produced by an object's onTick reading the image colour beneath it each step and applying a force through its mass (Section 22). Nothing samples a combined field at arbitrary positions; the slot number is retained so the later module numbers don't shift.
 3. Trigger — position, size, payload, collision and auto function references.
-4. Sprite — position, velocity, step and auto function references, integrates field and boundary collisions.
+4. Sprite — position, velocity, step and auto function references, integrates its own two-layer velocity (a cycleSpeeds-owned base plus an onTick-driven impulse layer) and boundary collisions (Section 22).
 5. Curve — geometric shape (line, ellipse, piste, with vx/vy starting velocity for upcoming bounce mechanics), cyclePattern as Strudel mini-notation, cursor with cursorL and cursorR extents, behaviour slot bindings (hasHit, beenHit, onTick).
 6. PatternEngine — Strudel pattern evaluation and dispatch. Holds per-source cycle counters and the firing-context pointer, runs two-pass evaluation that decouples pattern structure from dynamic-signal values, schedules events one cycle ahead via populatedCycles, and dispatches them late-refresh through Web MIDI within the audio commit window. See Section 10 (Pattern Language) for the language layer it consumes and Section 12 (Pattern Engine) for the architectural detail.
-7. Scene — holds image, field, regions, curves, triggers, sprites, and score-level harmony parameters.
+7. Scene — holds image, regions, curves, triggers, sprites, and score-level harmony parameters.
 8. SceneLoader — parses scene.json plus behaviours.js with Acorn, resolves function-name references against behaviours' top-level declarations, builds a Scene. Replaces the v2.0 SketchRunner.
 9. SceneEditor — pure parse/mutate/stringify functions for scene.json text, used by canvas direct-manipulation operations to commit edits without disturbing the editor's view of the file. Includes addSpriteAt, setSpritePositions, removeObjects, plus a custom stringifier that approximates the hand-written formatting style of the default template.
 10. Transport — global clock, tempo, beat position, play state, AudioContext integration.
