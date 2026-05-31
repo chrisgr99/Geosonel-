@@ -785,6 +785,24 @@ export class Sprite {
         this.displayDiameter = opts.displayDiameter ?? 1.05;
 
         /**
+         * Relative inertial mass, dimensionless. Default one is
+         * the reference object: an onTick force produces an
+         * impulse-velocity change of force / mass, so a sprite
+         * of mass two responds half as much to the same force
+         * and a sprite of mass one-half twice as much. There is
+         * no physical unit — only the ratio matters, which is
+         * all the force model and any future inter-object
+         * gravity need. The inspector enforces a positive floor
+         * of one tenth (so a near-zero mass can't divide a
+         * force into an unbounded acceleration), and the
+         * simulation re-applies the same floor defensively at
+         * force time. Part of the music, so stored per sprite
+         * in scene.json.
+         * @type {number}
+         */
+        this.mass = opts.mass ?? 1;
+
+        /**
          * Boundary ring colour, as a CSS hex string. The
          * sprite's interior fill always shows the image
          * pixel under its centre (or a placeholder when no

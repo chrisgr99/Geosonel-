@@ -193,95 +193,96 @@ function readImageOKLCh() {
     return entry.imageOKLCh;
 }
 
-/** Perceptual lightness (OKLCh L), in [0, 1] naturally. */
-function readPxLt() {
-    const o = readImageOKLCh();
-    return o === null ? 0 : o.L;
+/**
+ * @typedef {Object} ImageSignalValues
+ * @property {number} pxLt @property {number} pxChr
+ * @property {number} pxR @property {number} pxG
+ * @property {number} pxY @property {number} pxB
+ * @property {number} pxOr @property {number} pxLi
+ * @property {number} pxCy @property {number} pxPu
+ */
+
+/**
+ * Derive all ten image-colour signal values from one OKLCh
+ * sample. This is the single source of truth for the
+ * projection-and-normalisation math: the pattern-signal
+ * read functions below call it, and the simulation's onTick
+ * context calls it directly with a sample taken at the
+ * sprite's live sub-step position (see simulation.js). Both
+ * surfaces therefore produce identical numbers for the same
+ * pixel, which is the whole point of sharing one function —
+ * a composer's pxR in a pattern and ctx.pxR in an onTick
+ * read the same colour the same way.
+ *
+ * A null or undefined sample (no firing context, no image,
+ * or a position outside the canvas region) yields zero for
+ * every signal, matching the documented no-data default.
+ *
+ * @param {{L: number, C: number, a: number, b: number} | null | undefined} o
+ * @returns {ImageSignalValues}
+ */
+export function imageSignalsFromOKLCh(o) {
+    if (o === null || o === undefined) {
+        return {
+            pxLt: 0, pxChr: 0, pxR: 0, pxG: 0, pxY: 0,
+            pxB: 0, pxOr: 0, pxLi: 0, pxCy: 0, pxPu: 0,
+        };
+    }
+    const a = o.a;
+    const b = o.b;
+    const orProj = (a + b) * INV_SQRT2;
+    const liProj = (-a + b) * INV_SQRT2;
+    const cyProj = (-a - b) * INV_SQRT2;
+    const puProj = (a - b) * INV_SQRT2;
+    return {
+        pxLt: o.L,
+        pxChr: clamp01(o.C / PRIMARY_NORMALIZER),
+        pxR: a > 0 ? clamp01(a / PRIMARY_NORMALIZER) : 0,
+        pxG: a < 0 ? clamp01(-a / PRIMARY_NORMALIZER) : 0,
+        pxY: b > 0 ? clamp01(b / PRIMARY_NORMALIZER) : 0,
+        pxB: b < 0 ? clamp01(-b / PRIMARY_NORMALIZER) : 0,
+        pxOr: orProj > 0 ? clamp01(orProj / PRIMARY_NORMALIZER) : 0,
+        pxLi: liProj > 0 ? clamp01(liProj / PRIMARY_NORMALIZER) : 0,
+        pxCy: cyProj > 0 ? clamp01(cyProj / PRIMARY_NORMALIZER) : 0,
+        pxPu: puProj > 0 ? clamp01(puProj / PRIMARY_NORMALIZER) : 0,
+    };
 }
+
+// The ten pattern-signal read functions delegate to the
+// shared derivation so they can never drift from the onTick
+// context's reads. Each recomputes the full set and picks
+// its field; the extra arithmetic is a handful of multiplies
+// per Pass 2 query, negligible beside queryArc itself.
+
+/** Perceptual lightness (OKLCh L), in [0, 1] naturally. */
+function readPxLt() { return imageSignalsFromOKLCh(readImageOKLCh()).pxLt; }
 
 /** Perceptual chroma (OKLCh C, hypot of a and b), normalised. */
-function readPxChr() {
-    const o = readImageOKLCh();
-    return o === null ? 0 : clamp01(o.C / PRIMARY_NORMALIZER);
-}
+function readPxChr() { return imageSignalsFromOKLCh(readImageOKLCh()).pxChr; }
 
 /** Redness: positive +a clamped to the red half-axis. */
-function readPxR() {
-    const o = readImageOKLCh();
-    if (o === null || o.a <= 0) return 0;
-    return clamp01(o.a / PRIMARY_NORMALIZER);
-}
+function readPxR() { return imageSignalsFromOKLCh(readImageOKLCh()).pxR; }
 
 /** Greenness: positive -a clamped to the green half-axis. */
-function readPxG() {
-    const o = readImageOKLCh();
-    if (o === null || o.a >= 0) return 0;
-    return clamp01(-o.a / PRIMARY_NORMALIZER);
-}
+function readPxG() { return imageSignalsFromOKLCh(readImageOKLCh()).pxG; }
 
 /** Yellowness: positive +b clamped to the yellow half-axis. */
-function readPxY() {
-    const o = readImageOKLCh();
-    if (o === null || o.b <= 0) return 0;
-    return clamp01(o.b / PRIMARY_NORMALIZER);
-}
+function readPxY() { return imageSignalsFromOKLCh(readImageOKLCh()).pxY; }
 
 /** Blueness: positive -b clamped to the blue half-axis. */
-function readPxB() {
-    const o = readImageOKLCh();
-    if (o === null || o.b >= 0) return 0;
-    return clamp01(-o.b / PRIMARY_NORMALIZER);
-}
+function readPxB() { return imageSignalsFromOKLCh(readImageOKLCh()).pxB; }
 
-/**
- * Orange: projection along the +45-degree direction in
- * OKLab (a, b), the diagonal between +a (redness) and +b
- * (yellowness), clamped to the named-positive half-plane.
- * (a + b) divided by sqrt(2) is the dot product of (a, b)
- * with the unit vector pointing at hue 45 degrees.
- */
-function readPxOr() {
-    const o = readImageOKLCh();
-    if (o === null) return 0;
-    const proj = (o.a + o.b) * INV_SQRT2;
-    return proj <= 0 ? 0 : clamp01(proj / PRIMARY_NORMALIZER);
-}
+/** Orange: +45-degree (a, b) diagonal, named-positive half. */
+function readPxOr() { return imageSignalsFromOKLCh(readImageOKLCh()).pxOr; }
 
-/**
- * Lime: projection along the +135-degree direction, the
- * diagonal between -a (greenness) and +b (yellowness),
- * clamped to the named-positive half-plane.
- */
-function readPxLi() {
-    const o = readImageOKLCh();
-    if (o === null) return 0;
-    const proj = (-o.a + o.b) * INV_SQRT2;
-    return proj <= 0 ? 0 : clamp01(proj / PRIMARY_NORMALIZER);
-}
+/** Lime: +135-degree (a, b) diagonal, named-positive half. */
+function readPxLi() { return imageSignalsFromOKLCh(readImageOKLCh()).pxLi; }
 
-/**
- * Cyan: projection along the -135-degree (225-degree)
- * direction, the diagonal between -a (greenness) and -b
- * (blueness), clamped to the named-positive half-plane.
- */
-function readPxCy() {
-    const o = readImageOKLCh();
-    if (o === null) return 0;
-    const proj = (-o.a - o.b) * INV_SQRT2;
-    return proj <= 0 ? 0 : clamp01(proj / PRIMARY_NORMALIZER);
-}
+/** Cyan: -135-degree (a, b) diagonal, named-positive half. */
+function readPxCy() { return imageSignalsFromOKLCh(readImageOKLCh()).pxCy; }
 
-/**
- * Purple: projection along the -45-degree (315-degree)
- * direction, the diagonal between +a (redness) and -b
- * (blueness), clamped to the named-positive half-plane.
- */
-function readPxPu() {
-    const o = readImageOKLCh();
-    if (o === null) return 0;
-    const proj = (o.a - o.b) * INV_SQRT2;
-    return proj <= 0 ? 0 : clamp01(proj / PRIMARY_NORMALIZER);
-}
+/** Purple: -45-degree (a, b) diagonal, named-positive half. */
+function readPxPu() { return imageSignalsFromOKLCh(readImageOKLCh()).pxPu; }
 
 /**
  * The standard image-colour signal set, paired with their

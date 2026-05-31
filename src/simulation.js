@@ -232,6 +232,7 @@
 // @ts-check
 
 import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
+import { imageSignalsFromOKLCh } from "./strudel/signals.js";
 
 /**
  * Simulation step in seconds. Determinism requires this to
@@ -691,6 +692,36 @@ class SpriteRuntimeState {
         this.y = numberOrZero(sprite.y);
         this.vx = numberOrZero(sprite.vx);
         this.vy = numberOrZero(sprite.vy);
+        // Base velocity layer: the cycleSpeeds-owned launch
+        // velocity (authored times the cycle's speed entry),
+        // modified by wall bounces. vx/vy above are the
+        // EFFECTIVE velocity actually integrated and rendered;
+        // the impulse layer (the running sum of onTick forces)
+        // is the implicit difference vx - baseVx. Keeping base
+        // explicit lets a cycle-speed change scale only the
+        // launch component while the impulse rides through a
+        // boundary untouched, and lets the maxSpeed clamp cap
+        // the effective sum while leaving base pristine for the
+        // boundary ratio math. Initialised equal to vx/vy; the
+        // per-cycle speed multiplier is applied by rewind and
+        // by setScene's launch paths.
+        /** @type {number} */
+        this.baseVx = this.vx;
+        /** @type {number} */
+        this.baseVy = this.vy;
+        // Per-axis wall-reflection signs, plus or minus one,
+        // starting at plus one. The engine flips the sign on
+        // each wall bounce on that axis, and resets both to
+        // plus one on a rewind or a home-teleport. Exposed
+        // read-only on the onTick context as flipX / flipY for
+        // a callback to multiply into a pixel-derived force
+        // when it wants the field to reverse after a bounce
+        // (the anti-trap opt-in); the engine never applies
+        // them to forces itself.
+        /** @type {number} */
+        this.flipX = 1;
+        /** @type {number} */
+        this.flipY = 1;
         // Authored values as last observed during scene
         // reconciliation. setScene compares the current
         // Sprite's authored fields against these to detect
@@ -798,6 +829,62 @@ export class Simulation {
          * @type {number}
          */
         this._accumulator = 0;
+        /**
+         * Canvas reference, set via setCanvas after
+         * construction. Used only to sample the image's
+         * OKLCh buffer beneath a sprite for the onTick
+         * context's px colour reads, mirroring how the
+         * firing engine samples for its snapshot. Null until
+         * set; the colour reads fall back to zero (the no-
+         * image default) when absent, so the simulation still
+         * runs headless.
+         * @type {import("./canvas.js").Canvas | null}
+         */
+        this._canvas = null;
+        /**
+         * Optional logger for surfacing onTick runtime errors
+         * to the message area. Signature (text, level) mirrors
+         * MessageArea.write. Null until set via
+         * setMessageLogger; errors always reach the console
+         * regardless.
+         * @type {((text: string, level: string) => void) | null}
+         */
+        this._messageLogger = null;
+        /**
+         * Ids of sprites whose onTick threw and is therefore
+         * disabled for the rest of the session. onTick runs
+         * every sub-step, so a throwing callback is caught and
+         * its id parked here to avoid calling it again and
+         * flooding the console / message area. Cleared on
+         * every setScene, so a behaviours.js reload or any
+         * scene re-run re-enables the callback for another
+         * attempt.
+         * @type {Set<string>}
+         */
+        this._onTickDisabled = new Set();
+    }
+
+    /**
+     * Attach the canvas so the onTick context can sample the
+     * image's OKLCh buffer beneath a sprite for its px colour
+     * reads. Mirrors firingEngine.setCanvas; called once from
+     * main.js at startup. The simulation runs without it (px
+     * reads return zero), so the wiring is optional.
+     * @param {import("./canvas.js").Canvas | null} canvas
+     */
+    setCanvas(canvas) {
+        this._canvas = canvas;
+    }
+
+    /**
+     * Set a logger for surfacing onTick runtime errors to the
+     * message area, alongside the console. Signature (text,
+     * level) mirrors MessageArea.write. Called once from
+     * main.js; optional.
+     * @param {((text: string, level: string) => void) | null} logger
+     */
+    setMessageLogger(logger) {
+        this._messageLogger = typeof logger === "function" ? logger : null;
     }
 
     /**
@@ -824,6 +911,10 @@ export class Simulation {
      * @param {import("./scene.js").Scene | null} scene
      */
     setScene(scene) {
+        // A scene re-run (behaviours.js reload, inspector or
+        // canvas edit) re-enables any onTick that a throw
+        // disabled earlier this session.
+        this._onTickDisabled.clear();
         this._scene = scene;
         if (scene === null) {
             this._curveState.clear();
@@ -956,8 +1047,10 @@ export class Simulation {
                 // snapped cycle is moot since the position is
                 // already home.
                 const { speed } = this._spriteCycleSpeed(newState, newState.cycleCount);
-                newState.vx = newState._authVx * speed;
-                newState.vy = newState._authVy * speed;
+                newState.baseVx = newState._authVx * speed;
+                newState.baseVy = newState._authVy * speed;
+                newState.vx = newState.baseVx;
+                newState.vy = newState.baseVy;
                 this._spriteState.set(s.id, newState);
                 continue;
             }
@@ -978,10 +1071,12 @@ export class Simulation {
                 existing._authY = authY;
             }
             if (authVx !== existing._authVx) {
+                existing.baseVx = authVx;
                 existing.vx = authVx;
                 existing._authVx = authVx;
             }
             if (authVy !== existing._authVy) {
+                existing.baseVy = authVy;
                 existing.vy = authVy;
                 existing._authVy = authVy;
             }
@@ -1278,8 +1373,12 @@ export class Simulation {
             // applies. A leading-zero list parks the sprite at
             // home with zero launch velocity.
             const { speed } = this._spriteCycleSpeed(state, 0);
-            state.vx = state._authVx * speed;
-            state.vy = state._authVy * speed;
+            state.baseVx = state._authVx * speed;
+            state.baseVy = state._authVy * speed;
+            state.vx = state.baseVx;
+            state.vy = state.baseVy;
+            state.flipX = 1;
+            state.flipY = 1;
         }
     }
 
@@ -2009,6 +2108,142 @@ export class Simulation {
     }
 
     /**
+     * Run one sprite's onTick callback for this sub-step, if
+     * it is enabled and resolves, building the fresh context
+     * object the callback reads and writes through.
+     *
+     * Gating: the sprite must have canTick true, must be
+     * unmuted (mute makes a sprite's callback slots inert),
+     * must name a function that resolves in the scene's
+     * functionMap, and must not be in the session-disable set
+     * (parked there by a previous throw). Any miss is a silent
+     * no-op.
+     *
+     * The context exposes reads — identity, the kinematics as
+     * the effective velocity, the two flip signs, the
+     * transport, and the ten px colour values sampled beneath
+     * the sprite via the shared derivation so they match the
+     * pattern signals — and one write, applyForce, which
+     * converts a literal force into an impulse-velocity change
+     * of force / mass times dt added to the effective
+     * velocity. Multiple applyForce calls in a step accumulate;
+     * the engine never transforms the force (the composer
+     * multiplies flipX / flipY in themselves for the anti-trap
+     * reversal). mass is the sprite's authored field, default
+     * one, floored at one tenth.
+     *
+     * A throw is caught, the sprite's onTick is disabled for
+     * the rest of the session, and the first error is logged
+     * once to the console and (when a logger is attached) the
+     * message area, rather than flooding either at the sub-
+     * step rate.
+     *
+     * @param {any} sprite
+     * @param {SpriteRuntimeState} state
+     * @param {number} dt  Fixed sub-step seconds (SIM_DT).
+     * @param {number | null} bpm
+     */
+    _runSpriteOnTick(sprite, state, dt, bpm) {
+        if (sprite.canTick !== true) return;
+        if (sprite.mute === true) return;
+        if (this._scene === null) return;
+        const name = sprite.onTickFunction;
+        if (typeof name !== "string" || name === "") return;
+        const fn = this._scene.functionMap[name];
+        if (typeof fn !== "function") return;
+        if (this._onTickDisabled.has(sprite.id)) return;
+
+        // mass: dimensionless, default one, floored at 0.1 so a
+        // near-zero mass can't divide a force into an unbounded
+        // velocity change.
+        let mass = (typeof sprite.mass === "number" && Number.isFinite(sprite.mass))
+            ? sprite.mass
+            : 1;
+        if (mass < 0.1) mass = 0.1;
+
+        // Sample the image colour beneath the sprite at its
+        // current position and derive the ten px reads with the
+        // SAME function the pattern signals use, so a pattern's
+        // pxR and an onTick's ctx.pxR agree. No canvas or no
+        // image -> null -> all reads zero.
+        const oklch = (this._canvas !== null
+            && typeof this._canvas.sampleImageOKLCh === "function")
+            ? this._canvas.sampleImageOKLCh(state.x, state.y)
+            : null;
+        const px = imageSignalsFromOKLCh(oklch);
+
+        const simTime = this._simTime;
+        const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
+        const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
+
+        const ctx = {
+            id: sprite.id,
+            kind: "sprite",
+            x: state.x,
+            y: state.y,
+            vx: state.vx,
+            vy: state.vy,
+            speed: Math.hypot(state.vx, state.vy),
+            flipX: state.flipX,
+            flipY: state.flipY,
+            beat,
+            time: simTime,
+            bpm: bpmNum,
+            cyclePhase: state.cycleProgress,
+            cycleCount: state.cycleCount,
+            pxLt: px.pxLt,
+            pxChr: px.pxChr,
+            pxR: px.pxR,
+            pxG: px.pxG,
+            pxY: px.pxY,
+            pxB: px.pxB,
+            pxOr: px.pxOr,
+            pxLi: px.pxLi,
+            pxCy: px.pxCy,
+            pxPu: px.pxPu,
+            /**
+             * Apply a literal force this sub-step. The engine
+             * divides by the sprite's mass and integrates over
+             * the fixed step into the effective velocity (the
+             * impulse layer, implicitly vx - baseVx); it never
+             * changes the force's direction. +Y is up, matching
+             * the canvas coordinate system. Multiple calls in
+             * one onTick accumulate. Non-finite components are
+             * ignored so a NaN can't poison the velocity.
+             * @param {number} fx
+             * @param {number} fy
+             */
+            applyForce(fx, fy) {
+                if (typeof fx === "number" && Number.isFinite(fx)) {
+                    state.vx += (fx / mass) * dt;
+                }
+                if (typeof fy === "number" && Number.isFinite(fy)) {
+                    state.vy += (fy / mass) * dt;
+                }
+            },
+        };
+
+        try {
+            fn(ctx);
+        } catch (err) {
+            this._onTickDisabled.add(sprite.id);
+            const detail = (err instanceof Error && typeof err.message === "string")
+                ? err.message
+                : String(err);
+            const line = `onTick disabled for ${sprite.id}: ${detail}`;
+            console.error("[onTick] " + line, err);
+            if (this._messageLogger !== null) {
+                try {
+                    this._messageLogger(line, "error");
+                } catch (_loggerErr) {
+                    // A logger fault must never destabilise the
+                    // simulation; the console line above stands.
+                }
+            }
+        }
+    }
+
+    /**
      * Advance every sprite's runtime state by dt seconds.
      * Order per sprite:
      *
@@ -2063,6 +2298,16 @@ export class Simulation {
             if (typeof sprite.id !== "string") continue;
             const state = this._spriteState.get(sprite.id);
             if (state === undefined) continue;
+            // 0. onTick: run the sprite's per-tick callback (if
+            //    any) BEFORE physics, so a force it applies is
+            //    integrated this same step. Gated inside the
+            //    helper by canTick, mute, a resolved function
+            //    name, and the session-disable set. applyForce
+            //    adds into the effective velocity (the impulse
+            //    layer); the step-1 clamp below then caps the
+            //    sum and holds the impulse from winding past
+            //    maxSpeed.
+            this._runSpriteOnTick(sprite, state, dt, bpm);
             // 1. Velocity ceiling.
             const maxSpeed = (typeof sprite.maxSpeed === "number" && sprite.maxSpeed > 0)
                 ? sprite.maxSpeed
@@ -2090,16 +2335,24 @@ export class Simulation {
                 if (newX + r > halfW) {
                     newX = halfW - r;
                     state.vx = -state.vx;
+                    state.baseVx = -state.baseVx;
+                    state.flipX = -state.flipX;
                 } else if (newX - r < -halfW) {
                     newX = -halfW + r;
                     state.vx = -state.vx;
+                    state.baseVx = -state.baseVx;
+                    state.flipX = -state.flipX;
                 }
                 if (newY + r > halfH) {
                     newY = halfH - r;
                     state.vy = -state.vy;
+                    state.baseVy = -state.baseVy;
+                    state.flipY = -state.flipY;
                 } else if (newY - r < -halfH) {
                     newY = -halfH + r;
                     state.vy = -state.vy;
+                    state.baseVy = -state.baseVy;
+                    state.flipY = -state.flipY;
                 }
             }
             state.x = newX;
@@ -2147,32 +2400,43 @@ export class Simulation {
                 );
                 if (teleport) {
                     // Loop restart on a zero-terminated list:
-                    // snap home and relaunch in the authored
-                    // direction at this cycle's speed, the same
-                    // fresh launch a rewind performs.
+                    // a fresh launch identical to a rewind's.
+                    // Home position, base re-derived from
+                    // authored times this cycle's speed, the
+                    // impulse layer zeroed (vx/vy set equal to
+                    // base), and the flip signs reset.
                     state.x = state._authX;
                     state.y = state._authY;
-                    state.vx = state._authVx * speed;
-                    state.vy = state._authVy * speed;
+                    state.baseVx = state._authVx * speed;
+                    state.baseVy = state._authVy * speed;
+                    state.vx = state.baseVx;
+                    state.vy = state.baseVy;
+                    state.flipX = 1;
+                    state.flipY = 1;
                 } else {
-                    // Continuous wrap: scale the CURRENT
-                    // velocity by the ratio of this cycle's
-                    // speed to the previous cycle's. This
-                    // preserves any wall bounces accumulated
-                    // during the cycle (a plain re-derive from
-                    // authored would undo them and lurch the
-                    // sprite back toward its authored heading
-                    // every cycle). A same-speed list ("1")
-                    // gives ratio 1 and just keeps going; a
-                    // sign change ("1 -1") flips direction; a
-                    // magnitude change ("1 2") rescales speed.
-                    // The product of ratios telescopes so the
-                    // magnitude stays |authored| × this cycle's
-                    // speed. maxSpeed is enforced by the step-1
-                    // clamp on the next step.
+                    // Continuous wrap: scale only the BASE
+                    // layer by the ratio of this cycle's speed
+                    // to the previous cycle's, leaving the
+                    // impulse layer (the implicit vx - baseVx)
+                    // untouched so a force field's accumulated
+                    // effect rides through the boundary. The
+                    // effective velocity moves by the base
+                    // delta: new vx = old vx + baseVx*(ratio-1),
+                    // computed BEFORE baseVx is itself rescaled.
+                    // With no impulse (vx == baseVx) this
+                    // reduces to the old vx *= ratio. A same-
+                    // speed list ("1") gives ratio 1 and changes
+                    // nothing; "1 -1" flips direction; "1 2"
+                    // rescales speed. The product of ratios
+                    // telescopes over a loop so base magnitude
+                    // stays |authored| times this cycle's speed.
+                    // maxSpeed caps the effective sum via the
+                    // step-1 clamp; base stays pristine.
                     const ratio = prevSpeed !== 0 ? speed / prevSpeed : 0;
-                    state.vx *= ratio;
-                    state.vy *= ratio;
+                    state.vx += state.baseVx * (ratio - 1);
+                    state.vy += state.baseVy * (ratio - 1);
+                    state.baseVx *= ratio;
+                    state.baseVy *= ratio;
                 }
                 logCycleWrap("sprite", sprite, state.cycleCount);
             }

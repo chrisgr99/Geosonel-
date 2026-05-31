@@ -254,6 +254,7 @@ export const SPRITE_FIELDS = [
     { key: "vy", label: "VY", type: "number", default: 0 },
     { key: "maxSpeed", label: "Max Speed", type: "number", default: 16 },
     { key: "displayDiameter", label: "Display Diameter", type: "number", default: 1.05 },
+    { key: "mass", label: "Mass", type: "number", default: 1, min: 0.1 },
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },

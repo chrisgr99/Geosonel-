@@ -555,6 +555,14 @@ async function main() {
     const simulation = new Simulation(transport);
     canvas.setTransport(transport);
     canvas.setSimulation(simulation);
+    // Give the simulation the canvas (to sample image colour
+    // beneath a sprite for the onTick context's px reads,
+    // mirroring the firing engine's snapshot sampling) and a
+    // logger so a throwing onTick surfaces once in the message
+    // area as well as the console. Both are optional one-time
+    // wirings; the simulation runs without them.
+    simulation.setCanvas(canvas);
+    simulation.setMessageLogger((text, level) => messages.write(text, level === "error" ? "error" : "info"));
 
     // --- Pattern firing engine (Tier 2 Phase 1) ---
     //
