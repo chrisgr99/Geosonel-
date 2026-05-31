@@ -240,7 +240,7 @@ function applyPieceLevelFields(scene, data) {
  * falls back to the default. Returns a fresh object so the
  * Scene does not alias the loader's working copy.
  * @param {any} kin
- * @returns {{drag: number, jitter: number, coast: number}}
+ * @returns {{drag: number, jitter: number, coast: number, turnDamping: number}}
  */
 function sanitizeKinematics(kin) {
     const pick = (v, fallback) =>
@@ -250,6 +250,7 @@ function sanitizeKinematics(kin) {
         drag: pick(src.drag, DEFAULT_KINEMATICS.drag),
         jitter: pick(src.jitter, DEFAULT_KINEMATICS.jitter),
         coast: pick(src.coast, DEFAULT_KINEMATICS.coast),
+        turnDamping: pick(src.turnDamping, DEFAULT_KINEMATICS.turnDamping),
     };
 }
 

@@ -332,21 +332,37 @@ const TOOLTIP_MARKER_HIT_PX = 7;
 // show faintly through the body.
 const SPRITE_FILL_ALPHA = 1.0;
 
-// Heading tracking for the directional body. The nose faces
-// the authored starting velocity while the transport is
-// stopped (so editing the velocity rotates a resting sprite
-// live), the live on-screen motion direction during
-// playback, and holds the last non-zero heading through any
-// momentary stop. Motion is read as the frame-to-frame
-// change in the sprite's canvas position: a change below
-// SPRITE_HEADING_MOTION_EPS counts as "not moving" and one
-// above SPRITE_HEADING_TELEPORT_LIMIT (canvas units) is
-// treated as a cycle-reset teleport rather than travel, so
-// both hold the last heading rather than snapping the nose.
-// A sprite with no heading source yet points left.
-const SPRITE_HEADING_MOTION_EPS = 1e-3;
+// Heading tracking for the directional body. The nose points
+// along a persistent, smoothed estimate of the sprite's
+// direction of travel — NOT the instantaneous motion
+// direction, which jitters frame to frame under the anti-trap
+// agitation or a noisy force field. Each playing frame the
+// frame-to-frame displacement is low-passed into a stored
+// heading vector (see _spriteHeadingVec) AS A VECTOR, so it is
+// weighted by distance travelled, and the nose faces that
+// vector's angle. Distance weighting is the crux: a small or
+// backward jitter step is a short vector that barely moves the
+// accumulated heading, so the nose holds the sustained
+// direction and ignores the wobble; pure back-and-forth motion
+// cancels toward a zero-length vector and the heading is held.
+// The low-pass time constant is score.kinematics.turnDamping
+// (seconds); 0 disables it (the heading then tracks the
+// instantaneous displacement). While the transport is stopped
+// the nose faces the authored starting velocity so editing it
+// rotates a resting sprite live. A displacement above
+// SPRITE_HEADING_TELEPORT_LIMIT (canvas units) is a cycle-reset
+// teleport, not travel, and is ignored. When the smoothed
+// vector is shorter than SPRITE_HEADING_VEC_EPS its direction
+// is undefined and the last heading is held. A sprite with no
+// heading source yet points left.
+const SPRITE_HEADING_VEC_EPS = 1e-3;
 const SPRITE_HEADING_TELEPORT_LIMIT = 6;
 const SPRITE_DEFAULT_HEADING = Math.PI; // left (-x) in canvas space
+// Fallback heading-smoothing time constant (seconds), used when
+// a scene carries no kinematics.turnDamping (defensive; the
+// loader and the Scene constructor both populate it from
+// DEFAULT_KINEMATICS.turnDamping, so this mirrors that value).
+const SPRITE_HEADING_DEFAULT_TURN = 0.9;
 
 export class Canvas {
     /**
@@ -717,6 +733,26 @@ export class Canvas {
         this._spriteHeading = new Map();
         /** @type {Map<string, {x: number, y: number}>} */
         this._spritePrevPos = new Map();
+        /**
+         * Per-sprite smoothed heading vector in canvas space,
+         * a distance-weighted exponential average of the
+         * frame-to-frame displacement. Its angle is the nose's
+         * pointing direction. Low-passing the VECTOR (not the
+         * angle) is what lets a small or backward jitter step —
+         * a short vector — barely move the heading while
+         * sustained travel dominates it.
+         * @type {Map<string, {hx: number, hy: number}>}
+         */
+        this._spriteHeadingVec = new Map();
+        /**
+         * Timestamp (performance.now ms) of the previous
+         * sprite-draw frame, used to compute the per-frame
+         * elapsed seconds the heading low-pass needs. null
+         * until the first frame; that first frame reads a dt
+         * of 0, which snaps the heading rather than smoothing.
+         * @type {number | null}
+         */
+        this._lastHeadingFrameTime = null;
 
         /**
          * Currently brightened hover target, or null. Tracks
@@ -2011,6 +2047,17 @@ export class Canvas {
     _drawSprites() {
         if (this._scene === null) return;
         const ctx = this.ctx;
+        // Per-frame elapsed seconds for the heading low-pass,
+        // computed once here and threaded into
+        // _spriteHeadingPixelAngle for every sprite this frame.
+        // Clamped to [0, 0.1] so a long gap (e.g. a backgrounded
+        // tab) can't produce a runaway smoothing step; the first
+        // frame reads 0, which snaps the heading (no smoothing).
+        const headingNow = performance.now();
+        const headingDt = (this._lastHeadingFrameTime !== null)
+            ? Math.min(0.1, Math.max(0, (headingNow - this._lastHeadingFrameTime) / 1000))
+            : 0;
+        this._lastHeadingFrameTime = headingNow;
         // Sprite display radius in canvas units, multiplied by
         // the score's per-score spriteScale. The scale is part
         // of the music — it determines how sprites bounce off
@@ -2036,7 +2083,7 @@ export class Canvas {
             // defaults to left when there is no source. The
             // method also advances the per-sprite heading and
             // previous-position history each frame.
-            const phi = this._spriteHeadingPixelAngle(s, pos);
+            const phi = this._spriteHeadingPixelAngle(s, pos, headingDt);
             // Muted sprites render desaturated to gray via
             // a canvas-level grayscale filter applied for the
             // duration of this sprite's draw. The filter
@@ -2150,22 +2197,29 @@ export class Canvas {
     /**
      * Compute the pixel-space angle (radians) the sprite's
      * nose should point along this frame, and advance the
-     * per-sprite heading and previous-position history.
+     * per-sprite smoothed heading vector and previous-position
+     * history.
      *
-     * The heading source depends on the transport state.
-     * While the transport is stopped (editor at rest) the
-     * sprite faces its authored starting velocity
-     * (sprite.vx, sprite.vy), so editing the velocity in the
-     * inspector rotates a resting sprite immediately; a zero
-     * starting velocity faces left. While playing, the
-     * heading tracks the sprite's actual motion, read as the
-     * frame-to-frame change in canvas position: a change
-     * below SPRITE_HEADING_MOTION_EPS counts as not moving
-     * and holds the last heading, and one above
-     * SPRITE_HEADING_TELEPORT_LIMIT is treated as a cycle-
-     * reset teleport rather than travel and also holds the
-     * last heading. A sprite with no heading source yet
-     * points left (SPRITE_DEFAULT_HEADING).
+     * The pointing direction is a persistent property of the
+     * sprite, not the instantaneous motion direction. While
+     * the transport is stopped (editor at rest) the sprite
+     * faces its authored starting velocity (sprite.vx,
+     * sprite.vy) so editing the velocity in the inspector
+     * rotates a resting sprite immediately; a zero starting
+     * velocity faces left. While playing, the frame-to-frame
+     * displacement is low-passed into a stored heading vector
+     * AS A VECTOR (distance-weighted), and the nose faces that
+     * vector's angle: a small or backward step is a short
+     * vector that barely turns the nose, sustained travel
+     * dominates, and back-and-forth jitter cancels so the
+     * heading holds. The time constant is
+     * score.kinematics.turnDamping in seconds (0 tracks the
+     * instantaneous displacement). A displacement above
+     * SPRITE_HEADING_TELEPORT_LIMIT is a cycle-reset teleport
+     * and is ignored; a smoothed vector shorter than
+     * SPRITE_HEADING_VEC_EPS holds the last heading. A sprite
+     * with no heading source yet points left
+     * (SPRITE_DEFAULT_HEADING).
      *
      * Headings are stored in canvas space (Y up, +x = 0,
      * counter-clockwise positive) keyed by sprite id, then
@@ -2174,51 +2228,89 @@ export class Canvas {
      *
      * @param {any} sprite
      * @param {{x: number, y: number}} pos  Current canvas-space position.
+     * @param {number} headingDt  Seconds since the previous frame, for
+     *   the heading low-pass. 0 (first frame) snaps without smoothing.
      * @returns {number}  Pixel-space heading angle in radians.
      */
-    _spriteHeadingPixelAngle(sprite, pos) {
+    _spriteHeadingPixelAngle(sprite, pos, headingDt) {
         const id = typeof sprite.id === "string" ? sprite.id : null;
         const playing = this._transport !== null && this._transport.isPlaying;
         const vx = typeof sprite.vx === "number" ? sprite.vx : 0;
         const vy = typeof sprite.vy === "number" ? sprite.vy : 0;
 
+        // The pointing direction is read from the sprite's
+        // persistent smoothed heading vector, low-passed below.
+        // Seed theta from the last stored heading; the branches
+        // refine it.
         /** @type {number | undefined} */
-        let theta;
-        let moved = false;
+        let theta = id !== null ? this._spriteHeading.get(id) : undefined;
 
-        if (playing && id !== null) {
+        if (!playing) {
+            // At rest in the editor: face the authored starting
+            // velocity so editing it rotates the sprite live;
+            // default left when it is zero. Seed the smoothed
+            // vector along that direction so resuming playback
+            // begins from the authored heading and adapts.
+            theta = (vx !== 0 || vy !== 0)
+                ? Math.atan2(vy, vx)
+                : SPRITE_DEFAULT_HEADING;
+            if (id !== null) {
+                this._spriteHeadingVec.set(id, {
+                    hx: Math.cos(theta),
+                    hy: Math.sin(theta),
+                });
+            }
+        } else if (id !== null) {
+            // Playing: low-pass the frame-to-frame displacement
+            // into the stored heading vector, then take the
+            // heading from its angle.
+            if (theta === undefined) {
+                theta = (vx !== 0 || vy !== 0)
+                    ? Math.atan2(vy, vx)
+                    : SPRITE_DEFAULT_HEADING;
+            }
             const prev = this._spritePrevPos.get(id);
             if (prev !== undefined) {
                 const dx = pos.x - prev.x;
                 const dy = pos.y - prev.y;
                 const dist = Math.hypot(dx, dy);
-                if (dist > SPRITE_HEADING_MOTION_EPS && dist < SPRITE_HEADING_TELEPORT_LIMIT) {
-                    theta = Math.atan2(dy, dx);
-                    moved = true;
+                // Ignore cycle-reset teleports: a jump beyond the
+                // limit is not travel, so it neither feeds the
+                // vector nor moves the heading.
+                if (dist < SPRITE_HEADING_TELEPORT_LIMIT) {
+                    const kin = this._scene !== null ? this._scene.kinematics : null;
+                    const tau = (kin !== null && typeof kin === "object"
+                        && typeof kin.turnDamping === "number" && kin.turnDamping >= 0)
+                        ? kin.turnDamping
+                        : SPRITE_HEADING_DEFAULT_TURN;
+                    const prevVec = this._spriteHeadingVec.get(id);
+                    let hx;
+                    let hy;
+                    if (prevVec === undefined || tau <= 0 || headingDt <= 0) {
+                        // No prior vector, smoothing off, or no
+                        // time elapsed: take the displacement
+                        // directly (instant heading).
+                        hx = dx;
+                        hy = dy;
+                    } else {
+                        const alpha = 1 - Math.exp(-headingDt / tau);
+                        hx = prevVec.hx + (dx - prevVec.hx) * alpha;
+                        hy = prevVec.hy + (dy - prevVec.hy) * alpha;
+                    }
+                    this._spriteHeadingVec.set(id, { hx, hy });
+                    // Take the heading from the smoothed vector
+                    // only while it is long enough to define a
+                    // direction; below that (a stalled sprite, or
+                    // one whose back-and-forth motion has
+                    // cancelled) hold the last heading.
+                    if (Math.hypot(hx, hy) > SPRITE_HEADING_VEC_EPS) {
+                        theta = Math.atan2(hy, hx);
+                    }
                 }
             }
         }
 
-        if (!moved) {
-            if (playing) {
-                // Momentary stop (or first playing frame):
-                // hold the last heading, seeding from the
-                // authored velocity then left if none exists.
-                theta = id !== null ? this._spriteHeading.get(id) : undefined;
-                if (theta === undefined) {
-                    theta = (vx !== 0 || vy !== 0)
-                        ? Math.atan2(vy, vx)
-                        : SPRITE_DEFAULT_HEADING;
-                }
-            } else {
-                // At rest in the editor: face the authored
-                // starting velocity so editing it rotates the
-                // sprite live; default left when it is zero.
-                theta = (vx !== 0 || vy !== 0)
-                    ? Math.atan2(vy, vx)
-                    : SPRITE_DEFAULT_HEADING;
-            }
-        }
+        if (theta === undefined) theta = SPRITE_DEFAULT_HEADING;
 
         if (id !== null) {
             this._spriteHeading.set(id, theta);

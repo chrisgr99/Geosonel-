@@ -80,9 +80,19 @@ import { DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
  *   coast  — minimum coast speed (canvas units/sec) the force-
  *            driven impulse is held at so a weak region can't damp
  *            a sprite to a crawl. 0 disables the floor.
- * @type {{drag: number, jitter: number, coast: number}}
+ *   turnDamping — time constant (seconds) of the low-pass on a
+ *            sprite's pointing direction (the nose / perpendicular
+ *            cursor heading). Higher turns the nose more gently
+ *            toward the recent overall direction of travel,
+ *            smoothing out the rapid wobble small frame-to-frame
+ *            direction changes (e.g. the anti-trap jitter) would
+ *            otherwise cause; 0 disables smoothing (instant
+ *            heading). Affects only the pointing direction, never
+ *            the centre-point motion. Read by the canvas renderer,
+ *            not the simulation.
+ * @type {{drag: number, jitter: number, coast: number, turnDamping: number}}
  */
-export const DEFAULT_KINEMATICS = { drag: 2, jitter: 1.0, coast: 0.2 };
+export const DEFAULT_KINEMATICS = { drag: 2, jitter: 1.0, coast: 0.2, turnDamping: 0.9 };
 
 /**
  * One $objectId: expression labelled statement extracted from
