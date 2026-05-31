@@ -4049,6 +4049,7 @@ async function main() {
             performCut,
             performCopy,
             performPaste,
+            performPasteImage: () => { void imageImporter.importFromSystemClipboard(); },
             performSelectAll,
             performToggleMute,
         });

@@ -37,6 +37,7 @@ import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
  * @property {() => void} performCut
  * @property {() => void} performCopy
  * @property {() => void} performPaste
+ * @property {() => void} performPasteImage
  * @property {() => void} performSelectAll
  * @property {() => void} performToggleMute
  */
@@ -95,6 +96,10 @@ export function installEditMenu(ctx) {
             label: "Paste",
             shortcut: "\u2318V",
             action: () => ctx.performPaste(),
+        },
+        {
+            label: "Paste Image",
+            action: () => ctx.performPasteImage(),
         },
         {
             label: "Select All",

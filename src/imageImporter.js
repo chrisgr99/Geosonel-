@@ -184,7 +184,105 @@ export class ImageImporter {
         this.messages.write(`Removed image "${removedName}".`);
     }
 
+    /**
+     * Paste an image from the system clipboard: read the
+     * clipboard image, then route it through the same
+     * normalize / store / gallery pipeline every other import
+     * path uses, so it replaces the canvas background and
+     * lands as the most recent entry in the Canvas tab's
+     * recent-images section. Backs the Edit menu's Paste
+     * Image command.
+     *
+     * Reads through the Electron main-process bridge
+     * (window.gxwClipboard) when present, falling back to the
+     * web Clipboard API otherwise. When the clipboard holds
+     * no image, writes a message to the message area and
+     * returns false rather than failing silently — the user
+     * gets audible confirmation the command ran. Returns true
+     * when an image was found and handed to the import
+     * pipeline (which surfaces its own success or error
+     * message).
+     *
+     * @returns {Promise<boolean>}
+     */
+    async importFromSystemClipboard() {
+        const result = await this._readClipboardImage();
+        if (result === null) {
+            this.messages.write("No image found on the clipboard.");
+            return false;
+        }
+        // Reuse _importFromFile so the accepted-format and
+        // size checks, the pasted-name generation, and the
+        // full store-and-gallery pipeline all run exactly as
+        // they do for a dropped or file-picked image. isPaste
+        // forces a generated pasted-YYYYMMDD-HHMMSS name.
+        const file = new File([result.bytes], "pasted", { type: result.mimeType });
+        await this._importFromFile(file, /* isPaste */ true);
+        return true;
+    }
+
     // --- Internals ---
+
+    /**
+     * Read an image off the system clipboard, returning
+     * { bytes, mimeType } or null when none is present.
+     * Prefers the Electron main-process bridge
+     * (window.gxwClipboard.readImage), which reads via
+     * Electron's clipboard module and returns PNG bytes;
+     * falls back to the web async Clipboard API
+     * (navigator.clipboard.read) on the browser build. Both
+     * failure paths (no bridge and no Clipboard API, a
+     * rejected read, or a clipboard with no image item)
+     * resolve to null so the caller can report the empty
+     * case uniformly.
+     * @returns {Promise<{bytes: ArrayBuffer, mimeType: string} | null>}
+     */
+    async _readClipboardImage() {
+        const bridge = /** @type {any} */ (window).gxwClipboard;
+        if (bridge !== undefined && bridge !== null &&
+            typeof bridge.readImage === "function") {
+            try {
+                const result = await bridge.readImage();
+                if (result !== null && result !== undefined && result.bytes) {
+                    return {
+                        bytes: result.bytes,
+                        mimeType: typeof result.mimeType === "string"
+                            ? result.mimeType
+                            : "image/png",
+                    };
+                }
+                return null;
+            } catch (err) {
+                console.error("GXW: clipboard image read (Electron) failed:", err);
+                return null;
+            }
+        }
+        // Web build fallback: the async Clipboard API. The
+        // menu click is the user gesture the browser requires
+        // for clipboard reads; a denied permission or a
+        // clipboard with no image item lands in the null
+        // return below.
+        try {
+            const clip = /** @type {any} */ (navigator).clipboard;
+            if (clip !== undefined && clip !== null &&
+                typeof clip.read === "function") {
+                const items = await clip.read();
+                for (const item of items) {
+                    const imageType = item.types.find(
+                        (/** @type {string} */ t) => t.startsWith("image/"),
+                    );
+                    if (imageType !== undefined) {
+                        const blob = await item.getType(imageType);
+                        const bytes = await blob.arrayBuffer();
+                        return { bytes, mimeType: blob.type || imageType };
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("GXW: clipboard image read (web) failed:", err);
+        }
+        return null;
+    }
 
     /**
      * @param {DragEvent} e

@@ -72,6 +72,18 @@ contextBridge.exposeInMainWorld('gxwDialog', {
     ipcRenderer.invoke('gxw:show-open-dialog', options),
 });
 
+// System clipboard IPC (Paste Image command).
+//
+// readImage reads an image off the OS clipboard in the main
+// process via Electron's clipboard module and returns
+// { bytes, mimeType } with PNG bytes, or null when the
+// clipboard holds no image. The renderer's ImageImporter
+// uses this for the Edit menu's Paste Image command, feeding
+// the bytes through its normalize-store-and-gallery pipeline.
+contextBridge.exposeInMainWorld('gxwClipboard', {
+  readImage: () => ipcRenderer.invoke('gxw:clipboard-read-image'),
+});
+
 // Native menu IPC (Stage 5 commit 5a).
 //
 // onAction registers a listener for menu-action dispatch

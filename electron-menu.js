@@ -31,7 +31,7 @@
 // Whenever the renderer pushes a new state, the menu is
 // rebuilt and reapplied.
 
-const { app, Menu } = require('electron');
+const { app, Menu, clipboard } = require('electron');
 
 // Mutable state pushed from the renderer via gxw:menu-state.
 // Drives disabled/checked flags and the Open Recent / Revert
@@ -44,6 +44,13 @@ const menuState = {
   dirty: false,
   isUntitled: true,
   autoZoom: false,
+  // Whether the OS clipboard currently holds an image.
+  // Drives the Edit > Paste Image item's enabled flag.
+  // Unlike the other fields this one is NOT pushed from the
+  // renderer: the main process owns it, since the clipboard
+  // is a main-process resource. refreshClipboardState polls
+  // it and rebuilds the menu when the value flips.
+  hasClipboardImage: false,
   /** @type {Array<{path: string, name: string}>} */
   recentScores: [],
   /** @type {Array<{slotNumber: number, label: string}>} */
@@ -51,6 +58,40 @@ const menuState = {
 };
 
 let currentWindow = null;
+/** @type {ReturnType<typeof setInterval> | null} */
+let clipboardPollTimer = null;
+
+// Cheaply test whether the OS clipboard holds image data.
+// availableFormats() reports the pasteboard's flavours
+// without decoding any image, so it's safe to call on a
+// timer; macOS surfaces image data as image/* flavours
+// (image/png, image/tiff, ...). A copied FILE (Finder)
+// shows up as a path / uri flavour, not image/*, and
+// readImage() can't produce bytes from it, so treating file
+// copies as "no image" keeps Paste Image's enabled state
+// honest about what it can actually paste.
+function imageOnClipboard() {
+  try {
+    return clipboard.availableFormats().some((f) => f.startsWith('image/'));
+  } catch (err) {
+    return false;
+  }
+}
+
+// Re-check the clipboard and, if image-presence flipped
+// since the last check, rebuild the menu so Paste Image's
+// enabled flag tracks reality. Rebuild only on a transition
+// so the menu isn't churned every poll; transitions happen
+// when the user copies or clears the clipboard, which is
+// almost never while a menu is open, so this won't close an
+// open menu in practice.
+function refreshClipboardState() {
+  const present = imageOnClipboard();
+  if (present !== menuState.hasClipboardImage) {
+    menuState.hasClipboardImage = present;
+    rebuildMenu();
+  }
+}
 
 // Menu actions dispatch through the gxw:menu-action IPC
 // channel as { action, payload } objects. Most static items
@@ -64,7 +105,7 @@ function send(action, payload = null) {
 }
 
 function buildTemplate() {
-  const { dirty, isUntitled, autoZoom, recentScores, backups } = menuState;
+  const { dirty, isUntitled, autoZoom, recentScores, backups, hasClipboardImage } = menuState;
 
   // Open Recent submenu items. macOS convention: list of
   // recent entries, separator, Clear Menu (always present,
@@ -224,6 +265,15 @@ function buildTemplate() {
     // trySelectAllInFocus methods. Delete keeps its
     // built-in role since it has no accelerator and no
     // canvas-level analogue under the current model.
+    //
+    // Paste Image is a separate menu-only command (no
+    // accelerator) that reads an image off the system
+    // clipboard and replaces the canvas background with it,
+    // adding it to the Canvas tab's recent-images gallery.
+    // It dispatches paste-image; the renderer routes it
+    // straight to the image importer, independent of the
+    // canvas-object Paste above. It's greyed out while the
+    // clipboard holds no image (see refreshClipboardState).
     {
       label: 'Edit',
       submenu: [
@@ -252,6 +302,11 @@ function buildTemplate() {
           label: 'Paste',
           accelerator: 'CmdOrCtrl+V',
           click: () => send('paste-canvas-edit'),
+        },
+        {
+          label: 'Paste Image',
+          enabled: hasClipboardImage,
+          click: () => send('paste-image'),
         },
         { role: 'delete' },
         {
@@ -367,7 +422,16 @@ function rebuildMenu() {
  */
 function installMenu(win) {
   currentWindow = win;
+  // Seed the clipboard-image flag before the first build so
+  // Paste Image paints with the right enabled state, then
+  // poll so it tracks clipboard changes for the app's
+  // lifetime. 1s is responsive enough for a menu the user
+  // opens by hand and keeps the poll cost negligible.
+  menuState.hasClipboardImage = imageOnClipboard();
   rebuildMenu();
+  if (clipboardPollTimer === null) {
+    clipboardPollTimer = setInterval(refreshClipboardState, 1000);
+  }
 }
 
 /**

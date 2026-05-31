@@ -255,6 +255,18 @@ export function installMenuActions(ctx) {
                 if (!ctx.editor.trySelectAllInFocus()) ctx.performSelectAll();
                 break;
 
+            // Paste Image. Reads an image off the system
+            // clipboard and replaces the canvas background
+            // with it, adding it to the Canvas tab's recent-
+            // images gallery. Routed straight to the image
+            // importer's clipboard entry point, independent
+            // of the canvas-object Paste above; the importer
+            // surfaces its own success / error / empty-
+            // clipboard message in the message area.
+            case "paste-image":
+                void ctx.imageImporter.importFromSystemClipboard();
+                break;
+
             // Mute toggle on the canvas selection (Cmd-Shift-M).
             // No editor-focus delegation: Cmd-Shift-M has no
             // text-editing analogue, so this always runs the

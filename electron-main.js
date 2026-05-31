@@ -26,7 +26,7 @@
 // in <userData>/settings.json, so the Scores folder can be moved or relinked
 // without losing app-level state.
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -1175,6 +1175,33 @@ function registerStorageHandlers() {
       buffer.byteOffset + buffer.byteLength,
     );
     return { bytes: ab, mimeType: 'image/jpeg' };
+  });
+
+  // --- System clipboard image read (Paste Image command) ---
+  //
+  // The Edit menu's Paste Image command reads an image off
+  // the OS clipboard and routes it through the renderer's
+  // image-import pipeline (replace the canvas background and
+  // add it to the gallery as the most recent entry).
+  // Electron's clipboard.readImage returns a NativeImage; an
+  // empty clipboard, or one holding only non-image content,
+  // yields an image whose isEmpty() is true, in which case we
+  // return null so the renderer can report "no image on the
+  // clipboard" rather than importing garbage. On success we
+  // encode to PNG — lossless, and the renderer's normalize
+  // step re-encodes to the canonical JPEG@70 anyway — and
+  // ship the bytes as a fresh ArrayBuffer detached from
+  // Node's Buffer pool, matching the gallery-load-image
+  // handler's slice idiom.
+  ipcMain.handle('gxw:clipboard-read-image', async () => {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) return null;
+    const buffer = image.toPNG();
+    const ab = buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength,
+    );
+    return { bytes: ab, mimeType: 'image/png' };
   });
 
   // --- Native dialogs (Stage 3 commit 3a) ---
