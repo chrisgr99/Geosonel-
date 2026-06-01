@@ -924,6 +924,17 @@ export class PatternFiringEngine {
             // own release plays the tail.
             this._midiSender.send(value, fireTime, gate);
         }
+
+        // Drive the same firing-event flash the pattern path
+        // uses, so a procedural note flashes its source red
+        // (the sprite outline, via Canvas.markFiredSprite) just
+        // like a pattern event does. Emitted after dispatch so a
+        // subscriber throw can't strand a half-fired note; the
+        // try/catch isolates a buggy visual subscriber. The
+        // procedural fire isn't tied to a beat-point position,
+        // so absoluteFractional is 0 — the sprite flash is a
+        // timestamped fade keyed by sourceId and ignores it.
+        this._emitFiring(sourceId);
     }
 
     /**
@@ -990,6 +1001,54 @@ export class PatternFiringEngine {
         }
 
         this._runtime.play(value, fireTime);
+
+        // Flash the source red, same as the note path and the
+        // pattern path. See fireImmediateNote for the rationale
+        // on emitting after dispatch and on absoluteFractional.
+        this._emitFiring(sourceId);
+    }
+
+    /**
+     * Emit the firing-event signal for a procedural fire so
+     * the canvas flashes the source. Mirrors the inline
+     * _onFiring emission on the pattern-dispatch path, with a
+     * resolved kind so a curve or trigger calling playNote in
+     * a future collision-callback path flashes correctly too;
+     * defaults to "sprite" since onTick (the only live call
+     * site today) is sprite-only. absoluteFractional is 0 —
+     * a procedural fire has no beat-point position, and the
+     * sprite flash ignores the field anyway. No-op when no
+     * subscriber is attached; a subscriber throw is caught and
+     * logged so it can't destabilise the audio path that
+     * already completed.
+     *
+     * @param {string} sourceId
+     */
+    _emitFiring(sourceId) {
+        if (this._onFiring === null) return;
+        const source = this._findSourceById(sourceId);
+        /** @type {"curve" | "sprite"} */
+        let kind = "sprite";
+        if (source !== null && this._scene !== null) {
+            if (Array.isArray(this._scene.curves)
+                && this._scene.curves.includes(source)) {
+                kind = "curve";
+            }
+        }
+        try {
+            this._onFiring({
+                sourceId,
+                kind,
+                absoluteFractional: 0,
+                audioTime: 0,
+            });
+        } catch (err) {
+            console.warn(
+                "[firing] onFiring subscriber threw for procedural fire " +
+                sourceId + ":",
+                err,
+            );
+        }
     }
 
     /**
