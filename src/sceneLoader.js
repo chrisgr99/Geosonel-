@@ -88,6 +88,27 @@ let calibratedOffset = null;
  */
 
 export class SceneLoader {
+    constructor() {
+        /**
+         * Diagnostic print sink exposed to behaviours.js as the
+         * global `print(...)`. Defaults to a no-op so the loader
+         * runs headless; main.js wires it to the message area via
+         * setPrint. See executeScript for how it reaches user code.
+         * @type {(...args: any[]) => void}
+         */
+        this._print = () => {};
+    }
+
+    /**
+     * Set the diagnostic print sink that behaviours.js can call
+     * as print(...). Called once from main.js with a writer that
+     * formats its arguments into the GXW message area.
+     * @param {(...args: any[]) => void} fn
+     */
+    setPrint(fn) {
+        this._print = typeof fn === "function" ? fn : () => {};
+    }
+
     /**
      * Load a Scene from the bundle's scene.json and
      * behaviors.js files.
@@ -136,7 +157,7 @@ export class SceneLoader {
         //        it is pre-filled with the defaults and read
         //        back after execution.
         const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
-        const execResult = executeScript(strippedSource, functionNames, scoreGlobal);
+        const execResult = executeScript(strippedSource, functionNames, scoreGlobal, this._print);
         if (!execResult.ok) {
             return errorResult(execResult.error);
         }
@@ -424,9 +445,13 @@ function splitLabelledStatements(ast, source) {
  * @param {string} source
  * @param {string[]} functionNames
  * @param {any} scoreGlobal  The `score` object exposed to behaviours.js.
+ * @param {(...args: any[]) => void} [printFn]  Diagnostic sink exposed to
+ *   behaviours.js as the global print(...); defaults to a no-op. Passed as a
+ *   Function parameter (not prepended to the source) so it does not shift
+ *   user line numbers for error reporting.
  * @returns {{ok: true, functions: Object<string, Function>} | {ok: false, error: string}}
  */
-function executeScript(source, functionNames, scoreGlobal) {
+function executeScript(source, functionNames, scoreGlobal, printFn) {
     const returnObjectEntries = functionNames
         .map((n) => `${JSON.stringify(n)}: typeof ${n} === "function" ? ${n} : null`)
         .join(", ");
@@ -439,7 +464,7 @@ function executeScript(source, functionNames, scoreGlobal) {
     let fn;
     try {
         // eslint-disable-next-line no-new-func
-        fn = new Function("score", body);
+        fn = new Function("score", "print", body);
     } catch (err) {
         // Acorn already caught syntax errors at parse time, but
         // belt-and-braces in case the new Function path catches
@@ -452,7 +477,7 @@ function executeScript(source, functionNames, scoreGlobal) {
 
     let raw;
     try {
-        raw = fn(scoreGlobal);
+        raw = fn(scoreGlobal, typeof printFn === "function" ? printFn : () => {});
     } catch (err) {
         return {
             ok: false,

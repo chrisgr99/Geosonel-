@@ -862,6 +862,21 @@ async function main() {
 
     // --- Scene loader ---
     const sceneLoader = new SceneLoader();
+    // Expose print(...) to behaviours.js, writing its formatted
+    // arguments to the message area. A diagnostic the composer
+    // can drop into any callback to trace values.
+    sceneLoader.setPrint((...args) => {
+        const text = args.map((a) => {
+            if (typeof a === "string") return a;
+            if (a === null) return "null";
+            if (a === undefined) return "undefined";
+            if (typeof a === "object") {
+                try { return JSON.stringify(a); } catch { return String(a); }
+            }
+            return String(a);
+        }).join(" ");
+        messages.write(text === "" ? "(print)" : text, "info");
+    });
 
     /**
      * Load the current score's scene.json and behaviours.js,
