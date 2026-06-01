@@ -4636,13 +4636,47 @@ export class Canvas {
             return;
         }
         const triggers = this._scene.triggers;
+        const hasTriggers = Array.isArray(triggers) && triggers.length > 0;
         const now = performance.now();
         const dtRaw = this._lastCollisionTime !== null
             ? (now - this._lastCollisionTime) / 1000
             : 0;
         this._lastCollisionTime = now;
-        if (!Array.isArray(triggers) || triggers.length === 0) {
-            // No targets this commit; drop stale collider history.
+        // Curve beat-point markers are collision targets too,
+        // alongside triggers. Precompute each marker's current
+        // canvas position once per frame: the curve sample point
+        // plus the curve's runtime offset, matching how markers
+        // are drawn (under a context translate of the same
+        // offset, so a moving curve's markers move with it). Each
+        // marker is keyed `${curveId}#${index}` for the crossing
+        // test; marker indices are stable between the refreshes
+        // (_refreshCurveMarkerPositions, on setScene / strudel
+        // status changes) that rebuild the position arrays, so a
+        // changed marker set simply re-seeds the stored sign
+        // rather than misfiring.
+        /** @type {Array<{key: string, curveId: string, t: number, x: number, y: number}>} */
+        const markerTargets = [];
+        for (const curve of this._scene.curves) {
+            if (curve === null || typeof curve.id !== "string") continue;
+            const ts = this._curveMarkerPositions.get(curve.id);
+            if (ts === undefined || ts.length === 0) continue;
+            const off = this._simulation.getCurveRuntimeOffset(curve.id);
+            const odx = off !== null ? off.dx : 0;
+            const ody = off !== null ? off.dy : 0;
+            for (let i = 0; i < ts.length; i++) {
+                const sample = sampleCurve(curve.shape, ts[i]);
+                if (sample === null) continue;
+                markerTargets.push({
+                    key: curve.id + "#" + i,
+                    curveId: curve.id,
+                    t: ts[i],
+                    x: sample.x + odx,
+                    y: sample.y + ody,
+                });
+            }
+        }
+        if (!hasTriggers && markerTargets.length === 0) {
+            // No targets at all; drop stale collider history.
             if (this._collisionPrev.size > 0) this._collisionPrev.clear();
             return;
         }
@@ -4730,7 +4764,7 @@ export class Canvas {
                     teleported = true;
                 }
             }
-            for (const trig of triggers) {
+            for (const trig of (hasTriggers ? triggers : [])) {
                 if (trig === null || typeof trig.id !== "string") continue;
                 const px = typeof trig.x === "number" ? trig.x : 0;
                 const py = typeof trig.y === "number" ? trig.y : 0;
@@ -4766,6 +4800,44 @@ export class Canvas {
                 // the markFiredTrigger hook wired for this path.
                 if (res !== null && typeof res === "object" && res.beenHitFired) {
                     this.markFiredTrigger(trig.id);
+                }
+            }
+            // Curve beat-point markers as targets. The same
+            // signed-side crossing test as triggers, with two
+            // differences: the self-fire exclusion (a curve's
+            // own cursor passing over its own markers fires
+            // neither callback — only other colliders' cursors
+            // hit a curve's markers), and a struck marker flashes
+            // yellow via markFiredCurveBeat, the same hook the
+            // pattern-firing path uses, keyed by the marker's t.
+            // dispatchCollision resolves a "curve" target through
+            // the curve's canBeHit / beenHitFunction fields.
+            for (const m of markerTargets) {
+                if (col.kind === "curve" && col.id === m.curveId) continue;
+                const side = abx * (m.y - col.ay) - aby * (m.x - col.ax);
+                const sign = side > 0 ? 1 : (side < 0 ? -1 : 0);
+                sides.set(m.key, sign);
+                if (teleported || prev === undefined || dt === 0) continue;
+                const prevSign = prev.sides.get(m.key);
+                if (prevSign === undefined || prevSign === 0 || sign === 0) continue;
+                if (prevSign === sign) continue;
+                if (len2 === 0) continue;
+                const u = ((m.x - col.ax) * abx + (m.y - col.ay) * aby) / len2;
+                if (u < 0 || u > 1) continue;
+                const footX = col.ax + u * abx;
+                const footY = col.ay + u * aby;
+                const pFootX = prev.seg.ax + u * (prev.seg.bx - prev.seg.ax);
+                const pFootY = prev.seg.ay + u * (prev.seg.by - prev.seg.ay);
+                const hitSpeed = Math.hypot(footX - pFootX, footY - pFootY) / dt;
+                const res = this._simulation.dispatchCollision({
+                    colliderId: col.id,
+                    colliderKind: col.kind,
+                    targetId: m.curveId,
+                    targetKind: "curve",
+                    hitSpeed,
+                });
+                if (res !== null && typeof res === "object" && res.beenHitFired) {
+                    this.markFiredCurveBeat(m.curveId, m.t);
                 }
             }
             next.set(col.id, {
