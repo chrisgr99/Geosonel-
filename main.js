@@ -606,6 +606,13 @@ async function main() {
             firingEngine.fireImmediateNote(sourceId, spec);
         } else if (spec.type === "sound") {
             firingEngine.fireImmediateSound(sourceId, spec);
+        } else if (spec.type === "value") {
+            // A raw strudel Hap value replayed by a curve
+            // beenHit's ctx.playMarker: route through the same
+            // voice + output path the pattern uses so the struck
+            // marker sounds like the curve firing that beat.
+            firingEngine.fireImmediateValue(
+                sourceId, spec.value, spec.duration, spec.amplitude);
         }
     });
 

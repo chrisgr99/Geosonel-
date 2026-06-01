@@ -535,6 +535,25 @@ export class Canvas {
         this._curveMarkerPositions = new Map();
 
         /**
+         * Cached pattern-event marker VALUES per curve, keyed
+         * by curve id and index-aligned with the same curve's
+         * entry in _curveMarkerPositions. Each value is the
+         * strudel Hap value the curve's cyclePattern assigns at
+         * that beat position (e.g. {s:"bd"} or {note:60,
+         * s:"piano"}) — the native superdough value object.
+         * Populated alongside the positions in
+         * _refreshCurveMarkerPositions so the two arrays share
+         * indices: marker i on curve C is at positions[i] and
+         * carries values[i]. Consumed by the collision detector
+         * to hand a struck marker's value to the curve's beenHit
+         * (ctx.hitValue / ctx.playMarker); the draw path ignores
+         * it. Cleared and rebuilt on the same refreshes as the
+         * positions map.
+         * @type {Map<string, any[]>}
+         */
+        this._curveMarkerValues = new Map();
+
+        /**
          * Transport reference. Used to subscribe to the
          * play and rewind events so the canvas can run a
          * continuous render loop during playback and
@@ -1907,12 +1926,24 @@ export class Canvas {
      */
     _refreshCurveMarkerPositions() {
         this._curveMarkerPositions.clear();
+        this._curveMarkerValues.clear();
         if (this._scene === null) return;
         for (const curve of this._scene.curves) {
             if (typeof curve.id !== "string" || curve.id.length === 0) continue;
             if (typeof curve.cyclePattern !== "string" || curve.cyclePattern.length === 0) continue;
             const result = parsePatternToPositions(curve.cyclePattern);
             if (!result.ok || result.positions.length === 0) continue;
+            // The in-cycle Haps, in the same order as
+            // result.positions (parsePatternToPositions filters
+            // both by begin in [0, 1) in one pass), so a Hap's
+            // value lines up with its begin position. Iterating
+            // these rather than result.positions lets the marker
+            // value travel alongside the position into the
+            // aligned values array below.
+            const inRange = result.haps.filter(
+                (h) => h.begin >= 0 && h.begin < 1,
+            );
+            if (inRange.length === 0) continue;
             // Lay out patternRepeats copies of the pattern
             // around the curve. Each repeat occupies 1/N of
             // the curve's parameter range; within a repeat,
@@ -1926,12 +1957,16 @@ export class Canvas {
             ));
             /** @type {number[]} */
             const positions = [];
+            /** @type {any[]} */
+            const values = [];
             for (let i = 0; i < repeats; i++) {
-                for (const p of result.positions) {
-                    positions.push((i + p) / repeats);
+                for (const h of inRange) {
+                    positions.push((i + h.begin) / repeats);
+                    values.push(h.value);
                 }
             }
             this._curveMarkerPositions.set(curve.id, positions);
+            this._curveMarkerValues.set(curve.id, values);
         }
     }
 
@@ -4654,12 +4689,13 @@ export class Canvas {
         // status changes) that rebuild the position arrays, so a
         // changed marker set simply re-seeds the stored sign
         // rather than misfiring.
-        /** @type {Array<{key: string, curveId: string, t: number, x: number, y: number}>} */
+        /** @type {Array<{key: string, curveId: string, t: number, x: number, y: number, value: any}>} */
         const markerTargets = [];
         for (const curve of this._scene.curves) {
             if (curve === null || typeof curve.id !== "string") continue;
             const ts = this._curveMarkerPositions.get(curve.id);
             if (ts === undefined || ts.length === 0) continue;
+            const vals = this._curveMarkerValues.get(curve.id);
             const off = this._simulation.getCurveRuntimeOffset(curve.id);
             const odx = off !== null ? off.dx : 0;
             const ody = off !== null ? off.dy : 0;
@@ -4672,6 +4708,7 @@ export class Canvas {
                     t: ts[i],
                     x: sample.x + odx,
                     y: sample.y + ody,
+                    value: vals !== undefined ? vals[i] : null,
                 });
             }
         }
@@ -4835,6 +4872,7 @@ export class Canvas {
                     targetId: m.curveId,
                     targetKind: "curve",
                     hitSpeed,
+                    markerValue: m.value,
                 });
                 if (res !== null && typeof res === "object" && res.beenHitFired) {
                     this.markFiredCurveBeat(m.curveId, m.t);

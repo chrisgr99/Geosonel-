@@ -953,9 +953,11 @@ export class Simulation {
          * sprite's onTick (and, later, collision) callbacks via
          * the context's playNote / playSound. Called with
          * (sourceId, spec) where spec is a plain object tagged
-         * { type: "note" | "sound", ... }; the wiring in main.js
-         * routes a note spec to the firing engine's
-         * fireImmediateNote and a sound spec to fireImmediateSound.
+         * { type: "note" | "sound" | "value", ... }; the wiring in
+         * main.js routes a note spec to the firing engine's
+         * fireImmediateNote, a sound spec to fireImmediateSound,
+         * and a value spec (a raw strudel Hap value, used by a
+         * curve beenHit's ctx.playMarker) to fireImmediateValue.
          * Null until setAudioSink runs, so the context methods
          * no-op and the simulation still runs headless. The
          * simulation holds no audio knowledge beyond forwarding
@@ -1024,7 +1026,7 @@ export class Simulation {
      *
      * @param {{colliderId: string, colliderKind: "curve" | "sprite",
      *          targetId: string, targetKind: "curve" | "trigger" | "sprite",
-     *          hitSpeed: number}} event
+     *          hitSpeed: number, markerValue?: any}} event
      * @returns {{beenHitFired: boolean, hasHitFired: boolean}}  Whether each
      *     callback actually ran (gate passed + function resolved). The canvas
      *     uses beenHitFired to flash a struck trigger.
@@ -1036,14 +1038,21 @@ export class Simulation {
         }
         const hitSpeed = (typeof event.hitSpeed === "number"
             && Number.isFinite(event.hitSpeed)) ? event.hitSpeed : 0;
+        // The struck marker's strudel value, present only for a
+        // curve-marker hit; undefined for a trigger (or any
+        // future sprite) target. Passed to the beenHit side
+        // only, where self is the marker-owning curve, so
+        // ctx.hitValue / ctx.playMarker read and sound through
+        // that curve's own voice rather than the collider's.
+        const markerValue = event.markerValue;
         // Target's beenHit first, then the collider's hasHit —
         // the firing order the collision model specifies.
         const beenHitFired = this._runCollisionCallback(
             "beenHit", event.targetId, event.targetKind,
-            event.colliderId, event.colliderKind, hitSpeed);
+            event.colliderId, event.colliderKind, hitSpeed, markerValue);
         const hasHitFired = this._runCollisionCallback(
             "hasHit", event.colliderId, event.colliderKind,
-            event.targetId, event.targetKind, hitSpeed);
+            event.targetId, event.targetKind, hitSpeed, undefined);
         return { beenHitFired, hasHitFired };
     }
 
@@ -1063,10 +1072,15 @@ export class Simulation {
      *
      * The context exposes reads — own id and kind, the other
      * object's id and kind, the transport (beat, time, bpm),
-     * and hitSpeed — and the two emitters playNote / playSound,
+     * and hitSpeed — the two emitters playNote / playSound,
      * which forward to the same audio sink the patterns and
-     * onTick use, keyed by this object's id so the sound
-     * carries this object's voice. No rate limiting is applied
+     * onTick use, keyed by the firing object's id so the sound
+     * carries this object's voice — and, on the beenHit side of
+     * a curve-marker hit, the struck marker's strudel value as
+     * the read hitValue (a copy, or null off the marker path)
+     * plus playMarker(amplitude?, duration?), which sounds that
+     * marker's own pattern event through this curve's voice (the
+     * same path the pattern uses). No rate limiting is applied
      * on the collision path (collisions are edge-triggered).
      *
      * A throw is caught, this object's slot is disabled for the
@@ -1080,10 +1094,13 @@ export class Simulation {
      * @param {string} otherId
      * @param {string} otherKind
      * @param {number} hitSpeed
+     * @param {any} [markerValue]  The struck marker's strudel value on a
+     *     curve-marker beenHit; undefined otherwise. Surfaced as ctx.hitValue
+     *     and replayed by ctx.playMarker.
      * @returns {boolean}  True if the callback function was invoked
      *     (gate enabled, name resolved, not session-disabled), else false.
      */
-    _runCollisionCallback(slot, selfId, selfKind, otherId, otherKind, hitSpeed) {
+    _runCollisionCallback(slot, selfId, selfKind, otherId, otherKind, hitSpeed, markerValue) {
         if (this._scene === null) return false;
         if (typeof selfId !== "string" || selfId === "") return false;
         const obj = this._findSceneObject(selfId);
@@ -1110,6 +1127,14 @@ export class Simulation {
             otherId,
             otherKind,
             hitSpeed,
+            // The struck marker's strudel value on a curve-marker
+            // beenHit, handed back as a shallow copy so the author
+            // can read or reshape it without corrupting the cached
+            // marker value the canvas reuses. null when this hit
+            // carried no marker value (a trigger beenHit, or the
+            // hasHit side).
+            hitValue: (markerValue !== null && typeof markerValue === "object"
+                && !Array.isArray(markerValue)) ? { ...markerValue } : null,
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -1151,6 +1176,32 @@ export class Simulation {
                 self._audioSink(selfId, {
                     type: "sound",
                     bank, sample, amplitude,
+                });
+            },
+            /**
+             * Sound the struck marker's OWN pattern event, the
+             * strudel value the curve's cyclePattern assigns at
+             * that beat position, through this curve's voice — so
+             * it sounds exactly like the curve firing that beat.
+             * A drum value plays the drum, a pitched value plays
+             * the note; no branching, the value carries its own
+             * type. Both args optional: amplitude (0..1) overrides
+             * the value's gain (e.g. map ctx.hitSpeed to loudness),
+             * duration is the note window in seconds (pitched
+             * values only; defaults to the immediate-fire default).
+             * No-op off the curve-marker beenHit path (no marker
+             * value to play) or when the sink isn't wired.
+             * @param {number} [amplitude]
+             * @param {number} [duration]
+             */
+            playMarker(amplitude, duration) {
+                if (self._audioSink === null) return;
+                if (markerValue === null || typeof markerValue !== "object") return;
+                self._audioSink(selfId, {
+                    type: "value",
+                    value: markerValue,
+                    amplitude,
+                    duration,
                 });
             },
         };

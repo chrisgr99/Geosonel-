@@ -1009,6 +1009,80 @@ export class PatternFiringEngine {
     }
 
     /**
+     * Fire a raw strudel Hap value immediately, dispatched a few
+     * milliseconds ahead of the current audio time, through the
+     * SAME voice + output path the pattern uses. The primitive
+     * behind a curve beenHit's ctx.playMarker: it sounds a struck
+     * marker's own pattern event (the value the cyclePattern
+     * assigned at that beat position) so it plays exactly as the
+     * curve would have fired it.
+     *
+     * The value is the native superdough Hap value — {s:"bd"},
+     * {note:60}, {note:"c4", s:"piano", gain:0.7}, etc. It carries
+     * its own type, so a drum value plays the drum and a pitched
+     * value plays the note with no branching here. On the
+     * superdough path the value runs through applyVoiceInjection
+     * (filling the source's per-object / global voice into a
+     * missing s or bank, just like the pattern dispatch) and
+     * applyVoiceEnvelope before play(); on the MIDI path it goes
+     * straight to midiSender.send (a drum value with no note is
+     * silent there, matching the pattern path).
+     *
+     * amplitude, when a finite number, overrides the value's gain
+     * (the typical use is mapping a collision's hitSpeed to
+     * loudness). durationSeconds bounds the note window; it
+     * defaults to the immediate-fire default and is passed to the
+     * output as the play / note-off length.
+     *
+     * The incoming value is shallow-copied before any field is
+     * set, so the cached marker value the canvas reuses is never
+     * mutated. No-ops when the engine isn't loaded, the audio
+     * context is missing, or the value isn't a usable object.
+     *
+     * @param {string} sourceId  Id of the curve whose marker was struck.
+     * @param {any} value  The struck marker's strudel Hap value.
+     * @param {number} [durationSeconds]
+     * @param {number} [amplitude]
+     */
+    fireImmediateValue(sourceId, value, durationSeconds, amplitude) {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) return;
+        if (this._runtime.status !== "loaded") return;
+        const audioCtx = this._runtime.audioContext;
+        if (audioCtx === null) return;
+        const fireTime = audioCtx.currentTime + IMMEDIATE_FIRE_LOOKAHEAD_SECONDS;
+        const duration = (typeof durationSeconds === "number"
+            && Number.isFinite(durationSeconds) && durationSeconds > 0)
+            ? durationSeconds
+            : DEFAULT_PLAYNOTE_DURATION_SECONDS;
+
+        // Shallow-copy so an amplitude override (and the voice
+        // injection below) never mutates the canvas's cached
+        // marker value.
+        /** @type {any} */
+        const out = { ...value };
+        if (typeof amplitude === "number" && Number.isFinite(amplitude)) {
+            out.gain = amplitude;
+        }
+
+        if (this._outputMode === "superdough") {
+            const source = this._findSourceById(sourceId);
+            const globalVoice = this._scene !== null ? this._scene.voiceSuperdough : null;
+            const injected = applyVoiceInjection(out, source, globalVoice);
+            if (typeof this._runtime.ensureSamplesForVoice === "function") {
+                this._runtime.ensureSamplesForVoice(injected.s, injected.bank);
+            }
+            const voiced = applyVoiceEnvelope(injected);
+            this._runtime.play(voiced, fireTime, duration);
+        } else {
+            this._midiSender.send(out, fireTime, duration);
+        }
+
+        // Flash the source, same as the note / sound / pattern
+        // paths. See fireImmediateNote for the rationale.
+        this._emitFiring(sourceId);
+    }
+
+    /**
      * Emit the firing-event signal for a procedural fire so
      * the canvas flashes the source. Mirrors the inline
      * _onFiring emission on the pattern-dispatch path, with a
