@@ -936,6 +936,19 @@ export class Simulation {
          */
         this._onTickDisabled = new Set();
         /**
+         * Keys of collision callback slots that threw and are
+         * therefore disabled for the rest of the session. A key
+         * is `${slot}:${objectId}`, e.g. "beenHit:TRG3" or
+         * "hasHit:SPR1", so an object's beenHit and hasHit are
+         * disabled independently. Mirrors _onTickDisabled: a
+         * throwing collision callback is caught, parked here so
+         * it isn't called again, and the error logged once.
+         * Cleared on every setScene, so a behaviours.js reload
+         * or any scene re-run re-enables the slot.
+         * @type {Set<string>}
+         */
+        this._collisionDisabled = new Set();
+        /**
          * Audio sink for procedural notes and sounds fired from a
          * sprite's onTick (and, later, collision) callbacks via
          * the context's playNote / playSound. Called with
@@ -988,6 +1001,212 @@ export class Simulation {
     }
 
     /**
+     * Dispatch a collision detected canvas-side. Fires the
+     * target's beenHit first, then the collider's hasHit,
+     * each only when that object enables the matching slot
+     * (canBeHit / canHit) and names a function that resolves
+     * in the scene's functionMap. Either callback is optional
+     * and independent.
+     *
+     * Called from the canvas's per-frame collision detection,
+     * NOT from the deterministic sim step, so collision timing
+     * is not replay-identical. That is acceptable because a
+     * callback firing is a pure side effect: it makes sound
+     * and reads state but never mutates simulation motion, so
+     * the deterministic retrace of position and velocity is
+     * preserved regardless of whether or exactly when a
+     * collision callback runs.
+     *
+     * Mute is intentionally NOT a gate: per the collision
+     * model, mute silences only a source's own self-firing,
+     * so a muted collider still collides and a muted target
+     * still gets its beenHit.
+     *
+     * @param {{colliderId: string, colliderKind: "curve" | "sprite",
+     *          targetId: string, targetKind: "curve" | "trigger" | "sprite",
+     *          hitSpeed: number}} event
+     * @returns {{beenHitFired: boolean, hasHitFired: boolean}}  Whether each
+     *     callback actually ran (gate passed + function resolved). The canvas
+     *     uses beenHitFired to flash a struck trigger.
+     */
+    dispatchCollision(event) {
+        if (this._scene === null) return { beenHitFired: false, hasHitFired: false };
+        if (event === null || typeof event !== "object") {
+            return { beenHitFired: false, hasHitFired: false };
+        }
+        const hitSpeed = (typeof event.hitSpeed === "number"
+            && Number.isFinite(event.hitSpeed)) ? event.hitSpeed : 0;
+        // Target's beenHit first, then the collider's hasHit —
+        // the firing order the collision model specifies.
+        const beenHitFired = this._runCollisionCallback(
+            "beenHit", event.targetId, event.targetKind,
+            event.colliderId, event.colliderKind, hitSpeed);
+        const hasHitFired = this._runCollisionCallback(
+            "hasHit", event.colliderId, event.colliderKind,
+            event.targetId, event.targetKind, hitSpeed);
+        return { beenHitFired, hasHitFired };
+    }
+
+    /**
+     * Run one collision callback slot on one object, if it is
+     * enabled and resolves, building the fresh context the
+     * callback reads and writes through.
+     *
+     * slot is "beenHit" or "hasHit". The gate boolean and the
+     * function-name field differ by slot: beenHit is gated by
+     * canBeHit and named by beenHitFunction; hasHit is gated
+     * by canHit and named by hasHitFunction. selfId/selfKind
+     * identify the object whose callback runs; otherId/
+     * otherKind identify the object on the other side of the
+     * collision (the collider for beenHit, the target for
+     * hasHit). Both ends see the same hitSpeed.
+     *
+     * The context exposes reads — own id and kind, the other
+     * object's id and kind, the transport (beat, time, bpm),
+     * and hitSpeed — and the two emitters playNote / playSound,
+     * which forward to the same audio sink the patterns and
+     * onTick use, keyed by this object's id so the sound
+     * carries this object's voice. No rate limiting is applied
+     * on the collision path (collisions are edge-triggered).
+     *
+     * A throw is caught, this object's slot is disabled for the
+     * rest of the session (keyed `${slot}:${selfId}`), and the
+     * first error is logged once to the console and the message
+     * area, mirroring onTick.
+     *
+     * @param {"beenHit" | "hasHit"} slot
+     * @param {string} selfId
+     * @param {string} selfKind
+     * @param {string} otherId
+     * @param {string} otherKind
+     * @param {number} hitSpeed
+     * @returns {boolean}  True if the callback function was invoked
+     *     (gate enabled, name resolved, not session-disabled), else false.
+     */
+    _runCollisionCallback(slot, selfId, selfKind, otherId, otherKind, hitSpeed) {
+        if (this._scene === null) return false;
+        if (typeof selfId !== "string" || selfId === "") return false;
+        const obj = this._findSceneObject(selfId);
+        if (obj === null) return false;
+        const gateField = slot === "beenHit" ? "canBeHit" : "canHit";
+        const fnField = slot === "beenHit" ? "beenHitFunction" : "hasHitFunction";
+        if (obj[gateField] !== true) return false;
+        const name = obj[fnField];
+        if (typeof name !== "string" || name === "") return false;
+        const fn = this._scene.functionMap[name];
+        if (typeof fn !== "function") return false;
+        const disableKey = slot + ":" + selfId;
+        if (this._collisionDisabled.has(disableKey)) return false;
+
+        const self = this;
+        const simTime = this._simTime;
+        const bpm = this._transport.bpm;
+        const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
+        const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
+
+        const ctx = {
+            id: selfId,
+            kind: selfKind,
+            otherId,
+            otherKind,
+            hitSpeed,
+            beat,
+            time: simTime,
+            bpm: bpmNum,
+            /**
+             * Fire a pitched note immediately through the active
+             * audio output, the moment the collision callback
+             * runs. Same positional args as the onTick emitter:
+             * instrument sound name (superdough only), MIDI note
+             * number or name, amplitude 0..1, total duration in
+             * seconds, articulation in seconds. Routed through
+             * the firing engine's fireImmediateNote, keyed by
+             * this object's id so the note carries this object's
+             * voice. No collision-path rate limiting.
+             * @param {string} [sound]
+             * @param {number|string} [note]
+             * @param {number} [amplitude]
+             * @param {number} [duration]
+             * @param {number} [articulation]
+             */
+            playNote(sound, note, amplitude, duration, articulation) {
+                if (self._audioSink === null) return;
+                self._audioSink(selfId, {
+                    type: "note",
+                    sound, note, amplitude, duration, articulation,
+                });
+            },
+            /**
+             * Fire a sample immediately through the active audio
+             * output. Positional args: bank name, sample name,
+             * amplitude 0..1. Silent under MIDI (use playNote
+             * with a percussion note number for MIDI drums). No
+             * collision-path rate limiting.
+             * @param {string} [bank]
+             * @param {string} [sample]
+             * @param {number} [amplitude]
+             */
+            playSound(bank, sample, amplitude) {
+                if (self._audioSink === null) return;
+                self._audioSink(selfId, {
+                    type: "sound",
+                    bank, sample, amplitude,
+                });
+            },
+        };
+
+        try {
+            fn(ctx);
+        } catch (err) {
+            this._collisionDisabled.add(disableKey);
+            const detail = (err instanceof Error && typeof err.message === "string")
+                ? err.message
+                : String(err);
+            const line = `${slot} disabled for ${selfId}: ${detail}`;
+            console.error("[collision] " + line, err);
+            if (this._messageLogger !== null) {
+                try {
+                    this._messageLogger(line, "error");
+                } catch (_loggerErr) {
+                    // A logger fault must never destabilise the
+                    // simulation; the console line above stands.
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Find a live scene object (curve, trigger, or sprite) by
+     * id, scanning all three arrays. Returns null when no
+     * scene is loaded or the id isn't present. Used by the
+     * collision dispatch to read the firing object's gate and
+     * function-name fields. Kept separate from the firing
+     * engine's own _findSourceById since the simulation owns
+     * the scene reference here.
+     *
+     * @param {string} id
+     * @returns {any}
+     */
+    _findSceneObject(id) {
+        if (this._scene === null) return null;
+        const arrays = [
+            this._scene.curves,
+            this._scene.triggers,
+            this._scene.sprites,
+        ];
+        for (const arr of arrays) {
+            if (!Array.isArray(arr)) continue;
+            for (const obj of arr) {
+                if (obj !== null && typeof obj === "object" && obj.id === id) {
+                    return obj;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * Update the scene reference. Reconciles per-source
      * runtime state by id across curves, triggers, and
      * sprites. Existing ids preserve their state so
@@ -1012,9 +1231,10 @@ export class Simulation {
      */
     setScene(scene) {
         // A scene re-run (behaviours.js reload, inspector or
-        // canvas edit) re-enables any onTick that a throw
-        // disabled earlier this session.
+        // canvas edit) re-enables any onTick or collision
+        // callback that a throw disabled earlier this session.
         this._onTickDisabled.clear();
+        this._collisionDisabled.clear();
         this._scene = scene;
         if (scene === null) {
             this._curveState.clear();
