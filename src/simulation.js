@@ -268,6 +268,22 @@ const SIM_DT = 1 / 240;
  */
 const FORCE_EPSILON = 1e-6;
 
+/**
+ * Minimum sim-time interval, in seconds, between procedural
+ * audio fires (ctx.playNote / ctx.playSound) from a single
+ * sprite's callbacks. A safety throttle against a callback
+ * that fires every sub-step (~240 Hz) flooding the output:
+ * the second and later fires within this window are dropped.
+ * Set to a 64th note at 120 BPM (a quarter note is 0.5 s, so
+ * a 64th is 0.5 / 16 = 0.03125 s) — already very fast, a
+ * starting value to tune by ear. Gated on _simTime (the
+ * deterministic sim clock) and reset on rewind / home-teleport
+ * alongside the per-sprite RNG, so a replay throttles
+ * identically. Shared across playNote and playSound: the cap
+ * is on a sprite's total audio messages, not per kind.
+ */
+const MIN_AUDIO_FIRE_INTERVAL = 0.03125;
+
 // The motion feel knobs — drag (damping), jitter (anti-trap
 // agitation), and coast (minimum coast speed) — are score-wide
 // and set from behaviours.js via the `score.kinematics` object;
@@ -819,6 +835,17 @@ class SpriteRuntimeState {
             typeof sprite.id === "string" ? sprite.id : "");
         /** @type {number} */
         this._rngState = this._rngSeed;
+
+        // Throttle clock for procedural audio fired from this
+        // sprite's callbacks (ctx.playNote / ctx.playSound). Holds
+        // the _simTime of the last fire; a fresh fire is dropped
+        // unless at least MIN_AUDIO_FIRE_INTERVAL seconds of sim
+        // time have passed since it. -Infinity lets the first fire
+        // through. Reset to -Infinity on rewind and home-teleport
+        // (the same points _rngState resets) so a replay fires
+        // identically.
+        /** @type {number} */
+        this._lastAudioFireTime = -Infinity;
     }
 }
 
@@ -908,6 +935,21 @@ export class Simulation {
          * @type {Set<string>}
          */
         this._onTickDisabled = new Set();
+        /**
+         * Audio sink for procedural notes and sounds fired from a
+         * sprite's onTick (and, later, collision) callbacks via
+         * the context's playNote / playSound. Called with
+         * (sourceId, spec) where spec is a plain object tagged
+         * { type: "note" | "sound", ... }; the wiring in main.js
+         * routes a note spec to the firing engine's
+         * fireImmediateNote and a sound spec to fireImmediateSound.
+         * Null until setAudioSink runs, so the context methods
+         * no-op and the simulation still runs headless. The
+         * simulation holds no audio knowledge beyond forwarding
+         * the spec.
+         * @type {((sourceId: string, spec: any) => void) | null}
+         */
+        this._audioSink = null;
     }
 
     /**
@@ -931,6 +973,18 @@ export class Simulation {
      */
     setMessageLogger(logger) {
         this._messageLogger = typeof logger === "function" ? logger : null;
+    }
+
+    /**
+     * Set the audio sink the onTick context's playNote /
+     * playSound forward to. Signature (sourceId, spec); main.js
+     * wires it to the firing engine's immediate-fire methods.
+     * Called once at startup; optional — the context's audio-
+     * firing methods no-op when it's null.
+     * @param {((sourceId: string, spec: any) => void) | null} sink
+     */
+    setAudioSink(sink) {
+        this._audioSink = typeof sink === "function" ? sink : null;
     }
 
     /**
@@ -1426,6 +1480,7 @@ export class Simulation {
             state.flipX = 1;
             state.flipY = 1;
             state._rngState = state._rngSeed;
+            state._lastAudioFireTime = -Infinity;
         }
     }
 
@@ -2221,6 +2276,7 @@ export class Simulation {
         const px = imageSignalsFromOKLCh(oklch);
 
         const simTime = this._simTime;
+        const self = this;
         const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
         const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
 
@@ -2278,6 +2334,56 @@ export class Simulation {
                     state.vy += (fy / mass) * dt;
                     netFy += fy;
                 }
+            },
+            /**
+             * Fire a pitched note immediately through the active
+             * audio output, the moment this callback runs (not
+             * beat-quantized). Positional args: instrument sound
+             * name (superdough only; ignored on MIDI), MIDI note
+             * number (or note name), amplitude in 0..1, total
+             * duration in seconds, and articulation in seconds
+             * (the hold before damping begins; defaults to the
+             * full duration). Per-sprite rate-limited to one fire
+             * per MIN_AUDIO_FIRE_INTERVAL of sim time, shared with
+             * playSound, so an ungated call can't flood the
+             * output. The actual audio mapping (gate, release,
+             * voice, output path) lives in the firing engine's
+             * fireImmediateNote; this just forwards a spec.
+             * @param {string} [sound]
+             * @param {number|string} [note]
+             * @param {number} [amplitude]
+             * @param {number} [duration]
+             * @param {number} [articulation]
+             */
+            playNote(sound, note, amplitude, duration, articulation) {
+                if (self._audioSink === null) return;
+                if (simTime - state._lastAudioFireTime < MIN_AUDIO_FIRE_INTERVAL) return;
+                state._lastAudioFireTime = simTime;
+                self._audioSink(sprite.id, {
+                    type: "note",
+                    sound, note, amplitude, duration, articulation,
+                });
+            },
+            /**
+             * Fire a sample immediately through the active audio
+             * output. Positional args: sample bank name (e.g.
+             * "RolandTR909"; omit for the default kit), sample
+             * name (e.g. "bd"), and amplitude in 0..1. Silent
+             * when MIDI is the active output — use playNote with a
+             * percussion note number for drums on MIDI. Shares
+             * playNote's per-sprite rate limit.
+             * @param {string} [bank]
+             * @param {string} [sample]
+             * @param {number} [amplitude]
+             */
+            playSound(bank, sample, amplitude) {
+                if (self._audioSink === null) return;
+                if (simTime - state._lastAudioFireTime < MIN_AUDIO_FIRE_INTERVAL) return;
+                state._lastAudioFireTime = simTime;
+                self._audioSink(sprite.id, {
+                    type: "sound",
+                    bank, sample, amplitude,
+                });
             },
         };
 
@@ -2569,6 +2675,7 @@ export class Simulation {
                     state.flipX = 1;
                     state.flipY = 1;
                     state._rngState = state._rngSeed;
+                    state._lastAudioFireTime = -Infinity;
                 } else {
                     // Continuous wrap: scale only the BASE
                     // layer by the ratio of this cycle's speed

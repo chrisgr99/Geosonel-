@@ -588,6 +588,27 @@ async function main() {
     canvas.setFiringEngine(firingEngine);
     firingEngine.setCanvas(canvas);
 
+    // Procedural audio sink. A sprite's onTick callback can
+    // fire an immediate note or sample through ctx.playNote /
+    // ctx.playSound (Section 30); the simulation forwards each
+    // as a typed spec to this sink, which routes it to the
+    // firing engine's immediate-fire methods so a callback note
+    // sounds through the same output path (MIDI or superdough)
+    // as that object's patterns. Notes fire on either output;
+    // sounds are silent under MIDI by design (playNote with a
+    // percussion note number covers drums on MIDI). The
+    // per-sprite rate limit that guards against a tick-rate
+    // flood lives on the simulation side, before this sink is
+    // called.
+    simulation.setAudioSink((sourceId, spec) => {
+        if (spec === null || typeof spec !== "object") return;
+        if (spec.type === "note") {
+            firingEngine.fireImmediateNote(sourceId, spec);
+        } else if (spec.type === "sound") {
+            firingEngine.fireImmediateSound(sourceId, spec);
+        }
+    });
+
     // Wire the firing-event subscription so the canvas
     // flashes the relevant colored element yellow each
     // time the engine dispatches an audio event. Curves

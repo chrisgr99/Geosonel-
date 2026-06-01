@@ -212,6 +212,38 @@ const DEFAULT_LATE_REFRESH_WINDOW_SECONDS = 0.03;
 const DEFAULT_LATE_REFRESH_WINDOW_SECONDS_SUPERDOUGH = 0.1;
 
 /**
+ * Default total duration in seconds for a procedural
+ * playNote call that omits the duration argument. The
+ * duration is the whole window the note occupies, envelope
+ * tail included; a short default keeps an unspecified note
+ * from ringing long. Tunable by feel; a procedural note is
+ * not beat-quantized, so this is wall-clock seconds rather
+ * than a musical division.
+ */
+const DEFAULT_PLAYNOTE_DURATION_SECONDS = 0.25;
+
+/**
+ * Forward scheduling lookahead in seconds for an immediate
+ * procedural fire (fireImmediateNote / fireImmediateSound).
+ * The dispatch time is currentTime plus this, never exactly
+ * currentTime. superdough lets Web Audio schedule an event
+ * sample-accurately at its timestamp, but a timestamp at or
+ * behind currentTime gives the audio engine no headroom: the
+ * event competes with whatever JS-scheduler jitter exists at
+ * that instant and the occasional note is dropped (the
+ * symptom of a missed note at random). The pattern path never
+ * hits this because its event times sit ahead on the cycle
+ * grid; the play() wrapper's past-time clamp also pins a late
+ * time to currentTime, which is the same headroom-less case.
+ * 30ms comfortably clears a dropped frame and a typical Web
+ * Audio output buffer while staying well below the perceptual
+ * threshold for a non-quantized procedural note, so a motion-
+ * or collision-triggered note still reads as prompt. Bump it
+ * if drops persist on a given machine.
+ */
+const IMMEDIATE_FIRE_LOOKAHEAD_SECONDS = 0.03;
+
+/**
  * Debug flag for Pass 2 logging. When true, each Pass 2
  * refresh dispatch logs a one-line console message naming
  * the source, cycle index, fractional position, and the
@@ -769,6 +801,218 @@ export class PatternFiringEngine {
      */
     onFiring(cb) {
         this._onFiring = typeof cb === "function" ? cb : null;
+    }
+
+    /**
+     * Fire a single pitched note immediately, dispatched a few
+     * milliseconds ahead of the current audio time (see
+     * IMMEDIATE_FIRE_LOOKAHEAD_SECONDS) through whichever output
+     * mode is active. This is the procedural-note primitive behind the
+     * onTick context's ctx.playNote (Section 30); a later
+     * collision-callback path will reuse it. Unlike a
+     * cyclePattern's events it is NOT beat-quantized — it sounds
+     * the moment the callback fires — and it routes into the
+     * same output layer the patterns use, so a callback note
+     * sounds identical to that object's pattern notes.
+     *
+     * The spec carries the playNote arguments: sound (the
+     * superdough instrument name, ignored on MIDI), note (a
+     * MIDI number or note name), amplitude (0..1 gain), duration
+     * (the total note window in seconds), and articulation (the
+     * gate — how long the note holds before damping begins).
+     *
+     * Duration / articulation model. The duration is the whole
+     * window the note occupies. The gate is the articulation,
+     * defaulting to the full duration. On the superdough path
+     * the gate is the held length passed to play() and the
+     * release tail fills the remainder (duration minus gate),
+     * so the note sums back to the total duration; with no
+     * articulation the gate is the full duration and the
+     * instrument table's short release damps it, matching an
+     * ordinary pattern note. On the MIDI path the note-off
+     * fires at the gate and the external synth supplies its own
+     * release tail, so the beyond-gate portion isn't shaped
+     * here. Channel defaults to 1 (no channel argument yet).
+     *
+     * No-ops when the engine isn't loaded, the audio context is
+     * missing, the spec is malformed, or the note field is
+     * neither a finite number nor a non-empty string.
+     *
+     * @param {string} sourceId  Id of the object whose callback fired.
+     * @param {any} spec  { sound?, note, amplitude?, duration?, articulation? }.
+     */
+    fireImmediateNote(sourceId, spec) {
+        if (spec === null || typeof spec !== "object") return;
+        if (this._runtime.status !== "loaded") return;
+        const audioCtx = this._runtime.audioContext;
+        if (audioCtx === null) return;
+        // A small forward lookahead, not exactly currentTime, so
+        // superdough has scheduling headroom and doesn't drop the
+        // occasional note. Applied to MIDI too for parity; the
+        // few milliseconds are inaudible there.
+        const fireTime = audioCtx.currentTime + IMMEDIATE_FIRE_LOOKAHEAD_SECONDS;
+
+        // Pitch: a finite number is a MIDI note, a non-empty
+        // string is a note name; both output paths understand
+        // either. Anything else has nothing to play.
+        const rawNote = spec.note;
+        /** @type {number | string} */
+        let noteField;
+        if (typeof rawNote === "number" && Number.isFinite(rawNote)) {
+            noteField = rawNote;
+        } else if (typeof rawNote === "string" && rawNote.length > 0) {
+            noteField = rawNote;
+        } else {
+            return;
+        }
+
+        const duration = (typeof spec.duration === "number"
+            && Number.isFinite(spec.duration) && spec.duration > 0)
+            ? spec.duration
+            : DEFAULT_PLAYNOTE_DURATION_SECONDS;
+        const hasArticulation = typeof spec.articulation === "number"
+            && Number.isFinite(spec.articulation) && spec.articulation > 0;
+        let gate = hasArticulation ? spec.articulation : duration;
+        if (gate > duration) gate = duration;
+        const release = duration - gate;
+
+        /** @type {any} */
+        const value = { note: noteField };
+        if (typeof spec.amplitude === "number" && Number.isFinite(spec.amplitude)) {
+            value.gain = spec.amplitude;
+        }
+        const sound = (typeof spec.sound === "string" && spec.sound.length > 0)
+            ? spec.sound
+            : null;
+        if (sound !== null) value.s = sound;
+
+        if (this._outputMode === "superdough") {
+            // An early gate (articulation shorter than the
+            // duration) sets the release tail explicitly so it
+            // spans the remainder; a full-duration gate leaves
+            // release unset so applyVoiceEnvelope fills the
+            // instrument table's short default, reproducing the
+            // ordinary pattern-note damp.
+            if (hasArticulation && release > 0) {
+                value.release = release;
+            }
+            const source = this._findSourceById(sourceId);
+            const globalVoice = this._scene !== null ? this._scene.voiceSuperdough : null;
+            const injected = applyVoiceInjection(value, source, globalVoice);
+            // Lazy-load the resolved instrument's sample map
+            // (e.g. the VCSL map a marimba needs) the same way
+            // the pattern path and the inspector dropdown do.
+            // Without this an explicit sound arg that isn't a
+            // startup-loaded instrument stays silent until
+            // something else triggers the load. Idempotent and
+            // fire-and-forget: the per-name audio still lazy-
+            // loads, so the very first hit on a fresh instrument
+            // can be silent while the map fetches, then sounds.
+            // Reads the post-injection s/bank so an omitted sound
+            // arg that falls through to the object or global
+            // voice is covered too.
+            if (typeof this._runtime.ensureSamplesForVoice === "function") {
+                this._runtime.ensureSamplesForVoice(injected.s, injected.bank);
+            }
+            const voiced = applyVoiceEnvelope(injected);
+            this._runtime.play(voiced, fireTime, gate);
+        } else {
+            // MIDI: send() sets the note-off at audioTime +
+            // duration * (value.clip ?? 1). Passing the gate as
+            // the duration with no clip puts the note-off exactly
+            // at now + gate (the articulation point); the synth's
+            // own release plays the tail.
+            this._midiSender.send(value, fireTime, gate);
+        }
+    }
+
+    /**
+     * Fire a single sample immediately through the superdough
+     * output, dispatched a few milliseconds ahead of the current
+     * audio time (see IMMEDIATE_FIRE_LOOKAHEAD_SECONDS). The
+     * procedural-sample primitive behind the onTick context's
+     * ctx.playSound (Section 30).
+     *
+     * Silent under MIDI by design: a raw drum sample carries no
+     * MIDI note, so there is nothing to send. Percussion through
+     * MIDI is played with playNote and a percussion note number
+     * instead.
+     *
+     * The spec carries the playSound arguments: bank (the
+     * drum-machine kit name, e.g. "RolandTR909"; omit for the
+     * default dirt-samples kit), sample (the sample name, e.g.
+     * "bd"), and amplitude (0..1 gain). The bank resolves a raw
+     * sample name against the kit at superdough lookup time,
+     * mirroring strudel's .bank() semantics; a pre-banked name
+     * already carrying an underscore is left alone. The bank's
+     * sample map is requested through the runtime so its audio
+     * lazy-loads — the first hit on a freshly-named bank can be
+     * silent while the map fetches, then sounds from then on.
+     *
+     * One-shot: no duration argument, so superdough plays the
+     * sample's natural length. Drum samples damp on their own,
+     * so no synthetic envelope is applied (unlike the pitched
+     * note path).
+     *
+     * No-ops when not in superdough mode, the engine isn't
+     * loaded, the audio context is missing, the spec is
+     * malformed, or no sample name is given.
+     *
+     * @param {string} sourceId  Id of the object whose callback fired.
+     * @param {any} spec  { bank?, sample, amplitude? }.
+     */
+    fireImmediateSound(sourceId, spec) {
+        if (spec === null || typeof spec !== "object") return;
+        if (this._outputMode !== "superdough") return;
+        if (this._runtime.status !== "loaded") return;
+        const audioCtx = this._runtime.audioContext;
+        if (audioCtx === null) return;
+        const fireTime = audioCtx.currentTime + IMMEDIATE_FIRE_LOOKAHEAD_SECONDS;
+
+        const sample = (typeof spec.sample === "string" && spec.sample.length > 0)
+            ? spec.sample
+            : null;
+        if (sample === null) return;
+        const bank = (typeof spec.bank === "string" && spec.bank.length > 0)
+            ? spec.bank
+            : null;
+
+        /** @type {any} */
+        const value = { s: sample };
+        if (typeof spec.amplitude === "number" && Number.isFinite(spec.amplitude)) {
+            value.gain = spec.amplitude;
+        }
+        if (bank !== null && !sample.includes("_")) value.bank = bank;
+
+        if (typeof this._runtime.ensureSamplesForVoice === "function") {
+            this._runtime.ensureSamplesForVoice(
+                sample, bank === null ? undefined : bank);
+        }
+
+        this._runtime.play(value, fireTime);
+    }
+
+    /**
+     * Find a live scene source (curve, sprite, or trigger) by
+     * id. Used by fireImmediateNote's superdough path to resolve
+     * the per-object voice for injection. Returns null when no
+     * scene is loaded or the id isn't present.
+     *
+     * @param {string} id
+     * @returns {any}
+     */
+    _findSourceById(id) {
+        if (this._scene === null) return null;
+        const arrays = [this._scene.curves, this._scene.sprites, this._scene.triggers];
+        for (const arr of arrays) {
+            if (!Array.isArray(arr)) continue;
+            for (const obj of arr) {
+                if (obj !== null && typeof obj === "object" && obj.id === id) {
+                    return obj;
+                }
+            }
+        }
+        return null;
     }
 
     /**
