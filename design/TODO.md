@@ -16,7 +16,7 @@ Scene data model: three object kinds (curves, triggers, sprites), score-level fi
 - Per-object string id with kind prefix (CRV*, TRG*, SPR*).
 - mute boolean per object, suppressing cursor rendering and the firing that depends on it.
 - hide boolean per curve for geometry rendering, surfaced only in the JSON tab.
-- Score-level fields in SCENE_FIELDS: bpm, tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo, imageName, output, triggerScale, spriteScale.
+- Score-level fields in SCENE_FIELDS: bpm, tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo, imageName, output, triggerScale, spriteScale. (The harmony fields tonic/scaleName/root/chordName are slated for removal — harmony is now per-section; see Harmony.)
 - Optional background image resampled to 1000x1000 as a scalar field.
 
 ### Pending
@@ -129,7 +129,7 @@ Image-colour and sprite kinematic signals consumed by patterns; firing-context p
 
 - Remaining image-colour signals: pxChr (perceptual saturation), the four opponent-axis primaries (pxR, pxG, pxY, pxB), and the four hue intermediates (pxOr, pxPu, pxCy, pxLi). Each is a trivial projection of the precomputed OKLab values.
 - Sprite kinematic signals: spriteX, spriteY, spriteVx, spriteVy, spriteV.
-- currentScale and tonal-context signals; defer until tonal integration lands (see Harmony).
+- currentScale, currentChord, currentTonic, currentRoot harmony-context signals exposing the active per-section harmony; @strudel/tonal is now in scope (see Harmony).
 - Distance-derivatives of image signals (dpxLt_ds, dpxR_ds, and so on) computed against arc length traversed.
 - EMA smoothing of dynamic signal values.
 - defineSignal helper for composer-defined signals expressed as JavaScript formulas over the standard vocabulary.
@@ -155,20 +155,20 @@ Master BPM, beat counter, per-source cycle periods, play/stop/rewind, and determ
 
 ## Harmony
 
-Score-level harmony with per-object override, eventually integrated with @strudel/tonal.
+Per-section harmony: each section carries its own tonal center (root), scale, and a chord progression authored as Strudel mini-notation of scale-degree tokens, resolved to concrete pitches through @strudel/tonal. There is no score-level harmony. See Section 11.
 
 ### Shipped
 
-- Schema fields in SCENE_FIELDS for tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo. Inspector surface deferred.
-- HARMONY_OVERRIDE_FIELDS per object: the same keys with null default meaning "inherit from the score".
+- HARMONY_OVERRIDE_FIELDS per object (tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo) in the schema. These describe how an object's notes map onto the active harmony; the active harmony itself is now per-section.
 
 ### Pending
 
-- Inspector fields for scene-level harmony in the Properties tab.
-- Per-object harmony override surface where relevant.
-- @strudel/tonal modifier integration in patterns so a pattern can reference the inherited harmonic context.
-- currentScale and related dynamic signals exposing the active scale to dynamic-signal-driven patterns.
-- Voicing, transpose, and chord-progression support per the @strudel/tonal vocabulary plus the GeoSonix model.
+- Remove the score-level harmony fields (tonic, scaleName, root, chordName) from SCENE_FIELDS; harmony is per-section, so the score level keeps only non-harmony fields. The mapping fields (range, rangeLow, mapNotesTo) are per-object concerns and stay.
+- Per-section harmony data: tonal center/root, scale, and the chord-progression mini-notation string, the progression authored as a section-scoped labelled block in the Code tab.
+- @strudel/tonal integration (now in scope): resolve a section's scale and degree tokens into pitches and chords; per-object patterns consume the active harmony through mapNotesTo.
+- Harmony-context signals currentScale, currentChord, currentTonic, currentRoot exposing the active per-section harmony to patterns.
+- Chord-progression timing layer (which degree is active on which bar and beat): the GXW-native half, which can land before Tonal makes it audible.
+- Extend the degree-token vocabulary toward the full Strudel/Tonal chord set (v1 starts diatonic).
 
 ## Inspector
 

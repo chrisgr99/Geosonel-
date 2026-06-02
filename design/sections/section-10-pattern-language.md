@@ -39,6 +39,6 @@ GXW exposes only OKLCh-derived perceptual colour as the standard colour-driven m
 
 Sprite kinematic signals expose the firing sprite's current motion state: `spriteX` and `spriteY` for position, `spriteVx` and `spriteVy` for velocity components, `spriteV` for scalar speed.
 
-Harmony-context signals expose the inherited harmony at the firing source: `currentScale`, `currentChord`, `currentTonic`, `currentRoot`. These are deferred until @strudel/tonal integration lands and the harmony framework (Section 11) is wired through; the underlying schema fields exist but the signals themselves are not yet implemented.
+Harmony-context signals expose the active harmony at the firing source: `currentScale`, `currentChord`, `currentTonic`, `currentRoot`. The active harmony is the per-section scale, root, and chord progression (Section 11); @strudel/tonal is now in scope as the mechanism that resolves a section's scale degrees into concrete pitches. The signals are not yet implemented, but the integration is committed rather than deferred.
 
 The mechanism by which dynamic signals read live scene state at near-play time lives in the Pattern Engine (Section 12) — specifically the firing-context pointer set in a try-finally block during pattern evaluation, and the two-pass evaluation that refreshes signal values just before each event dispatches.
