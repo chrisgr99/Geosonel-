@@ -1,698 +1,788 @@
-/**
- * Per-field builders and DOM primitives for the Property
- * Inspector.
- *
- * Sits below inspector.js as the field-construction layer.
- * Each builder returns an HTMLElement that the band methods
- * compose into rows. The builders that emit edits take an
- * Inspector instance as their first argument so they can
- * call inspector._emitEdit(...); the lower-level mk*
- * primitives are pure DOM constructors that don't need the
- * inspector reference.
- *
- * Commit lifecycle (shared by Name, Editable, Color, and
- * Slot fields):
- *   - Hard error: red squiggle. On Enter the field keeps
- *     focus so the user can fix the value; on blur the
- *     field silently reverts to the last-saved value.
- *   - Soft warning: yellow squiggle. The value commits.
- *   - OK: no squiggle. The value commits.
- *   - Wheel scrolling on a numeric field bypasses the
- *     focus-blur double-emit guard because wheel events
- *     don't focus the field.
- *
- * The destruction-blur double-emit guard lives in each
- * builder's tryCommit closure as a `committed` flag. After
- * a successful Enter, the inspector re-renders and the
- * focused element is detached; the browser fires a stray
- * blur on the detached node which would otherwise re-emit
- * the same edit. The flag stops the second emit.
- */
-
-// @ts-check
-
-import {
-    validateName,
-    collectOtherNames,
-    nameConflictsInScene,
-} from "./nameValidation.js";
 import {
     validateHexColor,
-    validateFunctionName,
-} from "./pathFieldValidation.js";
+} from "./curveFieldValidation.js";
 import {
-    editKindForSlot,
-    proposedFunctionName,
-} from "./inspectorSelection.js";
+    W,
+} from "./inspectorShared.js";
+import {
+    normaliseHexForPicker,
+    wireFocusSelect,
+    wrapNumericFieldWithSpinner,
+} from "./inspectorWidgets.js";
+import {
+    collectOtherNames,
+    validateName,
+} from "./nameValidation.js";
 
-// --- Editable field ---
+export const fieldMethods = {
 
-/**
- * Build an editable field with arbitrary validation. Used
- * by Band 2 (Position, Path Size, Cursor R/L, thicknesses,
- * Sprite Size). Each call site supplies a validator plus
- * either an editKind tag identifying the edit OR an onCommit
- * callback that receives the validated value and emits
- * whatever edit shape it likes — used by Position
- * (translateSelection with computed delta) and Path W/H
- * (setSizeAxis with computed factor) where the edit isn't a
- * simple field-equals-value commit.
- *
- * Multi-select edits propagate the validated value to every
- * member of the appropriate selection slice via the matching
- * sceneEditor function. The varies-blank case renders an
- * empty field; for fields where editing varies has well-
- * defined semantics (set all to the typed value) the call
- * site passes editable=true; for fields where varies-edit is
- * ambiguous the call site passes editable=false so the field
- * is locked.
- *
- * @param {import("./inspector.js").Inspector} inspector
- * @param {{
- *   value: string,
- *   width: number,
- *   numeric?: boolean,
- *   editable: boolean,
- *   validator: (candidate: string) => { kind: "ok" | "soft" | "hard", value: string, message?: string },
- *   editKind?: string,
- *   onCommit?: (value: string) => void,
- *   wheelStep?: number,
- *   wheelPrecision?: number,
- * }} opts
- * @returns {HTMLDivElement}
- */
-export function buildEditableField(inspector, opts) {
-    const el = document.createElement("div");
-    el.className = "insp-field";
-    if (opts.numeric) el.classList.add("insp-field-numeric");
-    el.style.width = `${opts.width}px`;
+    /**
+     * Translate a Mute or Hide checkbox click into the
+     * appropriate edit. The varies state (multi-select with
+     * divergent values) resolves to true — the declarative
+     * "do this thing" outcome — so the click commits to a
+     * uniform muted-or-hidden state. Other states toggle.
+     *
+     * @param {"setMute" | "setHide" | "setCanHit" | "setCanBeHit" | "setCanTick"} kind
+     * @param {boolean | "varies"} currentState
+     */
+    _onBooleanCheckboxClick(kind, currentState) {
+        const newValue = (currentState === "varies") ? true : !currentState;
+        this._emitEdit({ kind, value: newValue });
+    },
 
-    if (!opts.editable) {
-        el.classList.add("disabled");
+    /**
+     * Build the Name field. When editable (single-select),
+     * the field is contenteditable and wires keydown and
+     * blur handlers for commit and validation; when not
+     * editable (multi-select), it's a plain greyed display.
+     *
+     * Validation outcomes:
+     *   - ok: clear any error class; emit a setName edit
+     *     (which triggers runScene and a re-render).
+     *   - soft (duplicate name): same commit as ok, but add
+     *     the error-soft class so a yellow squiggle persists
+     *     under the name until the user resolves the
+     *     duplicate.
+     *   - hard (invalid identifier, reserved word, reserved
+     *     id-format pattern): on Enter, add error-hard for
+     *     the red squiggle and keep focus so the user can
+     *     fix it; on blur, silently revert to the saved
+     *     value so an abandoned attempt doesn't carry
+     *     invalid state across navigations.
+     *
+     * Initial render shows the saved value with error-soft
+     * applied iff the saved name conflicts with another
+     * object's name in the scene.
+     *
+     * @param {{ value: string, editable: boolean, conflict: boolean, objId: string | null }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildNameField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-field";
+        el.style.width = `${W.name}px`;
+
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.textContent = opts.value;
+            return el;
+        }
+
+        el.setAttribute("contenteditable", "plaintext-only");
+        el.setAttribute("spellcheck", "false");
         el.textContent = opts.value;
-        return el;
-    }
+        if (opts.conflict) el.classList.add("error-soft");
 
-    el.setAttribute("contenteditable", "plaintext-only");
-    el.setAttribute("spellcheck", "false");
-    el.textContent = opts.value;
+        // Mouse-aware focus selection: mouse-origin focus
+        // leaves the caret at the click position, tab-origin
+        // focus selects-all so the first keystroke replaces
+        // the value the way a standard input element does
+        // on tab.
+        wireFocusSelect(el);
 
-    // Numeric fields support scroll-wheel adjustment.
-    // Default step is 0.3 with rounding to 0.1 precision
-    // (10x finer than the step so floating-point drift
-    // doesn't accumulate); fields that want a finer or
-    // coarser scrub override via wheelStep and
-    // wheelPrecision (Phase uses 0.01 / 0.01, for
-    // example). Wheel events bypass the keyboard commit's
-    // destruction-blur guard because wheel doesn't focus
-    // the field.
-    if (opts.numeric) {
-        const wheelStep = opts.wheelStep ?? 0.3;
-        const wheelPrecision = opts.wheelPrecision ?? 0.1;
-        const wheelMultiplier = 1 / wheelPrecision;
-        el.addEventListener("wheel", (e) => {
-            if (document.activeElement === el) return;
-            const currentText = el.textContent ?? "";
-            const currentValue = parseFloat(currentText);
-            if (!Number.isFinite(currentValue)) return;
-            e.preventDefault();
-            const direction = e.deltaY < 0 ? 1 : -1;
-            const newValue = currentValue + direction * wheelStep;
-            const rounded = Math.round(newValue * wheelMultiplier) / wheelMultiplier;
-            const result = opts.validator(String(rounded));
-            if (result.kind === "hard") return;
-            el.textContent = result.value;
-            // Update opts.value so a subsequent click-blur
-            // doesn't fire a redundant tryCommit emit.
-            opts.value = result.value;
-            if (typeof opts.onCommit === "function") {
-                opts.onCommit(result.value);
-            } else if (typeof opts.editKind === "string") {
-                inspector._emitEdit({ kind: opts.editKind, value: result.value });
-            }
-        }, { passive: false });
-    }
+        // Track whether this field has already emitted its
+        // edit. After an Enter or successful blur commit,
+        // applySceneEdit's async runScene chain eventually
+        // calls inspector.setScene which clears innerHTML;
+        // the focused element is detached and the browser
+        // fires a blur event on the detached element. That
+        // blur runs tryCommit("blur") which would compute
+        // the same typed-versus-original difference and emit
+        // a second edit — producing visible double-application
+        // of dx/dy translates and double-multiplication of
+        // scale factors. The flag stops the second emit. The
+        // flag is per-closure so a fresh field after re-render
+        // starts uncommitted.
+        let committed = false;
 
-    wireFocusSelect(el);
-
-    let committed = false;
-
-    const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
-        const candidate = el.textContent ?? "";
-        const result = opts.validator(candidate);
-        if (result.kind === "hard") {
-            if (mode === "blur") {
-                el.textContent = opts.value;
-                el.classList.remove("error-hard", "error-soft");
+        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
+            const candidate = el.textContent ?? "";
+            const otherNames = collectOtherNames(this._scene, opts.objId);
+            const result = validateName(candidate, otherNames);
+            if (result.kind === "hard") {
+                if (mode === "blur") {
+                    // Silently revert: an abandoned bad name
+                    // shouldn't carry invalid state forward.
+                    el.textContent = opts.value;
+                    el.classList.remove("error-hard", "error-soft");
+                    if (opts.conflict) el.classList.add("error-soft");
+                    return;
+                }
+                el.classList.remove("error-soft");
+                el.classList.add("error-hard");
                 return;
             }
-            el.classList.remove("error-soft");
-            el.classList.add("error-hard");
-            return;
-        }
-        el.classList.remove("error-hard");
-        if (result.kind === "soft") el.classList.add("error-soft");
-        else el.classList.remove("error-soft");
-        if (committed) return;
-        if (result.value !== opts.value) {
-            committed = true;
-            if (typeof opts.onCommit === "function") {
-                opts.onCommit(result.value);
-            } else if (typeof opts.editKind === "string") {
-                inspector._emitEdit({ kind: opts.editKind, value: result.value });
+            // ok or soft — commit if the trimmed value differs
+            // from what's currently saved.
+            el.classList.remove("error-hard");
+            if (result.kind === "soft") {
+                el.classList.add("error-soft");
+            } else {
+                el.classList.remove("error-soft");
             }
-        }
-    };
+            if (committed) return;
+            if (result.value !== opts.value) {
+                committed = true;
+                this._emitEdit({ kind: "setName", value: result.value });
+            }
+        };
 
-    el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            tryCommit("enter");
-            return;
-        }
-        if (e.key === "Escape") {
-            e.preventDefault();
-            el.textContent = opts.value;
-            el.classList.remove("error-hard", "error-soft");
-            el.blur();
-            return;
-        }
-        if (el.classList.contains("error-hard")) {
-            queueMicrotask(() => el.classList.remove("error-hard"));
-        }
-    });
-    el.addEventListener("blur", () => tryCommit("blur"));
-
-    return el;
-}
-
-// --- Name field ---
-
-/**
- * Build the Name field for Band 1. Validates against the
- * JS-identifier rule, the reserved-word list, and the
- * generated-id pattern; surfaces a soft yellow squiggle on
- * names that already exist on another object in the scene.
- *
- * @param {import("./inspector.js").Inspector} inspector
- * @param {{ value: string, editable: boolean, conflict: boolean, objId: string | null, width: number }} opts
- * @returns {HTMLDivElement}
- */
-export function buildNameField(inspector, opts) {
-    const el = document.createElement("div");
-    el.className = "insp-field";
-    el.style.width = `${opts.width}px`;
-
-    if (!opts.editable) {
-        el.classList.add("disabled");
-        el.textContent = opts.value;
-        return el;
-    }
-
-    el.setAttribute("contenteditable", "plaintext-only");
-    el.setAttribute("spellcheck", "false");
-    el.textContent = opts.value;
-    if (opts.conflict) el.classList.add("error-soft");
-
-    wireFocusSelect(el);
-
-    let committed = false;
-
-    const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
-        const candidate = el.textContent ?? "";
-        const otherNames = collectOtherNames(inspector._scene, opts.objId);
-        const result = validateName(candidate, otherNames);
-        if (result.kind === "hard") {
-            if (mode === "blur") {
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit("enter");
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
                 el.textContent = opts.value;
                 el.classList.remove("error-hard", "error-soft");
                 if (opts.conflict) el.classList.add("error-soft");
+                el.blur();
                 return;
             }
-            el.classList.remove("error-soft");
-            el.classList.add("error-hard");
-            return;
-        }
-        el.classList.remove("error-hard");
-        if (result.kind === "soft") el.classList.add("error-soft");
-        else el.classList.remove("error-soft");
-        if (committed) return;
-        if (result.value !== opts.value) {
-            committed = true;
-            inspector._emitEdit({ kind: "setName", value: result.value });
-        }
-    };
+            // Any other keystroke should clear a hard-error
+            // squiggle so the user can see their edits as
+            // they fix the name. queueMicrotask runs after
+            // the character is inserted so the squiggle
+            // disappears in step with the user's typing.
+            if (el.classList.contains("error-hard")) {
+                queueMicrotask(() => {
+                    el.classList.remove("error-hard");
+                });
+            }
+        });
+        el.addEventListener("blur", () => {
+            tryCommit("blur");
+        });
 
-    el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            tryCommit("enter");
-            return;
-        }
-        if (e.key === "Escape") {
-            e.preventDefault();
-            el.textContent = opts.value;
-            el.classList.remove("error-hard", "error-soft");
-            if (opts.conflict) el.classList.add("error-soft");
-            el.blur();
-            return;
-        }
-        if (el.classList.contains("error-hard")) {
-            queueMicrotask(() => el.classList.remove("error-hard"));
-        }
-    });
-    el.addEventListener("blur", () => tryCommit("blur"));
-
-    return el;
-}
-
-// --- Color field ---
-
-/**
- * Build the Band 2 Color field — a colour swatch followed
- * by an editable hex string. The swatch updates live as the
- * user types valid hex; the commit lifecycle mirrors
- * buildEditableField but is duplicated here because the
- * field's structure is two-part rather than a single
- * contenteditable.
- *
- * @param {import("./inspector.js").Inspector} inspector
- * @param {{ hex: string, editable: boolean, varies: boolean }} opts
- * @returns {HTMLDivElement}
- */
-export function buildColorField(inspector, opts) {
-    const el = document.createElement("div");
-    el.className = "insp-color";
-    if (!opts.editable) el.classList.add("disabled");
-
-    const placeholderColour = "#444444";
-    const initialHex = opts.hex || "";
-
-    const swatch = document.createElement("div");
-    swatch.className = "insp-color-swatch";
-    swatch.style.backgroundColor = initialHex || placeholderColour;
-    el.appendChild(swatch);
-
-    const text = document.createElement("div");
-    text.className = "insp-color-text";
-
-    if (!opts.editable) {
-        text.textContent = initialHex.toUpperCase();
-        el.appendChild(text);
         return el;
-    }
+    },
 
-    text.setAttribute("contenteditable", "plaintext-only");
-    text.setAttribute("spellcheck", "false");
-    text.textContent = initialHex.toUpperCase();
-    wireFocusSelect(text);
+    /**
+     * Build an editable field with arbitrary validation. Used
+     * by every editable field in Band 2 (Position, sizes,
+     * cursor extents, thicknesses, curve W/H). Each call site
+     * supplies a validator function from
+     * curveFieldValidation.js plus either an editKind tag
+     * identifying the edit OR an onCommit callback that
+     * receives the validated value and emits whatever edit
+     * shape it likes — used by Position (setPositionAxis with
+     * computed value) and curve W/H (setSizeAxis with
+     * computed value) where the edit isn't a simple
+     * field-equals-value commit. The rest of the commit
+     * lifecycle — hard error red squiggle on Enter with focus
+     * retained, hard error silent revert on blur, soft warning
+     * yellow squiggle on commit, ok commit — mirrors the Name
+     * field's behaviour.
+     *
+     * Multi-select edits propagate the validated value to
+     * every member of the appropriate selection slice via the
+     * matching sceneEditor function. The varies-blank case
+     * renders an empty field; for fields where editing varies
+     * has well-defined semantics (set all to the typed value)
+     * the call site passes editable=true; for fields where
+     * varies-edit is ambiguous (Position, curve W/H) the call
+     * site passes editable=false so the field is locked.
+     *
+     * @param {{
+     *   value: string,
+     *   width: number,
+     *   numeric?: boolean,
+     *   editable: boolean,
+     *   validator: (candidate: string) => { kind: "ok" | "soft" | "hard", value: string, message?: string },
+     *   editKind?: string,
+     *   onCommit?: (value: string) => void,
+     *   selectOnFocus?: boolean,
+     * }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildEditableField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-field";
+        if (opts.numeric) el.classList.add("insp-field-numeric");
 
-    let committed = false;
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.style.width = `${opts.width}px`;
+            el.textContent = opts.value;
+            return el;
+        }
 
-    const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
-        const candidate = text.textContent ?? "";
-        const result = validateHexColor(candidate);
-        if (result.kind === "hard") {
-            if (mode === "blur") {
+        el.setAttribute("contenteditable", "plaintext-only");
+        el.setAttribute("spellcheck", "false");
+        el.textContent = opts.value;
+
+        // Focus selection. Mouse focus leaves the caret at
+        // the click position so a single click positions
+        // the caret where the user clicked and the user can
+        // edit in place; tab focus still selects-all so the
+        // first keystroke replaces the existing value, the
+        // way a standard input element does on tab. Double-
+        // click selects the word under the pointer via
+        // browser default; triple-click selects the full
+        // field. selectOnFocus: false skips both — used by
+        // multi-token fields like cycleSpeeds where editing
+        // one entry in place is the normal case.
+        if (opts.selectOnFocus !== false) {
+            wireFocusSelect(el);
+        }
+
+        // See _buildNameField for the rationale behind this
+        // flag. The destruction-blur double-commit problem
+        // is most visible here because Position emits
+        // setPositionAxis (absolute) and Curve W/H emits
+        // setSizeAxis (absolute) — a double-application of
+        // either is functionally idempotent for absolute
+        // semantics but the flag keeps the emit chain clean.
+        let committed = false;
+
+        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
+            const candidate = el.textContent ?? "";
+            const result = opts.validator(candidate);
+            if (result.kind === "hard") {
+                if (mode === "blur") {
+                    // Silently revert: an abandoned bad value
+                    // shouldn't carry invalid state forward.
+                    el.textContent = opts.value;
+                    el.classList.remove("error-hard", "error-soft");
+                    return;
+                }
+                el.classList.remove("error-soft");
+                el.classList.add("error-hard");
+                return;
+            }
+            el.classList.remove("error-hard");
+            if (result.kind === "soft") {
+                el.classList.add("error-soft");
+            } else {
+                el.classList.remove("error-soft");
+            }
+            // Canonicalise the visible text to the validated
+            // value so a normalisation that leaves the stored
+            // value unchanged is still reflected in the field.
+            // Without this, a fold the validator applies (the
+            // Speeds field dropping entries past a zero, or
+            // trailing whitespace) would linger on screen,
+            // since no edit emits and so no re-render lands.
+            if ((el.textContent ?? "") !== result.value) {
+                el.textContent = result.value;
+            }
+            if (committed) return;
+            if (result.value !== opts.value) {
+                committed = true;
+                if (typeof opts.onCommit === "function") {
+                    opts.onCommit(result.value);
+                } else if (typeof opts.editKind === "string") {
+                    this._emitEdit({ kind: opts.editKind, value: result.value });
+                }
+            }
+        };
+
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit("enter");
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                el.textContent = opts.value;
+                el.classList.remove("error-hard", "error-soft");
+                el.blur();
+                return;
+            }
+            // Clear a hard-error squiggle on the next
+            // keystroke so the user sees their corrections
+            // in step with their typing. queueMicrotask runs
+            // after the character is inserted.
+            if (el.classList.contains("error-hard")) {
+                queueMicrotask(() => {
+                    el.classList.remove("error-hard");
+                });
+            }
+        });
+        el.addEventListener("blur", () => {
+            tryCommit("blur");
+        });
+
+        // Numeric editable fields wrap in a container with
+        // a two-button spinner band on the right edge. The
+        // wrapper takes opts.width; the field shrinks
+        // inside to make room for the spinner. Non-numeric
+        // editable fields take the width on the field
+        // itself, since there's no surrounding chrome.
+        if (opts.numeric) {
+            return wrapNumericFieldWithSpinner(el, opts, this);
+        }
+        el.style.width = `${opts.width}px`;
+        return el;
+    },
+
+    /**
+     * Build a native <select> dropdown field. Used by Band
+     * 1's Beat Interval control. Native <select> rather
+     * than a custom popover gives OS-level keyboard
+     * navigation (arrow keys, type-ahead), VoiceOver
+     * compatibility, and a popup menu that escapes the
+     * inspector pane's clipping without extra code. The
+     * .insp-dropdown CSS suppresses the native arrow
+     * chrome and paints a custom green chevron so the
+     * field reads as a sibling of the inspector's other
+     * editable controls.
+     *
+     * Varies / empty state: pass value = "" to render the
+     * dropdown trigger blank. Native <select> leaves the
+     * trigger empty when the assigned value doesn't match
+     * any <option>, so the empty / divergent case needs
+     * no special option in the list; selecting any token
+     * from the dropdown then fires the change handler with
+     * a real value and the field becomes uniform across
+     * the selection.
+     *
+     * Disabled state: the .disabled class plus the native
+     * disabled attribute together suppress the green frame
+     * (via CSS), mute the text, and block interaction. The
+     * field's footprint stays visible so the row layout
+     * doesn't shift when the gate flips.
+     *
+     * @param {{
+     *   options: Array<{value: string, label: string}>,
+     *   value: string,
+     *   width: number,
+     *   editable: boolean,
+     *   editKind: string,
+     * }} opts
+     * @returns {HTMLSelectElement}
+     */
+    _buildDropdownField(opts) {
+        const el = document.createElement("select");
+        el.className = "insp-dropdown";
+        el.style.width = `${opts.width}px`;
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.disabled = true;
+        }
+        for (const tok of opts.options) {
+            const option = document.createElement("option");
+            option.value = tok.value;
+            option.textContent = tok.label;
+            el.appendChild(option);
+        }
+        // Assignment after children are attached so the
+        // browser can match value against a real <option>.
+        // An unmatched value leaves the trigger blank, which
+        // is the varies / empty-state look.
+        el.value = opts.value;
+        if (opts.editable) {
+            el.addEventListener("change", () => {
+                this._emitEdit({ kind: opts.editKind, value: el.value });
+            });
+        }
+        return el;
+    },
+
+    /**
+     * Build the Color field, used by the Band 2 Color row.
+     * The field consists of a colour swatch, a hidden native
+     * <input type="color"> picker, and an editable hex
+     * string. As the user types valid hex into the text
+     * portion, the swatch updates live so the user can see
+     * the colour they're approaching before they commit.
+     * Clicking the swatch opens the OS colour picker (the
+     * native input is positioned offscreen but invoked via
+     * .click()); a colour committed in the picker fires the
+     * picker's change event and emits a setColor edit
+     * immediately, just like the text field's Enter commit.
+     * Commit and revert lifecycle for the text portion
+     * mirrors _buildEditableField but is duplicated here
+     * because the field's structure is multi-part (swatch +
+     * picker + text) rather than a single contenteditable
+     * div.
+     *
+     * Disabled state (empty selection) shows a dim swatch
+     * and the stored hex value as plain text, with the
+     * picker omitted entirely so a stray swatch click on a
+     * greyed row does nothing. Varies state (multi-select
+     * with mismatched colours) shows a placeholder neutral
+     * swatch and an empty text field; the picker opens on
+     * the placeholder colour, and picking a value commits
+     * to every selected object regardless of kind via
+     * setColorOnSelection.
+     *
+     * Picker emit timing: only the change event triggers
+     * an emit, not input. The native picker's input event
+     * fires continuously as the user drags through colours;
+     * emitting on every fire would trigger an inspector
+     * re-render that destroys the picker DOM mid-session,
+     * collapsing the picker and aborting the pick. The
+     * change event fires once per commit (mouseup after
+     * drag, or Enter in the picker's hex input), which
+     * matches the user's mental model of "I'm done
+     * picking" and lets the re-render happen cleanly
+     * after the picker closes. The trade-off is no live
+     * canvas preview as the user drags, but the picker's
+     * own gradient preview gives immediate visual
+     * feedback inside the picker UI.
+     *
+     * @param {{ hex: string, editable: boolean, varies: boolean }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildColorField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-color";
+        if (!opts.editable) el.classList.add("disabled");
+
+        // Placeholder colour for empty / varies states keeps
+        // the swatch visible as a footprint rather than a
+        // hole in the layout.
+        const placeholderColour = "#444444";
+        const initialHex = opts.hex || "";
+
+        const swatch = document.createElement("div");
+        swatch.className = "insp-color-swatch";
+        swatch.style.backgroundColor = initialHex || placeholderColour;
+        el.appendChild(swatch);
+
+        const text = document.createElement("div");
+        text.className = "insp-color-text";
+
+        if (!opts.editable) {
+            text.textContent = initialHex.toUpperCase();
+            el.appendChild(text);
+            return el;
+        }
+
+        // Native colour picker, hidden visually but invoked
+        // programmatically when the user clicks the swatch.
+        // The OS picker gives the user a colour gradient,
+        // hue slider, hex input, and (on platforms that
+        // support it) an eyedropper without leaving the
+        // inspector's footprint. The picker element is
+        // sized to 1px with zero opacity so it contributes
+        // nothing visually; .click() on a hidden element
+        // still opens the picker as long as the element is
+        // in the DOM and not display:none.
+        //
+        // Native colour input accepts and returns
+        // "#rrggbb" strings only (lowercase, exactly 7
+        // chars). The picker's initial value is normalised
+        // to that shape; an empty initial value (varies
+        // state) falls back to the placeholder grey so the
+        // picker opens on a neutral colour rather than
+        // #000000, which would feel like the picker had
+        // "lost" the current colour.
+        const picker = document.createElement("input");
+        picker.type = "color";
+        picker.className = "insp-color-picker";
+        picker.value = normaliseHexForPicker(initialHex, placeholderColour);
+        el.appendChild(picker);
+
+        // Clicking the swatch opens the picker. The cursor
+        // change signals the click affordance; the disabled
+        // branch above returned before reaching here, so the
+        // swatch is always clickable in this code path.
+        swatch.style.cursor = "pointer";
+        swatch.addEventListener("click", () => {
+            picker.click();
+        });
+
+        text.setAttribute("contenteditable", "plaintext-only");
+        text.setAttribute("spellcheck", "false");
+        text.textContent = initialHex.toUpperCase();
+
+        // Mouse-aware focus selection: see _buildNameField.
+        wireFocusSelect(text);
+
+        // See _buildNameField for the rationale.
+        let committed = false;
+
+        const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
+            const candidate = text.textContent ?? "";
+            const result = validateHexColor(candidate);
+            if (result.kind === "hard") {
+                if (mode === "blur") {
+                    text.textContent = initialHex.toUpperCase();
+                    text.classList.remove("error-hard", "error-soft");
+                    swatch.style.backgroundColor = initialHex || placeholderColour;
+                    return;
+                }
+                text.classList.remove("error-soft");
+                text.classList.add("error-hard");
+                return;
+            }
+            text.classList.remove("error-hard");
+            if (result.kind === "soft") {
+                text.classList.add("error-soft");
+            } else {
+                text.classList.remove("error-soft");
+            }
+            if (committed) return;
+            if (result.value !== initialHex) {
+                committed = true;
+                // Sync the picker so a subsequent open
+                // reflects the just-committed colour
+                // rather than the original.
+                picker.value = normaliseHexForPicker(result.value, placeholderColour);
+                this._emitEdit({ kind: "setColor", value: result.value });
+            }
+        };
+
+        text.addEventListener("input", () => {
+            // Live swatch preview while the user types valid
+            // hex. Invalid intermediate states (e.g. "#7d")
+            // leave the swatch on its previous colour.
+            const candidate = text.textContent ?? "";
+            const result = validateHexColor(candidate);
+            if (result.kind !== "hard") {
+                swatch.style.backgroundColor = result.value;
+                // Sync the picker to the in-flight typed
+                // value too so an open picker (if the user
+                // somehow has one) reflects the live state.
+                picker.value = normaliseHexForPicker(result.value, placeholderColour);
+            }
+            if (text.classList.contains("error-hard")) {
+                queueMicrotask(() => {
+                    text.classList.remove("error-hard");
+                });
+            }
+        });
+        text.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit("enter");
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
                 text.textContent = initialHex.toUpperCase();
                 text.classList.remove("error-hard", "error-soft");
                 swatch.style.backgroundColor = initialHex || placeholderColour;
+                picker.value = normaliseHexForPicker(initialHex, placeholderColour);
+                text.blur();
                 return;
             }
-            text.classList.remove("error-soft");
-            text.classList.add("error-hard");
-            return;
-        }
-        text.classList.remove("error-hard");
-        if (result.kind === "soft") text.classList.add("error-soft");
-        else text.classList.remove("error-soft");
-        if (committed) return;
-        if (result.value !== initialHex) {
-            committed = true;
-            inspector._emitEdit({ kind: "setColor", value: result.value });
-        }
-    };
+        });
+        text.addEventListener("blur", () => {
+            tryCommit("blur");
+        });
 
-    text.addEventListener("input", () => {
-        const candidate = text.textContent ?? "";
-        const result = validateHexColor(candidate);
-        if (result.kind !== "hard") {
+        // Picker -> commit. The change event fires once per
+        // user commit (mouseup after drag, or Enter in the
+        // picker's hex input). See the band docstring above
+        // for why we don't wire the input event here.
+        picker.addEventListener("change", () => {
+            const pickedHex = picker.value;
+            const result = validateHexColor(pickedHex);
+            if (result.kind === "hard") return;
+            // Update the in-place visuals before emitting so
+            // the field reads correctly during the brief
+            // window before the inspector re-render lands.
             swatch.style.backgroundColor = result.value;
-        }
-        if (text.classList.contains("error-hard")) {
-            queueMicrotask(() => text.classList.remove("error-hard"));
-        }
-    });
-    text.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            tryCommit("enter");
-            return;
-        }
-        if (e.key === "Escape") {
-            e.preventDefault();
-            text.textContent = initialHex.toUpperCase();
+            text.textContent = result.value.toUpperCase();
             text.classList.remove("error-hard", "error-soft");
-            swatch.style.backgroundColor = initialHex || placeholderColour;
-            text.blur();
-            return;
-        }
-    });
-    text.addEventListener("blur", () => tryCommit("blur"));
-
-    el.appendChild(text);
-    return el;
-}
-
-// --- Slot field (Band 3) ---
-
-/**
- * Build a slot field for one Band 3 row. Mirrors the commit
- * lifecycle of buildEditableField with placeholder-hint
- * display: when the field is empty and unfocused, the
- * proposed function name shows in muted text. Focus clears
- * the placeholder for editing; blur restores it iff the
- * field is empty.
- *
- * @param {import("./inspector.js").Inspector} inspector
- * @param {{
- *   value: string,
- *   placeholder: string,
- *   width: number,
- *   editable: boolean,
- *   slotKey: string,
- *   kind: "path" | "sprite" | null,
- * }} opts
- * @returns {HTMLDivElement}
- */
-export function buildSlotField(inspector, opts) {
-    const el = document.createElement("div");
-    el.className = "insp-field insp-slot-field";
-    el.style.width = `${opts.width}px`;
-
-    if (!opts.editable) {
-        el.classList.add("disabled");
-        el.textContent = opts.value;
-        return el;
-    }
-
-    el.setAttribute("contenteditable", "plaintext-only");
-    el.setAttribute("spellcheck", "false");
-
-    const showPlaceholder = () => {
-        el.textContent = opts.placeholder;
-        el.classList.add("placeholder-shown");
-    };
-    const clearPlaceholder = () => {
-        el.textContent = "";
-        el.classList.remove("placeholder-shown");
-    };
-    if (opts.value !== "") {
-        el.textContent = opts.value;
-    } else if (opts.placeholder !== "") {
-        showPlaceholder();
-    }
-
-    wireFocusSelect(el, {
-        onFocus: () => {
-            if (el.classList.contains("placeholder-shown")) clearPlaceholder();
-        },
-    });
-
-    let committed = false;
-    const editKind = editKindForSlot(opts.slotKey);
-
-    const tryCommit = (/** @type {"enter" | "blur"} */ mode) => {
-        const candidate = el.textContent ?? "";
-        const result = validateFunctionName(candidate);
-        if (result.kind === "hard") {
-            if (mode === "blur") {
-                el.classList.remove("error-hard", "error-soft");
-                if (opts.value !== "") el.textContent = opts.value;
-                else if (opts.placeholder !== "") showPlaceholder();
-                else el.textContent = "";
-                return;
+            if (committed) return;
+            if (result.value !== initialHex) {
+                committed = true;
+                this._emitEdit({ kind: "setColor", value: result.value });
             }
-            el.classList.remove("error-soft");
-            el.classList.add("error-hard");
-            return;
-        }
-        el.classList.remove("error-hard");
-        if (result.kind === "soft") el.classList.add("error-soft");
-        else el.classList.remove("error-soft");
-        if (committed) return;
-        if (result.value !== opts.value) {
-            committed = true;
-            inspector._emitEdit({ kind: editKind, value: result.value });
-        }
-    };
+        });
 
-    el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            tryCommit("enter");
-            return;
+        el.appendChild(text);
+        return el;
+    },
+
+    /**
+     * Build a slot function-name field for Band 3 rows 3
+     * through 5. Like _buildEditableField but with two
+     * additions: a placeholder shown in muted text when
+     * the field is empty (the proposed default function
+     * name), and a render-time muted treatment for the
+     * typed text when the named function doesn't exist in
+     * behaviors.js. Both muted treatments use inline
+     * opacity so the field reads correctly without
+     * dedicated CSS in this commit.
+     *
+     * Commit lifecycle mirrors _buildEditableField: Enter
+     * commits, Escape reverts, blur silently reverts a
+     * hard-error candidate. Stage 2B uses an identity
+     * validator (every input commits as ok); Stage 4 will
+     * swap in validateFunctionName.
+     *
+     * @param {{
+     *   value: string,
+     *   placeholder: string,
+     *   width: number,
+     *   editable: boolean,
+     *   functionExists: boolean,
+     *   editKind: string,
+     * }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildSlotField(opts) {
+        const el = document.createElement("div");
+        el.className = "insp-field insp-slot-field";
+        el.style.width = `${opts.width}px`;
+
+        // Function-doesn't-exist muted treatment for typed
+        // names. Placeholder text gets its own muted
+        // styling below; this branch handles the case where
+        // the user has typed (or stored) a name that
+        // doesn't resolve in scene.functionMap yet.
+        if (opts.editable && !opts.functionExists && opts.value !== "") {
+            el.style.opacity = "0.55";
         }
-        if (e.key === "Escape") {
-            e.preventDefault();
-            el.classList.remove("error-hard", "error-soft");
-            if (opts.value !== "") el.textContent = opts.value;
-            else if (opts.placeholder !== "") showPlaceholder();
-            else el.textContent = "";
-            el.blur();
-            return;
+
+        if (!opts.editable) {
+            el.classList.add("disabled");
+            el.textContent = opts.value;
+            return el;
         }
-        if (el.classList.contains("error-hard")) {
-            queueMicrotask(() => el.classList.remove("error-hard"));
-        }
-    });
-    el.addEventListener("blur", () => {
-        tryCommit("blur");
-        if (
-            el.textContent === "" &&
-            !el.classList.contains("error-hard") &&
-            opts.placeholder !== ""
-        ) {
+
+        el.setAttribute("contenteditable", "plaintext-only");
+        el.setAttribute("spellcheck", "false");
+
+        const showPlaceholder = () => {
+            el.textContent = opts.placeholder;
+            el.classList.add("placeholder-shown");
+            el.style.opacity = "0.55";
+        };
+        const clearPlaceholder = () => {
+            el.textContent = "";
+            el.classList.remove("placeholder-shown");
+            el.style.opacity = "";
+        };
+
+        if (opts.value !== "") {
+            el.textContent = opts.value;
+        } else if (opts.placeholder !== "") {
             showPlaceholder();
         }
-    });
 
-    return el;
-}
-
-/**
- * Build the slot button for one Band 3 row. Carries one of
- * two labels — Create when the proposed function name doesn't
- * yet exist in behaviors.js, or Go-to when it does. The
- * action picks at click time based on what the field
- * actually contains.
- *
- * @param {import("./inspector.js").Inspector} inspector
- * @param {{
- *   disabled: boolean,
- *   label: string,
- *   slotKey: string,
- *   kind: "path" | "sprite" | null,
- *   obj: any,
- * }} opts
- */
-export function buildSlotCreateButton(inspector, opts) {
-    const el = document.createElement("button");
-    el.className = "insp-btn-create";
-    if (opts.disabled) el.classList.add("disabled");
-    el.textContent = opts.label;
-    if (opts.disabled || opts.kind === null || opts.obj === null) return el;
-
-    el.addEventListener("click", () => {
-        const fieldEl = el.previousElementSibling;
-        let typed = "";
-        if (
-            fieldEl instanceof HTMLElement &&
-            !fieldEl.classList.contains("placeholder-shown")
-        ) {
-            typed = (fieldEl.textContent ?? "").trim();
-        }
-        const placeholder = proposedFunctionName(opts.slotKey, opts.kind, opts.obj);
-        const proposed = typed.length > 0 ? typed : placeholder;
-        if (proposed.length === 0) return;
-
-        const result = validateFunctionName(proposed);
-        if (result.kind === "hard") return;
-        const name = result.value;
-
-        if (functionExistsInScene(inspector, name)) {
-            inspector._emitEdit({ kind: "goToFunction", functionName: name });
-            return;
-        }
-        inspector._emitEdit({
-            kind: "createFunctionStub",
-            slotKey: opts.slotKey,
-            objectKind: opts.kind,
-            proposedName: name,
+        // Mouse-aware focus selection with placeholder-clear
+        // hook. The onFocus callback runs first on every
+        // focus regardless of origin and clears the
+        // placeholder if one is shown, after which the tab-
+        // vs-mouse branching applies (tab selects-all on
+        // the now-empty field — a harmless no-op; mouse
+        // leaves the caret at the click position).
+        wireFocusSelect(el, {
+            onFocus: () => {
+                if (el.classList.contains("placeholder-shown")) {
+                    clearPlaceholder();
+                }
+            },
         });
-    });
-    return el;
-}
 
-/**
- * Whether a top-level function with the given name already
- * exists in the current scene's functionMap. Used by the
- * Create-vs-Go-to gate. A null scene or empty name treats
- * the function as not-existing.
- *
- * @param {import("./inspector.js").Inspector} inspector
- * @param {string} name
- * @returns {boolean}
- */
-export function functionExistsInScene(inspector, name) {
-    if (inspector._scene === null || name === "") return false;
-    return Object.prototype.hasOwnProperty.call(
-        inspector._scene.functionMap, name,
-    );
-}
+        let committed = false;
+        const tryCommit = () => {
+            const candidate = el.textContent ?? "";
+            if (committed) return;
+            if (candidate !== opts.value) {
+                committed = true;
+                this._emitEdit({ kind: opts.editKind, value: candidate });
+            }
+        };
 
-// --- DOM primitives ---
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                tryCommit();
+                return;
+            }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                if (opts.value !== "") {
+                    el.textContent = opts.value;
+                    el.style.opacity = opts.functionExists ? "" : "0.55";
+                } else if (opts.placeholder !== "") {
+                    showPlaceholder();
+                } else {
+                    el.textContent = "";
+                    el.style.opacity = "";
+                }
+                el.blur();
+                return;
+            }
+        });
+        el.addEventListener("blur", () => {
+            tryCommit();
+            if (
+                el.textContent === "" &&
+                opts.placeholder !== ""
+            ) {
+                showPlaceholder();
+            }
+        });
 
-/**
- * @returns {HTMLDivElement}
- */
-export function mkRow() {
-    const r = document.createElement("div");
-    r.className = "insp-row";
-    return r;
-}
+        return el;
+    },
 
-/**
- * @param {string} text
- * @param {{ width?: number, disabled?: boolean, multiline?: boolean }} [opts]
- */
-export function mkLabel(text, opts = {}) {
-    const el = document.createElement("div");
-    el.className = "insp-label";
-    if (opts.disabled) el.classList.add("disabled");
-    if (typeof opts.width === "number") el.style.width = `${opts.width}px`;
-    if (opts.multiline) {
-        const lines = text.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-            if (i > 0) el.appendChild(document.createElement("br"));
-            el.appendChild(document.createTextNode(lines[i]));
+    /**
+     * Build the Create / Go-to button for a Band 3 slot
+     * row (rows 3 through 5). Disabled state uses the
+     * existing insp-btn-create.disabled styling. Enabled
+     * click routes to one of two edits: goToFunction when
+     * the named function already exists in behaviors.js,
+     * or createFunctionStub when it does not. The slotKey
+     * tags the createFunctionStub edit so main.js can
+     * dispatch the binding mutator (one of
+     * setHasHitFunctionOnSelection,
+     * setBeenHitFunctionOnSelection,
+     * setOnTickFunctionOnSelection).
+     *
+     * @param {{
+     *   label: string,
+     *   disabled: boolean,
+     *   slotKey: "hasHit" | "beenHit" | "onTick",
+     *   functionName: string,
+     *   functionExists: boolean,
+     * }} opts
+     * @returns {HTMLButtonElement}
+     */
+    _buildSlotButton(opts) {
+        const el = document.createElement("button");
+        el.className = "insp-btn-create";
+        el.style.minWidth = `${W.slotButton}px`;
+        if (opts.disabled) el.classList.add("disabled");
+        el.textContent = opts.label;
+
+        if (!opts.disabled) {
+            el.addEventListener("click", () => {
+                if (opts.functionExists) {
+                    this._emitEdit({
+                        kind: "goToFunction",
+                        functionName: opts.functionName,
+                    });
+                } else {
+                    this._emitEdit({
+                        kind: "createFunctionStub",
+                        slotKey: opts.slotKey,
+                        proposedName: opts.functionName,
+                    });
+                }
+            });
         }
-    } else {
-        el.textContent = text;
-    }
-    return el;
-}
+        return el;
+    },
 
-/**
- * Static (read-only) field display. Used for the locked-state
- * Object ID field in Band 1 and for any place a value should
- * show without being edited.
- *
- * @param {{ value?: string, numeric?: boolean, disabled?: boolean, style?: string, width?: number }} opts
- */
-export function mkField(opts) {
-    const el = document.createElement("div");
-    el.className = "insp-field";
-    if (opts.numeric) el.classList.add("insp-field-numeric");
-    if (opts.disabled) el.classList.add("disabled");
-    if (opts.style === "locked") el.classList.add("locked");
-    if (typeof opts.width === "number") el.style.width = `${opts.width}px`;
-    el.textContent = opts.value ?? "";
-    return el;
-}
-
-/**
- * Tri-state checkbox: checked / unchecked / varies. The
- * varies state styles distinct from both checked and empty
- * so multi-select divergence reads at a glance.
- *
- * @param {{ checked?: boolean, varies?: boolean, disabled?: boolean, onClick?: () => void }} [opts]
- */
-export function mkCheckbox(opts = {}) {
-    const el = document.createElement("div");
-    el.className = "insp-checkbox";
-    if (opts.checked) el.classList.add("checked");
-    if (opts.varies) el.classList.add("varies");
-    if (opts.disabled) el.classList.add("disabled");
-    if (typeof opts.onClick === "function" && !opts.disabled) {
-        el.addEventListener("click", opts.onClick);
-    }
-    return el;
-}
-
-/**
- * @param {string} text
- * @param {{ disabled?: boolean }} [opts]
- */
-export function mkUnits(text, opts = {}) {
-    const el = document.createElement("span");
-    el.className = "insp-units";
-    if (opts.disabled) el.classList.add("disabled");
-    el.textContent = text;
-    return el;
-}
-
-/**
- * @param {string} letter
- * @param {{ disabled?: boolean }} [opts]
- */
-export function mkInlineLetter(letter, opts = {}) {
-    const el = document.createElement("span");
-    el.className = "insp-inline-letter";
-    if (opts.disabled) el.classList.add("disabled");
-    el.textContent = letter;
-    return el;
-}
-
-/**
- * Programmatically select every character inside a
- * contenteditable element. Used by the editable field
- * builders' tab-focus path (via wireFocusSelect) so that a
- * tabbed-into field's first keystroke replaces the existing
- * value the way a standard <input> behaves on tab focus.
- *
- * @param {HTMLElement} el
- */
-export function selectAllInElement(el) {
-    const sel = window.getSelection();
-    if (sel === null) return;
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    sel.removeAllRanges();
-    sel.addRange(range);
-}
-
-/**
- * Wire mouse-aware focus-and-select behaviour on a
- * contenteditable field. Focus arriving via mouse leaves the
- * caret at the click position (browser default on mouseup)
- * and does not select-all, so a single click positions the
- * caret precisely where the user clicked and they can edit in
- * place. Focus arriving via keyboard tab still selects-all so
- * the first keystroke replaces the existing value, matching
- * standard <input> tab behaviour. Double-click selects the
- * word under the pointer via browser default; triple-click
- * selects the full field content.
- *
- * The optional onFocus callback runs first on every focus
- * regardless of origin, used by the Slot field to clear its
- * placeholder text before any select-all decision.
- *
- * @param {HTMLElement} el
- * @param {{ onFocus?: () => void }} [opts]
- */
-export function wireFocusSelect(el, opts = {}) {
-    let mouseFocusing = false;
-    el.addEventListener("mousedown", () => {
-        if (document.activeElement !== el) mouseFocusing = true;
-    });
-    el.addEventListener("focus", () => {
-        if (opts.onFocus !== undefined) opts.onFocus();
-        if (mouseFocusing) {
-            mouseFocusing = false;
-            return;
-        }
-        selectAllInElement(el);
-    });
-    el.addEventListener("blur", () => { mouseFocusing = false; });
-}
+    /**
+     * Whether a top-level function with the given name
+     * already exists in the current scene's functionMap.
+     * Used by the slot button's Create-vs-Go-to decision
+     * and by the slot field's function-doesn't-exist
+     * muted treatment. Null scene or empty name returns
+     * false so the gates settle on Create with whatever
+     * name shows up next.
+     *
+     * @param {string} name
+     * @returns {boolean}
+     */
+    _functionExistsInScene(name) {
+        if (this._scene === null || name === "") return false;
+        return Object.prototype.hasOwnProperty.call(
+            this._scene.functionMap, name,
+        );
+    },
+};
