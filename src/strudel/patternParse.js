@@ -58,6 +58,13 @@ const STRUDEL_NOT_LOADED_ERROR =
  * @property {number} begin  Fractional cycle position where the event starts.
  * @property {number} end    Fractional cycle position where the event ends.
  * @property {any} value     The event's value (e.g. {note: 60} or {s: "bd"}).
+ * @property {{start: number, end: number} | null} loc  Source location of the
+ *                                 mini-notation atom that produced this event,
+ *                                 as character offsets within the QUOTED mini
+ *                                 string (0 = the opening quote), or null when
+ *                                 the hap carries no location context. Used by
+ *                                 the Code-tab active-token highlighter to map a
+ *                                 sounding beat back to its source token.
  *
  * @typedef {Object} ParseSuccess
  * @property {true} ok
@@ -150,7 +157,20 @@ export function parsePatternToPositions(expressionString) {
         const begin = hapBoundary(hap, "begin");
         const end = hapBoundary(hap, "end");
         if (!Number.isFinite(begin) || !Number.isFinite(end)) continue;
-        parsed.push({ begin, end, value: hap.value });
+        // Source location of the atom, when the mini parser
+        // attached one (pure(value).withLoc in mini.mjs). Offsets
+        // are within the quoted mini string (0 = opening quote).
+        // Absent for haps from patterns that carry no location
+        // context; null then, and location-dependent consumers
+        // skip the hap.
+        const loc = (hap.context
+            && Array.isArray(hap.context.locations)
+            && hap.context.locations.length > 0
+            && hap.context.locations[0] !== null
+            && typeof hap.context.locations[0] === "object")
+            ? hap.context.locations[0]
+            : null;
+        parsed.push({ begin, end, value: hap.value, loc });
         // Position list filters to events that begin within
         // the unit cycle. queryArc may return Haps that span
         // the cycle boundary (begin < 0 or begin >= 1) for

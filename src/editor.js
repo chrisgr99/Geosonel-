@@ -32,6 +32,7 @@ import { Inspector } from "./inspector.js";
 import { CanvasInspector } from "./canvasInspector.js";
 import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect, setMutedObjectIdsEffect } from "./patternHighlight.js";
+import { activeBeatHighlightExtension, setActiveBeatsEffect, recomputeTokensEffect } from "./activeBeatHighlight.js";
 import { isAutoCompletionEnabled } from "./strudel/codemirror/autocomplete.mjs";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
@@ -1052,6 +1053,55 @@ export class TabbedEditor {
     }
 
     /**
+     * Push the current per-curve active-beat state into the
+     * Code-tab active-token highlighter (activeBeatHighlight.js),
+     * which outlines the currently-sounding token of each
+     * playing curve's pattern as its cursor sweeps. The map is
+     * Map<objectId, {t, repeats}> where t is the curve's cursor
+     * parameter in [0, 1) and repeats is its patternRepeats; the
+     * extension finds the active token from that fraction against
+     * its own parse of the block. Driven by the canvas render
+     * loop each frame during playback (via main.js), with an
+     * empty map sent on stop to clear the boxes.
+     *
+     * No tab gate here: the extension only holds tokens for the
+     * document currently in the editor, so when a non-Code tab
+     * is showing (scene.json, or the virtual Properties / Canvas
+     * tabs) its token map is empty and the dispatch produces no
+     * boxes. The canvas drives this only while the transport is
+     * playing, so the per-frame dispatch cost matches the REPL's
+     * own highlight cadence. Safe to call before the view has
+     * mounted: the call is a no-op in that case.
+     *
+     * @param {Map<string, {t: number, repeats: number}>} activeBeats
+     */
+    applyActiveBeats(activeBeats) {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: setActiveBeatsEffect.of(activeBeats),
+        });
+    }
+
+    /**
+     * Force the active-token highlighter to rebuild its token
+     * map from the current document without a document edit.
+     * Token building depends on the strudel engine being loaded
+     * (parsePatternToPositions no-ops until window.note exists),
+     * so a score opened before the engine arrives builds no
+     * tokens until this is called. Dispatched by main.js on the
+     * strudel "loaded" transition and after each scene reload so
+     * the map catches up with engine availability and any block
+     * changes that landed with the reload. Safe to call before
+     * the view has mounted: the call is a no-op in that case.
+     */
+    recomputeActiveBeatTokens() {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: recomputeTokensEffect.of(null),
+        });
+    }
+
+    /**
      * Provide the editor with the live scene so the
      * cursor-target highlight in behaviors.js can resolve
      * top-level function declarations back to the object
@@ -1527,6 +1577,7 @@ export class TabbedEditor {
                 this._langCompartment.of(javascript()),
                 ...customDarkTheme(),
                 patternHighlightExtension(),
+                activeBeatHighlightExtension(),
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         this._onDocChanged(update.state.doc.toString());

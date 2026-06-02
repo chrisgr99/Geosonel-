@@ -537,6 +537,14 @@ async function main() {
             // rather than failing with a ReferenceError.
             installImageSignals();
             canvas.refreshMarkers();
+            // Rebuild the Code-tab active-token highlighter's
+            // token map now that the engine can parse patterns:
+            // a score opened before Load Engine built no tokens
+            // (parsePatternToPositions no-ops without the engine),
+            // and the behaviours.js doc hasn't changed since, so
+            // a forced recompute is the only trigger that picks
+            // up the now-parseable patterns without a user edit.
+            editor.recomputeActiveBeatTokens();
             firingEngine.recompileMissingPatterns();
         }
     });
@@ -587,6 +595,14 @@ async function main() {
     const firingEngine = new PatternFiringEngine(strudelRuntime, midiSender, simulation, transport);
     canvas.setFiringEngine(firingEngine);
     firingEngine.setCanvas(canvas);
+
+    // Active-token highlight sink. The canvas emits a
+    // per-curve {t, repeats} map each playing frame; the
+    // editor forwards it to the Code-tab active-token
+    // highlighter, which boxes the currently-sounding token
+    // of each curve's pattern as its cursor sweeps. One-time
+    // wiring; the canvas drives it only while playing.
+    canvas.setActiveBeatSink((map) => editor.applyActiveBeats(map));
 
     // Procedural audio sink. A sprite's onTick callback can
     // fire an immediate note or sample through ctx.playNote /

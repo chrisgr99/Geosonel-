@@ -599,6 +599,32 @@ export class Canvas {
         this._playLoopId = null;
 
         /**
+         * Sink for the Code-tab active-token highlight, or
+         * null until main.js wires it via setActiveBeatSink.
+         * Called from _emitActiveBeats once per _draw with a
+         * Map<curveId, {t, repeats}> of every playing curve's
+         * cursor parameter and patternRepeats, which the
+         * editor forwards to the active-beat highlighter so it
+         * can outline the currently-sounding token. Receives an
+         * empty map when the transport isn't playing, so the
+         * boxes clear on pause / stop.
+         * @type {((map: Map<string, {t: number, repeats: number}>) => void) | null}
+         */
+        this._activeBeatSink = null;
+
+        /**
+         * Whether the active-beat sink was last sent an empty
+         * map. Starts true (nothing playing yet). Lets
+         * _emitActiveBeats send the clearing empty map exactly
+         * once on the transition to not-playing rather than on
+         * every non-playing redraw (hover, zoom, selection),
+         * while still emitting a fresh map every frame during
+         * playback.
+         * @type {boolean}
+         */
+        this._activeBeatsCleared = true;
+
+        /**
          * Active toolbar tool, or null if no creation tool is
          * armed. When non-null the cursor is shown as a
          * crosshair and a click on the canvas places a new
@@ -1289,6 +1315,19 @@ export class Canvas {
     }
 
     /**
+     * Attach the sink that carries per-frame active-beat
+     * state to the Code-tab active-token highlighter. main.js
+     * wires this to editor.applyActiveBeats so the editor
+     * boxes the currently-sounding token of each playing
+     * curve's pattern. Called once at startup; the canvas is
+     * fully usable without it (no boxes, all else works).
+     * @param {(map: Map<string, {t: number, repeats: number}>) => void} fn
+     */
+    setActiveBeatSink(fn) {
+        this._activeBeatSink = fn;
+    }
+
+    /**
      * Subscribe to scene-edit and selection-change events.
      * The callback receives a structured object with a kind
      * field. See _onMouseUp for the event shapes.
@@ -1548,6 +1587,62 @@ export class Canvas {
         if (this._playLoopId === null) return;
         cancelAnimationFrame(this._playLoopId);
         this._playLoopId = null;
+        // One more draw after the loop tears down so
+        // _emitActiveBeats runs once in the not-playing state
+        // and clears the active-token boxes on pause / stop.
+        this.scheduleDraw();
+    }
+
+    /**
+     * Build and emit the per-curve active-beat map for the
+     * Code-tab active-token highlighter. For each curve in the
+     * scene that has a cyclePattern, reports the curve's
+     * current cursor parameter t (in [0, 1)) and its
+     * patternRepeats; the editor's highlighter computes the
+     * pattern-local fraction (t * repeats mod 1) against its
+     * own parse of the block and outlines the token whose
+     * [begin, end) span contains it. Driven once per _draw,
+     * right after the simulation tick.
+     *
+     * Emits only while the transport is playing. When not
+     * playing (paused, stopped, or simulation/scene absent),
+     * sends one empty map to clear the boxes and then stays
+     * quiet until playback resumes — the _activeBeatsCleared
+     * flag suppresses the redundant per-redraw empties that
+     * hover, zoom, and selection redraws would otherwise
+     * produce. The getCurveCursorT typeof guard keeps a sink
+     * call from throwing if the simulation predates that
+     * method.
+     */
+    _emitActiveBeats() {
+        if (this._activeBeatSink === null) return;
+        const playing = this._transport !== null && this._transport.isPlaying;
+        if (!playing ||
+            this._scene === null ||
+            this._simulation === null ||
+            typeof this._simulation.getCurveCursorT !== "function") {
+            if (!this._activeBeatsCleared) {
+                this._activeBeatSink(new Map());
+                this._activeBeatsCleared = true;
+            }
+            return;
+        }
+        /** @type {Map<string, {t: number, repeats: number}>} */
+        const map = new Map();
+        for (const curve of this._scene.curves) {
+            if (typeof curve.id !== "string" || curve.id.length === 0) continue;
+            if (typeof curve.cyclePattern !== "string" ||
+                curve.cyclePattern.length === 0) continue;
+            const t = this._simulation.getCurveCursorT(curve.id);
+            if (typeof t !== "number" || !Number.isFinite(t)) continue;
+            const repeats = (typeof curve.patternRepeats === "number" &&
+                Number.isFinite(curve.patternRepeats) && curve.patternRepeats >= 1)
+                ? curve.patternRepeats
+                : 1;
+            map.set(curve.id, { t, repeats });
+        }
+        this._activeBeatSink(map);
+        this._activeBeatsCleared = false;
     }
 
     // --- Internals ---
@@ -1695,6 +1790,14 @@ export class Canvas {
         if (this._firingEngine !== null) {
             this._firingEngine.tick();
         }
+
+        // Emit per-curve active-beat state to the Code-tab
+        // highlighter after the simulation tick so each
+        // curve's cursor parameter is current for this frame.
+        // Paints nothing on the canvas; forwards the cursor
+        // fraction and patternRepeats per playing curve to the
+        // editor, which outlines the matching source token.
+        this._emitActiveBeats();
 
         ctx.save();
 
