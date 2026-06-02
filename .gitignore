@@ -4,6 +4,7 @@ commit-*.txt
 recent-commits.txt
 IN_FLIGHT.md
 DEFERRED.md
+.claude/settings.local.json
 
 # Electron migration (Stage 1+)
 node_modules/
