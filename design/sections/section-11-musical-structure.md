@@ -1,0 +1,135 @@
+## Section 11 — Musical Structure
+
+This section covers how a GXW score acquires higher-level musical structure — form, repeating multi-bar phrases, per-section tempo and harmony, which objects play when, and per-section starting conditions for those objects — on top of the base model in which each source simply loops its own cyclePattern forever. The mechanism is a structural layer that segments the master clock into an ordered, looping list of sections, where each section is in effect a self-contained mini-score: a subset of the score's objects, active at their own starting positions and properties, with a tempo, a harmonic context, and a background image, played from its defined start through a defined number of bars and then cut at the boundary as the next section begins.
+
+Everything in this section is subject to prototyping. The design has been worked through in conversation in enough detail to guide a first implementation, but it is provisional in a way the rest of the design doc is not, and many implementation questions of meaning and of user interface remain open (collected at the end). The right starting point is the smallest end-to-end slice — a two-section loop that swaps which objects play and changes the chord, built through the existing simulation and firing engine — with per-section tempo, per-section image, per-section starting conditions, and the arrangement UI layered on once the core boundary mechanism is proven.
+
+### Why structure is a GXW-native layer
+
+GXW owns the WHEN — the physics cursor and each source's per-source cycle clock — while Strudel owns the WHAT, the notes inside each cyclePattern. That split is exactly why higher-level structure is a real design question: nothing in the base model says "play section A, then a varied A, then B, then repeat." Strudel's own multi-cycle constructs (`arrange`, `cat`, `<...>`) assume Strudel owns a single global timeline, which GXW deliberately took away. So song-level form is layered as a GXW-native structural clock rather than delegated to Strudel.
+
+Conceptually the structural layer is an extension of Strudel's `arrange`. `arrange([n1, p1], [n2, p2], ...)` is a pure function of the cycle index: given a cycle it answers which section is active and how far into it. GXW reuses that cycle-to-section resolver as its structural clock, and extends it with the things `arrange` does not do — per-section tempo, per-section object activation, per-section image, per-section harmony, per-section starting conditions, per-section repeat counts, and a hard re-seed at every boundary. An `arrange`-style ordered list is also a natural authoring syntax for the section list.
+
+### The two clocks
+
+Adding per-section tempo changes what the master clock is. It stops being a single uniform BPM from which everything derives and becomes a structural bar counter with a piecewise-constant tempo: the bar count advances uniformly through the piece, but the wall-clock width of a bar is whatever the current section's BPM dictates. The structure is tracked in bars — a tempo-independent count — and the conversion to seconds is derived per section.
+
+This produces two layers:
+
+- A structural layer: an ordered list of sections. By default it loops — after the final section it returns to the first and plays forever — unless a section is designated the last, after which playback stops. It advances in bars, knows the current section, and at each boundary reconfigures the score-local layer below it.
+- A score-local layer: everything inside a section. This is the existing simulation, unchanged, running at the section's BPM with only that section's objects active and at that section's starting conditions.
+
+A score-level time signature (beats per bar plus the beat unit, e.g. 4/4) supplies the bar-to-beats conversion that makes "a section is N bars" precise. Time signature is new score-level state; sections may in principle carry their own time signature override, since each section is independent, though the common case is one signature for the whole score.
+
+### The fixed object set
+
+The set of objects is fixed by the master score. Sections never add or remove objects; they only mark objects active or inactive and override some of their properties. Adding or removing an object is always a master-level action. An object that should appear only in the bridge exists in the master set and is simply active only in the bridge section, inactive (muted, and optionally hidden) everywhere else.
+
+This simplification removes a whole class of complexity: there is no per-section identity set, no reconciling which objects exist where, and no question of what an override on a nonexistent object means. The inspector's object list is constant across sections, so switching sections never adds or drops objects on the canvas — it only activates, greys, or hides them — and the cascade below always has a base object present to inherit from.
+
+### Section properties
+
+A section carries:
+
+- Length in bars.
+- BPM. The section sets the master tempo for its duration; the score's default tempo applies to any section that does not override it.
+- Repeat count: how many times the section plays before the arrangement advances to the next section (default 1). Each repeat re-seeds the section from its starting conditions, so the iterations are identical — a compact alternative to placing the same section in the list several times.
+- Last-section flag: marks the section after which playback stops, once that section has finished its repeats. At most one section carries it. If no section is flagged, the arrangement loops back to the first section and plays forever, so the flag is how looping is controlled: a finite piece has a last section, an endless one does not. A single-section score flagged last plays its repeat count and stops; the same section left unflagged loops forever, its repeat count then having no effect since the loop subsumes it. The flag normally sits on the final section in order; placed earlier it simply ends the play-through there, which is mostly useful as a temporary ending while authoring.
+- Active set: which curves, sprites, and triggers play in the section (a subset of the fixed master object set).
+- Hide-inactive flag: whether inactive objects are merely muted (still drawn, greyed) or also hidden from the canvas for the section.
+- Optional background image. Because the image is the scalar field that drives sprite forces and feeds the pattern signals through OKLCh sampling, swapping it per section changes the physics landscape and the signal source the section reads from, not just the backdrop.
+- Optional harmony: a chord, scale, tonic, or root that becomes the section's tonal context, consumed by per-object patterns through @strudel/tonal modifiers or the harmony-context signals (`currentChord`, `currentScale`, `currentTonic`, `currentRoot`) described in Section 10.
+- Per-section starting conditions for its active objects, described below.
+
+These are authored in the new Score tab.
+
+### Per-section starting conditions and the editing model
+
+A section owns the starting conditions of the objects active in it. Move an object, resize it, change its colour, or activate it while a given section is shown, and those become that section's initial state, leaving every other section untouched. A verse and a chorus can hold the same lead instrument at different positions and sizes while remaining the same object. For a score with a single section this reduces exactly to the current model; the structure is one conceptual level deeper only when more than one section exists.
+
+The layer being edited is made explicit through the section dropdown described under Transport and position display, which carries a Master entry at the top alongside the named sections. Selecting Master shows and edits the shared base values; selecting a section shows the effective values (master merged with that section's overrides) and routes edits to that section's override layer. While the transport is stopped, selecting a section pins it for editing and the canvas shows that section's starting state — its active objects at their section-start positions, its image. During playback the dropdown follows the music as a readout; pinning is a stopped-transport, authoring-time concept.
+
+The edit-routing rule is therefore: Properties-tab edits apply to the layer shown in the dropdown (Master or a section), Score-tab edits are score-wide or live on a section's own row. The canvas obeys the same rule — dragging an object while a section is shown sets that section's position override; dragging under Master sets the shared default.
+
+### The cascade and the override UI
+
+The storage model is a cascade. Each object is defined once at master level — its identity, its callbacks, its default fields and pattern — and each section carries only a sparse set of overrides, the fields that differ there. The effective value in a section is the base merged with that section's overrides; an absent override means inherit. One section with no overrides is again exactly today. This is the same inherit-or-override idiom GXW already uses for per-object harmony (`HARMONY_OVERRIDE_FIELDS`), applied one level up. The private-copy alternative — a full scene per section — was considered and set aside: it duplicates shared state, loses object identity across sections, and is painful to migrate away from, whereas the cascade collapses to the copy model's simplicity whenever a section overrides every field.
+
+The inspector makes the cascade legible with a single accent colour, orange, distinct from the green used for active field frames so the two systems never collide. A field that is overrideable but currently inherited shows its label in orange. A field that is overridden in the shown section shows an orange box around its label, or an orange underline if a box reads too cramped at zoom (both are trivial to render; the underline is the lighter option). A field that is not overrideable carries no orange at all, in the normal label colour, so the presence of orange means "part of the override system" and the box-or-underline means "overridden here." The inspector is a purely visual surface — the author does not use Speak Selection on form data — so colour alone is an acceptable carrier here.
+
+Clicking an orange label toggles the override on and off. The toggle is non-destructive: turning an override off retains its value rather than discarding it, so the click is an A/B compare between the master value and the section value. Entering a value in the field is what creates the override; a deliberate "forget this override" is a separate, rarer action (a modifier-click or a small clear control) so an accidental click never wipes a value.
+
+### What is overrideable
+
+The object ID is the only field that is never overrideable. The callbacks (the hasHit, beenHit, and onTick function-name slots) and the cyclePattern are shared for now: they are authored in the Code tab and behaviours.js rather than in the inspector form, so per-section variants of them would mean section-scoped code, which is a larger feature. This is a "for now," not a dead end — a later extension such as section-scoped labelled blocks (`$lead@bridge: ...`) could add per-section patterns without disturbing the model. Everything else — position, velocity, size, colour, the active flag, voice, per-object harmony override — is overrideable.
+
+### Different material across sections
+
+Because the pattern is not overrideable per section, different melodic material in different sections does not come from one object playing different notes per section; it comes from activating different objects. The verse lead and the chorus lead are separate objects in the fixed master set, each with its own shared pattern, and the section's activation decides which is live. Harmonic variation is the other half: a single shared pattern that reads the section's harmony (through @strudel/tonal or the harmony-context signals) produces different pitches as the chords change, which covers a chord progression directly. So the working idiom is "different notes by harmony, different material by membership": a twelve-bar blues is mostly per-section harmony feeding shared leads, and a pop AABA bridge is a bridge object active only in the bridge section.
+
+### Section boundaries: the mini-score model
+
+The structural clock is authoritative. When a section's bar length elapses, the boundary fires regardless of where any object is in its own cycle: an object mid-sweep is interrupted and moved to the start of the next section (or to the start of the same section, if a repeat remains). At a boundary the controller, in one step:
+
+1. Switches the transport BPM to the next section's BPM.
+2. Swaps activation: unmutes and shows the next section's active objects, mutes (and optionally hides) the rest. This writes through to the same mute/hide state the inspector and Cmd-Shift-M use, not a parallel one, so the last write wins and manual changes coexist.
+3. Swaps the background image if the next section specifies one, recomputing the OKLCh buffer and pixel-sampling array so sprite forces and pattern signals read the new field.
+4. Re-seeds the next section's active objects to their section-start home — that section's authored starting conditions, base merged with overrides — via the full reset that rewind performs: cursor t, sprite position and velocity, curve runtime offset and velocity, cycle counter, the wall-bounce flip signs, the per-sprite RNG seed, and the procedural audio-fire throttle.
+5. Updates the harmonic context to the section's harmony.
+6. Zeroes the section-local clock.
+
+A repeat of a section is the same boundary with steps 1, 2, 3, and 5 unchanged: only the re-seed and the clock-zero apply, since the BPM, activation, image, and harmony all stay the same. That is exactly why a repeat produces an identical iteration. Inside a section nothing new happens: each active object loops its own cyclePattern at its own beatsPerCycle against the section's BPM, exactly as today. The section is a self-contained run between two hard cuts.
+
+### Procedural callbacks loop for free
+
+Because the boundary re-seed restores precisely the dynamic state that rewind restores, and because onTick, beenHit, and hasHit are pure side effects of that state that never mutate the deterministic motion (Section 9), a section's procedural music replays identically on every repeat: the tenth play of a section produces the same notes, hits, and forces as the first. This is the payoff of treating a section as a mini-score rewound to its beginning.
+
+The "for free" is real but conditional: it holds only if the boundary applies the complete per-object reset, not a partial one. A reset that restored cursor and position but carried over a sprite's RNG state or its audio-fire throttle would let the repeats drift. The existing `_rewind` already enumerates the full set of fields to reset; the section boundary applies that same reset scoped to the section's active objects, with the section's starting conditions as the target rather than a single global home.
+
+### Why per-section tempo is tractable
+
+Changing tempo mid-piece would normally mean carrying every object's cursor phase across a tempo discontinuity, which is awkward — the simulation's existing mid-play BPM handling recomputes phase via the closed-form `computeCyclePhaseFromGlobalTime` against `_simTime` as if the new tempo had applied since time zero, which is a phase jump that is correct for a live tweak but wrong for a musical section boundary. The hard re-seed removes the problem entirely. Each section runs at a constant BPM from a known start state, so there is never a phase to carry across the discontinuity. The interrupt-to-start behaviour the form already wants and the per-section tempo are the same mechanism: a boundary that stops, retunes, re-seeds, and resumes.
+
+A section's wall-clock duration is therefore `bars × beatsPerBar × 60 / BPM` per iteration; with a repeat count the section occupies that many bars times the repeat count on the structural timeline.
+
+### Determinism and scrubbing
+
+The section schedule — lengths, tempos, repeat counts, activations, images, harmony, starting conditions — is authored, fixed data. An object's state within a section iteration is a pure function of its section-start conditions, the time elapsed into the current iteration, and the section's BPM. The current section, repeat index, and bar-offset for any elapsed time come from a closed-form section resolver that walks the section durations (each section contributing repeat-count times its bar length), the same closed-form move the simulation already uses one level down for cycle phase. The arrangement has a finite total length when a last section is designated, and otherwise the resolver wraps modulo the section list. So rewind, scrub-to-arbitrary-position, and faster-than-realtime offline render all remain deterministic; determinism now reads as "(section schedule, elapsed time) gives the events."
+
+### The Score tab
+
+Score-wide state has had no real inspector surface; tempo, tonic, scale, output, and now the section list live in the JSON tab or nowhere. A new Score tab is the home for it: time signature and default tempo at the top, the tonal defaults and output routing, and below them the arrangement as an ordered, reorderable vertical list of section cards, each with add, duplicate, and delete. Each card shows its section-level line — name, bars, BPM, repeat count, image, harmony — and below it the objects active in the section.
+
+Per-section overrides surface in that active list rather than in a separate view. An object carrying any override in the section shows its name with the same orange underline that marks an overridden field in Properties; a plain name means it is playing at master values. Clicking an orange name jumps to the Properties tab with that section pinned and the object selected, where the orange field labels show exactly which fields differ. So the Score tab answers which object in which section is customized, and the Properties tab answers which fields, with no field-level detail duplicated and so a single source of truth. The active list doubles as the membership control: it shows the live objects, with an expander to reveal the full object set and toggle activation, defaulting to the active ones to keep each card short at zoom. Duplicate-section is the natural cloning move — copy a section with its overrides, then tweak it.
+
+The vertical-list shape is deliberate for the zoom workflow: sections stacked, each with its active objects stacked beneath, is all single-axis scrolling, with no grid to lose one's bearings in when magnified. An object-by-section matrix was considered and rejected as a primary surface for that reason. This also draws the inspector's dividing line: per-object state on Properties (routed to the shown layer), score-wide and section-level state on the Score tab, with the JSON tab the fallback for anything not yet surfaced.
+
+### Transport and position display
+
+With per-section tempo, the transport's elapsed readout naturally refers to the current section, so the display splits into two levels. The transport readout becomes in-section position: beats and measures (and seconds) into the current section iteration at its tempo. The overall position is shown by the section dropdown — a labelled menu naming the current section by name and index (e.g. "2 / 5 — Bridge"), with the Master entry at its head. The dropdown is both indicator and control: during playback it advances to the live section as a readout, and while stopped it pins a layer for authoring as described above. It is likely the right permanent primary control rather than only a starting point, because a discrete labelled menu is more legible than a fine-grained scrub bar under zoom and selects cleanly by keyboard or menu.
+
+A scrub bar can still be added later for finer overall-position feedback, laying the section list out end to end with a position marker. One layout choice would then be open: by bars (each section's width proportional to its bar count times its repeats, tempo-independent, reading like a score) or by wall-clock seconds (a slow section wider, reflecting real playback time); bars is the working preference. The two-level display supersedes the deferred elapsed-time-display rework, since a real time signature makes the bar-and-measure framing honest.
+
+### Relationship to the conductor mechanism
+
+An earlier version of this section specified a `conductor()` pattern: a curve whose cyclePattern tokens are commands rather than notes, with a `role` field for group addressing and a command vocabulary (rewind, mutate, chord-change tokens, solo) dispatched to the targeted objects. The section model absorbs the conductor's two largest jobs. Form gating by solo becomes per-section activation; chord-change tokens become per-section harmony. What remains potentially useful from the conductor idea is the per-event, in-musical-time command channel for things that are not "select state for a span" — a `mutate` applied to a voice at a beat, project-specific verbs registered through a `defineCommand` registry in behaviours.js, and the timeline-on-canvas visualization of a conductor curve. Whether that channel survives alongside sections, layers within a section, or is retired is open. The `role` field is likely to persist regardless, since it is a natural way for a section to name a group of objects to activate.
+
+### Open questions
+
+Many implementation questions of meaning and of interface remain; the major ones:
+
+- Repeat semantics (settled). A repeat re-seeds the section so iterations are identical — the working choice, since a non-re-seeding repeat would be indistinguishable from a longer section. Loop-versus-stop is handled by the last-section flag: the arrangement loops by default and terminates at the designated last section.
+- Override UI confirmation. The orange-label scheme (orange label overrideable, orange box-or-underline overridden, no orange shared) and the non-destructive click-toggle need confirming against a real inspector at zoom; box versus underline is an aesthetic call.
+- The overrideable field set. Working answer: everything except ID, with callbacks and cyclePattern shared for now; confirm the exact list and revisit per-section patterns later via section-scoped labelled blocks.
+- Carry-through is deferred. Boundaries are uniformly hard-cut: every active object re-seeds to its section-start conditions, so each section stays self-contained and the section list reorders, duplicates, and deletes freely. Carry-through — letting a sustained drone or pad glide across a boundary instead of restarting — is a nice-to-have left for later, because expressing it as "carry from the previous section" couples a section to its predecessor and breaks under reordering: the carried fields, and which fields are greyed in the inspector, would depend on what now precedes the section, and an object set to carry could end up first in the order with nothing to carry from. The order-safe way to add it later is a whole-arrangement per-object flag — "this object runs continuously and is never re-seeded at boundaries" — set once on the object rather than per adjacency, so reordering cannot break it and the affected kinematic fields are simply not section-overrideable for that object. Less flexible than per-boundary carry, but it matches the real use case (an element that sounds throughout) and keeps the boundary model uniform. In the meantime the author can approximate carry-through by authoring an object's starting conditions in the next section to match where it left off; for a sustained pad or drone the slight re-articulation at the boundary is usually unobtrusive, so deferring carry-through does not block the effect, only the engine guarantee of it.
+- Dropdown follow-versus-pin semantics. Working rule: selecting a section while stopped pins it, pressing play lets it follow. Edge cases (editing while playing, scrubbing by changing the dropdown mid-play) need confirming.
+- Activation expression: an explicit per-section active-object list, or role-based activation (a section names roles, objects carry roles), or both with a precedence rule.
+- Image preload at the boundary, so the swap and OKLCh recompute do not hitch, and how that interacts with scrubbing to an arbitrary section.
+- Audio scheduler boundary barrier: the one-cycle-ahead scheduling must flush events pre-scheduled past a boundary at the old tempo and re-bootstrap at the new BPM, extending the existing BPM-change flush as a planned structural event.
+- Per-section time signature: whether to expose a per-section override or keep one signature per score.
+- Per-section harmony and @strudel/tonal: turning a section's chord or scale into concrete pitches depends on the still-deferred tonal integration (Section 25, item 27); the timing machinery is independent and can land first, with harmony as bare context-field updates until then. How per-section harmony composes with per-object harmony overrides also needs working through.
+- Fate of the conductor channel: whether the per-event command channel (mutate, defineCommand verbs, the conductor-curve visualization) survives alongside sections, and if so at what level.
+- Scrub-bar layout, if added: by bars or by wall-clock seconds.
+- Mutate semantics, if the command channel survives: what a mutation does to a voice, whether mutations accumulate or reset, and the default when none is configured.
+
+These open questions are tracked here rather than in TODO.md until they are resolved; they are pre-implementable design work, not pending implementation items.

@@ -20,7 +20,7 @@ GeoSonel is a web app for composing music that emerges from 2D scenes. A scene i
 - [Section 8 — Collision Model](sections/section-08-collision-model.md)
 - [Section 9 — Behaviour Slots and behaviors.js](sections/section-09-function-slots.md)
 - [Section 10 — Pattern Language](sections/section-10-pattern-language.md)
-- [Section 11 — Score Orchestration and Harmony](sections/section-11-harmony.md)
+- [Section 11 — Musical Structure](sections/section-11-musical-structure.md)
 - [Section 12 — Pattern Engine](sections/section-12-pattern-engine.md)
 - [Section 13 — User Interface](sections/section-13-user-interface.md)
 - [Section 13.5 — Canvas](sections/section-13-5-canvas.md)
