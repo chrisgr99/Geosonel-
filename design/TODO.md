@@ -16,7 +16,7 @@ Scene data model: three object kinds (curves, triggers, sprites), score-level fi
 - Per-object string id with kind prefix (CRV*, TRG*, SPR*).
 - mute boolean per object, suppressing cursor rendering and the firing that depends on it.
 - hide boolean per curve for geometry rendering, surfaced only in the JSON tab.
-- Score-level fields in SCENE_FIELDS: bpm, tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo, imageName, output, triggerScale, spriteScale. (The harmony fields tonic/scaleName/root/chordName move onto the Shared baseline so key and chord progression cascade to sections, rather than remaining flat score-level fields; see Harmony.)
+- Score-level fields in SCENE_FIELDS: bpm, tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo, imageName, output, triggerScale, spriteScale. (The harmony fields tonic/scaleName/root/chordName move onto the Shared baseline so key and chord progression cascade to segments, rather than remaining flat score-level fields; see Harmony.)
 - Optional background image resampled to 1000x1000 as a scalar field.
 
 ### Pending
@@ -155,7 +155,7 @@ Master BPM, beat counter, per-source cycle periods, play/stop/rewind, and determ
 
 ## Harmony
 
-Cascading harmony: the key (tonal centre and scale) and the chord progression sit on the Shared baseline and cascade to sections, each section inheriting or overriding either. The progression is Strudel mini-notation of scale-degree tokens, resolved to concrete pitches through @strudel/tonal, and is authored as a labelled block — `$chords` for Shared, `$chords@<section>` for a section override. See Section 11.
+Cascading harmony: the key (tonal centre and scale) and the chord progression sit on the Shared baseline and cascade to segments, each segment inheriting or overriding either. The progression is Strudel mini-notation of scale-degree tokens, resolved to concrete pitches through @strudel/tonal, and is authored as a labelled block — `$chords` for Shared, `$chords@<segment>` for a segment override. See Section 11.
 
 ### Shipped
 
@@ -163,9 +163,9 @@ Cascading harmony: the key (tonal centre and scale) and the chord progression si
 
 ### Pending
 
-- Reorganize the harmony fields (tonic, scaleName, root, chordName) onto the Shared baseline layer so key and chord progression cascade to sections, rather than keeping them as flat score-level fields. The mapping fields (range, rangeLow, mapNotesTo) are per-object concerns and stay.
-- Cascading harmony data: key (tonal centre/root and scale) and the chord-progression mini-notation on the Shared baseline with per-section overrides; the progression authored as a labelled block (`$chords` for Shared, `$chords@<section>` for a section).
-- @strudel/tonal integration (now in scope): resolve a section's scale and degree tokens into pitches and chords; per-object patterns consume the active harmony through mapNotesTo.
+- Reorganize the harmony fields (tonic, scaleName, root, chordName) onto the Shared baseline layer so key and chord progression cascade to segments, rather than keeping them as flat score-level fields. The mapping fields (range, rangeLow, mapNotesTo) are per-object concerns and stay.
+- Cascading harmony data: key (tonal centre/root and scale) and the chord-progression mini-notation on the Shared baseline with per-segment overrides; the progression authored as a labelled block (`$chords` for Shared, `$chords@<segment>` for a segment).
+- @strudel/tonal integration (now in scope): resolve a segment's scale and degree tokens into pitches and chords; per-object patterns consume the active harmony through mapNotesTo.
 - Harmony-context signals currentScale, currentChord, currentTonic, currentRoot exposing the active (cascaded) harmony to patterns.
 - Chord-progression timing layer (which degree is active on which bar and beat): the GXW-native half, which can land before Tonal makes it audible.
 - Extend the degree-token vocabulary toward the full Strudel/Tonal chord set (v1 starts diatonic).
