@@ -40,4 +40,5 @@ GeoSonel is a web app for composing music that emerges from 2D scenes. A scene i
 - [Section 27 — Strudel as Pattern Language (superseded — forwarding stub)](sections/section-27-strudel-pattern-language.md)
 - [Section 28 — Pattern Authoring and the Cursor Model (superseded — forwarding stub)](sections/section-28-pattern-authoring-and-cursor-model.md)
 - [Section 29 — Electron Migration](sections/section-29-electron-migration.md)
+- [Section 30 — Composer Helper Library](sections/section-30-composer-helper-library.md)
 - [Section 31 — Semantic Code Speech Layer](sections/section-31-semantic-code-speech-layer.md)

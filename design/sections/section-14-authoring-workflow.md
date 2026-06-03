@@ -17,28 +17,24 @@ Example scene.json:
   "curves": [
     {
       "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 10, "h": 10 },
-      "cycleDuration": 4,
+      "cyclePattern": "0 2 4 5",
+      "beatsPerCycle": 4,
       "beatInterval": "Qtr",
-      "beatsPerBar": 4,
-      "beatOffset": 0,
       "cycleSpeeds": "1",
       "stopAtCycle": -1,
-      "beatPointsMode": "normal",
-      "activeBeats": "x",
-      "strength": "9",
       "cursorR": 3,
       "cursorL": 0,
-      "hitBeat": "hitBeat_circle",
-      "hitTrigger": "hitTrigger_circle"
+      "hasHitFunction": "hasHit_CRV1",
+      "beenHitFunction": "beenHit_CRV1"
     }
   ],
   "triggers": [
-    { "x": 3, "y": 4, "note": 60, "collision": "collision_node" },
-    { "x": -4, "y": 2, "note": 64, "collision": "collision_node" },
-    { "x": 2, "y": -3, "note": 67, "collision": "collision_node" }
+    { "x": 3, "y": 4, "note": 60, "beenHitFunction": "beenHit_TRG1" },
+    { "x": -4, "y": 2, "note": 64, "beenHitFunction": "beenHit_TRG1" },
+    { "x": 2, "y": -3, "note": 67, "beenHitFunction": "beenHit_TRG1" }
   ],
   "sprites": [
-    { "x": 0, "y": 0, "vx": 1, "vy": 0, "motionUpdate": "" }
+    { "x": 0, "y": 0, "vx": 1, "vy": 0, "onTickFunction": "onTick_SPR1" }
   ]
 }
 ```
@@ -46,40 +42,42 @@ Example scene.json:
 Corresponding behaviours.js:
 
 ```javascript
-// Curve functions.
-function hitBeat_circle(ctx) {
-    // An arpeggio keyed to which beat of the cycle fired.
+// Curve functions. Names follow the slotName_objectId convention
+// (Section 9); each is bound explicitly from the object's slot field.
+function hasHit_CRV1(ctx) {
+    // The curve's cursor struck a target — arpeggiate by scale degree
+    // against the active (cascaded) harmony.
     const degrees = [0, 2, 4, 5];
-    const note = scaleMap(degrees[ctx.beatIndex % 4] / 7,
+    const note = scaleMap(degrees[ctx.cycleCount % 4] / 7,
                           { scale: ctx.scale, root: ctx.root });
-    return { note, velocity: ctx.strength * 14, duration: 200 };
+    return { note, velocity: 100, duration: 200 };
 }
 
-function hitTrigger_circle(ctx) {
-    // Distance-based pitch — GeoMaestro distortion pattern.
+function beenHit_CRV1(ctx) {
+    // Something crossed one of this curve's markers — distance-based
+    // pitch off the struck marker's value, a GeoMaestro distortion
+    // pattern.
     return {
-        note: ctx.trigger.note - Math.floor(ctx.d),
+        note: ctx.hitValue.note - Math.floor(ctx.d),
         velocity: Math.max(0, 127 - Math.floor(ctx.d * 8)),
         duration: 400,
     };
 }
 
 // Trigger functions.
-function collision_node(ctx) {
+function beenHit_TRG1(ctx) {
     return { note: this.note, velocity: 100, duration: 300 };
 }
 
-// Sprite functions. The shared Motion Update default — every sprite
-// with an empty motionUpdate field invokes this function.
-function motionUpdate(ctx) {
-    // Image colour drives acceleration — red pulls right, blue pulls
-    // left, the green channel pushes vertically. The simulation adds
-    // the returned ax/ay to velocity before integrating position.
-    const c = ctx.imageColor;
-    return {
-        ax: (c.r - c.b) * 0.05,
-        ay: (c.g - 128) * 0.05,
-    };
+// Sprite functions. Bound explicitly per sprite via onTickFunction;
+// the old implicit motionUpdate default has been retired (Section 9).
+function onTick_SPR1(ctx) {
+    // Image colour drives a force field — the red/blue axis pushes
+    // horizontally and brightness pushes vertically. Motion changes by
+    // impulse through applyForce, never by absolute assignment; flipX
+    // and flipY reverse the field after each wall bounce.
+    ctx.applyForce((ctx.pxR - ctx.pxB) * 0.05 * ctx.flipX,
+                   (ctx.pxLt - 0.5) * 0.05 * ctx.flipY);
 }
 ```
 

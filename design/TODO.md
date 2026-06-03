@@ -16,7 +16,7 @@ Scene data model: three object kinds (curves, triggers, sprites), score-level fi
 - Per-object string id with kind prefix (CRV*, TRG*, SPR*).
 - mute boolean per object, suppressing cursor rendering and the firing that depends on it.
 - hide boolean per curve for geometry rendering, surfaced only in the JSON tab.
-- Score-level fields in SCENE_FIELDS: bpm, tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo, imageName, output, triggerScale, spriteScale. (The harmony fields tonic/scaleName/root/chordName are slated for removal — harmony is now per-section; see Harmony.)
+- Score-level fields in SCENE_FIELDS: bpm, tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo, imageName, output, triggerScale, spriteScale. (The harmony fields tonic/scaleName/root/chordName move onto the Shared baseline so key and chord progression cascade to sections, rather than remaining flat score-level fields; see Harmony.)
 - Optional background image resampled to 1000x1000 as a scalar field.
 
 ### Pending
@@ -129,7 +129,7 @@ Image-colour and sprite kinematic signals consumed by patterns; firing-context p
 
 - Remaining image-colour signals: pxChr (perceptual saturation), the four opponent-axis primaries (pxR, pxG, pxY, pxB), and the four hue intermediates (pxOr, pxPu, pxCy, pxLi). Each is a trivial projection of the precomputed OKLab values.
 - Sprite kinematic signals: spriteX, spriteY, spriteVx, spriteVy, spriteV.
-- currentScale, currentChord, currentTonic, currentRoot harmony-context signals exposing the active per-section harmony; @strudel/tonal is now in scope (see Harmony).
+- currentScale, currentChord, currentTonic, currentRoot harmony-context signals exposing the active (cascaded) harmony; @strudel/tonal is now in scope (see Harmony).
 - Distance-derivatives of image signals (dpxLt_ds, dpxR_ds, and so on) computed against arc length traversed.
 - EMA smoothing of dynamic signal values.
 - defineSignal helper for composer-defined signals expressed as JavaScript formulas over the standard vocabulary.
@@ -155,18 +155,18 @@ Master BPM, beat counter, per-source cycle periods, play/stop/rewind, and determ
 
 ## Harmony
 
-Per-section harmony: each section carries its own tonal center (root), scale, and a chord progression authored as Strudel mini-notation of scale-degree tokens, resolved to concrete pitches through @strudel/tonal. There is no score-level harmony. See Section 11.
+Cascading harmony: the key (tonal centre and scale) and the chord progression sit on the Shared baseline and cascade to sections, each section inheriting or overriding either. The progression is Strudel mini-notation of scale-degree tokens, resolved to concrete pitches through @strudel/tonal, and is authored as a labelled block — `$chords` for Shared, `$chords@<section>` for a section override. See Section 11.
 
 ### Shipped
 
-- HARMONY_OVERRIDE_FIELDS per object (tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo) in the schema. These describe how an object's notes map onto the active harmony; the active harmony itself is now per-section.
+- HARMONY_OVERRIDE_FIELDS per object (tonic, scaleName, root, chordName, range, rangeLow, mapNotesTo) in the schema. These describe how an object's notes map onto the active harmony; the active harmony itself now cascades from the Shared baseline.
 
 ### Pending
 
-- Remove the score-level harmony fields (tonic, scaleName, root, chordName) from SCENE_FIELDS; harmony is per-section, so the score level keeps only non-harmony fields. The mapping fields (range, rangeLow, mapNotesTo) are per-object concerns and stay.
-- Per-section harmony data: tonal center/root, scale, and the chord-progression mini-notation string, the progression authored as a section-scoped labelled block in the Code tab.
+- Reorganize the harmony fields (tonic, scaleName, root, chordName) onto the Shared baseline layer so key and chord progression cascade to sections, rather than keeping them as flat score-level fields. The mapping fields (range, rangeLow, mapNotesTo) are per-object concerns and stay.
+- Cascading harmony data: key (tonal centre/root and scale) and the chord-progression mini-notation on the Shared baseline with per-section overrides; the progression authored as a labelled block (`$chords` for Shared, `$chords@<section>` for a section).
 - @strudel/tonal integration (now in scope): resolve a section's scale and degree tokens into pitches and chords; per-object patterns consume the active harmony through mapNotesTo.
-- Harmony-context signals currentScale, currentChord, currentTonic, currentRoot exposing the active per-section harmony to patterns.
+- Harmony-context signals currentScale, currentChord, currentTonic, currentRoot exposing the active (cascaded) harmony to patterns.
 - Chord-progression timing layer (which degree is active on which bar and beat): the GXW-native half, which can land before Tonal makes it audible.
 - Extend the degree-token vocabulary toward the full Strudel/Tonal chord set (v1 starts diatonic).
 
