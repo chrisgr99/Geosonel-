@@ -1538,13 +1538,15 @@ export class PatternFiringEngine {
         for (const state of this._sources.values()) {
             const source = this._lookupSource(state);
             if (source === null) continue;
-            // Mute gate. A muted source consumes no firings —
-            // pending events are dropped and population is
-            // skipped. Unmuting on the fly re-bootstraps on
-            // the next tick from whatever cycle the
-            // simulation is currently in, so unmute lands
-            // cleanly on the next cycle boundary.
-            if (source.mute === true) {
+            // Non-active gate. A source that is not active
+            // (passive or disabled) consumes no firings — pending
+            // events are dropped and population is skipped. Going
+            // active on the fly re-bootstraps on the next tick
+            // from whatever cycle the simulation is currently in,
+            // so it lands cleanly on the next cycle boundary.
+            // (Self-firing needs the cursor, which only an active
+            // source has.)
+            if (source.state !== "active") {
                 state.pendingEvents = [];
                 state.populatedCycles.clear();
                 continue;

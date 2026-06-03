@@ -213,6 +213,18 @@ export const renderMethods = {
                 ? null
                 : this._simulation.getCurveRuntimeOffset(curve.id);
             const hasOffset = offset !== null && (offset.dx !== 0 || offset.dy !== 0);
+            // Disabled curves render desaturated to gray (the
+            // whole object), matching disabled triggers and
+            // sprites; greying is reserved for disabled. A
+            // passive curve keeps full colour and only loses
+            // its cursor (gated in _drawCurveCursor). The cursor
+            // does not draw for a disabled curve anyway, so the
+            // filter only greys the shape and its markers.
+            const curveDisabled = curve.state === "disabled";
+            if (curveDisabled) {
+                ctx.save();
+                ctx.filter = "grayscale(100%)";
+            }
             if (hasOffset) {
                 ctx.save();
                 ctx.translate(
@@ -224,6 +236,9 @@ export const renderMethods = {
             this._drawCurveMarkers(curve);
             this._drawCurveCursor(curve);
             if (hasOffset) {
+                ctx.restore();
+            }
+            if (curveDisabled) {
                 ctx.restore();
             }
         }
@@ -420,21 +435,21 @@ export const renderMethods = {
 
     _drawCurveCursor(curve) {
         // Cursor-as-collider gate: a curve has a visible
-        // cursor only when it has a non-zero extent AND is
-        // not muted. Both extents zero, or `mute` checked,
-        // means no cursor on the canvas. Per section 27's
+        // cursor only when it has a non-zero extent AND its
+        // state is "active". A passive or disabled curve has no
+        // cursor on the canvas. Per section 27's
         // cursor-as-collider model, cursor presence is what
-        // makes the curve a collider and an audio source;
-        // the visual gate matches the operational one.
+        // makes the curve a collider and an audio source; the
+        // visual gate matches the operational one.
         //
         // The legacy `hide` field (curve-only, deprecated
-        // in favour of the universal `mute` — see
-        // sceneSchema.js) is honoured alongside `mute` so
-        // existing scores that used hide as an ad-hoc mute
-        // keep their cursor-hidden behaviour. New work
-        // should use `mute`.
+        // in favour of the universal `state` — see
+        // sceneSchema.js) is honoured alongside `state` so
+        // existing scores that used hide as an ad-hoc cursor
+        // hide keep their behaviour. New work should use
+        // `state` ("passive").
         if (curve.cursorR === 0 && curve.cursorL === 0) return;
-        if (curve.mute || curve.hide) return;
+        if (curve.state !== "active" || curve.hide) return;
 
         const ctx = this.ctx;
         // Cursor parameter t comes from the simulation's
@@ -488,16 +503,18 @@ export const renderMethods = {
             const cx = this.toPixelX(t.x);
             const cy = this.toPixelY(t.y);
             const r = Math.max(3, t.size * scale * this.pixelsPerUnit);
-            // Muted triggers render desaturated to gray via
+            // Disabled triggers render desaturated to gray via
             // a canvas-level grayscale filter applied for the
             // duration of this trigger's draw. The filter
             // desaturates both the image-sampled fill and
             // the boundary stroke (including the hover-
             // lightened variant), keeping lightness contrast
             // against the canvas background while removing
-            // colour as the muted-state signal.
-            const muted = t.mute === true;
-            if (muted) {
+            // colour as the disabled-state signal. Greying is
+            // reserved for disabled; active triggers render
+            // normally (triggers have no passive state).
+            const isDisabled = t.state === "disabled";
+            if (isDisabled) {
                 ctx.save();
                 ctx.filter = "grayscale(100%)";
             }
@@ -555,7 +572,7 @@ export const renderMethods = {
                 ? 1.5 + HOVER_LINE_WIDTH_BONUS
                 : 1.5;
             ctx.stroke();
-            if (muted) ctx.restore();
+            if (isDisabled) ctx.restore();
         }
     },
 
@@ -599,16 +616,18 @@ export const renderMethods = {
             // method also advances the per-sprite heading and
             // previous-position history each frame.
             const phi = this._spriteHeadingPixelAngle(s, pos, headingDt);
-            // Muted sprites render desaturated to gray via
+            // Disabled sprites render desaturated to gray via
             // a canvas-level grayscale filter applied for the
             // duration of this sprite's draw. The filter
             // desaturates both the image-sampled fill and
             // the boundary stroke (including the hover-
             // lightened variant), keeping lightness contrast
             // against the canvas background while removing
-            // colour as the muted-state signal.
-            const muted = s.mute === true;
-            if (muted) {
+            // colour as the disabled-state signal. Greying is
+            // reserved for disabled; a passive sprite keeps its
+            // full colour and only loses its cursor (below).
+            const isDisabled = s.state === "disabled";
+            if (isDisabled) {
                 ctx.save();
                 ctx.filter = "grayscale(100%)";
             }
@@ -675,15 +694,16 @@ export const renderMethods = {
                 ? 1.5 + HOVER_LINE_WIDTH_BONUS
                 : 1.5;
             ctx.stroke();
-            if (muted) ctx.restore();
+            if (isDisabled) ctx.restore();
 
             // Cursor line. A perpendicular segment through the
             // sprite's centre, extending cursorR to its right
             // and cursorL to its left of the heading, in the
             // curve-cursor colour at cursorThickness. Hidden
-            // when both extents are zero or the sprite is muted
-            // (a muted sprite has no firing surface, matching a
-            // muted curve's hidden cursor). Drawn after the body
+            // when both extents are zero or the sprite is not
+            // active (a passive or disabled sprite has no firing
+            // surface, matching a passive curve's hidden cursor).
+            // Drawn after the body
             // so it reads on top, and deliberately NOT part of
             // the firing flash — only the body flashes red while
             // the cursor keeps its colour. R/L go through the
@@ -692,7 +712,7 @@ export const renderMethods = {
             // canvas-space heading is recovered by flipping Y
             // (cos phi, -sin phi). This makes the right-of-motion
             // sense match the curve cursor exactly.
-            if (!muted && (s.cursorR !== 0 || s.cursorL !== 0)) {
+            if (s.state === "active" && (s.cursorR !== 0 || s.cursorL !== 0)) {
                 const perp = pixelPerpendicularUnit(Math.cos(phi), -Math.sin(phi));
                 const ppu = this.pixelsPerUnit;
                 const xRight = cx + perp.x * s.cursorR * ppu;

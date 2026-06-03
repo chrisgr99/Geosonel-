@@ -10,8 +10,10 @@ export const W = {
 
     // Inline labels next to the row's leftmost field group,
     // sized to the shortest text that fits at 10pt.
-    hideCursor: 90,    // "Hide Cursor" — deprecated width key, kept for any legacy reference; the Band 1 mute row now uses W.mute instead
-    mute: 40,          // "Mute" — the universal mute label on Band 1's row 1, renamed from "Hide Cursor" once mute consolidated across curves, sprites, and triggers (Commit 2 of the pattern-correspondence invariant work)
+    hideCursor: 90,    // "Hide Cursor" — deprecated width key, kept for any legacy reference; the Band 1 state row now uses W.state / W.stateField instead
+    mute: 40,          // "Mute" — deprecated width key from the old single Mute control; superseded by the three-state `state` field (Active / Hide Cursor / Disable) on Band 1's row 1
+    state: 40,         // "State" — the Band 1 row-1 label for the three-state activity dropdown (active / passive / disabled)
+    stateField: 110,   // the Band 1 state dropdown itself; wide enough for the longest option label ("Hide Cursor")
     curveThick: 60,    // "Curve\nThickness" multiline
     cursorThick: 60,   // "Cursor\nThickness" multiline
 

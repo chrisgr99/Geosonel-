@@ -445,14 +445,18 @@ export class Curve {
         this.name = opts.name ?? "";
 
         /**
-         * When true the curve is muted: its callback slots
-         * do not fire. The cursor still advances visibly so
-         * the curve's rhythm structure stays readable as
-         * motion. Wired into the simulation loop in a later
-         * milestone.
-         * @type {boolean}
+         * Three-state activity field. "active" (the default):
+         * normal — cursor shown, self-fires, is both collider
+         * and target, onTick runs. "passive": cursor removed,
+         * so no self-firing and not a collider, but the curve
+         * still moves, still runs onTick, is still a valid
+         * target (its beenHit runs), and renders at full
+         * colour. "disabled": fully inert — greyed, frozen,
+         * out of collisions as both collider and target, no
+         * firing, onTick does not run.
+         * @type {"active" | "passive" | "disabled"}
          */
-        this.mute = opts.mute ?? false;
+        this.state = opts.state ?? "active";
 
         /**
          * When true the curve is hidden: its geometry does
@@ -598,7 +602,7 @@ export class Curve {
         // onTick are Code-tab slots, each guarded by a
         // Can-X gate. The cyclePattern carries the
         // strudel mini-notation pattern that fires when
-        // the source has cursor extents and is unmuted
+        // the source has cursor extents and state "active"
         // (per the cursor-as-collider model). Function-
         // name fields hold STRING NAMES of functions in
         // behaviors.js; empty string means no binding.
@@ -698,12 +702,14 @@ export class Trigger {
         this.name = opts.name ?? "";
 
         /**
-         * When true the trigger is muted: its callback slots
-         * do not fire. The trigger still renders. Wired into
-         * the simulation loop in a later milestone.
-         * @type {boolean}
+         * Activity field. A trigger has no cursor, so it has no
+         * "passive" state — only "active" (the default; normal,
+         * a valid target whose beenHit runs and which can
+         * auto-fire) and "disabled" (fully inert: greyed,
+         * frozen, out of collisions as a target, no firing).
+         * @type {"active" | "disabled"}
          */
-        this.mute = opts.mute ?? false;
+        this.state = opts.state ?? "active";
 
         this.x = opts.x ?? 0;
         this.y = opts.y ?? 0;
@@ -803,13 +809,18 @@ export class Sprite {
         this.name = opts.name ?? "";
 
         /**
-         * When true the sprite is muted: its callback slots
-         * do not fire. Physics, image-sampling, and rendering
-         * continue. Wired into the simulation loop in a later
-         * milestone.
-         * @type {boolean}
+         * Three-state activity field. "active" (the default):
+         * normal — cursor shown, self-fires, is both collider
+         * and target, physics and onTick run. "passive": cursor
+         * removed, so no self-firing and not a collider, but
+         * the sprite still moves, still runs onTick, is still a
+         * valid target (its beenHit runs), and renders at full
+         * colour. "disabled": fully inert — greyed, frozen (no
+         * physics), out of collisions as both collider and
+         * target, no firing, onTick does not run.
+         * @type {"active" | "passive" | "disabled"}
          */
-        this.mute = opts.mute ?? false;
+        this.state = opts.state ?? "active";
 
         this.x = opts.x ?? 0;
         this.y = opts.y ?? 0;
@@ -863,7 +874,7 @@ export class Sprite {
         // motion direction. cursorR units extend right of
         // motion, cursorL units extend left. A sprite has a
         // visible, firing, colliding cursor iff cursorR or
-        // cursorL is non-zero AND mute is unchecked. Default
+        // cursorL is non-zero AND state is "active". Default
         // zero so existing sprites do not silently grow
         // cursors on schema migration.
         /** @type {number} */

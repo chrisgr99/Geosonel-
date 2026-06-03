@@ -120,7 +120,7 @@ import {
     fillMissingEngine,
     stripObsoleteFields,
     migrateBehaviorsFilename,
-    setMuteOnSelection,
+    setStateOnSelection,
     setHideOnCurves,
     setNameOnSelection,
     translateSelection,
@@ -2197,37 +2197,39 @@ async function main() {
     };
 
     /**
-     * Build the set of object ids in the current scene
-     * whose `mute` field is true, and dispatch it to the
-     * editor so the muted-tag decoration in behaviors.js
-     * fades the binding identifiers (labelled-block
-     * labels and callback function names) of every muted
-     * source. The fade composes with the active-tag and
-     * orphan-tag decorations so a selected-and-muted
-     * binding reads as faded green and an unselected-
-     * and-muted one reads as gray.
+     * Build the set of object ids in the current scene that
+     * are disabled (`state === "disabled"`), and dispatch it
+     * to the editor so the muted-tag decoration in behaviors.js
+     * greys the binding identifiers (labelled-block labels and
+     * callback function names) of every disabled source. Per
+     * the three-state model, label decorations grey only for
+     * disabled objects; passive objects render at full colour
+     * (on the canvas and in the editor) and active objects
+     * render normally. The grey composes with the active-tag
+     * and orphan-tag decorations so a selected-and-disabled
+     * binding reads as faded green and an unselected-and-
+     * disabled one reads as gray.
      *
      * Called after each successful runScene, alongside
-     * dispatchKnownObjectIds. The muted set is
+     * dispatchKnownObjectIds. The disabled set is
      * independent of the known and selected sets: known
      * tracks existence (added / removed / renamed),
-     * selected tracks canvas focus (clicks), muted tracks
-     * the per-object mute field (toggled via Cmd-Shift-M,
-     * the inspector checkbox, or an AI edit through the
-     * mirror).
+     * selected tracks canvas focus (clicks), this set tracks
+     * the per-object state field (changed via the inspector
+     * State dropdown or an AI edit through the mirror).
      */
     const dispatchMutedObjectIds = () => {
         /** @type {Set<string>} */
         const ids = new Set();
         if (currentScene !== null) {
             for (const obj of currentScene.sprites) {
-                if (obj.mute === true && typeof obj.id === "string") ids.add(obj.id);
+                if (obj.state === "disabled" && typeof obj.id === "string") ids.add(obj.id);
             }
             for (const obj of currentScene.triggers) {
-                if (obj.mute === true && typeof obj.id === "string") ids.add(obj.id);
+                if (obj.state === "disabled" && typeof obj.id === "string") ids.add(obj.id);
             }
             for (const obj of currentScene.curves) {
-                if (obj.mute === true && typeof obj.id === "string") ids.add(obj.id);
+                if (obj.state === "disabled" && typeof obj.id === "string") ids.add(obj.id);
             }
         }
         editor.setMutedObjectIds(ids);
@@ -3111,49 +3113,50 @@ async function main() {
         const cursorTargetId = editor.deriveCursorMuteTarget();
         if (cursorTargetId !== null && currentScene !== null) {
             // Find the cursor target in currentScene to
-            // determine its current mute state. The
-            // single-id toggle simplifies to "if muted,
-            // unmute; else mute" — no tri-state logic
-            // since there's only one object. When the id
-            // doesn't resolve to any scene object (an
-            // orphan label that survived a delete or a
-            // rename), the cursor-mute path silently
-            // no-ops rather than falling through to the
-            // canvas selection: the user pressed Cmd-
-            // Shift-M with the cursor on a specific
-            // label, which is a clear intent to toggle
-            // that label's object, and falling back to
-            // canvas selection in that case would be
-            // surprising.
-            let currentMuted = false;
-            let found = false;
+            // determine its kind and current state. Cmd-Shift-M
+            // toggles active <-> passive on a curve or sprite
+            // and is a no-op on a trigger (no cursor, so no
+            // passive state). When the id doesn't resolve to any
+            // scene object (an orphan label that survived a
+            // delete or rename), the cursor path silently no-ops
+            // rather than falling through to the canvas
+            // selection: the user pressed Cmd-Shift-M with the
+            // cursor on a specific label, a clear intent to
+            // toggle that label's object, so falling back to the
+            // canvas selection would be surprising.
+            let currentState = "active";
+            /** @type {"sprite" | "trigger" | "curve" | null} */
+            let foundKind = null;
             for (const obj of currentScene.sprites) {
                 if (obj.id === cursorTargetId) {
-                    currentMuted = obj.mute === true;
-                    found = true;
+                    currentState = obj.state;
+                    foundKind = "sprite";
                     break;
                 }
             }
-            if (!found) {
+            if (foundKind === null) {
                 for (const obj of currentScene.triggers) {
                     if (obj.id === cursorTargetId) {
-                        currentMuted = obj.mute === true;
-                        found = true;
+                        currentState = obj.state;
+                        foundKind = "trigger";
                         break;
                     }
                 }
             }
-            if (!found) {
+            if (foundKind === null) {
                 for (const obj of currentScene.curves) {
                     if (obj.id === cursorTargetId) {
-                        currentMuted = obj.mute === true;
-                        found = true;
+                        currentState = obj.state;
+                        foundKind = "curve";
                         break;
                     }
                 }
             }
-            if (!found) return;
-            const newValue = !currentMuted;
+            if (foundKind === null) return;
+            // No-op on triggers; toggle active <-> passive on a
+            // curve or sprite (a disabled target becomes active).
+            if (foundKind === "trigger") return;
+            const newValue = currentState === "active" ? "passive" : "active";
             // The id-to-index lookup happens inside the
             // mutator against the freshly-parsed scene
             // data, since applyCanvasEdit re-parses
@@ -3194,7 +3197,7 @@ async function main() {
                         }
                     }
                 }
-                setMuteOnSelection(data, sel, newValue);
+                setStateOnSelection(data, sel, newValue);
             });
             return;
         }
@@ -3203,30 +3206,36 @@ async function main() {
         const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
         if (total === 0 || currentScene === null) return;
 
-        // Determine if every selected object is currently
-        // muted. A single non-muted object flips the toggle
-        // target to "mute all".
-        let allMuted = true;
+        // Cmd-Shift-M toggles active <-> passive on the selected
+        // curves and sprites; triggers in the selection are left
+        // untouched (no passive state). If every selected
+        // curve/sprite is already passive, the toggle makes them
+        // all active; otherwise it makes them all passive — the
+        // standard DAW mute-keystroke shape. A selection with no
+        // curve or sprite (e.g. triggers only) is a no-op.
+        let anyCursorKind = false;
+        let allPassive = true;
         /** @type {Array<[number[], any[]]>} */
         const checks = [
             [sel.sprites, currentScene.sprites],
-            [sel.triggers, currentScene.triggers],
             [sel.curves, currentScene.curves],
         ];
         for (const [indexes, arr] of checks) {
-            if (!allMuted) break;
             for (const i of indexes) {
                 if (i < 0 || i >= arr.length) continue;
                 const obj = arr[i];
-                if (obj === null || obj === undefined || !obj.mute) {
-                    allMuted = false;
-                    break;
-                }
+                if (obj === null || obj === undefined) continue;
+                anyCursorKind = true;
+                if (obj.state !== "passive") allPassive = false;
             }
         }
-
-        const newValue = !allMuted;
-        await applyCanvasEdit((data) => setMuteOnSelection(data, sel, newValue));
+        if (!anyCursorKind) return;
+        const newValue = allPassive ? "active" : "passive";
+        // Apply to curves and sprites only; any triggers in the
+        // selection are left as-is.
+        await applyCanvasEdit((data) =>
+            setStateOnSelection(data, { sprites: sel.sprites, curves: sel.curves }, newValue),
+        );
     };
 
     canvas.setEditCallback(async (edit) => {
@@ -3406,21 +3415,21 @@ async function main() {
 
     // --- Inspector edit callback ---
     //
-    // The inspector emits edits when the user toggles Mute or
-    // Hide or commits a Name change. Each edit carries a kind
-    // tag, the new value, and the current selection at the
-    // moment of the click. We translate the edit into the
-    // matching scene.json mutation and route it through
-    // applySceneEdit — the same pipeline the canvas toolbar
-    // uses — so inspector edits and canvas edits share the
-    // dirty-marking and re-run mechanics without either
-    // knowing about the other. Persistence is explicit; the
-    // user decides when to save via Cmd-S.
+    // The inspector emits edits when the user changes the
+    // State dropdown or the Hide checkbox, or commits a Name
+    // change. Each edit carries a kind tag, the new value, and
+    // the current selection at the moment of the click. We
+    // translate the edit into the matching scene.json mutation
+    // and route it through applySceneEdit — the same pipeline
+    // the canvas toolbar uses — so inspector edits and canvas
+    // edits share the dirty-marking and re-run mechanics
+    // without either knowing about the other. Persistence is
+    // explicit; the user decides when to save via Cmd-S.
     if (editor.inspector) {
         editor.inspector.setEditCallback(async (edit) => {
-            if (edit.kind === "setMute") {
+            if (edit.kind === "setState") {
                 await applySceneEdit((data) =>
-                    setMuteOnSelection(data, edit.selection, edit.value),
+                    setStateOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setHide") {
                 await applySceneEdit((data) =>

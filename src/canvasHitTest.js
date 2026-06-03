@@ -201,7 +201,7 @@ export const hitTestMethods = {
      * Sprite cursor visualisation is deferred at this
      * milestone, so sprites have no cursor element to
      * hit-test (covered by the same gate _drawCurveCursor
-     * uses for curves: non-zero extent and not muted).
+     * uses for curves: non-zero extent and state "active").
      *
      * @param {number} canvasX
      * @param {number} canvasY
@@ -234,14 +234,14 @@ export const hitTestMethods = {
         // plus the small filled centre dot at the
         // curve's current sweep position. Gated by the
         // same cursor-as-collider checks _drawCurveCursor
-        // uses (non-zero extent and not muted) so
+        // uses (non-zero extent and state "active") so
         // unrendered cursors don't produce hover hits.
         const ppu = this.pixelsPerUnit;
         for (let i = this._scene.curves.length - 1; i >= 0; i--) {
             const c = this._scene.curves[i];
             if (typeof c.id !== "string") continue;
             if (c.cursorR === 0 && c.cursorL === 0) continue;
-            if (c.mute) continue;
+            if (c.state !== "active") continue;
             const t = this._simulation === null
                 ? 0
                 : this._simulation.getCurveCursorT(c.id);

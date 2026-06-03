@@ -537,15 +537,19 @@ export function stripObsoleteFields(data) {
             "beatsAreTriggers", "hitBeat", "hitTrigger",
             "beat", "sweep",
             "canCycle", "cyclePatternLocation",
+            // Superseded by the single `state` enum field.
+            "mute", "active", "enabled",
         ],
         triggers: [
             "collision", "auto", "autoInterval", "autoBeatInterval",
             "canCycle", "cyclePatternLocation",
+            "mute", "active", "enabled",
         ],
         sprites: [
             "motionUpdate", "auto", "autoInterval", "autoBeatInterval",
             "step",
             "canCycle", "cyclePatternLocation",
+            "mute", "active", "enabled",
         ],
     };
     let changed = false;
@@ -693,7 +697,7 @@ export function addCurveAt(data, shape) {
  * translateShape). Everything else — including
  * cyclePattern, size, color, cursor extents, callback
  * function-name references, Can-X gates, harmony
- * overrides, beatsPerCycle, name, mute, hide — carries
+ * overrides, beatsPerCycle, name, state, hide — carries
  * over verbatim.
  *
  * Labelled pattern blocks in behaviors.js are NOT
@@ -912,19 +916,42 @@ export function removeObjects(data, selection) {
 }
 
 /**
- * Set the mute field on every object in the given selection,
- * across all three kinds. Used by the inspector's Band 1
- * Mute checkbox commit. Mutates `data` in place. Indexes
- * that fall outside their array are silently ignored —
- * keeps a transient mismatch between the inspector's cached
- * scene and the just-edited bundle from breaking the commit.
+ * Set the `state` field on every object in the given selection,
+ * across all three kinds. Used by the inspector's Band 1 State
+ * control and the Cmd-Shift-M toggle. `value` is one of
+ * "active", "passive", or "disabled". Triggers have no cursor
+ * and therefore no passive state: a "passive" value is skipped
+ * for triggers (they keep their current state) while curves and
+ * sprites take it. Mutates `data` in place. Indexes that fall
+ * outside their array are silently ignored — keeps a transient
+ * mismatch between the inspector's cached scene and the
+ * just-edited bundle from breaking the commit.
  *
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
- * @param {boolean} value
+ * @param {"active" | "passive" | "disabled"} value
  */
-export function setMuteOnSelection(data, selection, value) {
-    setBooleanFieldOnSelection(data, selection, "mute", value, true);
+export function setStateOnSelection(data, selection, value) {
+    /** @type {Array<[string, Iterable<number> | undefined]>} */
+    const arrays = [
+        ["sprites", selection.sprites],
+        ["triggers", selection.triggers],
+        ["curves", selection.curves],
+    ];
+    for (const [arrayKey, indexes] of arrays) {
+        if (indexes === undefined) continue;
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        // Triggers have no passive state (no cursor); leave them
+        // untouched when the requested value is "passive".
+        if (arrayKey === "triggers" && value === "passive") continue;
+        for (const idx of indexes) {
+            if (idx < 0 || idx >= arr.length) continue;
+            const entry = arr[idx];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            entry.state = value;
+        }
+    }
 }
 
 /**
@@ -2253,9 +2280,10 @@ function escapeForRegex(s) {
  * Generic helper for the boolean-field setters. The
  * preserveExisting flag keeps the field's slot in the entry
  * even when the new value matches the default — so a click
- * that sets mute to false on a previously-true object
- * leaves "mute": false in the JSON rather than removing the
- * key, which keeps the field's editing footprint visible.
+ * that sets a boolean field to its default on an object that
+ * carried the non-default value leaves the field explicit in
+ * the JSON rather than removing the key, which keeps the
+ * field's editing footprint visible.
  *
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection

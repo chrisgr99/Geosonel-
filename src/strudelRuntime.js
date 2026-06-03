@@ -857,12 +857,12 @@ export class StrudelRuntime {
 
         // Solo gate: when solo is active, a sprite whose id
         // is not in the solo set is effectively muted. The
-        // user's per-sprite mute field still applies on top
-        // — a muted sprite stays silent even when in the
-        // solo set, so deliberate mute choices are honoured
-        // during solo testing.
+        // user's per-sprite state still applies on top — a
+        // non-active sprite (passive or disabled) stays silent
+        // even when in the solo set, so deliberate state
+        // choices are honoured during solo testing.
         const soloAllows = !this._soloActive || this._soloIds.has(sprite.id);
-        const effectivelyMuted = sprite.mute || !soloAllows;
+        const effectivelyMuted = sprite.state !== "active" || !soloAllows;
 
         // Decide what this sprite contributes. Audio comes
         // from the cycle pattern only when the cycle slot

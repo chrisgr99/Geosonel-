@@ -3,7 +3,6 @@ import {
     validateNumber,
 } from "./curveFieldValidation.js";
 import {
-    aggregateBoolean,
     aggregateColor,
     aggregateCurveSize,
     aggregatePosition,
@@ -19,7 +18,6 @@ import {
     W,
 } from "./inspectorShared.js";
 import {
-    mkCheckbox,
     mkField,
     mkInlineLetter,
     mkLabel,
@@ -77,12 +75,13 @@ export const bandObjectMethods = {
 
     /**
      * Band 1 — Identity. Three rows. Row 1: Object ID
-     * is read-only and greyed for multi-select; Hide Cursor
-     * is editable for any non-empty selection and defaults
-     * to off (false = cursor visible and firing active).
-     * The Hide Cursor field is stored in scene.json's
-     * existing `mute` field — the rename is UI-only and
-     * existing scores need no migration. The separate
+     * is read-only and greyed for multi-select; a single
+     * State dropdown is editable for any non-empty selection
+     * and defaults to Active. The dropdown is the three-state
+     * `state` field: Active / Hide Cursor / Disable for curves
+     * and sprites, Active / Disable for triggers (a trigger
+     * has no cursor, so no passive state). "Hide Cursor"
+     * stores the value "passive". The separate
      * `hide` schema field (which controls whether a
      * curve's geometry renders, independent of the cursor)
      * has been dropped from the inspector but stays in the
@@ -141,7 +140,7 @@ export const bandObjectMethods = {
 
         const objs = selectedObjects(this._scene, this._selection);
         const idEditable = ctx.isSingle;
-        const muteActive = ctx.total > 0;
+        const togglesEnabled = ctx.total > 0;
         // Cycle duration row gate. The row is universal
         // across kinds: curves, sprites, and triggers all
         // carry beatsPerCycle and beatInterval on the
@@ -164,20 +163,29 @@ export const bandObjectMethods = {
             idValue = typeof obj.id === "string" ? obj.id : "";
         }
 
-        // Mute aggregates across every selected object
-        // (any kind). The aggregate returns true / false /
-        // "varies" so a tri-state checkbox can render the
-        // mixed case as a visually distinct "divergent"
-        // state. Label was "Hide Cursor" in earlier inspector
-        // versions when the control was curve-shaped; with
-        // mute consolidated across all three kinds in
-        // Commit 1 of the pattern-correspondence invariant
-        // work and visual feedback for muted sprites and
-        // triggers added in Commit 2, the label now reads
-        // simply "Mute" to match the schema field name, the
-        // Cmd-Shift-M keyboard toggle, and the Mute menu
-        // item under Edit.
-        const muteState = aggregateBoolean(objs.all, "mute");
+        // The three-state `state` field aggregates across every
+        // selected object (any kind). aggregateString returns
+        // the common value or "varies"; "varies" maps to a blank
+        // dropdown trigger. The option set depends on the
+        // selection: curves and sprites can be made passive
+        // ("Hide Cursor"), triggers cannot, so a triggers-only
+        // selection offers just Active / Disable. A mixed
+        // selection offers all three; applying "passive" then
+        // affects only the curves and sprites (setStateOnSelection
+        // skips triggers for that value). Active drives the same
+        // Cmd-Shift-M toggle and Mute menu item under Edit.
+        const stateValue = aggregateString(objs.all, "state");
+        const hasCursorKinds = ctx.hasCurves || ctx.hasSprites;
+        const stateOptions = hasCursorKinds
+            ? [
+                { value: "active", label: "Active" },
+                { value: "passive", label: "Hide Cursor" },
+                { value: "disabled", label: "Disable" },
+            ]
+            : [
+                { value: "active", label: "Active" },
+                { value: "disabled", label: "Disable" },
+            ];
 
         // beatsPerCycle aggregates across the whole selection
         // since the schema field is universal. The row greys
@@ -223,14 +231,13 @@ export const bandObjectMethods = {
             disabled: !idEditable,
             width: W.idField,
         }));
-        r1.appendChild(mkLabel("Mute", { width: W.mute, disabled: !muteActive }));
-        r1.appendChild(mkCheckbox({
-            checked: muteState === true,
-            varies: muteState === "varies",
-            disabled: !muteActive,
-            onClick: muteActive
-                ? () => this._onBooleanCheckboxClick("setMute", muteState)
-                : undefined,
+        r1.appendChild(mkLabel("State", { width: W.state, disabled: !togglesEnabled }));
+        r1.appendChild(this._buildDropdownField({
+            options: stateOptions,
+            value: stateValue === "varies" ? "" : stateValue,
+            width: W.stateField,
+            editable: togglesEnabled,
+            editKind: "setState",
         }));
         band.appendChild(r1);
 
@@ -647,10 +654,11 @@ export const bandObjectMethods = {
         // curves and sprites under the cursor-as-collider
         // model; cursor presence is the gate for self-firing
         // and collision capability. The fields grey when the
-        // selection contains no curve or sprite, or when all
-        // selected curves and sprites are muted (mute is the
-        // operational toggle that hides the cursor without
-        // losing the extent settings). The sprite cursor
+        // selection contains no curve or sprite, or when none
+        // of the selected curves and sprites is active (a
+        // passive or disabled object has no cursor; the state
+        // control hides the cursor without losing the extent
+        // settings). The sprite cursor
         // line itself is drawn in a later commit; this row
         // stores the authored thickness now so the control
         // is in place when the rendering lands.
@@ -658,9 +666,9 @@ export const bandObjectMethods = {
         const cursorRAgg = aggregateString(cursorObjs, "cursorR");
         const cursorLAgg = aggregateString(cursorObjs, "cursorL");
         const cursorThicknessAgg = aggregateString(cursorObjs, "cursorThickness");
-        const cursorMuteAgg = aggregateBoolean(cursorObjs, "mute");
         const cursorExtentDisabled =
-            cursorObjs.length === 0 || cursorMuteAgg === true;
+            cursorObjs.length === 0
+            || cursorObjs.every((o) => o.state !== "active");
 
         const r3 = mkRow();
         r3.appendChild(mkLabel("Cursor Size", { width: W.leftLabel, disabled: cursorExtentDisabled }));

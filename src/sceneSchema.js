@@ -83,7 +83,7 @@ const HARMONY_OVERRIDE_FIELDS = [
  * each guarded by a Can-X gate boolean (canHit, canBeHit,
  * canTick). The cyclePattern lives in the Band 4 CodeMirror
  * editor; cursor-as-collider derives self-firing from cursor
- * extents and mute, so there is no canCycle gate. The
+ * extents and the object's state, so there is no canCycle gate. The
  * beatsPerCycle field gives the cycle length in master beats
  * and surfaces in Band 1 as the cycle duration row.
  *
@@ -183,12 +183,14 @@ export const SCENE_FIELDS = [
  * fields and the harmony overrides.
  *
  * Deprecation note on `hide`: this curve-only field predates
- * the universal `mute` control. It still hides the curve's
- * cursor when true, and the runtime continues to honour
- * `hide || mute` for cursor visibility so existing scores
- * keep their behaviour. New work should use `mute` instead,
- * which gates pattern firing as well as cursor rendering and
- * applies uniformly across curves, triggers, and sprites.
+ * the universal `state` control. It still hides the curve's
+ * cursor when true, and the runtime honours
+ * `hide || state !== "active"` for cursor visibility so a
+ * cursor renders only on an active, non-hidden curve. New work
+ * should use `state` instead: the "passive" state removes the
+ * cursor — gating pattern firing as well as cursor rendering —
+ * uniformly across curves and sprites, and "disabled" makes
+ * any object fully inert (greyed, frozen, out of collisions).
  * The Hide row was removed from the curve inspector in the
  * Commit 2 visual-feedback pass; the field stays in the
  * schema for backward compatibility with existing scene.json
@@ -198,7 +200,7 @@ export const SCENE_FIELDS = [
 export const CURVE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
-    { key: "mute", label: "Mute", type: "boolean", default: false },
+    { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "passive", "disabled"] },
     // Deprecated; see the CURVE_FIELDS JSDoc above. Honoured
     // by the runtime for backward compatibility; not surfaced
     // in the inspector.
@@ -227,7 +229,7 @@ export const CURVE_FIELDS = [
 export const TRIGGER_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
-    { key: "mute", label: "Mute", type: "boolean", default: false },
+    { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "disabled"] },
     { key: "x", label: "X", type: "number", default: 0 },
     { key: "y", label: "Y", type: "number", default: 0 },
     { key: "size", label: "Trigger Size", type: "number", default: 0.35 },
@@ -247,7 +249,7 @@ export const TRIGGER_FIELDS = [
 export const SPRITE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
-    { key: "mute", label: "Mute", type: "boolean", default: false },
+    { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "passive", "disabled"] },
     { key: "x", label: "X", type: "number", default: 0 },
     { key: "y", label: "Y", type: "number", default: 0 },
     { key: "vx", label: "VX", type: "number", default: 0 },

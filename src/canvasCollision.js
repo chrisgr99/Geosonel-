@@ -18,9 +18,10 @@ export const collisionMethods = {
      * position and velocity is unaffected.
      *
      * Collider = a curve or sprite with a non-zero cursor
-     * extent that is not muted (a muted source hides its
-     * cursor, so it is not a collider — the same gate the
-     * cursor draw uses). Its cursor is a line segment in canvas
+     * extent and state "active" (passive removes the cursor and
+     * disabled is fully inert, so neither is a collider — the
+     * same gate the cursor draw uses). Its cursor is a line
+     * segment in canvas
      * units, left end at -cursorL and right end at +cursorR of
      * the right-of-motion perpendicular. Target (this commit):
      * triggers, at their centerpoint; the trigger's size is
@@ -80,6 +81,10 @@ export const collisionMethods = {
         const markerTargets = [];
         for (const curve of this._scene.curves) {
             if (curve === null || typeof curve.id !== "string") continue;
+            // Disabled curves are out of collisions as a target;
+            // their markers do not enter the test. Passive curves
+            // stay valid targets (their markers remain).
+            if (curve.state === "disabled") continue;
             const ts = this._curveMarkerPositions.get(curve.id);
             if (ts === undefined || ts.length === 0) continue;
             const vals = this._curveMarkerValues.get(curve.id);
@@ -122,7 +127,7 @@ export const collisionMethods = {
         for (const curve of this._scene.curves) {
             if (curve === null || typeof curve.id !== "string") continue;
             if (curve.cursorR === 0 && curve.cursorL === 0) continue;
-            if (curve.mute || curve.hide) continue;
+            if (curve.state !== "active" || curve.hide) continue;
             const t = this._simulation.getCurveCursorT(curve.id);
             const sample = sampleCurve(curve.shape, t);
             if (sample === null) continue;
@@ -148,7 +153,7 @@ export const collisionMethods = {
         for (const s of this._scene.sprites) {
             if (s === null || typeof s.id !== "string") continue;
             if (s.cursorR === 0 && s.cursorL === 0) continue;
-            if (s.mute) continue;
+            if (s.state !== "active") continue;
             const theta = this._spriteHeading.get(s.id);
             if (typeof theta !== "number") continue;
             const pos = this._spritePosition(s);
@@ -190,6 +195,9 @@ export const collisionMethods = {
             }
             for (const trig of (hasTriggers ? triggers : [])) {
                 if (trig === null || typeof trig.id !== "string") continue;
+                // Disabled triggers are out of collisions as a
+                // target.
+                if (trig.state === "disabled") continue;
                 const px = typeof trig.x === "number" ? trig.x : 0;
                 const py = typeof trig.y === "number" ? trig.y : 0;
                 // Signed side of the target relative to the cursor

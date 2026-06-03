@@ -17,13 +17,15 @@ import {
 export const fieldMethods = {
 
     /**
-     * Translate a Mute or Hide checkbox click into the
-     * appropriate edit. The varies state (multi-select with
-     * divergent values) resolves to true — the declarative
-     * "do this thing" outcome — so the click commits to a
-     * uniform muted-or-hidden state. Other states toggle.
+     * Translate a boolean checkbox click (the Hide field or a
+     * Can-X gate) into the appropriate edit. The varies state
+     * (multi-select with divergent values) resolves to true —
+     * the declarative "do this thing" outcome — so the click
+     * commits the whole selection to a uniform on state. Other
+     * states toggle. (The object's three-state `state` field is
+     * a separate dropdown control, not routed through here.)
      *
-     * @param {"setMute" | "setHide" | "setCanHit" | "setCanBeHit" | "setCanTick"} kind
+     * @param {"setHide" | "setCanHit" | "setCanBeHit" | "setCanTick"} kind
      * @param {boolean | "varies"} currentState
      */
     _onBooleanCheckboxClick(kind, currentState) {

@@ -1019,10 +1019,15 @@ export class Simulation {
      * preserved regardless of whether or exactly when a
      * collision callback runs.
      *
-     * Mute is intentionally NOT a gate: per the collision
-     * model, mute silences only a source's own self-firing,
-     * so a muted collider still collides and a muted target
-     * still gets its beenHit.
+     * State is NOT re-checked here: the gating happens upstream
+     * when the collider and target lists are built (in
+     * canvasCollision). Passive removes a source's cursor, so a
+     * passive object is excluded as a COLLIDER but stays a
+     * valid TARGET (its beenHit still runs). Disabled is
+     * excluded as BOTH collider and target. By the time a pair
+     * reaches this dispatch, it is already a legal
+     * collider/target pair, so this method faithfully runs the
+     * callbacks without re-gating on state.
      *
      * @param {{colliderId: string, colliderKind: "curve" | "sprite",
      *          targetId: string, targetKind: "curve" | "trigger" | "sprite",
@@ -1552,6 +1557,8 @@ export class Simulation {
         const simTime = this._simTime;
         for (const curve of this._scene.curves) {
             if (typeof curve.id !== "string") continue;
+            // Disabled is frozen: leave its phase untouched.
+            if (curve.state === "disabled") continue;
             const state = this._curveState.get(curve.id);
             if (state === undefined) continue;
             if (state.halted) continue;
@@ -1568,6 +1575,8 @@ export class Simulation {
         }
         for (const trigger of this._scene.triggers) {
             if (typeof trigger.id !== "string") continue;
+            // Disabled is frozen: leave its phase untouched.
+            if (trigger.state === "disabled") continue;
             const state = this._triggerState.get(trigger.id);
             if (state === undefined) continue;
             const cd = cycleDurationSeconds(bpm, trigger.beatsPerCycle, trigger.beatInterval);
@@ -1581,6 +1590,9 @@ export class Simulation {
         }
         for (const sprite of this._scene.sprites) {
             if (typeof sprite.id !== "string") continue;
+            // Disabled is frozen: do not recompute its cycle
+            // phase on a tempo change. Passive is unaffected.
+            if (sprite.state === "disabled") continue;
             const state = this._spriteState.get(sprite.id);
             if (state === undefined) continue;
             const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle, sprite.beatInterval);
@@ -1772,6 +1784,10 @@ export class Simulation {
         const bpm = this._transport.bpm;
         for (const curve of this._scene.curves) {
             if (typeof curve.id !== "string") continue;
+            // Disabled is frozen: no cursor sweep or cycle
+            // advance. Passive still advances normally (it just
+            // has no cursor and does not self-fire).
+            if (curve.state === "disabled") continue;
             const state = this._curveState.get(curve.id);
             if (state === undefined) continue;
             if (state.halted) continue;
@@ -1780,6 +1796,9 @@ export class Simulation {
         }
         for (const trigger of this._scene.triggers) {
             if (typeof trigger.id !== "string") continue;
+            // Disabled is frozen: a disabled trigger does not
+            // advance its cycle (it cannot fire anyway).
+            if (trigger.state === "disabled") continue;
             const state = this._triggerState.get(trigger.id);
             if (state === undefined) continue;
             const cd = cycleDurationSeconds(bpm, trigger.beatsPerCycle, trigger.beatInterval);
@@ -2485,9 +2504,10 @@ export class Simulation {
      * it is enabled and resolves, building the fresh context
      * object the callback reads and writes through.
      *
-     * Gating: the sprite must have canTick true, must be
-     * unmuted (mute makes a sprite's callback slots inert),
-     * must name a function that resolves in the scene's
+     * Gating: the sprite must have canTick true, must not be
+     * disabled (a disabled sprite is inert and frozen; a
+     * passive sprite still runs onTick), must name a function
+     * that resolves in the scene's
      * functionMap, and must not be in the session-disable set
      * (parked there by a previous throw). Any miss is a silent
      * no-op.
@@ -2522,7 +2542,7 @@ export class Simulation {
      */
     _runSpriteOnTick(sprite, state, dt, bpm) {
         if (sprite.canTick !== true) return 0;
-        if (sprite.mute === true) return 0;
+        if (sprite.state === "disabled") return 0;
         if (this._scene === null) return 0;
         const name = sprite.onTickFunction;
         if (typeof name !== "string" || name === "") return 0;
@@ -2763,13 +2783,17 @@ export class Simulation {
         const coast = kinNum(kin.coast, DEFAULT_KINEMATICS.coast);
         for (const sprite of this._scene.sprites) {
             if (typeof sprite.id !== "string") continue;
+            // Disabled is frozen: skip physics AND onTick. A
+            // passive sprite is NOT skipped — it still moves and
+            // still runs onTick; it just has no cursor.
+            if (sprite.state === "disabled") continue;
             const state = this._spriteState.get(sprite.id);
             if (state === undefined) continue;
             // 0. onTick: run the sprite's per-tick callback (if
             //    any) BEFORE physics, so a force it applies is
             //    integrated this same step. Gated inside the
-            //    helper by canTick, mute, a resolved function
-            //    name, and the session-disable set. applyForce
+            //    helper by canTick, not-disabled, a resolved
+            //    function name, and the session-disable set. applyForce
             //    adds into the effective velocity (the impulse
             //    layer); the step-1 damping below relaxes that
             //    impulse toward the base launch velocity at the
