@@ -231,14 +231,27 @@ export const bandObjectMethods = {
             disabled: !idEditable,
             width: W.idField,
         }));
-        r1.appendChild(mkLabel("State", { width: W.state, disabled: !togglesEnabled }));
-        r1.appendChild(this._buildDropdownField({
+        // State control: a horizontal radio group on the SAME
+        // row as Object ID, to the right of the id field with a
+        // small gap before the first radio. No visible field
+        // label — the group is announced via role="radiogroup" +
+        // aria-label "State". Built from stateOptions (the
+        // field's enumValues), so triggers show only Active /
+        // Disable and curves and sprites show Active / Hide
+        // Cursor / Disable. Emits the same setState edit the
+        // dropdown did ("Hide Cursor" stores "passive"); "varies"
+        // passes "" so no radio is checked on a divergent
+        // multi-select.
+        const stateGroup = this._buildRadioGroupField({
             options: stateOptions,
             value: stateValue === "varies" ? "" : stateValue,
-            width: W.stateField,
+            name: "insp-state",
             editable: togglesEnabled,
             editKind: "setState",
-        }));
+            ariaLabel: "State",
+        });
+        stateGroup.style.marginLeft = "12px";
+        r1.appendChild(stateGroup);
         band.appendChild(r1);
 
         const r2 = mkRow();

@@ -10,10 +10,9 @@ export const W = {
 
     // Inline labels next to the row's leftmost field group,
     // sized to the shortest text that fits at 10pt.
-    hideCursor: 90,    // "Hide Cursor" — deprecated width key, kept for any legacy reference; the Band 1 state row now uses W.state / W.stateField instead
+    hideCursor: 90,    // "Hide Cursor" — deprecated width key, kept for any legacy reference; the Band 1 State control now uses W.state (a radio group)
     mute: 40,          // "Mute" — deprecated width key from the old single Mute control; superseded by the three-state `state` field (Active / Hide Cursor / Disable) on Band 1's row 1
-    state: 40,         // "State" — the Band 1 row-1 label for the three-state activity dropdown (active / passive / disabled)
-    stateField: 110,   // the Band 1 state dropdown itself; wide enough for the longest option label ("Hide Cursor")
+    state: 40,         // the Band 1 object State control — now a horizontal radio group (Active / Hide Cursor / Disable; triggers show Active / Disable). The radios are content-sized on their own row with no visible label, so no fixed pixel width is imposed; this key marks the State control's binding. (Was the dropdown's label/field width before the radio-group conversion.)
     curveThick: 60,    // "Curve\nThickness" multiline
     cursorThick: 60,   // "Cursor\nThickness" multiline
 

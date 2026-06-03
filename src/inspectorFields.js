@@ -386,6 +386,92 @@ export const fieldMethods = {
     },
 
     /**
+     * Build a horizontal radio-button group field. Parallel to
+     * _buildDropdownField but renders one native radio input
+     * plus its label per option, in options order, on a single
+     * row — a single-select control where exactly one radio is
+     * checked. Used by Band 1's object State control (Active /
+     * Hide Cursor / Disable for curves and sprites; Active /
+     * Disable for triggers, since the option list is built from
+     * the field's enumValues).
+     *
+     * Each pair is a <label> with the <input type="radio">
+     * nested first, then the label text, so the input sits
+     * immediately to the left of its text and the nesting
+     * associates the two without needing matched for/id. All
+     * radios share opts.name so the browser enforces
+     * single-select within the group; the radio whose value
+     * equals opts.value is checked. A value that matches no
+     * option (the multi-select "varies" / empty state, passed
+     * as "") leaves every radio unchecked, mirroring the
+     * dropdown's blank trigger.
+     *
+     * There is no visible field label, so the group carries
+     * role="radiogroup" and an aria-label (opts.ariaLabel) so
+     * Speak Selection and VoiceOver announce it.
+     *
+     * Disabled state (empty selection): the inputs are disabled
+     * and the group dims, matching the greyed look the other
+     * controls use when the row is inactive.
+     *
+     * On change, emits the same edit the dropdown did:
+     * { kind: opts.editKind, value: <chosen option value> }.
+     *
+     * @param {{
+     *   options: Array<{value: string, label: string}>,
+     *   value: string,
+     *   name: string,
+     *   editable: boolean,
+     *   editKind: string,
+     *   ariaLabel?: string,
+     * }} opts
+     * @returns {HTMLDivElement}
+     */
+    _buildRadioGroupField(opts) {
+        const group = document.createElement("div");
+        group.className = "insp-radio-group";
+        group.setAttribute("role", "radiogroup");
+        group.setAttribute("aria-label", opts.ariaLabel ?? "State");
+        group.style.display = "flex";
+        group.style.flexDirection = "row";
+        group.style.alignItems = "center";
+        if (!opts.editable) {
+            group.classList.add("disabled");
+            group.style.opacity = "0.5";
+        }
+        for (let i = 0; i < opts.options.length; i++) {
+            const o = opts.options[i];
+            const label = document.createElement("label");
+            label.className = "insp-radio";
+            label.style.display = "inline-flex";
+            label.style.alignItems = "center";
+            // Small horizontal gap before each pair after the
+            // first, separating one radio-and-label from the next.
+            if (i > 0) label.style.marginLeft = "14px";
+            const input = document.createElement("input");
+            input.type = "radio";
+            input.name = opts.name;
+            input.value = o.value;
+            input.checked = o.value === opts.value;
+            // Input immediately to the left of its label text.
+            input.style.marginRight = "4px";
+            if (!opts.editable) {
+                input.disabled = true;
+            } else {
+                input.addEventListener("change", () => {
+                    if (input.checked) {
+                        this._emitEdit({ kind: opts.editKind, value: o.value });
+                    }
+                });
+            }
+            label.appendChild(input);
+            label.appendChild(document.createTextNode(o.label));
+            group.appendChild(label);
+        }
+        return group;
+    },
+
+    /**
      * Build the Color field, used by the Band 2 Color row.
      * The field consists of a colour swatch, a hidden native
      * <input type="color"> picker, and an editable hex
