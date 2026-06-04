@@ -918,10 +918,11 @@ export class PatternFiringEngine {
             this._runtime.play(voiced, fireTime, gate);
         } else {
             // MIDI: send() sets the note-off at audioTime +
-            // duration * (value.clip ?? 1). Passing the gate as
-            // the duration with no clip puts the note-off exactly
-            // at now + gate (the articulation point); the synth's
-            // own release plays the tail.
+            // duration * (value.clip ?? 1). This procedural value
+            // carries no clip field, so passing the gate as the
+            // duration puts the note-off exactly at now + gate
+            // (the articulation point); the synth's own release
+            // plays the tail.
             this._midiSender.send(value, fireTime, gate);
         }
 
@@ -1807,7 +1808,7 @@ export class PatternFiringEngine {
             // "now" via the runtime.play wrapper's past-time
             // clamp (without which superdough would silently
             // drop past-timed events).
-            /** @type {Array<{audioTime: number, value: any, duration: number, cycleIndex: number, fractional: number}>} */
+            /** @type {Array<{audioTime: number, value: any, duration: number, segmentDuration: number, cycleIndex: number, fractional: number}>} */
             const remaining = [];
             for (const ev of state.pendingEvents) {
                 if (ev.audioTime > lateRefreshHorizon) {
@@ -1815,7 +1816,11 @@ export class PatternFiringEngine {
                 } else if (ev.audioTime < audioNow - 0.2) {
                     // stale — drop without dispatch.
                 } else {
-                    const refreshedValue = this._pass2RefreshValue(state, ev, snapshot);
+                    const {
+                        value: refreshedValue,
+                        duration: refreshedDuration,
+                        durationMidi: refreshedDurationMidi,
+                    } = this._pass2Refresh(state, ev, snapshot);
                     if (this._outputMode === "superdough") {
                         // Superdough path. Apply voice
                         // soft-injection first so events
@@ -1854,9 +1859,9 @@ export class PatternFiringEngine {
                             : null;
                         const injectedValue = applyVoiceInjection(refreshedValue, source, globalVoice);
                         const voicedValue = applyVoiceEnvelope(injectedValue);
-                        this._runtime.play(voicedValue, ev.audioTime, ev.duration);
+                        this._runtime.play(voicedValue, ev.audioTime, refreshedDuration);
                     } else {
-                        this._midiSender.send(refreshedValue, ev.audioTime, ev.duration);
+                        this._midiSender.send(refreshedValue, ev.audioTime, refreshedDurationMidi);
                     }
                     // Emit the firing-event signal for the
                     // canvas's yellow-flash visual feedback.
@@ -2019,6 +2024,16 @@ export class PatternFiringEngine {
                     audioTime,
                     value: hap.value,
                     duration,
+                    // The wall-clock length of one repeat
+                    // segment, carried so Pass 2 can rescale the
+                    // in-context hap's cycle-unit length the same
+                    // way Pass 1 did here (duration =
+                    // cycleUnitDur * segmentDuration). Needed
+                    // because a signal-fed .legato()/.clip()
+                    // reads 0 in the no-context Pass 1 and only
+                    // takes its real per-note value once Pass 2
+                    // re-queries with the firing context active.
+                    segmentDuration,
                     cycleIndex,
                     fractional,
                     // GXW-cycle position in [0, 1). For
@@ -2203,13 +2218,40 @@ export class PatternFiringEngine {
      * rather than waiting for Phase 4's first signal to
      * make it audible.
      *
+     * Returns the refreshed value and TWO note lengths, one per
+     * output path's clip mechanism so the .legato()/.clip()
+     * articulation is applied exactly once on each:
+     *
+     *   - duration (superdough): the clip-articulated length,
+     *     hapDuration rescaled by segmentDuration (whole-span
+     *     fallback). Superdough has no value.clip equivalent, so
+     *     the articulation must already be folded into the
+     *     duration. Equals ev.duration for a static articulation.
+     *   - durationMidi (MIDI): the UNCLIPPED whole-span length.
+     *     midiSender.send applies value.clip itself, so feeding
+     *     it the clip-folded length would double the articulation
+     *     on the MIDI path. (midiSender is shared with the
+     *     marker-strike path, whose duration is not clip-folded,
+     *     so it must keep applying value.clip — hence MIDI gets
+     *     the unclipped length here rather than dropping the
+     *     midiSender multiply.)
+     *
+     * Pass 1 computed ev.duration from the no-context hap, so a
+     * signal-fed .legato()/.clip() baked in a uniform no-data
+     * length; re-deriving from the in-context hap (the same one
+     * the value comes from) is what makes a signal-driven
+     * duration vary per note. On any fallback (zero, multiple, or
+     * thrown haps), all fields fall back to Pass 1's stored values.
+     *
      * @param {SourceFiringState} state
-     * @param {{audioTime: number, value: any, duration: number, cycleIndex: number, fractional: number}} ev
+     * @param {{audioTime: number, value: any, duration: number, segmentDuration: number, cycleIndex: number, fractional: number}} ev
      * @param {import("./firingContext.js").FiringSnapshot} snapshot
-     * @returns {any}
+     * @returns {{value: any, duration: number, durationMidi: number}}
      */
-    _pass2RefreshValue(state, ev, snapshot) {
-        if (state.compiled === null) return ev.value;
+    _pass2Refresh(state, ev, snapshot) {
+        if (state.compiled === null) {
+            return { value: ev.value, duration: ev.duration, durationMidi: ev.duration };
+        }
         const begin = ev.cycleIndex + ev.fractional;
         const PASS2_EPSILON = 1e-6;
         const end = begin + PASS2_EPSILON;
@@ -2245,7 +2287,7 @@ export class PatternFiringEngine {
                 "; falling back to Pass 1 value.",
                 err,
             );
-            return ev.value;
+            return { value: ev.value, duration: ev.duration, durationMidi: ev.duration };
         }
         if (!Array.isArray(haps) || haps.length !== 1) {
             if (LOG_PASS2) {
@@ -2258,9 +2300,29 @@ export class PatternFiringEngine {
                     "falling back to Pass 1 value.",
                 );
             }
-            return ev.value;
+            return { value: ev.value, duration: ev.duration, durationMidi: ev.duration };
         }
-        const refreshed = haps[0].value;
+        const refreshedHap = haps[0];
+        const refreshed = refreshedHap.value;
+        // Re-derive the note length from this same in-context hap.
+        // The whole-span length (grid length, unclipped) and the
+        // clip-articulated length both come from this hap; each
+        // output gets the one matching its clip mechanism. For a
+        // static articulation the hap is identical to Pass 1's, so
+        // the superdough duration equals ev.duration exactly and
+        // static superdough is unchanged; for a signal-fed
+        // duration both lengths now track the colour per note (the
+        // clip length directly, the whole-span length via
+        // midiSender's value.clip multiply).
+        const wholeSpan = hapEnd(refreshedHap) - hapBegin(refreshedHap);
+        const clipDur = hapDuration(refreshedHap);
+        const cycleUnitDur = Number.isFinite(clipDur) ? clipDur : wholeSpan;
+        const refreshedDuration = Number.isFinite(cycleUnitDur)
+            ? Math.max(0, cycleUnitDur * ev.segmentDuration)
+            : ev.duration;
+        const refreshedDurationMidi = Number.isFinite(wholeSpan)
+            ? Math.max(0, wholeSpan * ev.segmentDuration)
+            : ev.duration;
         if (LOG_PASS2) {
             const noteStr = (refreshed !== null && typeof refreshed === "object" && typeof refreshed.note === "string")
                 ? refreshed.note
@@ -2272,7 +2334,7 @@ export class PatternFiringEngine {
                 " -> " + noteStr,
             );
         }
-        return refreshed;
+        return { value: refreshed, duration: refreshedDuration, durationMidi: refreshedDurationMidi };
     }
 }
 

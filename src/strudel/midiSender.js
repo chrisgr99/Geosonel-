@@ -69,8 +69,12 @@
  *     to the firing engine's natural slot duration. The
  *     strudel .legato(N) modifier sets this field, so
  *     legato 0.5 produces staccato and legato 2.0 produces
- *     overlap into the next slot. Defaults to 1.0 when
- *     absent.
+ *     overlap into the next slot. Defaults to 1.0 when absent.
+ *     The MIDI path applies the articulation here, against the
+ *     unclipped slot duration the engine passes; the superdough
+ *     path instead gets a pre-articulated duration (it has no
+ *     value.clip equivalent), so each path applies clip exactly
+ *     once. See the firing engine's Pass-2 dispatch.
  *
  * Event subscribers. The MIDISender exposes onEvent for
  * subscribers (typically the transport bar indicator) that
@@ -449,6 +453,14 @@ export class MIDISender {
         const rawChannel = typeof value.midichan === "number" ? value.midichan : 1;
         const channel = clamp(Math.round(rawChannel), 1, 16);
 
+        // MIDI applies the .legato()/.clip() articulation here,
+        // via value.clip, against the unclipped slot duration the
+        // engine passes. (Superdough instead receives a duration
+        // with the articulation already folded in, since it has
+        // no equivalent of value.clip — see the firing engine's
+        // Pass-2 dispatch, which feeds each output the duration
+        // matching its own clip mechanism so the articulation is
+        // applied exactly once per path.)
         const clipMult = typeof value.clip === "number" ? value.clip : 1.0;
         const offDuration = Math.max(0, duration * clipMult);
 
