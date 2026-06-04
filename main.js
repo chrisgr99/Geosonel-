@@ -139,6 +139,7 @@ import {
     setCyclePatternOnSelection,
     setBeatsPerCycleOnSelection,
     setBeatIntervalOnSelection,
+    setVariabilityOnSelection,
     setPatternRepeatsOnCurves,
     setCycleSpeedsOnSelection,
     setCanHitOnSelection,
@@ -2113,6 +2114,32 @@ async function main() {
         firingEngine.setPlaySelectedMode(active);
     });
 
+    // Vary button (seed-variation experiment). Each press steps
+    // the global seed by 1 and replays from the new seeded start
+    // state, nudging the start position (all kinds) and start
+    // velocity (sprites and curves) of every object whose
+    // Variability is above 0. transport.rewind() resets the
+    // transport clock and gives the firing-engine audio flush /
+    // MIDI panic for free (its backward-jump detection);
+    // applySeedAndReset applies the offsets and aligns the
+    // simulation clock so the variation takes effect even from a
+    // cold start at elapsed 0. Playback is ensured so the new
+    // chunk plays immediately. Each press is the next
+    // deterministic seed, so returning to a seed reproduces its
+    // chunk exactly — the readout is the number to note.
+    toolbar.onVaryClick(() => {
+        const nextSeed = simulation.getSeed() + 1;
+        // Apply the offsets and align the sim clock first, so the
+        // rewind's redraw already shows the new start state; then
+        // rewind the transport (resetting its clock and giving the
+        // firing-engine flush / MIDI panic on the backward jump);
+        // then ensure playback.
+        simulation.applySeedAndReset(nextSeed);
+        transport.rewind();
+        if (!transport.isPlaying) transport.play();
+        toolbar.setSeedReadout(nextSeed);
+    });
+
     /**
      * Resolve a canvas selection — arrays of indices into
      * the current scene's sprites, triggers, and curves —
@@ -3499,6 +3526,10 @@ async function main() {
             } else if (edit.kind === "setBeatInterval") {
                 await applySceneEdit((data) =>
                     setBeatIntervalOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setVariability") {
+                await applySceneEdit((data) =>
+                    setVariabilityOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setPatternRepeats") {
                 await applySceneEdit((data) =>

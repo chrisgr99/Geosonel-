@@ -230,6 +230,18 @@ export class Toolbar {
         /** @type {HTMLButtonElement | null} */
         this._focusCanvasButton = null;
 
+        // Vary button (seed-variation experiment). Sits to the
+        // right of the transport cluster. Clicking it emits to
+        // _varyListeners; main.js steps the global seed, applies
+        // it via a seeded rewind, and ensures playback. The seed
+        // readout element is captured at render time so
+        // setSeedReadout can update the number without a full
+        // toolbar re-render.
+        /** @type {Array<() => void>} */
+        this._varyListeners = [];
+        /** @type {HTMLElement | null} */
+        this._seedReadout = null;
+
         this._render();
     }
 
@@ -282,6 +294,28 @@ export class Toolbar {
      */
     onFocusCanvasClick(cb) {
         this._focusCanvasClickListeners.push(cb);
+    }
+
+    /**
+     * Subscribe to Vary button clicks. main.js wires this to
+     * step the global seed, apply it via a seeded rewind, and
+     * ensure playback so the new variation plays immediately.
+     * @param {() => void} cb
+     */
+    onVaryClick(cb) {
+        this._varyListeners.push(cb);
+    }
+
+    /**
+     * Update the seed readout shown beside the Vary button.
+     * Called by main.js after each variation step (and once at
+     * startup) so the user can note which seed they are hearing.
+     * @param {number} seed
+     */
+    setSeedReadout(seed) {
+        if (this._seedReadout !== null) {
+            this._seedReadout.textContent = "Seed " + seed;
+        }
     }
 
     /** @returns {{tool: string | null, locked: boolean}} */
@@ -445,6 +479,16 @@ export class Toolbar {
         // to that module.
         this.container.appendChild(this._buildTransportCluster());
 
+        // Group separator before the seed-variation control.
+        this.container.appendChild(this._buildGroupSeparator());
+
+        // Vary control: a button that steps the global seed and
+        // replays the seeded variation, plus a readout of the
+        // current seed. Sits to the right of the transport
+        // controls, before the spacer pushes the MIDI indicator
+        // to the far edge.
+        this.container.appendChild(this._buildVaryControl());
+
         // Position 11: flex spacer. Pushes the MIDI
         // indicator to the right edge of the toolbar.
         // Absorbs the space previously occupied by the
@@ -461,6 +505,49 @@ export class Toolbar {
         this.container.appendChild(this._buildMidiIndicator());
 
         this._refreshButtons();
+    }
+
+    /**
+     * Build the seed-variation control: a "Vary" button plus a
+     * seed readout. The button emits to _varyListeners on click;
+     * main.js owns the seed stepping, the seeded rewind, and
+     * ensuring playback. The readout shows the current seed so
+     * the user can note which variation they are hearing — the
+     * number they would later capture. Ordinary clickable button
+     * with a clear text label, sized like the other toolbar
+     * controls; no drag or hover affordance.
+     * @returns {HTMLDivElement}
+     */
+    _buildVaryControl() {
+        const group = document.createElement("div");
+        group.className = "toolbar-vary-group";
+        group.style.display = "flex";
+        group.style.alignItems = "center";
+        group.style.gap = "8px";
+        group.style.flex = "0 0 auto";
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "toolbar-text-button";
+        btn.setAttribute("aria-label", "Vary");
+        btn.title = "Vary. Steps the variation seed and replays, nudging the start position and velocity of every object whose Variability is above zero. The same seed always reproduces the same chunk.";
+        btn.textContent = "Vary";
+        btn.addEventListener("click", () => {
+            for (const cb of this._varyListeners) {
+                try { cb(); } catch (err) {
+                    console.error("GXW: toolbar vary listener threw.", err);
+                }
+            }
+        });
+        group.appendChild(btn);
+
+        const readout = document.createElement("div");
+        readout.className = "toolbar-seed-readout";
+        readout.textContent = "Seed 0";
+        this._seedReadout = readout;
+        group.appendChild(readout);
+
+        return group;
     }
 
     /**

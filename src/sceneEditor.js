@@ -1735,6 +1735,22 @@ export function setBeatsPerCycleOnSelection(data, selection, value) {
 }
 
 /**
+ * Set the variability field across the whole selection. The
+ * field is universal — curves, sprites, and triggers all carry
+ * it — so a mixed selection writes every kind. Stored as a
+ * non-negative number; 0 locks the object (never moved by a
+ * seeded rewind). Negative or non-finite input clamps to 0.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string | number} value
+ */
+export function setVariabilityOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "variability", Math.max(0, n));
+}
+
+/**
  * Set the beatInterval field across the selection. Stored as
  * a token string from beatIntervals.js's TOKENS table (e.g.
  * "Qtr", "8th", "Dot 16th"). Invalid tokens silently no-op,

@@ -597,6 +597,15 @@ export class Curve {
          */
         this.cycleSpeeds = opts.cycleSpeeds ?? "1";
 
+        /**
+         * Seed-variation dial. 0 (default) locks the curve so a
+         * seeded rewind never moves it; a positive value scales
+         * the Gaussian spread of its per-seed position and
+         * starting-velocity offset. See src/seed/seedOffset.js.
+         * @type {number}
+         */
+        this.variability = opts.variability ?? 0;
+
         // --- Callback slots ---
         // Section-27 four-slot model: hasHit / beenHit /
         // onTick are Code-tab slots, each guarded by a
@@ -741,6 +750,16 @@ export class Trigger {
         this.note = opts.note ?? null;
         /** Arbitrary payload available as this.* in functions. */
         this.payload = opts.payload ?? null;
+
+        /**
+         * Seed-variation dial. 0 (default) locks the trigger; a
+         * positive value scales the Gaussian spread of its
+         * per-seed position offset. Triggers carry no starting
+         * velocity, so only position is offset. See
+         * src/seed/seedOffset.js.
+         * @type {number}
+         */
+        this.variability = opts.variability ?? 0;
 
         // --- Callback slots ---
         // Section-27 model. Triggers do not self-fire under
@@ -906,6 +925,15 @@ export class Sprite {
          * @type {string}
          */
         this.cycleSpeeds = opts.cycleSpeeds ?? "1";
+
+        /**
+         * Seed-variation dial. 0 (default) locks the sprite; a
+         * positive value scales the Gaussian spread of its
+         * per-seed position and starting-velocity offset. See
+         * src/seed/seedOffset.js.
+         * @type {number}
+         */
+        this.variability = opts.variability ?? 0;
 
         // --- Callback slots ---
         // Section-27 model. See Curve for the full

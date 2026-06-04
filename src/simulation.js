@@ -245,6 +245,7 @@
 import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
 import { imageSignalsFromOKLCh } from "./strudel/signals.js";
 import { DEFAULT_KINEMATICS } from "./scene.js";
+import { computeOffset } from "./seed/seedOffset.js";
 
 /**
  * Simulation step in seconds. Determinism requires this to
@@ -615,6 +616,24 @@ class CurveRuntimeState {
         this._authVx = this.vx;
         /** @type {number} */
         this._authVy = this.vy;
+        // Seed-variation start-state offset for this curve under
+        // the current global seed (seed-variation experiment).
+        // Position offset (dx, dy) becomes the curve's per-cycle
+        // home for the runtime offset — the curve body is
+        // translated by it, shape preserved — and velocity offset
+        // (vx, vy) is added to the authored launch velocity. All
+        // zero by default (seed 0 or variability 0), so the curve
+        // sits at its authored home exactly as today. Recomputed
+        // by Simulation._recomputeSeedOffsets and consumed by
+        // _rewind and the per-cycle home snap in _stepCurve.
+        /** @type {number} */
+        this._seedDx = 0;
+        /** @type {number} */
+        this._seedDy = 0;
+        /** @type {number} */
+        this._seedVx = 0;
+        /** @type {number} */
+        this._seedVy = 0;
         // Cached signature and bbox of the authored shape.
         // shapeSignature is a stable JSON-ish string used to
         // detect authored-geometry edits in setScene
@@ -789,6 +808,21 @@ class SpriteRuntimeState {
         this._authY = this.y;
         this._authVx = this.vx;
         this._authVy = this.vy;
+        // Seed-variation start-state offset for this sprite under
+        // the current global seed (seed-variation experiment).
+        // Added to the authored home position and launch velocity
+        // on rewind and on a per-cycle home-teleport. All zero by
+        // default (seed 0 or variability 0), so the sprite starts
+        // at its authored home exactly as today. Recomputed by
+        // Simulation._recomputeSeedOffsets.
+        /** @type {number} */
+        this._seedDx = 0;
+        /** @type {number} */
+        this._seedDy = 0;
+        /** @type {number} */
+        this._seedVx = 0;
+        /** @type {number} */
+        this._seedVy = 0;
         // Cycle tracking. Sprites have no cursor, so the
         // cycle phase drives only the per-cycle home snap
         // here; in a later stage the wrap also fires the
@@ -863,6 +897,18 @@ export class Simulation {
         this._triggerState = new Map();
         /** @type {Map<string, SpriteRuntimeState>} */
         this._spriteState = new Map();
+        /**
+         * Global variation seed (seed-variation experiment). 0
+         * means no offset, so a normal rewind / play at seed 0 is
+         * byte-for-byte today's behaviour. setSeed stores a new
+         * value and recomputes each object's per-seed start-state
+         * offset (scaled by that object's variability dial); the
+         * offsets are applied by _rewind, which the toolbar's Vary
+         * button triggers via transport.rewind(). Transient
+         * creation-mode state; not persisted to the scene.
+         * @type {number}
+         */
+        this._seed = 0;
         /**
          * Last elapsedSeconds value passed to tick. Used to
          * compute the delta for the next tick and to detect
@@ -1475,6 +1521,14 @@ export class Simulation {
         for (const id of [...this._spriteState.keys()]) {
             if (!seenSpriteIds.has(id)) this._spriteState.delete(id);
         }
+
+        // Seed-variation: refresh each object's per-seed offset
+        // against the freshly reconciled scene so the current seed
+        // keeps applying across reloads (fresh runtime states
+        // start with zero offset). Zero seed / zero variability
+        // leaves every offset at zero, so this is a no-op for the
+        // default path.
+        this._recomputeSeedOffsets();
     }
 
     /**
@@ -1686,6 +1740,88 @@ export class Simulation {
     }
 
     /**
+     * The current global variation seed.
+     * @returns {number}
+     */
+    getSeed() {
+        return this._seed;
+    }
+
+    /**
+     * Set the global variation seed and recompute every object's
+     * per-seed start-state offset. Storing the seed alone changes
+     * nothing audible; the offsets are applied on the next
+     * rewind. The toolbar's Vary button calls this then
+     * transport.rewind(), which triggers _rewind here (applying
+     * the offsets) and the firing engine's audio flush (a
+     * backward jump in elapsed time). Seed 0 clears all offsets,
+     * returning the scene to its authored start state.
+     * @param {number} seed
+     */
+    setSeed(seed) {
+        this._seed = Number.isFinite(seed) ? Math.trunc(seed) : 0;
+        this._recomputeSeedOffsets();
+    }
+
+    /**
+     * Apply a new seed and immediately re-seed every object to
+     * its seeded start state, then put the simulation clock in
+     * the exact post-rewind state. Used by the toolbar's Vary
+     * button so the variation takes effect deterministically —
+     * including from a cold start at elapsed 0, where a plain
+     * transport.rewind() produces no backward jump for tick() to
+     * detect. The caller still calls transport.rewind() too, so
+     * the transport position resets and the firing engine flushes
+     * its pending audio on the backward jump; this method aligns
+     * the simulation's own bookkeeping (_lastElapsed / _simTime /
+     * accumulator) with that reset so the next tick advances the
+     * new chunk cleanly from its seeded home.
+     * @param {number} seed
+     */
+    applySeedAndReset(seed) {
+        this.setSeed(seed);
+        this._rewind();
+        this._lastElapsed = 0;
+        this._simTime = 0;
+        this._accumulator = 0;
+    }
+
+    /**
+     * Recompute each curve's and sprite's per-seed start-state
+     * offset from the current seed and the object's variability,
+     * storing it on the runtime state for _rewind and the
+     * per-cycle home snaps to apply. Triggers carry no runtime
+     * position state, so their offset is computed inline in
+     * _rewind instead. A locked object (variability 0) or seed 0
+     * yields a zero offset, leaving today's behaviour intact.
+     * Called by setSeed and at the end of setScene so the offsets
+     * track both seed changes and scene reloads.
+     */
+    _recomputeSeedOffsets() {
+        if (this._scene === null) return;
+        const cw = numberOrZero(this._scene.canvasW) || 32;
+        const ch = numberOrZero(this._scene.canvasH) || 24;
+        for (const curve of this._scene.curves) {
+            const state = this._curveState.get(curve.id);
+            if (state === undefined) continue;
+            const off = computeOffset(this._seed, curve.id, numberOrZero(curve.variability), cw, ch);
+            state._seedDx = off.dx;
+            state._seedDy = off.dy;
+            state._seedVx = off.dvx;
+            state._seedVy = off.dvy;
+        }
+        for (const sprite of this._scene.sprites) {
+            const state = this._spriteState.get(sprite.id);
+            if (state === undefined) continue;
+            const off = computeOffset(this._seed, sprite.id, numberOrZero(sprite.variability), cw, ch);
+            state._seedDx = off.dx;
+            state._seedDy = off.dy;
+            state._seedVx = off.dvx;
+            state._seedVy = off.dvy;
+        }
+    }
+
+    /**
      * Reset every source's runtime state to its rewind
      * position. Curves: t = 0, cycle progress and count 0,
      * halted false. Triggers: cycle progress and count 0
@@ -1706,10 +1842,15 @@ export class Simulation {
             state.cycleProgress = 0;
             state.cycleCount = 0;
             state.halted = false;
-            state.dx = 0;
-            state.dy = 0;
-            state.vx = state._authVx;
-            state.vy = state._authVy;
+            // Seed-variation: the runtime offset starts at the
+            // seeded position offset (zero when seed 0 / locked),
+            // translating the whole curve body; the launch
+            // velocity adds the seeded velocity offset. Both are
+            // zero by default, so this is the plain authored home.
+            state.dx = state._seedDx;
+            state.dy = state._seedDy;
+            state.vx = state._authVx + state._seedVx;
+            state.vy = state._authVy + state._seedVy;
             // Clearing _lastCycleDuration so the first step
             // after the rewind treats this curve as fresh
             // and doesn't snap on the first observed
@@ -1736,6 +1877,31 @@ export class Simulation {
             state.cycleCount = 0;
             state._lastCycleDuration = 0;
         }
+        // Seed-variation: triggers carry no runtime position
+        // state — their collision point is read straight off the
+        // trigger object's x / y — so the seeded position offset
+        // is applied to the live object here, against a pristine
+        // home captured on first rewind (and recaptured whenever
+        // the scene reloads with fresh Trigger objects). Triggers
+        // never snap or move on their own, so this persists for
+        // the whole chunk and is fully reproducible (always home
+        // plus the seeded offset). Velocity is N/A for triggers.
+        if (this._scene !== null) {
+            const cw = numberOrZero(this._scene.canvasW) || 32;
+            const ch = numberOrZero(this._scene.canvasH) || 24;
+            for (const trigger of this._scene.triggers) {
+                if (typeof trigger.id !== "string") continue;
+                /** @type {any} */
+                const t = trigger;
+                if (t._seedHomeX === undefined) {
+                    t._seedHomeX = t.x;
+                    t._seedHomeY = t.y;
+                }
+                const off = computeOffset(this._seed, t.id, numberOrZero(t.variability), cw, ch);
+                t.x = t._seedHomeX + off.dx;
+                t.y = t._seedHomeY + off.dy;
+            }
+        }
         // Sprite rewind copies the per-state record of
         // last-seen authored values back into the live
         // runtime fields. The _auth fields stay where they
@@ -1744,20 +1910,23 @@ export class Simulation {
         // that doesn't see new authored values won't snap
         // again.
         for (const state of this._spriteState.values()) {
-            state.x = state._authX;
-            state.y = state._authY;
+            // Seed-variation: start from the authored home plus
+            // the seeded position offset (both zero by default).
+            state.x = state._authX + state._seedDx;
+            state.y = state._authY + state._seedDy;
             state.cycleProgress = 0;
             state.cycleCount = 0;
             state._lastCycleDuration = 0;
             // Launch cycle 0 at the authored velocity scaled
-            // by the first speed entry. Rewind always restores
-            // the home position (a full reset), so no teleport
-            // flag is needed here; only the velocity multiplier
-            // applies. A leading-zero list parks the sprite at
-            // home with zero launch velocity.
+            // by the first speed entry, plus the seeded velocity
+            // offset. Rewind always restores the home position (a
+            // full reset), so no teleport flag is needed here;
+            // only the velocity multiplier applies. A leading-zero
+            // list parks the sprite at home with zero launch
+            // velocity (the seeded velocity offset still adds).
             const { speed } = this._spriteCycleSpeed(state, 0);
-            state.baseVx = state._authVx * speed;
-            state.baseVy = state._authVy * speed;
+            state.baseVx = state._authVx * speed + state._seedVx;
+            state.baseVy = state._authVy * speed + state._seedVy;
             state.vx = state.baseVx;
             state.vy = state.baseVy;
             state.flipX = 1;
@@ -1946,10 +2115,16 @@ export class Simulation {
         while (state.cycleProgress >= 1) {
             state.cycleProgress -= 1;
             state.cycleCount++;
-            state.dx = 0;
-            state.dy = 0;
-            state.vx = state._authVx;
-            state.vy = state._authVy;
+            // Per-cycle home snap. The home is the authored
+            // position plus the seeded offset (both zero by
+            // default), so a seeded curve returns to its seeded
+            // home each cycle rather than drifting back to the
+            // authored one — keeping the variation stable across
+            // cycle wraps for the whole chunk.
+            state.dx = state._seedDx;
+            state.dy = state._seedDy;
+            state.vx = state._authVx + state._seedVx;
+            state.vy = state._authVy + state._seedVy;
             logCycleWrap("curve", curve, state.cycleCount);
             if (stopAt >= 0 && state.cycleCount >= stopAt) {
                 state.halted = true;
@@ -2957,14 +3132,16 @@ export class Simulation {
                 if (teleport) {
                     // Loop restart on a zero-terminated list:
                     // a fresh launch identical to a rewind's.
-                    // Home position, base re-derived from
-                    // authored times this cycle's speed, the
+                    // Home position (authored plus the seeded
+                    // offset, both zero by default), base
+                    // re-derived from authored times this cycle's
+                    // speed plus the seeded velocity offset, the
                     // impulse layer zeroed (vx/vy set equal to
                     // base), and the flip signs reset.
-                    state.x = state._authX;
-                    state.y = state._authY;
-                    state.baseVx = state._authVx * speed;
-                    state.baseVy = state._authVy * speed;
+                    state.x = state._authX + state._seedDx;
+                    state.y = state._authY + state._seedDy;
+                    state.baseVx = state._authVx * speed + state._seedVx;
+                    state.baseVy = state._authVy * speed + state._seedVy;
                     state.vx = state.baseVx;
                     state.vy = state.baseVy;
                     state.flipX = 1;

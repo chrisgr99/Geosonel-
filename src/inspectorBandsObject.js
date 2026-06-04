@@ -757,6 +757,28 @@ export const bandObjectMethods = {
         }));
         band.appendChild(r5);
 
+        // Variability. Universal across kinds — curves, sprites,
+        // and triggers all carry the seed-variation dial. 0
+        // (default) locks the object; a positive value is how
+        // much its start position (and velocity, for sprites and
+        // curves) is nudged by the global seed. Editable for any
+        // non-empty selection; the typed value commits to every
+        // selected object via setVariabilityOnSelection.
+        const variabilityActive = ctx.total > 0;
+        const variabilityAgg = aggregateString(objs.all, "variability");
+        const r6 = mkRow();
+        r6.appendChild(mkLabel("Variability", { width: W.leftLabel, disabled: !variabilityActive }));
+        r6.appendChild(this._buildEditableField({
+            value: variabilityAgg === "varies" ? "" : variabilityAgg,
+            numeric: true,
+            width: W.spriteTriggerSize,
+            editable: variabilityActive,
+            spinLive: true,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            editKind: "setVariability",
+        }));
+        band.appendChild(r6);
+
         return band;
     },
 };

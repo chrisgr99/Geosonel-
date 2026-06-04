@@ -419,6 +419,45 @@
     box-shadow: 0 0 8px rgba(232, 184, 112, 0.6);
 }
 
+/* Seed-variation control. A text button plus a seed readout,
+ * sitting to the right of the transport cluster. The button is
+ * sized to read clearly under zoom; the readout uses monospace
+ * digits so the number doesn't shift the layout as it grows. */
+.toolbar-text-button {
+    height: 32px;
+    padding: 0 14px;
+    background-color: #2a2a2a;
+    border: 1px solid #888888;
+    border-radius: 3px;
+    color: #e8e4dc;
+    font-size: 13pt;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    flex: 0 0 auto;
+}
+
+.toolbar-text-button:hover {
+    background-color: #3a3a3a;
+    border-color: #c8c8c8;
+    color: #ffffff;
+}
+
+.toolbar-text-button:focus {
+    outline: none;
+    border-color: #c8c8c8;
+}
+
+.toolbar-seed-readout {
+    color: #c8c4bc;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    font-size: 12pt;
+    line-height: 1;
+    flex: 0 0 auto;
+}
+
 /* Canvas size controls. Layout: "Canvas:" label, W field, H
  * field, with a small inter-field gap. The label-to-field
  * spacing is tight enough that the label reads as a prefix

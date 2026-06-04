@@ -216,6 +216,11 @@ export const CURVE_FIELDS = [
     { key: "cursorThickness", label: "Cursor Thickness", type: "number", default: 2 },
     { key: "patternRepeats", label: "Repeats", type: "integer", default: 1, min: 1 },
     { key: "cycleSpeeds", label: "Speeds", type: "string", default: "1" },
+    // Seed-variation dial. 0 (default) locks the object — it is
+    // never moved by a seeded rewind. A positive value scales the
+    // Gaussian spread of the per-seed position (and, for kinds
+    // that carry one, velocity) offset. See src/seed/seedOffset.js.
+    { key: "variability", label: "Variability", type: "number", default: 0, min: 0 },
     ...CALLBACK_SLOT_FIELDS,
     ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
@@ -236,6 +241,9 @@ export const TRIGGER_FIELDS = [
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
     { key: "note", label: "Note", type: "integer", default: null },
     { key: "payload", label: "Payload", type: "object", default: null },
+    // Seed-variation dial; see CURVE_FIELDS. Triggers carry only
+    // a position offset (no starting velocity).
+    { key: "variability", label: "Variability", type: "number", default: 0, min: 0 },
     ...CALLBACK_SLOT_FIELDS,
     ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
@@ -261,6 +269,9 @@ export const SPRITE_FIELDS = [
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
     { key: "cursorThickness", label: "Cursor Thickness", type: "number", default: 2 },
     { key: "cycleSpeeds", label: "Speeds", type: "string", default: "1" },
+    // Seed-variation dial; see CURVE_FIELDS. Sprites carry both a
+    // position and a starting-velocity offset.
+    { key: "variability", label: "Variability", type: "number", default: 0, min: 0 },
     ...CALLBACK_SLOT_FIELDS,
     ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
