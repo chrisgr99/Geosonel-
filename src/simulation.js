@@ -910,6 +910,24 @@ export class Simulation {
          */
         this._seed = 0;
         /**
+         * Audition boundary (seed-variation audition workflow).
+         * When non-null, it is a master-clock beat count measured
+         * from the most recent reset (elapsed 0); once the
+         * transport's elapsed beats reach it, tick() disarms it and
+         * calls _auditionBoundaryHandler exactly once, then returns
+         * for the frame. Null means no armed boundary — ordinary
+         * Play just runs. main.js arms it from the audition bar's
+         * Mutate / Loop buttons and decides what the boundary does:
+         * Mutate pauses (a clean finite one-shot — the firing
+         * engine's pause listener flushes + MIDI-panics); Loop
+         * re-applies the current seed, rewinds, and re-arms, so the
+         * same chunk repeats.
+         * @type {number | null}
+         */
+        this._auditionBoundaryBeats = null;
+        /** @type {(() => void) | null} */
+        this._auditionBoundaryHandler = null;
+        /**
          * Last elapsedSeconds value passed to tick. Used to
          * compute the delta for the next tick and to detect
          * rewind (when the new value is less than this).
@@ -1554,6 +1572,28 @@ export class Simulation {
             // Fall through so any positive elapsed time after
             // a rewind-and-resume still advances normally.
         }
+        // Audition boundary. When armed, fire once the elapsed
+        // beats (measured from the reset at elapsed 0) reach the
+        // target. Checked every playing tick, before the substep
+        // early-return, so a low-BPM frame with no substep still
+        // fires on time. elapsedBeats is null when the piece has no
+        // BPM, in which case there is no beat clock to audition
+        // against and the boundary never fires. The handler may
+        // reset the transport + sim clock (Loop re-seeds and
+        // rewinds; Mutate pauses), so RETURN immediately after it
+        // rather than computing a delta against the now-stale
+        // `elapsed` read at the top of this tick — the next frame
+        // starts cleanly from the new state.
+        if (this._auditionBoundaryBeats !== null && this._transport.isPlaying) {
+            const beats = this._transport.elapsedBeats;
+            if (beats !== null && beats >= this._auditionBoundaryBeats) {
+                this._auditionBoundaryBeats = null;
+                if (typeof this._auditionBoundaryHandler === "function") {
+                    this._auditionBoundaryHandler();
+                }
+                return;
+            }
+        }
         const delta = elapsed - this._lastElapsed;
         this._lastElapsed = elapsed;
         if (delta <= 0) return;
@@ -1784,6 +1824,40 @@ export class Simulation {
         this._lastElapsed = 0;
         this._simTime = 0;
         this._accumulator = 0;
+    }
+
+    /**
+     * Register the callback fired when an armed audition boundary
+     * is reached. main.js wires this to act on the current mode:
+     * Mutate pauses the transport (which the firing engine's pause
+     * listener flushes + MIDI-panics, ending the candidate
+     * cleanly); Loop re-applies the current seed, rewinds, and
+     * re-arms so the chunk repeats. Called once at setup.
+     * @param {() => void} fn
+     */
+    setAuditionBoundaryHandler(fn) {
+        this._auditionBoundaryHandler = fn;
+    }
+
+    /**
+     * Arm a boundary at `beats` master-clock beats from the current
+     * reset (elapsed 0). The audition bar's Mutate / Loop buttons
+     * call this right after applySeedAndReset + rewind, so the
+     * candidate plays exactly this many beats before the boundary
+     * fires. A non-positive or non-finite value disarms.
+     * @param {number} beats
+     */
+    armAuditionBoundary(beats) {
+        this._auditionBoundaryBeats = (Number.isFinite(beats) && beats > 0) ? beats : null;
+    }
+
+    /**
+     * Disarm any pending audition boundary. Called on a manual
+     * pause so a subsequent ordinary Play runs continuously rather
+     * than being cut short by a stale armed boundary.
+     */
+    disarmAuditionBoundary() {
+        this._auditionBoundaryBeats = null;
     }
 
     /**

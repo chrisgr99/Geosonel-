@@ -458,6 +458,125 @@
     flex: 0 0 auto;
 }
 
+/* Active (pressed) state for a text toggle button, e.g. the
+ * main toolbar's Audition toggle when the audition bar is
+ * showing. Amber, matching the other toolbar toggle's
+ * "this changes what you're doing" colour language. */
+.toolbar-text-button-active {
+    background-color: #3a2e1a;
+    border-color: #d4a05a;
+    color: #f0e0c0;
+    box-shadow: 0 0 6px rgba(212, 160, 90, 0.45);
+}
+
+.toolbar-text-button-active:hover {
+    background-color: #463722;
+    border-color: #e8b870;
+    color: #ffffff;
+}
+
+/* Floating audition toolbar — overlays the (position: relative)
+ * canvas area, anchored top-centre, always above the canvas but
+ * modeless so the canvas and inspector stay interactive. */
+.audition-bar {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 16px;
+    background-color: #2e2e2e;
+    border: 1px solid #8a8a8a;
+    border-radius: 10px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+}
+
+.audition-bar.hidden {
+    display: none;
+}
+
+.audition-field {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: #d8d4cc;
+    font-size: 12pt;
+}
+
+.audition-field-label {
+    white-space: nowrap;
+}
+
+.audition-beats {
+    width: 56px;
+    height: 30px;
+    background-color: #6b6b6b;
+    border: 2px solid #d8d4cc;
+    border-radius: 4px;
+    color: #ffffff;
+    font-size: 12pt;
+    padding: 2px 6px;
+}
+
+.audition-beats:focus {
+    outline: none;
+    border-color: #5fc858;
+}
+
+.audition-btn {
+    height: 34px;
+    padding: 0 18px;
+    background-color: #3a3a3a;
+    border: 1px solid #8a8a8a;
+    border-radius: 5px;
+    color: #f0ece4;
+    font-size: 13pt;
+    cursor: pointer;
+}
+
+.audition-btn:hover {
+    background-color: #484848;
+    border-color: #c8c8c8;
+    color: #ffffff;
+}
+
+.audition-btn:focus {
+    outline: none;
+    border-color: #c8c8c8;
+}
+
+/* Loop checkbox + its label. */
+.audition-check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: #d8d4cc;
+    font-size: 13pt;
+    cursor: pointer;
+    user-select: none;
+}
+
+.audition-loop {
+    width: 20px;
+    height: 20px;
+    accent-color: #5fc858;
+    cursor: pointer;
+}
+
+.audition-check-label {
+    white-space: nowrap;
+}
+
+/* Reserved space for the future "move to curated list" capture
+ * button. Holds room at the right end without drawing anything. */
+.audition-capture-reserved {
+    width: 44px;
+    height: 1px;
+}
+
 /* Canvas size controls. Layout: "Canvas:" label, W field, H
  * field, with a small inter-field gap. The label-to-field
  * spacing is tight enough that the label reads as a prefix

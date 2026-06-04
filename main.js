@@ -97,6 +97,7 @@ import { MirrorPush } from "./src/mirrorPush.js";
 import { AiBatchDialog } from "./src/aiBatchDialog.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
+import { AuditionBar } from "./src/auditionBar.js";
 import { actionSaveAs } from "./src/scoreActions.js";
 import { recordScoreOpen, migrateRecentScoresToPaths, subscribeToRecentScores } from "./src/recentFiles.js";
 import {
@@ -1671,6 +1672,18 @@ async function main() {
     const toolbar = new Toolbar(toolbarEl);
     aiBatchDialog.setToolbar(toolbar);
 
+    // Floating audition bar (seed-variation audition workflow),
+    // overlaid on the position:relative canvas area. Modeless, so
+    // the canvas and inspector stay interactive while it is up.
+    // Carries Vary/Again, the beats field, and the seed readout;
+    // the main toolbar's Audition toggle shows/hides it. Defaults
+    // to visible.
+    const auditionBar = new AuditionBar(canvasAreaEl);
+    toolbar.setAuditionActive(auditionBar.isVisible());
+    toolbar.onAuditionToggle(() => {
+        toolbar.setAuditionActive(auditionBar.toggle());
+    });
+
     // Wire the transport view and MIDI indicator now that
     // the toolbar has built its DOM. Both modules find
     // their elements by id; the transport view binds
@@ -2120,30 +2133,78 @@ async function main() {
         firingEngine.setPlaySelectedMode(active);
     });
 
-    // Vary button (seed-variation experiment). Each press steps
-    // the global seed by 1 and replays from the new seeded start
-    // state, nudging the start position (all kinds) and start
-    // velocity (sprites and curves) of every object whose
-    // Variability is above 0. transport.rewind() resets the
-    // transport clock and gives the firing-engine audio flush /
-    // MIDI panic for free (its backward-jump detection);
-    // applySeedAndReset applies the offsets and aligns the
-    // simulation clock so the variation takes effect even from a
-    // cold start at elapsed 0. Playback is ensured so the new
-    // chunk plays immediately. Each press is the next
-    // deterministic seed, so returning to a seed reproduces its
-    // chunk exactly — the readout is the number to note.
-    toolbar.onVaryClick(() => {
-        const nextSeed = simulation.getSeed() + 1;
-        // Apply the offsets and align the sim clock first, so the
-        // rewind's redraw already shows the new start state; then
-        // rewind the transport (resetting its clock and giving the
-        // firing-engine flush / MIDI panic on the backward jump);
-        // then ensure playback.
-        simulation.applySeedAndReset(nextSeed);
+    // Audition workflow (seed-variation). A Mutate button plus a
+    // Loop checkbox over the canvas. The shared primitive
+    // startAudition(seed) plays one finite N-beat pass from a fresh
+    // reset: applySeedAndReset (apply the seed + align the sim
+    // clock), transport.rewind() (zero its clock; the backward jump
+    // gives the firing-engine flush / MIDI panic for free), ensure
+    // playback, then arm the N-beat boundary (N from the bar's
+    // beats field). The boundary fires inside simulation.tick.
+    //
+    //   - Loop OFF: Mutate advances to the next variation and plays
+    //     one pass; the boundary then pauses (a clean finite stop).
+    //   - Loop ON: the current pattern loops continually — the
+    //     boundary re-seeds to the same start and re-arms. Mutate
+    //     restarts IMMEDIATELY with the next variation, which then
+    //     keeps looping (retained) until Mutate is pressed again.
+    //     Checking Loop while stopped starts looping the current
+    //     pattern.
+    //
+    // The seed is tracked internally (simulation.getSeed) and not
+    // shown — it is the key captured later when a pattern is curated.
+    let loopEnabled = false;
+    let auditionRunning = false;
+    const startAudition = (seed) => {
+        auditionRunning = true;
+        simulation.applySeedAndReset(seed);
         transport.rewind();
         if (!transport.isPlaying) transport.play();
-        toolbar.setSeedReadout(nextSeed);
+        simulation.armAuditionBoundary(auditionBar.getBeats());
+    };
+    // Mutate always restarts immediately with the next variation:
+    // advance the seed and play from its start now. With Loop off
+    // that is one finite pass; with Loop on the boundary then loops
+    // the new variation, so it is retained until the next Mutate.
+    auditionBar.onMutate(() => {
+        startAudition(simulation.getSeed() + 1);
+    });
+    auditionBar.onLoopToggle((checked) => {
+        loopEnabled = checked;
+        if (checked && !auditionRunning) {
+            // Begin looping the current pattern continually.
+            startAudition(simulation.getSeed());
+        }
+        // Unchecking does nothing here: the boundary reads
+        // loopEnabled live, so the current cycle finishes and then
+        // stops at the next boundary instead of repeating.
+    });
+
+    // The armed boundary fires here. While Loop is on, re-run the
+    // current candidate from its start (same seed) and re-arm, so it
+    // loops. While Loop is off, pause: the firing engine's pause
+    // listener flushes pending events + MIDI all-notes-off panics,
+    // so the pass ends in silence with nothing hanging over.
+    simulation.setAuditionBoundaryHandler(() => {
+        if (loopEnabled) {
+            startAudition(simulation.getSeed());
+        } else {
+            auditionRunning = false;
+            transport.pause();
+        }
+    });
+
+    // Whenever the transport stops playing (the boundary's pause, or
+    // a manual pause), end the audition session: disarm the boundary
+    // and clear the running state so a subsequent ordinary Play runs
+    // continuously rather than being cut short by a stale boundary.
+    // Ordinary Play is left unchanged: it is the audition boundary,
+    // not Play, that makes a pass finite.
+    transport.on("play", () => {
+        if (!transport.isPlaying) {
+            auditionRunning = false;
+            simulation.disarmAuditionBoundary();
+        }
     });
 
     /**

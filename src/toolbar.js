@@ -230,17 +230,18 @@ export class Toolbar {
         /** @type {HTMLButtonElement | null} */
         this._focusCanvasButton = null;
 
-        // Vary button (seed-variation experiment). Sits to the
-        // right of the transport cluster. Clicking it emits to
-        // _varyListeners; main.js steps the global seed, applies
-        // it via a seeded rewind, and ensures playback. The seed
-        // readout element is captured at render time so
-        // setSeedReadout can update the number without a full
-        // toolbar re-render.
+        // Audition toggle (seed-variation audition workflow).
+        // Sits to the right of the transport cluster; clicking it
+        // shows/hides the floating audition bar over the canvas
+        // (which carries the Vary/Again controls, the beats field,
+        // and the seed readout — those moved out of the main
+        // toolbar). Emits to _auditionToggleListeners; main.js
+        // owns the bar and calls setAuditionActive back so the
+        // toggle reflects the bar's visibility.
         /** @type {Array<() => void>} */
-        this._varyListeners = [];
-        /** @type {HTMLElement | null} */
-        this._seedReadout = null;
+        this._auditionToggleListeners = [];
+        /** @type {HTMLButtonElement | null} */
+        this._auditionToggleButton = null;
 
         this._render();
     }
@@ -297,25 +298,25 @@ export class Toolbar {
     }
 
     /**
-     * Subscribe to Vary button clicks. main.js wires this to
-     * step the global seed, apply it via a seeded rewind, and
-     * ensure playback so the new variation plays immediately.
+     * Subscribe to Audition toggle clicks. main.js wires this to
+     * show/hide the floating audition bar and call setAuditionActive
+     * back with the new visibility.
      * @param {() => void} cb
      */
-    onVaryClick(cb) {
-        this._varyListeners.push(cb);
+    onAuditionToggle(cb) {
+        this._auditionToggleListeners.push(cb);
     }
 
     /**
-     * Update the seed readout shown beside the Vary button.
-     * Called by main.js after each variation step (and once at
-     * startup) so the user can note which seed they are hearing.
-     * @param {number} seed
+     * Reflect the audition bar's visibility on the toggle button
+     * (pressed when the bar is showing). Called by main.js after
+     * each toggle and once at startup.
+     * @param {boolean} active
      */
-    setSeedReadout(seed) {
-        if (this._seedReadout !== null) {
-            this._seedReadout.textContent = "Seed " + seed;
-        }
+    setAuditionActive(active) {
+        if (this._auditionToggleButton === null) return;
+        this._auditionToggleButton.classList.toggle("toolbar-text-button-active", active);
+        this._auditionToggleButton.setAttribute("aria-pressed", active ? "true" : "false");
     }
 
     /** @returns {{tool: string | null, locked: boolean}} */
@@ -479,15 +480,15 @@ export class Toolbar {
         // to that module.
         this.container.appendChild(this._buildTransportCluster());
 
-        // Group separator before the seed-variation control.
+        // Group separator before the audition toggle.
         this.container.appendChild(this._buildGroupSeparator());
 
-        // Vary control: a button that steps the global seed and
-        // replays the seeded variation, plus a readout of the
-        // current seed. Sits to the right of the transport
-        // controls, before the spacer pushes the MIDI indicator
-        // to the far edge.
-        this.container.appendChild(this._buildVaryControl());
+        // Audition toggle: shows/hides the floating audition bar
+        // over the canvas (which carries Vary/Again, the beats
+        // field, and the seed readout). Sits to the right of the
+        // transport controls, before the spacer pushes the MIDI
+        // indicator to the far edge.
+        this.container.appendChild(this._buildAuditionToggle());
 
         // Position 11: flex spacer. Pushes the MIDI
         // indicator to the right edge of the toolbar.
@@ -508,46 +509,30 @@ export class Toolbar {
     }
 
     /**
-     * Build the seed-variation control: a "Vary" button plus a
-     * seed readout. The button emits to _varyListeners on click;
-     * main.js owns the seed stepping, the seeded rewind, and
-     * ensuring playback. The readout shows the current seed so
-     * the user can note which variation they are hearing — the
-     * number they would later capture. Ordinary clickable button
-     * with a clear text label, sized like the other toolbar
-     * controls; no drag or hover affordance.
-     * @returns {HTMLDivElement}
+     * Build the Audition toggle: a text button that shows/hides
+     * the floating audition bar. Emits to _auditionToggleListeners
+     * on click; main.js flips the bar and calls setAuditionActive
+     * back so the button reflects the bar's state. A plain text
+     * label ("Audition") rather than an icon, for accessibility.
+     * @returns {HTMLButtonElement}
      */
-    _buildVaryControl() {
-        const group = document.createElement("div");
-        group.className = "toolbar-vary-group";
-        group.style.display = "flex";
-        group.style.alignItems = "center";
-        group.style.gap = "8px";
-        group.style.flex = "0 0 auto";
-
+    _buildAuditionToggle() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "toolbar-text-button";
-        btn.setAttribute("aria-label", "Vary");
-        btn.title = "Vary. Steps the variation seed and replays, nudging the start position and velocity of every object whose Variability is above zero. The same seed always reproduces the same chunk.";
-        btn.textContent = "Vary";
+        btn.setAttribute("aria-label", "Audition");
+        btn.setAttribute("aria-pressed", "false");
+        btn.title = "Audition. Show or hide the floating audition bar over the canvas, where you advance the seed (Vary), replay the current seed (Again), and set the audition length in beats.";
+        btn.textContent = "Audition";
         btn.addEventListener("click", () => {
-            for (const cb of this._varyListeners) {
+            for (const cb of this._auditionToggleListeners) {
                 try { cb(); } catch (err) {
-                    console.error("GXW: toolbar vary listener threw.", err);
+                    console.error("GXW: toolbar audition-toggle listener threw.", err);
                 }
             }
         });
-        group.appendChild(btn);
-
-        const readout = document.createElement("div");
-        readout.className = "toolbar-seed-readout";
-        readout.textContent = "Seed 0";
-        this._seedReadout = readout;
-        group.appendChild(readout);
-
-        return group;
+        this._auditionToggleButton = btn;
+        return btn;
     }
 
     /**
