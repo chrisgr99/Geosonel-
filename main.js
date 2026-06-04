@@ -270,6 +270,12 @@ async function main() {
     }
     const canvas = new Canvas(canvasAreaEl);
     const messages = new MessageArea(messageAreaEl);
+    // Expose the message area for the Code-tab debug tap p()
+    // (src/strudel/debugTap.js), which writes each note's tapped
+    // values here for accessibility (Chris reads the message
+    // area, not the browser console). A bare global keeps p()
+    // usable in patterns with no import, matching the signals.
+    /** @type {any} */ (window).gxwMessages = messages;
 
     // Surface backup-rotation failures (Stage 2.5 Phase 3
     // commit 2) in the messages area. storage.js calls the

@@ -124,6 +124,7 @@
 // @ts-check
 
 import { getFiringContext } from "./firingContext.js";
+import { installDebugTap } from "./debugTap.js";
 
 /**
  * Uniform normaliser applied to OKLab a and b projections
@@ -461,4 +462,10 @@ export function installImageSignals() {
     // same way they reference pxLt and the other signals.
     win.mapClip = mapClip;
     console.log("[signals] mapClip transform helper installed");
+
+    // Install the per-note debug tap p() (or tap() if p is
+    // taken) as a bare global too, so Code-tab patterns can wrap
+    // any sub-expression to watch its per-note value in the
+    // message area. See src/strudel/debugTap.js.
+    installDebugTap();
 }

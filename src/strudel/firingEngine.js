@@ -137,6 +137,7 @@
 
 import { parsePatternToPositions } from "./patternParse.js";
 import { withFiringContext } from "./firingContext.js";
+import { flushNoteTaps } from "./debugTap.js";
 import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "../beatIntervals.js";
 
 /** @typedef {import("./runtime.js").StrudelRuntime} StrudelRuntime */
@@ -1863,6 +1864,13 @@ export class PatternFiringEngine {
                     } else {
                         this._midiSender.send(refreshedValue, ev.audioTime, refreshedDurationMidi);
                     }
+                    // Flush any per-note debug taps (p()) recorded
+                    // during this note's Pass-2 re-query above as
+                    // one grouped line, then clear for the next
+                    // note. Records exist only when the composer
+                    // wrapped a sub-expression in p(); otherwise the
+                    // buffer is empty and this is a cheap no-op.
+                    flushNoteTaps();
                     // Emit the firing-event signal for the
                     // canvas's yellow-flash visual feedback.
                     // Runs after the audio dispatch so a
