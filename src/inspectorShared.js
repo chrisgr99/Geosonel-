@@ -13,8 +13,8 @@ export const W = {
     hideCursor: 90,    // "Hide Cursor" — deprecated width key, kept for any legacy reference; the Band 1 State control now uses W.state (a radio group)
     mute: 40,          // "Mute" — deprecated width key from the old single Mute control; superseded by the three-state `state` field (Active / Hide Cursor / Disable) on Band 1's row 1
     state: 40,         // the Band 1 object State control — now a horizontal radio group (Active / Hide Cursor / Disable; triggers show Active / Disable). The radios are content-sized on their own row with no visible label, so no fixed pixel width is imposed; this key marks the State control's binding. (Was the dropdown's label/field width before the radio-group conversion.)
-    curveThick: 60,    // "Curve\nThickness" multiline
-    cursorThick: 60,   // "Cursor\nThickness" multiline
+    curveThick: 72,    // "Curve\nLine Width" — wide enough that "Line Width" stays on one line (2-line label, not 3)
+    cursorThick: 60,   // "Cursor\nWidth" multiline
 
     // Numeric fields.
     posXY: 60,         // Position X, Y (legacy; superseded by startState)
@@ -41,6 +41,16 @@ export const W = {
     // to match the Name field width so the right edge of
     // Band 3 lines up with Band 1's Name row.
     callbackField: 280,
+
+    // Band 2 Variability inline label, sitting to the right of
+    // the Color field on the same row (GeoSonixV2). Fits the
+    // word "Variability" at 11pt.
+    variabilityLabel: 72,
+
+    // Band 2 curve "Width" inline label, between the two curve
+    // size fields on the Dimension row (the first field's label
+    // "Length" uses the standard leftLabel column).
+    dimWidthLabel: 44,
 
     // Band 1 cycle duration numeric field. Small width
     // since the value is typically a single-digit master-

@@ -97,6 +97,17 @@ composition, which fits in two lines:
 - Group — dropped, at least for now.
 
 ### Band 2 — transform & appearance (CONFIRMED)
+STATUS: IMPLEMENTED (slice 2, awaiting Chris's use-validation). Initial Conditions row
+(X, Y, vX, vY) and Cursor Size row unchanged. The two old size rows (Curve Size W/H and
+the separate Sprite/Trigger Size) are merged into ONE row, labelled "Dimension": W/H +
+Curve Line Width when curves are selected, a single value (sprite displayDiameter /
+trigger size) for sprite-only or trigger-only selections. Color is unchanged (already a
+single colour, no inactive). Variability moved up onto the Color row, to the right of the
+colour field. No Z anywhere (GXW already had none). LABEL RENAMES (Chris, 2026-06-05): no "Dimension" row title — the curve size fields are
+labelled "Length" and "Width" (the "(W, H)" units dropped); the sprite/trigger single
+field is labelled "Size". Curve Thickness → "Curve Line Width"; Cursor Thickness →
+"Cursor Line Width"; Cursor Size → "Cursor Length" (multi-word labels wrap to two lines).
+
 Mostly GXW's current band, with these changes (this absorbs GeoSonix's separate size and
 colors bands):
 - Position — X and Y only; there is NO Z coordinate anywhere in the new app.

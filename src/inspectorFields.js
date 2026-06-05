@@ -435,6 +435,12 @@ export const fieldMethods = {
         group.style.display = "flex";
         group.style.flexDirection = "row";
         group.style.alignItems = "center";
+        // Never let the group shrink: when the identity row is
+        // wider than the inspector pane, a shrinking flex item
+        // would compress these inline-flex labels and wrap their
+        // text ("No Cursor" onto two lines). flex-shrink:0 keeps
+        // every option on one line.
+        group.style.flexShrink = "0";
         if (!opts.editable) {
             group.classList.add("disabled");
             group.style.opacity = "0.5";
@@ -445,9 +451,11 @@ export const fieldMethods = {
             label.className = "insp-radio";
             label.style.display = "inline-flex";
             label.style.alignItems = "center";
+            label.style.whiteSpace = "nowrap";
+            label.style.flexShrink = "0";
             // Small horizontal gap before each pair after the
             // first, separating one radio-and-label from the next.
-            if (i > 0) label.style.marginLeft = "14px";
+            if (i > 0) label.style.marginLeft = "8px";
             const input = document.createElement("input");
             input.type = "radio";
             input.name = opts.name;

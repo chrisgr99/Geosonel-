@@ -12,7 +12,6 @@ import {
     selectionSummaryTitle,
     singleSelectIdTitle,
     sizeRowActive,
-    sizeRowLabel,
 } from "./inspectorSelection.js";
 import {
     W,
@@ -22,7 +21,6 @@ import {
     mkInlineLetter,
     mkLabel,
     mkRow,
-    mkUnits,
 } from "./inspectorWidgets.js";
 export const bandObjectMethods = {
 
@@ -168,7 +166,7 @@ export const bandObjectMethods = {
         const stateOptions = hasCursorKinds
             ? [
                 { value: "active", label: "Active" },
-                { value: "passive", label: "Hide Cursor" },
+                { value: "passive", label: "No Cursor" },
                 { value: "disabled", label: "Disable" },
             ]
             : [
@@ -203,7 +201,7 @@ export const bandObjectMethods = {
             editKind: "setState",
             ariaLabel: "State",
         });
-        stateGroup.style.marginLeft = "12px";
+        stateGroup.style.marginLeft = "8px";
         r1.appendChild(stateGroup);
         band.appendChild(r1);
 
@@ -226,10 +224,9 @@ export const bandObjectMethods = {
         // authoring semantics are defined this becomes editable
         // and binds to `name`.
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Object\nName", {
+        r2.appendChild(mkLabel("Object Name", {
             width: W.leftLabel,
             disabled: true,
-            multiline: true,
         }));
         r2.appendChild(this._buildNameField({
             value: "",
@@ -244,10 +241,9 @@ export const bandObjectMethods = {
         // interval. Universal across kinds — editable for any
         // non-empty selection. Behaviour is TBD; this is model
         // and inspector scaffolding for now.
-        r2.appendChild(mkLabel("Time Lag\nIn Object", {
+        r2.appendChild(mkLabel("Time Lag", {
             width: W.timeLagLabel,
             disabled: !togglesEnabled,
-            multiline: true,
         }));
         r2.appendChild(this._buildEditableField({
             value: timeLagMultAgg === "varies" ? "" : timeLagMultAgg,
@@ -307,7 +303,6 @@ export const bandObjectMethods = {
 
         const curveDisabled = !ctx.hasCurves;
         const sizeActive = sizeRowActive(ctx);
-        const sizeLabel = sizeRowLabel(ctx);
         const colorActive = ctx.total > 0;
         const positionActive = ctx.total > 0;
         // Velocity applies to sprites and curves; triggers
@@ -432,65 +427,88 @@ export const bandObjectMethods = {
         }));
         band.appendChild(r1);
 
-        // Curve Size W/H + Curve Thickness. Curves only.
-        // W and H read from each curve's bbox dimensions and
-        // edits emit setSizeAxis (absolute) so single-select,
-        // uniform multi-select, and varies multi-select share
-        // one path. Per-shape semantics inside
-        // setSizeAxisOnSelection: ellipse assigns shape.w or
-        // shape.h directly (so a degenerate axis can be grown
-        // back to non-zero); line/piste compute a per-shape
-        // factor and scale around the bbox-axis midpoint, and
-        // skip silently when their starting extent is zero
-        // because midpoint scaling can't grow zero. Curve
-        // Thickness is a direct field commit.
-        const sizeWAgg = aggregateCurveSize(objs.curves, "x");
-        const sizeHAgg = aggregateCurveSize(objs.curves, "y");
-        const curveThicknessAgg = aggregateString(objs.curves, "curveThickness");
-        const sizeWEditable = !curveDisabled;
-        const sizeHEditable = !curveDisabled;
-
+        // Size. GeoSonixV2-unified single "Size" row: two
+        // dimensions (W, H) when curves are selected, one value
+        // for sprites and triggers (the old separate Trigger
+        // Size folds in here). Curve Thickness rides along on
+        // the curve variant, unchanged. W/H read from each
+        // curve's bbox and edit via setSizeAxis (absolute,
+        // per-shape semantics inside setSizeAxisOnSelection:
+        // ellipse assigns shape.w/shape.h directly so a
+        // degenerate axis can grow back; line/piste scale around
+        // the bbox-axis midpoint and skip a zero extent). The
+        // single sprite/trigger value is a direct field commit.
+        // Curves win a mixed selection (W/H shown); the sprite
+        // and trigger variant gates on the exclusive-kind
+        // sizeRowActive check.
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Curve Size", { width: W.leftLabel, disabled: curveDisabled }));
-        r2.appendChild(this._buildEditableField({
-            value: sizeWAgg === "varies" ? "" : sizeWAgg,
-            numeric: true,
-            width: W.sizeWH,
-            editable: sizeWEditable,
-            spinLive: true,
-            validator: (c) => validateNumber(c, { min: 0 }),
-            onCommit: (newValue) => {
-                const value = Number(newValue);
-                if (Number.isFinite(value) && value >= 0) {
-                    this._emitEdit({ kind: "setSizeAxis", axis: "x", value });
-                }
-            },
-        }));
-        r2.appendChild(this._buildEditableField({
-            value: sizeHAgg === "varies" ? "" : sizeHAgg,
-            numeric: true,
-            width: W.sizeWH,
-            editable: sizeHEditable,
-            spinLive: true,
-            validator: (c) => validateNumber(c, { min: 0 }),
-            onCommit: (newValue) => {
-                const value = Number(newValue);
-                if (Number.isFinite(value) && value >= 0) {
-                    this._emitEdit({ kind: "setSizeAxis", axis: "y", value });
-                }
-            },
-        }));
-        r2.appendChild(mkUnits("(W, H)", { disabled: curveDisabled }));
-        r2.appendChild(mkLabel("Curve\nThickness", { width: W.curveThick, disabled: curveDisabled, multiline: true }));
-        r2.appendChild(this._buildEditableField({
-            value: curveThicknessAgg === "varies" ? "" : curveThicknessAgg,
-            numeric: true,
-            width: W.thickness,
-            editable: !curveDisabled,
-            spinLive: true,
-            validator: (c) => validateNumber(c, { min: 0 }),
-            editKind: "setCurveThickness",
-        }));
+        if (ctx.hasCurves) {
+            const sizeWAgg = aggregateCurveSize(objs.curves, "x");
+            const sizeHAgg = aggregateCurveSize(objs.curves, "y");
+            const curveThicknessAgg = aggregateString(objs.curves, "curveThickness");
+            r2.appendChild(mkLabel("Length", { width: W.leftLabel, disabled: curveDisabled }));
+            r2.appendChild(this._buildEditableField({
+                value: sizeWAgg === "varies" ? "" : sizeWAgg,
+                numeric: true,
+                width: W.sizeWH,
+                editable: !curveDisabled,
+                spinLive: true,
+                validator: (c) => validateNumber(c, { min: 0 }),
+                onCommit: (newValue) => {
+                    const value = Number(newValue);
+                    if (Number.isFinite(value) && value >= 0) {
+                        this._emitEdit({ kind: "setSizeAxis", axis: "x", value });
+                    }
+                },
+            }));
+            const widthLabel = mkLabel("Width", { width: W.dimWidthLabel, disabled: curveDisabled });
+            widthLabel.style.marginLeft = "10px";
+            r2.appendChild(widthLabel);
+            r2.appendChild(this._buildEditableField({
+                value: sizeHAgg === "varies" ? "" : sizeHAgg,
+                numeric: true,
+                width: W.sizeWH,
+                editable: !curveDisabled,
+                spinLive: true,
+                validator: (c) => validateNumber(c, { min: 0 }),
+                onCommit: (newValue) => {
+                    const value = Number(newValue);
+                    if (Number.isFinite(value) && value >= 0) {
+                        this._emitEdit({ kind: "setSizeAxis", axis: "y", value });
+                    }
+                },
+            }));
+            r2.appendChild(mkLabel("Line Width", { width: W.curveThick, disabled: curveDisabled }));
+            r2.appendChild(this._buildEditableField({
+                value: curveThicknessAgg === "varies" ? "" : curveThicknessAgg,
+                numeric: true,
+                width: W.thickness,
+                editable: !curveDisabled,
+                spinLive: true,
+                validator: (c) => validateNumber(c, { min: 0 }),
+                editKind: "setCurveThickness",
+            }));
+        } else {
+            // Sprite-only or trigger-only: a single Size value
+            // (sprite displayDiameter or trigger size). Greyed
+            // for empty or mixed sprite+trigger selections.
+            const sizeFieldAgg = ctx.singleKind === "sprite"
+                ? aggregateString(objs.sprites, "displayDiameter")
+                : ctx.singleKind === "trigger"
+                ? aggregateString(objs.triggers, "size")
+                : "";
+            const sizeEditKind = ctx.singleKind === "trigger" ? "setTriggerSize" : "setSpriteSize";
+            r2.appendChild(mkLabel("Size", { width: W.leftLabel, disabled: !sizeActive }));
+            r2.appendChild(this._buildEditableField({
+                value: sizeFieldAgg === "varies" ? "" : sizeFieldAgg,
+                numeric: true,
+                width: W.spriteTriggerSize,
+                editable: sizeActive,
+                spinLive: true,
+                validator: (c) => validateNumber(c, { min: 0 }),
+                editKind: sizeEditKind,
+            }));
+        }
         band.appendChild(r2);
 
         // Cursor R/L + Cursor Thickness. All three apply to
@@ -514,7 +532,7 @@ export const bandObjectMethods = {
             || cursorObjs.every((o) => o.state !== "active");
 
         const r3 = mkRow();
-        r3.appendChild(mkLabel("Cursor Size", { width: W.leftLabel, disabled: cursorExtentDisabled }));
+        r3.appendChild(mkLabel("Cursor\nLength", { width: W.leftLabel, disabled: cursorExtentDisabled, multiline: true }));
         r3.appendChild(mkInlineLetter("R", { disabled: cursorExtentDisabled }));
         r3.appendChild(this._buildEditableField({
             value: cursorRAgg === "varies" ? "" : cursorRAgg,
@@ -535,7 +553,7 @@ export const bandObjectMethods = {
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorL",
         }));
-        r3.appendChild(mkLabel("Cursor\nThickness", { width: W.cursorThick, disabled: cursorExtentDisabled, multiline: true }));
+        r3.appendChild(mkLabel("Cursor\nWidth", { width: W.cursorThick, disabled: cursorExtentDisabled, multiline: true }));
         r3.appendChild(this._buildEditableField({
             value: cursorThicknessAgg === "varies" ? "" : cursorThicknessAgg,
             numeric: true,
@@ -547,36 +565,21 @@ export const bandObjectMethods = {
         }));
         band.appendChild(r3);
 
-        // Sprite/Trigger Size. Active only when the selection
-        // is exclusively sprites or exclusively triggers; the
-        // label and edit kind switch to match. Direct field
-        // commit.
-        const sizeFieldAgg = ctx.singleKind === "sprite"
-            ? aggregateString(objs.sprites, "displayDiameter")
-            : ctx.singleKind === "trigger"
-            ? aggregateString(objs.triggers, "size")
-            : "";
-        const sizeEditKind = ctx.singleKind === "trigger" ? "setTriggerSize" : "setSpriteSize";
-
-        const r4 = mkRow();
-        r4.appendChild(mkLabel(sizeLabel, { width: W.leftLabel, disabled: !sizeActive }));
-        r4.appendChild(this._buildEditableField({
-            value: sizeFieldAgg === "varies" ? "" : sizeFieldAgg,
-            numeric: true,
-            width: W.spriteTriggerSize,
-            editable: sizeActive,
-            spinLive: true,
-            validator: (c) => validateNumber(c, { min: 0 }),
-            editKind: sizeEditKind,
-        }));
-        band.appendChild(r4);
-
-        // Color. Universal across kinds — curves, sprites,
-        // and triggers all carry a per-object colour. Editable
-        // when at least one object is selected, including when
-        // the value varies (typing commits the typed colour
-        // to every object in the selection).
+        // Color + Variability on one row. Color is universal
+        // across kinds — curves, sprites, and triggers all carry
+        // a per-object colour; editable for any non-empty
+        // selection, including when the value varies (typing
+        // commits the typed colour to every selected object).
+        // There is no separate when-inactive colour.
+        //
+        // Variability (GeoSonixV2: moved up here, to the right of
+        // the colour field) is the seed-variation dial, also
+        // universal: 0 (default) locks the object; a positive
+        // value scales how much its start position (and velocity,
+        // for sprites and curves) is nudged by the global seed.
         const colorAgg = aggregateColor(objs);
+        const variabilityActive = ctx.total > 0;
+        const variabilityAgg = aggregateString(objs.all, "variability");
 
         const r5 = mkRow();
         r5.appendChild(mkLabel("Color", { width: W.leftLabel, disabled: !colorActive }));
@@ -585,20 +588,13 @@ export const bandObjectMethods = {
             editable: colorActive,
             varies: colorAgg === "varies",
         }));
-        band.appendChild(r5);
-
-        // Variability. Universal across kinds — curves, sprites,
-        // and triggers all carry the seed-variation dial. 0
-        // (default) locks the object; a positive value is how
-        // much its start position (and velocity, for sprites and
-        // curves) is nudged by the global seed. Editable for any
-        // non-empty selection; the typed value commits to every
-        // selected object via setVariabilityOnSelection.
-        const variabilityActive = ctx.total > 0;
-        const variabilityAgg = aggregateString(objs.all, "variability");
-        const r6 = mkRow();
-        r6.appendChild(mkLabel("Variability", { width: W.leftLabel, disabled: !variabilityActive }));
-        r6.appendChild(this._buildEditableField({
+        const variabilityLabel = mkLabel("Variability", {
+            width: W.variabilityLabel,
+            disabled: !variabilityActive,
+        });
+        variabilityLabel.style.marginLeft = "14px";
+        r5.appendChild(variabilityLabel);
+        r5.appendChild(this._buildEditableField({
             value: variabilityAgg === "varies" ? "" : variabilityAgg,
             numeric: true,
             width: W.spriteTriggerSize,
@@ -607,7 +603,7 @@ export const bandObjectMethods = {
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setVariability",
         }));
-        band.appendChild(r6);
+        band.appendChild(r5);
 
         return band;
     },

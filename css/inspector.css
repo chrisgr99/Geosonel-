@@ -75,8 +75,8 @@
 }
 
 .insp-band {
-    padding: 5px 14px;
-    border-bottom: 2px solid #777777;
+    padding: 5px 8px;
+    border-bottom: 1px solid #777777;
 }
 
 .insp-band:last-child {
@@ -87,16 +87,17 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    margin: 3px 0;
-    min-height: 24px;
+    margin: 2px 0;
+    min-height: 20px;
 }
 
 .insp-label {
     text-align: right;
     color: #ffffff;
     font-size: 10pt;
-    line-height: 1.15;
+    line-height: 1.05;
     flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .insp-label.disabled {
@@ -108,7 +109,7 @@
  * — that's how GeoSonix shows empty fields, as a clearly
  * visible field-shaped rectangle. The fill colour is
  * deliberately a strong step lighter than the panel
- * background (#6b6b6b vs #2a2a2a) and only slightly darker
+ * background (#646464 vs #2a2a2a) and only slightly darker
  * than the divider colour #777777, so each field reads as a
  * distinct rectangle even when its border is suppressed in
  * the disabled or locked state — important because the
@@ -124,12 +125,12 @@
  * read-only id field looks distinct from a disabled-by-
  * context field. */
 .insp-field {
-    background-color: #6b6b6b;
-    border: 2px solid #d8d4cc;
+    background-color: #646464;
+    border: 1px solid #789678;
     border-radius: 3px;
-    padding: 0 8px;
+    padding: 0 6px;
     color: #ffffff;
-    height: 24px;
+    height: 20px;
     font-size: 11pt;
     box-sizing: border-box;
     position: relative;
@@ -198,7 +199,7 @@
     height: 18px;
     border: 2px solid #777777;
     border-radius: 50%;
-    background-color: #6b6b6b;
+    background-color: #646464;
     flex-shrink: 0;
     box-sizing: border-box;
     cursor: pointer;
@@ -216,7 +217,7 @@
  * dark fill) and checked (fully green). */
 .insp-checkbox.varies {
     border-color: #5fc858;
-    background-color: #6b6b6b;
+    background-color: #646464;
     position: relative;
 }
 
@@ -247,12 +248,12 @@
  * keeps the lighter-grey fill so the field's footprint stays
  * visible. */
 .insp-combo {
-    background-color: #6b6b6b;
-    border: 2px solid #d8d4cc;
+    background-color: #646464;
+    border: 1px solid #789678;
     border-radius: 3px;
     padding: 0 24px 0 8px;
     color: #ffffff;
-    height: 24px;
+    height: 20px;
     font-size: 11pt;
     position: relative;
     box-sizing: border-box;
@@ -314,12 +315,12 @@
  * the browser's own disabled-attribute behaviour. Both
  * are kept in lockstep because inspector.js sets both. */
 .insp-dropdown {
-    background-color: #6b6b6b;
-    border: 2px solid #d8d4cc;
+    background-color: #646464;
+    border: 1px solid #789678;
     border-radius: 3px;
     padding: 0 22px 0 8px;
     color: #ffffff;
-    height: 24px;
+    height: 20px;
     font-size: 11pt;
     font-family: inherit;
     line-height: 1;
@@ -329,7 +330,7 @@
     -moz-appearance: none;
     cursor: pointer;
     flex-shrink: 0;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%23d8d4cc' d='M0 0h8L4 5z'/></svg>");
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%23789678' d='M0 0h8L4 5z'/></svg>");
     background-repeat: no-repeat;
     background-position: right 6px center;
     background-size: 8px 5px;
@@ -372,7 +373,7 @@
 .insp-popover {
     position: fixed;
     z-index: 3000;
-    background-color: #6b6b6b;
+    background-color: #646464;
     border: 2px solid #ffffff;
     border-radius: 3px;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
@@ -520,7 +521,7 @@
     color: #ffffff;
     border-radius: 3px;
     padding: 0 14px;
-    height: 24px;
+    height: 20px;
     font-size: 10pt;
     line-height: 1;
     cursor: pointer;
@@ -545,11 +546,11 @@
  * via inline style. Empty/disabled state still shows the
  * field's footprint via the lighter-grey fill. */
 .insp-color {
-    background-color: #6b6b6b;
-    border: 2px solid #d8d4cc;
+    background-color: #646464;
+    border: 1px solid #789678;
     border-radius: 3px;
     padding: 0 6px;
-    height: 24px;
+    height: 20px;
     width: 130px;
     box-sizing: border-box;
     display: flex;
@@ -670,10 +671,10 @@
     display: inline-flex;
     align-items: stretch;
     flex-shrink: 0;
-    height: 24px;
-    border: 2px solid #d8d4cc;
+    height: 20px;
+    border: 1px solid #789678;
     border-radius: 3px;
-    background-color: #6b6b6b;
+    background-color: #646464;
     box-sizing: border-box;
     overflow: hidden;
 }
