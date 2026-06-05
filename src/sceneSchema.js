@@ -92,9 +92,10 @@ const HARMONY_OVERRIDE_FIELDS = [
 /**
  * Callback-slot fields shared by Curve, Trigger, and Sprite.
  * Every source kind carries the cyclePattern field and the
- * three Code-tab callback slots (hasHit, beenHit, onTick),
- * each guarded by a Can-X gate boolean (canHit, canBeHit,
- * canTick). The cyclePattern lives in the Band 4 CodeMirror
+ * four Code-tab callback slots (hasHit, beenHit, autoMessage,
+ * onTick), each guarded by a Can-X gate boolean (canHit,
+ * canBeHit, canAutoMessage, canTick). autoMessage fires at the
+ * object's Automessage Interval (Band 4). The cyclePattern lives in the Band 4 CodeMirror
  * editor; cursor-as-collider derives self-firing from cursor
  * extents and the object's state, so there is no canCycle gate. The
  * beatsPerCycle field gives the cycle length in master beats
@@ -120,6 +121,8 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "hasHitFunction", label: "Has Hit Function", type: "functionRef", default: "" },
     { key: "canBeHit", label: "Can Be Hit", type: "boolean", default: false },
     { key: "beenHitFunction", label: "Been Hit Function", type: "functionRef", default: "" },
+    { key: "canAutoMessage", label: "Can Auto Message", type: "boolean", default: false },
+    { key: "autoMessageFunction", label: "Auto Message Function", type: "functionRef", default: "" },
     { key: "canTick", label: "Can Tick", type: "boolean", default: false },
     { key: "onTickFunction", label: "On Tick Function", type: "functionRef", default: "" },
 ];

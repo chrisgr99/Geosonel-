@@ -83,6 +83,15 @@
     border-bottom: none;
 }
 
+/* Band 3 (callback slots): its four rows have single-line,
+ * one-word labels, so at the shared row margin they sit
+ * closer together than the two-line-label rows in the other
+ * bands and read as cramped. A touch more vertical margin on
+ * just these rows evens the rhythm out. */
+.insp-band-callbacks .insp-row {
+    margin: 3px 0;
+}
+
 .insp-row {
     display: flex;
     align-items: center;
@@ -126,7 +135,7 @@
  * context field. */
 .insp-field {
     background-color: #646464;
-    border: 1px solid #789678;
+    border: 2px solid #789678;
     border-radius: 3px;
     padding: 0 6px;
     color: #ffffff;
@@ -249,7 +258,7 @@
  * visible. */
 .insp-combo {
     background-color: #646464;
-    border: 1px solid #789678;
+    border: 2px solid #789678;
     border-radius: 3px;
     padding: 0 24px 0 8px;
     color: #ffffff;
@@ -316,7 +325,7 @@
  * are kept in lockstep because inspector.js sets both. */
 .insp-dropdown {
     background-color: #646464;
-    border: 1px solid #789678;
+    border: 2px solid #789678;
     border-radius: 3px;
     padding: 0 22px 0 8px;
     color: #ffffff;
@@ -547,7 +556,7 @@
  * field's footprint via the lighter-grey fill. */
 .insp-color {
     background-color: #646464;
-    border: 1px solid #789678;
+    border: 2px solid #789678;
     border-radius: 3px;
     padding: 0 6px;
     height: 20px;
@@ -672,7 +681,7 @@
     align-items: stretch;
     flex-shrink: 0;
     height: 20px;
-    border: 1px solid #789678;
+    border: 2px solid #789678;
     border-radius: 3px;
     background-color: #646464;
     box-sizing: border-box;

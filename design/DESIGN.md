@@ -123,6 +123,14 @@ colors bands):
   them now.
 
 ### Band 3 — Msg Functions / callbacks (CONFIRMED)
+STATUS: IMPLEMENTED (slice 3, awaiting Chris's use-validation). The fourth row,
+autoMessage, was added beside the existing hasHit / beenHit / onTick rows. New model
+fields `canAutoMessage` + `autoMessageFunction` on all three kinds (sceneSchema / scene /
+sceneEditor setters / main.js dispatch + create-stub setter map). Each row keeps the one
+contextual CREATE / GO TO button (Create makes `autoMessage_<id>` in behaviors.js, Go to
+navigates). autoMessage's firing rate will be governed by Band 4 (Automessage Interval),
+still to build. The ctx/API for the callback bodies remains TBD.
+
 Replaces GeoSonix's two message functions (the collision-driven curveMelody and the
 interval-driven curveAutoMessage) with FOUR named procedural callbacks, GXW's own:
 hasHit, beenHit, autoMessage, and onTick. Presented as four rows, one per callback, each

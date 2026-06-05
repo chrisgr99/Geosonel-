@@ -1901,6 +1901,27 @@ export function setCanTickOnSelection(data, selection, value) {
 }
 
 /**
+ * Set the canAutoMessage field across the selection.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} value
+ */
+export function setCanAutoMessageOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "canAutoMessage", !!value, true);
+}
+
+/**
+ * Set the autoMessageFunction field across the selection. See
+ * setHasHitFunctionOnSelection for the validation note.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setAutoMessageFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "autoMessageFunction", String(value));
+}
+
+/**
  * Set the onTickFunction field across the selection. See
  * setHasHitFunctionOnSelection for the validation note.
  * @param {any} data

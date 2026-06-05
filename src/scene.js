@@ -665,6 +665,11 @@ export class Curve {
         this.beenHitFunction = opts.beenHitFunction ?? "";
 
         /** @type {boolean} */
+        this.canAutoMessage = opts.canAutoMessage ?? false;
+        /** @type {string} */
+        this.autoMessageFunction = opts.autoMessageFunction ?? "";
+
+        /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
         /** @type {string} */
         this.onTickFunction = opts.onTickFunction ?? "";
@@ -795,6 +800,11 @@ export class Trigger {
         this.canBeHit = opts.canBeHit ?? false;
         /** @type {string} */
         this.beenHitFunction = opts.beenHitFunction ?? "";
+
+        /** @type {boolean} */
+        this.canAutoMessage = opts.canAutoMessage ?? false;
+        /** @type {string} */
+        this.autoMessageFunction = opts.autoMessageFunction ?? "";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
@@ -973,6 +983,11 @@ export class Sprite {
         this.canBeHit = opts.canBeHit ?? false;
         /** @type {string} */
         this.beenHitFunction = opts.beenHitFunction ?? "";
+
+        /** @type {boolean} */
+        this.canAutoMessage = opts.canAutoMessage ?? false;
+        /** @type {string} */
+        this.autoMessageFunction = opts.autoMessageFunction ?? "";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
