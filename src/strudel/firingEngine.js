@@ -137,7 +137,20 @@
 
 import { parsePatternToPositions } from "./patternParse.js";
 import { withFiringContext } from "./firingContext.js";
-import { flushNoteTaps } from "./debugTap.js";
+import { flushNoteTaps, clearNoteTaps } from "./debugTap.js";
+
+/**
+ * Release margin for the seam tail-suppression guard, in seconds.
+ * A note is suppressed at a repeating seam (Loop / a following
+ * segment) when its onset + clip-scaled duration + THIS margin
+ * would overrun the boundary into the next pass — the margin
+ * stands in for the voice's release tail, so a note that nominally
+ * ends just before the seam but whose release would ring across it
+ * is still cut. Single tunable constant: larger = more aggressive
+ * suppression (cleaner seam, emptier tail), smaller = fuller tail
+ * with more bleed risk. Default ~60 ms; Chris tunes it by ear.
+ */
+const SEAM_RELEASE_MARGIN_SECONDS = 0.06;
 import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "../beatIntervals.js";
 
 /** @typedef {import("./runtime.js").StrudelRuntime} StrudelRuntime */
@@ -628,6 +641,20 @@ export class PatternFiringEngine {
          */
         this._onFiring = null;
 
+        /**
+         * Seam tail-suppression boundary, in master-clock beats
+         * from the current reset, or null for no repeating seam.
+         * When non-null, tick() suppresses notes whose tail would
+         * overrun this boundary (see SEAM_RELEASE_MARGIN_SECONDS).
+         * main.js sets it via setSeamBoundary on each looping
+         * audition pass (and clears it on a one-shot / stop); the
+         * future arrangement layer will set it per segment. Keyed
+         * off boundary TIME, not Loop specifically, so the guard
+         * is reusable.
+         * @type {number | null}
+         */
+        this._seamBoundaryBeats = null;
+
         // Subscribe to transport play-state changes so we
         // can panic the MIDI sender immediately when the
         // user pauses. The pause-path inside tick() also
@@ -719,6 +746,23 @@ export class PatternFiringEngine {
         if (wasMidi) {
             this._midiSender.panic();
         }
+    }
+
+    /**
+     * Set the seam tail-suppression boundary. Pass the repeating
+     * seam's position in master-clock beats from the current reset
+     * (the audition Loop length now; a segment's stored beat-length
+     * later) to arm the guard, or null/0 to disarm it (one-shot
+     * pass, terminal segment, or stopped) so tails ring out
+     * naturally. While armed, tick() suppresses any note whose tail
+     * would overrun the boundary into the next pass.
+     * @param {number | null} beats
+     */
+    setSeamBoundary(beats) {
+        this._seamBoundaryBeats =
+            (typeof beats === "number" && Number.isFinite(beats) && beats > 0)
+                ? beats
+                : null;
     }
 
     /**
@@ -1537,6 +1581,20 @@ export class PatternFiringEngine {
         const lateRefreshHorizon = audioNow + activeWindow;
         const snapshot = this._captureSnapshot(audioNow);
 
+        // Seam tail-suppression boundary, as an absolute audio-clock
+        // time. When a repeating seam is armed (_seamBoundaryBeats),
+        // translate it to an audio time: the reset (elapsed 0) sits
+        // at audioNow - elapsedSeconds, and the boundary is that
+        // many beats later. Notes whose tail crosses this time are
+        // suppressed in the dispatch below. Null when no repeating
+        // seam is armed (one-shot / terminal), so nothing is
+        // suppressed and tails ring out.
+        let seamBoundaryAudioTime = null;
+        if (this._seamBoundaryBeats !== null) {
+            const resetAudioTime = audioNow - this._transport.elapsedSeconds;
+            seamBoundaryAudioTime = resetAudioTime + this._seamBoundaryBeats * (60 / bpm);
+        }
+
         for (const state of this._sources.values()) {
             const source = this._lookupSource(state);
             if (source === null) continue;
@@ -1822,6 +1880,25 @@ export class PatternFiringEngine {
                         duration: refreshedDuration,
                         durationMidi: refreshedDurationMidi,
                     } = this._pass2Refresh(state, ev, snapshot);
+                    // Seam tail-suppression. At a repeating seam,
+                    // do NOT fire a note whose tail — onset +
+                    // clip-scaled duration + the release margin —
+                    // would overrun the boundary into the next pass,
+                    // since a triggered superdough voice cannot be
+                    // killed. refreshedDuration is the clip-scaled
+                    // sounding length (the MIDI path's effective
+                    // length equals it), so one test suppresses the
+                    // same note on both outputs; the MIDI seam panic
+                    // stays a backstop. Clear the p() tap buffer the
+                    // Pass-2 re-query just filled so a suppressed
+                    // note neither logs nor leaks its taps onto the
+                    // next note's line. Deterministic: the test reads
+                    // only this note's onset/duration vs the boundary.
+                    if (seamBoundaryAudioTime !== null &&
+                        ev.audioTime + refreshedDuration + SEAM_RELEASE_MARGIN_SECONDS > seamBoundaryAudioTime) {
+                        clearNoteTaps();
+                        continue;
+                    }
                     if (this._outputMode === "superdough") {
                         // Superdough path. Apply voice
                         // soft-injection first so events

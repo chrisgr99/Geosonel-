@@ -81,6 +81,16 @@ export function recordTap(label, value) {
 }
 
 /**
+ * Drop the current note's buffered taps WITHOUT emitting a line.
+ * Used by the firing engine when it suppresses a note (e.g. the
+ * seam tail-suppression guard) so the suppressed note neither logs
+ * nor leaks its taps onto the next note's flushed line.
+ */
+export function clearNoteTaps() {
+    _buffer = [];
+}
+
+/**
  * Format one tapped value compactly for reading aloud: numbers
  * to ~3 decimals, control objects to `key=val key=val`, strings
  * as-is, everything else via String().

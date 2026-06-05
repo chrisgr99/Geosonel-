@@ -2160,7 +2160,11 @@ async function main() {
         simulation.applySeedAndReset(seed);
         transport.rewind();
         if (!transport.isPlaying) transport.play();
-        simulation.armAuditionBoundary(auditionBar.getBeats());
+        const beats = auditionBar.getBeats();
+        simulation.armAuditionBoundary(beats);
+        // Arm the seam tail-suppression guard only when this pass
+        // loops (a repeating seam follows); a one-shot rings out.
+        firingEngine.setSeamBoundary(loopEnabled ? beats : null);
     };
     // Mutate always restarts immediately with the next variation:
     // advance the seed and play from its start now. With Loop off
@@ -2174,10 +2178,15 @@ async function main() {
         if (checked && !auditionRunning) {
             // Begin looping the current pattern continually.
             startAudition(simulation.getSeed());
+        } else if (auditionRunning) {
+            // A pass is mid-flight: turning Loop on means a
+            // repeating seam now follows, so arm the seam guard;
+            // turning it off means the current cycle becomes
+            // terminal, so disarm and let its tail ring out. (The
+            // boundary handler reads loopEnabled live for the
+            // repeat-vs-stop decision.)
+            firingEngine.setSeamBoundary(checked ? auditionBar.getBeats() : null);
         }
-        // Unchecking does nothing here: the boundary reads
-        // loopEnabled live, so the current cycle finishes and then
-        // stops at the next boundary instead of repeating.
     });
 
     // The armed boundary fires here. While Loop is on, re-run the
@@ -2204,6 +2213,7 @@ async function main() {
         if (!transport.isPlaying) {
             auditionRunning = false;
             simulation.disarmAuditionBoundary();
+            firingEngine.setSeamBoundary(null);
         }
     });
 
