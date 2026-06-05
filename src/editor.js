@@ -33,6 +33,7 @@ import { CanvasInspector } from "./canvasInspector.js";
 import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect, setMutedObjectIdsEffect } from "./patternHighlight.js";
 import { activeBeatHighlightExtension, setActiveBeatsEffect, recomputeTokensEffect } from "./activeBeatHighlight.js";
+import { parenHighlightExtension } from "./parenHighlight.js";
 import { isAutoCompletionEnabled } from "./strudel/codemirror/autocomplete.mjs";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
@@ -1578,6 +1579,11 @@ export class TabbedEditor {
                 ...customDarkTheme(),
                 patternHighlightExtension(),
                 activeBeatHighlightExtension(),
+                // Enclosing-parenthesis highlight (always on):
+                // lights the innermost paren pair around the caret
+                // and around the mouse pointer, with a light span
+                // on the hovered pair. See src/parenHighlight.js.
+                ...parenHighlightExtension(),
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         this._onDocChanged(update.state.doc.toString());
