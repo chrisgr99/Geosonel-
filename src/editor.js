@@ -37,7 +37,7 @@ import { parenHighlightExtension } from "./parenHighlight.js";
 import { isAutoCompletionEnabled } from "./strudel/codemirror/autocomplete.mjs";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
-import { getPreference, subscribePreference } from "./preferences.js";
+import { getPreference, setPreference, subscribePreference } from "./preferences.js";
 import { codeSpeechExtension } from "./codeSpeech.js";
 
 /**
@@ -1648,6 +1648,65 @@ export class TabbedEditor {
             state,
             parent: this.editorArea,
         });
+
+        this._mountCodeSpeakToggle();
+    }
+
+    /**
+     * Mount the speak-on-hover toggle: an ear button overlaid at
+     * the top-right of the editor area, shown only on the Code
+     * tab. Reflects and flips the persisted `codeSpeakOnHover`
+     * preference (the codeSpeech layer reads that to gate its
+     * dwell-speak). A visible pressed state is enough — Chris
+     * zooms to read button state — so the button never announces
+     * itself by voice. Subscribes to the preference so the pressed
+     * state stays in sync if it is changed elsewhere (e.g. the
+     * Settings dialog).
+     */
+    _mountCodeSpeakToggle() {
+        if (this.editorArea === null) return;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "code-speak-toggle";
+        btn.setAttribute("aria-label", "Speak code on hover");
+        btn.title = "Speak code on hover. When on, resting the pointer on a name in the Code tab speaks it aloud after a short pause.";
+        // Ear icon (currentColor stroke so the pressed state's
+        // colour shift is visible).
+        btn.innerHTML =
+            "<svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\">" +
+            "<path d=\"M7 9.5a5 5 0 0 1 10 0c0 3-2.3 4-3.6 5.6c-.9 1.1-1 2.4-2.4 2.4-1.2 0-2-1-2-2.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>" +
+            "<path d=\"M10 9.5a2 2 0 0 1 4 0c0 1.3-1.2 1.7-1.8 2.6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>" +
+            "</svg>";
+        btn.addEventListener("click", () => {
+            setPreference("codeSpeakOnHover", !getPreference("codeSpeakOnHover"));
+            // _refreshCodeSpeakToggle runs via the preference
+            // subscription below, but call it directly too so the
+            // pressed state updates even if the subscription path
+            // ever changes.
+            this._refreshCodeSpeakToggle();
+        });
+        this._codeSpeakToggleButton = btn;
+        this.editorArea.appendChild(btn);
+        subscribePreference("codeSpeakOnHover", () => this._refreshCodeSpeakToggle());
+        this._refreshCodeSpeakToggle();
+    }
+
+    /**
+     * Show the speak toggle only on the Code tab and reflect the
+     * current `codeSpeakOnHover` preference as its pressed state.
+     * Called from _renderTabs (every tab change) and the
+     * preference subscription.
+     */
+    _refreshCodeSpeakToggle() {
+        const btn = this._codeSpeakToggleButton;
+        if (!btn) return;
+        const onCodeTab =
+            this.activeName === "behaviors.js" ||
+            this.activeName === "behaviours.js";
+        btn.style.display = onCodeTab ? "" : "none";
+        const active = getPreference("codeSpeakOnHover") === true;
+        btn.classList.toggle("code-speak-toggle-active", active);
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
     }
 
     /**
@@ -2470,6 +2529,10 @@ export class TabbedEditor {
         const filler = document.createElement("div");
         filler.className = "tab-bar-filler";
         this.tabBar.appendChild(filler);
+
+        // Keep the Code-tab-only speak toggle's visibility in sync
+        // with the active tab (it's editor chrome like the tabs).
+        this._refreshCodeSpeakToggle();
     }
 
     /**

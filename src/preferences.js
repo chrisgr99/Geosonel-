@@ -118,6 +118,15 @@ export const PREFERENCES = [
         category: "Code Editor",
     },
     {
+        key: "codeSpeakOnHover",
+        label: "Speak Code on Hover",
+        description:
+            "When on, resting the pointer on a name in the Code tab — a function, method, signal, or keyword — speaks that name aloud after a short pause. Numbers and the contents of quoted strings stay silent. Toggle it from the ear button at the top-right of the Code editor, or here.",
+        type: "boolean",
+        default: false,
+        category: "Code Editor",
+    },
+    {
         key: "enableLineWrapping",
         label: "Soft-Wrap Long Lines",
         description:

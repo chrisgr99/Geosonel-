@@ -188,10 +188,17 @@
 
 // @ts-check
 
-import { EditorView, keymap, Decoration, hoverTooltip } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
+import { EditorView, keymap, Decoration } from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.5.2";
 import { StateField, StateEffect } from "https://esm.sh/@codemirror/state@6.5.2";
 import { syntaxTree } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.5.2";
-import { FUNCTION_SIGNATURES } from "./codeSpeechSignatures.js";
+import { getPreference, subscribePreference } from "./preferences.js";
+
+/**
+ * Dwell before speak-on-hover fires, in milliseconds. After the
+ * pointer rests this long on a name (no further movement), the
+ * name is spoken. Single tunable constant.
+ */
+const SPEAK_DWELL_MS = 333;
 
 /**
  * StateEffect carrying the array of [from, to] tuples that
@@ -1056,82 +1063,56 @@ if (typeof window !== "undefined" && window.speechSynthesis) {
 let playbackGeneration = 0;
 
 /**
- * Speech state for tooltip reading. Only set when the
- * composer holds Option to request that hovered tooltips
- * be spoken aloud. The mechanism: hoverTooltip's create()
- * sets currentTooltipText to the tooltip's text and
- * speaks it if isOptionHeld is true at that moment; the
- * destroy() clears currentTooltipText if it still
- * matches. A window-level Option keydown listener also
- * speaks the current tooltip text (if any) the moment
- * Option is first pressed, covering the hover-then-press
- * case in addition to the hold-then-hover case.
+ * Speak a single short name aloud through the same
+ * SpeechSynthesis voice the chunk-queue playback uses. Cancels
+ * any in-flight utterance first so a fresh dwell cleanly replaces
+ * the previous name. Used by the speak-on-hover dwell.
  *
- * isTooltipUtteranceInFlight distinguishes tooltip speech
- * from code-speech (playChunks). When code speech is in
- * flight the tooltip request is ignored so Option-hover
- * doesn't accidentally interrupt a Cmd-Shift-' reading;
- * the composer must press Escape first to stop code
- * speech before requesting tooltip speech. Between
- * consecutive tooltips while Option is held, the new
- * speakTooltip call cancels the previous tooltip
- * utterance so each tooltip cleanly replaces the last.
+ * @param {string} name
  */
-let currentTooltipText = null;
-let isOptionHeld = false;
-let isTooltipUtteranceInFlight = false;
-
-/**
- * Speak a single tooltip's text aloud through the same
- * SpeechSynthesis voice the chunk-queue playback uses.
- * Refuses to interrupt code speech in flight; cancels any
- * previous tooltip utterance so consecutive tooltips
- * (continuous Option-hover across multiple arguments)
- * each replace the previous reading cleanly.
- *
- * @param {string} text
- */
-function speakTooltip(text) {
+function speakName(name) {
     if (typeof window === "undefined") return;
     if (typeof window.speechSynthesis === "undefined") return;
     const synth = window.speechSynthesis;
-    if ((synth.speaking || synth.paused) && !isTooltipUtteranceInFlight) {
-        return;
-    }
     synth.cancel();
-    isTooltipUtteranceInFlight = true;
-    const utterance = new window.SpeechSynthesisUtterance(text);
+    const utterance = new window.SpeechSynthesisUtterance(name);
     if (selectedVoice !== null) {
         utterance.voice = selectedVoice;
     }
-    utterance.onend = () => { isTooltipUtteranceInFlight = false; };
-    utterance.onerror = () => { isTooltipUtteranceInFlight = false; };
     synth.speak(utterance);
 }
 
-// Window-level Option (Alt) key listeners for tooltip
-// speech. event.repeat is checked so auto-repeat fires
-// don't re-speak; the speak triggers exactly once on the
-// released-to-held transition. Speech only fires if
-// currentTooltipText is non-null, which is true only when
-// a tooltip is currently visible — and tooltips only
-// appear when isCodeTab() is true (gated in the
-// hoverTooltip callback) — so these listeners are
-// implicitly inactive on tabs other than Code.
-if (typeof window !== "undefined") {
-    window.addEventListener("keydown", (event) => {
-        if (event.key === "Alt" && !event.repeat) {
-            isOptionHeld = true;
-            if (currentTooltipText !== null) {
-                speakTooltip(currentTooltipText);
-            }
-        }
-    });
-    window.addEventListener("keyup", (event) => {
-        if (event.key === "Alt") {
-            isOptionHeld = false;
-        }
-    });
+/**
+ * Resolve the NAMED SYMBOL at a document offset for speak-on-hover,
+ * or null when the offset isn't on a name we speak. Speaks
+ * identifiers — function names, method names, signal names, and
+ * keywords — but stays silent on numbers and on the contents of
+ * string literals (the mini-notation inside "1 1 1 1" or a scale
+ * string). Resolves the innermost Lezer node at the offset: a
+ * Number node, or any node inside a String / TemplateString,
+ * returns null; an identifier-shaped leaf returns its text.
+ *
+ * Returns the name plus its source range so the caller can
+ * suppress re-speaking the same token as the pointer jitters
+ * within it.
+ *
+ * @param {any} view  CodeMirror EditorView.
+ * @param {number} offset
+ * @returns {{name: string, from: number, to: number} | null}
+ */
+function nameAtOffset(view, offset) {
+    const tree = syntaxTree(view.state);
+    /** @type {any} */
+    const node = tree.resolveInner(offset, 0);
+    if (node.name === "Number") return null;
+    for (let n = node; n !== null; n = n.parent) {
+        if (n.name === "String" || n.name === "TemplateString") return null;
+    }
+    const text = view.state.sliceDoc(node.from, node.to);
+    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(text)) {
+        return { name: text, from: node.from, to: node.to };
+    }
+    return null;
 }
 
 /**
@@ -1266,6 +1247,22 @@ export function codeSpeechExtension({ isCodeTab }) {
      */
     let lastPointerOffset = null;
 
+    // Speak-on-hover enable flag, cached from the persisted
+    // preference and kept live via a subscription so the ear toggle
+    // (and the Settings dialog) take effect immediately. Replaces
+    // the old hold-Option trigger: speech is now driven solely by
+    // this toggle plus the dwell below.
+    let speakEnabled = getPreference("codeSpeakOnHover") === true;
+    subscribePreference("codeSpeakOnHover", (v) => { speakEnabled = v === true; });
+
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let dwellTimer = null;
+    // Source range of the name most recently spoken, so the pointer
+    // moving WITHIN that token doesn't re-speak it; -1 means none
+    // (nothing spoken, or the pointer has left the spoken token).
+    let spokenFrom = -1;
+    let spokenTo = -1;
+
     const pointerTracker = EditorView.domEventHandlers({
         mousemove: (event, view) => {
             const pos = view.posAtCoords({
@@ -1275,6 +1272,44 @@ export function codeSpeechExtension({ isCodeTab }) {
             if (pos !== null) {
                 lastPointerOffset = pos;
             }
+            // Speak-on-hover dwell. Restart the timer on every move;
+            // once the pointer has rested SPEAK_DWELL_MS with no
+            // further movement, speak the settled token's name if it
+            // is a named symbol. Gated on the toggle and the Code
+            // tab. Moving (or leaving) cancels the pending speak.
+            if (dwellTimer !== null) {
+                clearTimeout(dwellTimer);
+                dwellTimer = null;
+            }
+            if (!speakEnabled || pos === null || !isCodeTab()) return;
+            const dwellPos = pos;
+            dwellTimer = setTimeout(() => {
+                dwellTimer = null;
+                const hit = nameAtOffset(view, dwellPos);
+                if (hit === null) {
+                    // Settled off any name — clear so returning to a
+                    // name later speaks it again.
+                    spokenFrom = -1;
+                    spokenTo = -1;
+                    return;
+                }
+                // Don't re-speak the same token the pointer is still
+                // inside; only speak when it has settled on a
+                // different name.
+                if (hit.from === spokenFrom && hit.to === spokenTo) return;
+                spokenFrom = hit.from;
+                spokenTo = hit.to;
+                speakName(hit.name);
+            }, SPEAK_DWELL_MS);
+        },
+        mouseleave: () => {
+            if (dwellTimer !== null) {
+                clearTimeout(dwellTimer);
+                dwellTimer = null;
+            }
+            // Leaving the editor counts as leaving the spoken token.
+            spokenFrom = -1;
+            spokenTo = -1;
         },
     });
 
@@ -1499,164 +1534,6 @@ export function codeSpeechExtension({ isCodeTab }) {
         return false;
     };
 
-    /**
-     * CodeMirror hover-tooltip extension surfacing
-     * parameter names from FUNCTION_SIGNATURES. The
-     * callback fires on every hover; it walks up the
-     * Lezer tree from the hover position to find an
-     * enclosing CallExpression, extracts the rightmost
-     * identifier of the callee as the lookup key, and
-     * returns either the full signature (when hovering
-     * on the callee) or the per-argument name (when
-     * hovering inside the ArgList). Returns null on
-     * anything else — hovers outside a known call,
-     * functions without a signatures entry, the tab
-     * being something other than Code.
-     */
-    const paramTooltip = hoverTooltip((view, pos, side) => {
-        if (!isCodeTab()) return null;
-
-        const tree = syntaxTree(view.state);
-        const node = tree.resolveInner(pos, side);
-
-        // Walk up to find the enclosing CallExpression.
-        /** @type {any} */
-        let callExpr = null;
-        /** @type {any} */
-        let walker = node;
-        while (walker !== null) {
-            if (walker.name === "CallExpression") {
-                callExpr = walker;
-                break;
-            }
-            walker = walker.parent;
-        }
-        if (callExpr === null) return null;
-
-        // Get the callee's rightmost identifier. For a
-        // plain VariableName callee that's the callee
-        // itself; for a MemberExpression callee it's the
-        // last PascalCase child (a chain like a.b.c.d has
-        // last-child PropertyName d).
-        const callee = callExpr.firstChild;
-        if (callee === null) return null;
-        /** @type {any} */
-        let nameNode = null;
-        if (callee.name === "VariableName") {
-            nameNode = callee;
-        } else if (callee.name === "MemberExpression") {
-            /** @type {any} */
-            let c = callee.firstChild;
-            while (c !== null) {
-                if (/^[A-Z]/.test(c.name)) nameNode = c;
-                c = c.nextSibling;
-            }
-        }
-        if (nameNode === null) return null;
-        const fnName = view.state.sliceDoc(nameNode.from, nameNode.to);
-
-        const signature = FUNCTION_SIGNATURES[fnName];
-        if (!signature) return null;
-
-        // Hovering on the callee — show the full
-        // signature on one line. The callee's range covers
-        // both the plain-identifier case and the
-        // member-expression case; for a member chain like
-        // pxLt.range, hovering anywhere on the full
-        // pxLt.range span (including the dot) counts as a
-        // callee hover.
-        /** @type {string} */
-        let text;
-        if (callee.from <= pos && pos <= callee.to) {
-            text = `${fnName}(${signature.join(", ")})`;
-        } else {
-            // Hovering somewhere after the callee — must
-            // be inside ArgList for an arg hover.
-            /** @type {any} */
-            let argList = null;
-            /** @type {any} */
-            let c = callExpr.firstChild;
-            while (c !== null) {
-                if (c.name === "ArgList") {
-                    argList = c;
-                    break;
-                }
-                c = c.nextSibling;
-            }
-            if (argList === null) return null;
-
-            let idx = 0;
-            let foundIdx = -1;
-            /** @type {any} */
-            let arg = argList.firstChild;
-            while (arg !== null) {
-                if (/^[A-Z]/.test(arg.name)) {
-                    if (arg.from <= pos && pos <= arg.to) {
-                        foundIdx = idx;
-                        break;
-                    }
-                    idx++;
-                }
-                arg = arg.nextSibling;
-            }
-            if (foundIdx < 0 || foundIdx >= signature.length) return null;
-            // Per-argument tooltip shows the parameter
-            // name only, without the function-name
-            // prefix. The function name is available on
-            // the callee hover (which shows the full
-            // signature) so it doesn't need to repeat in
-            // every argument tooltip; omitting it also
-            // keeps the tooltip narrow enough to fit
-            // inside the screen-zoom viewport without
-            // being clipped on either side.
-            text = signature[foundIdx];
-        }
-
-        return {
-            pos: pos,
-            above: false,
-            create: () => {
-                const dom = document.createElement("div");
-                dom.className = "cm-codeSpeech-tooltip";
-                dom.textContent = text;
-                // Register this tooltip as the
-                // currently visible one so the Option
-                // keydown listener can find it; speak it
-                // immediately if Option is already held
-                // (the hold-then-hover case).
-                currentTooltipText = text;
-                if (isOptionHeld) {
-                    speakTooltip(text);
-                }
-                return {
-                    dom,
-                    destroy: () => {
-                        // Only clear if this tooltip is
-                        // still the current one.
-                        // CodeMirror's lifecycle can
-                        // call the next tooltip's
-                        // create before the previous
-                        // tooltip's destroy, so an
-                        // unconditional clear would
-                        // wipe the new tooltip's text
-                        // out from under the keydown
-                        // listener.
-                        if (currentTooltipText === text) {
-                            currentTooltipText = null;
-                        }
-                    },
-                };
-            },
-        };
-    }, {
-        // 600ms gives the composer time to settle on a
-        // hover target without tooltips firing for every
-        // mouse-drift across the line. CodeMirror's
-        // default of 300ms is too jumpy under macOS Zoom
-        // where small movements feel more deliberate.
-        hoverTime: 600,
-    });
-
     const speechKeymap = keymap.of([
         {
             key: "Mod-Shift-'",
@@ -1677,6 +1554,5 @@ export function codeSpeechExtension({ isCodeTab }) {
         speechKeymap,
         codeSpeechHighlightField,
         codeSpeechHighlightTheme,
-        paramTooltip,
     ];
 }
