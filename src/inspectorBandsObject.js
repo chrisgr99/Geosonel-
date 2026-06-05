@@ -1,7 +1,7 @@
 import {
-    validateCycleSpeeds,
     validateNumber,
 } from "./curveFieldValidation.js";
+import { INTERVAL_OPTIONS } from "./intervalMenu.js";
 import {
     aggregateColor,
     aggregateCurveSize,
@@ -24,8 +24,6 @@ import {
     mkRow,
     mkUnits,
 } from "./inspectorWidgets.js";
-import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
-
 export const bandObjectMethods = {
 
     /**
@@ -141,15 +139,6 @@ export const bandObjectMethods = {
         const objs = selectedObjects(this._scene, this._selection);
         const idEditable = ctx.isSingle;
         const togglesEnabled = ctx.total > 0;
-        // Cycle duration row gate. The row is universal
-        // across kinds: curves, sprites, and triggers all
-        // carry beatsPerCycle and beatInterval on the
-        // schema, and a trigger's beat-interval field is
-        // editable from the inspector for future Tier 5
-        // collision-firing work. Greying applies only when
-        // the selection is empty, mirroring the Hide Cursor
-        // gate above.
-        const cycleDurationActive = ctx.total > 0;
 
         // ID comes from the single selected object on
         // single-select. On multi-select the field is greyed
@@ -187,42 +176,6 @@ export const bandObjectMethods = {
                 { value: "disabled", label: "Disable" },
             ];
 
-        // beatsPerCycle aggregates across the whole selection
-        // since the schema field is universal. The row greys
-        // only when the selection is empty (cycleDurationActive
-        // gate above), so any non-empty selection — including
-        // trigger-only — keeps the row editable. The aggregate
-        // reads from objs.all so mixed selections show the
-        // common value (or varies) across every kind.
-        const beatsPerCycleAgg = aggregateString(objs.all, "beatsPerCycle");
-        // beatInterval aggregates the same way. Stored as a
-        // token string from beatIntervals.js's TOKENS table
-        // (e.g. "Qtr", "8th", "Dot 16th"). Missing / null /
-        // undefined values fall through to empty string and
-        // render as a blank dropdown trigger; the dropdown's
-        // change handler commits a valid token via
-        // setBeatInterval, and the underlying field then
-        // shows up.
-        const beatIntervalAgg = aggregateString(objs.all, "beatInterval");
-        const beatIntervalValue =
-            (beatIntervalAgg === "varies" || beatIntervalAgg === "")
-                ? ""
-                : beatIntervalAgg;
-
-        // cycleSpeeds aggregates across the curve and
-        // sprite slices — both kinds carry the field with
-        // the same shape and meaning (a per-cycle speed
-        // multiplier list); triggers don't, so they're
-        // excluded. The Speeds field gate (cycleSpeedsActive
-        // below) keeps the field greyed for selections with
-        // no curve or sprite; mixed or multi-object
-        // selections show "varies" as a blank field, and a
-        // typed value applies uniformly across every
-        // selected curve and sprite.
-        const cycleSpeedsActive = ctx.hasCurves || ctx.hasSprites;
-        const cycleSpeedsAgg = aggregateString(
-            [...objs.curves, ...objs.sprites], "cycleSpeeds");
-
         const r1 = mkRow();
         r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !idEditable }));
         r1.appendChild(mkField({
@@ -254,190 +207,67 @@ export const bandObjectMethods = {
         r1.appendChild(stateGroup);
         band.appendChild(r1);
 
+        // Aggregate the Time Lag In Object fields across the
+        // whole selection (universal across kinds). "varies"
+        // renders as a blank field / blank dropdown trigger; a
+        // typed value or chosen interval commits uniformly.
+        const timeLagMultAgg = aggregateString(objs.all, "timeLagMultiplier");
+        const timeLagIntervalAgg = aggregateString(objs.all, "timeLagInterval");
+        const timeLagIntervalValue =
+            (timeLagIntervalAgg === "varies" || timeLagIntervalAgg === "")
+                ? ""
+                : timeLagIntervalAgg;
+
+        // Object Name: reuses GXW's `name` field, but rendered
+        // BLANK and non-editable for now. There is no defined way
+        // to author object names yet, and the legacy `name` holds
+        // stale values we don't want to surface, so the field is a
+        // placeholder: value "" and editable false. When the
+        // authoring semantics are defined this becomes editable
+        // and binds to `name`.
         const r2 = mkRow();
-        // "Beats /\nCycle" wraps to two lines so the
-        // label fits the standard leftLabel column width,
-        // matching the multiline pattern used by
-        // "State\nat Start" in Band 2 and "Beat\nInterval"
-        // later in this same row. The 78px column width
-        // keeps the row's label column aligned vertically
-        // with every other row in the band above and
-        // below; text right-aligns within the column via
-        // the .insp-label CSS default.
-        r2.appendChild(mkLabel("Beats /\nCycle", {
+        r2.appendChild(mkLabel("Object\nName", {
             width: W.leftLabel,
-            disabled: !cycleDurationActive,
+            disabled: true,
+            multiline: true,
+        }));
+        r2.appendChild(this._buildNameField({
+            value: "",
+            editable: false,
+            conflict: false,
+            objId: null,
+            width: W.objectName,
+        }));
+        // Time Lag In Object: a multiplier times an interval
+        // from the shared interval menu. The "x" reads as
+        // "times"; the lag is denominated in the chosen
+        // interval. Universal across kinds — editable for any
+        // non-empty selection. Behaviour is TBD; this is model
+        // and inspector scaffolding for now.
+        r2.appendChild(mkLabel("Time Lag\nIn Object", {
+            width: W.timeLagLabel,
+            disabled: !togglesEnabled,
             multiline: true,
         }));
         r2.appendChild(this._buildEditableField({
-            value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
+            value: timeLagMultAgg === "varies" ? "" : timeLagMultAgg,
             numeric: true,
-            width: W.beatsPerCycle,
-            editable: cycleDurationActive,
-            validator: (c) => validateNumber(c, { min: 1 }),
-            editKind: "setBeatsPerCycle",
+            width: W.timeLagMult,
+            editable: togglesEnabled,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            editKind: "setTimeLagMultiplier",
             spinStep: 1,
             selectOnFocus: false,
         }));
-        // Inline label between the count field and the
-        // dropdown. Wraps to two lines ("Beat" / "Interval")
-        // so the label column is narrower than the single-
-        // line text would need, leaving room for the Speeds
-        // field that follows. The .insp-label class right-
-        // aligns text within its width box.
-        r2.appendChild(mkLabel("Beat\nInterval", {
-            width: W.beatIntervalLabel,
-            disabled: !cycleDurationActive,
-            multiline: true,
-        }));
+        r2.appendChild(mkInlineLetter("x", { disabled: !togglesEnabled }));
         r2.appendChild(this._buildDropdownField({
-            options: BEAT_INTERVAL_TOKENS.map((t) => ({ value: t.token, label: t.label })),
-            value: beatIntervalValue,
-            width: W.beatInterval,
-            editable: cycleDurationActive,
-            editKind: "setBeatInterval",
-        }));
-        // Speeds label and field. Curves and sprites:
-        // greyed when the selection has no curve or sprite.
-        // The field is a whitespace-separated number list
-        // (integers or decimals, possibly negative) with
-        // validation through validateCycleSpeeds. Mixed and
-        // multi-object selections aggregate across the curve
-        // and sprite slices, so "varies" renders as blank
-        // and a typed value commits uniformly across every
-        // selected curve and sprite.
-        r2.appendChild(mkLabel("Speeds", {
-            width: W.cycleSpeedsLabel,
-            disabled: !cycleSpeedsActive,
-        }));
-        r2.appendChild(this._buildEditableField({
-            value: cycleSpeedsAgg === "varies" ? "" : cycleSpeedsAgg,
-            width: W.cycleSpeeds,
-            editable: cycleSpeedsActive,
-            validator: validateCycleSpeeds,
-            editKind: "setCycleSpeeds",
-            selectOnFocus: false,
+            options: INTERVAL_OPTIONS,
+            value: timeLagIntervalValue,
+            width: W.timeLagInterval,
+            editable: togglesEnabled,
+            editKind: "setTimeLagInterval",
         }));
         band.appendChild(r2);
-
-        // Row 3: pattern row. Active only for single-
-        // object selections; multi-select and empty
-        // selections grey the row. Existence check and
-        // co-label count are strictly labelled-block-
-        // based. The loader emits one labelledBlocks
-        // entry per label in a chain, all sharing the
-        // same source range; the count of OTHER entries
-        // with the matching range is the +N indicator.
-        const patternRowActive = ctx.isSingle && objs.all.length === 1;
-        const patternObj = patternRowActive ? objs.all[0] : null;
-        let labelledBlockExists = false;
-        let coLabelCount = 0;
-        if (patternObj !== null && this._scene !== null) {
-            const blocks = this._scene.labelledBlocks;
-            if (Array.isArray(blocks)) {
-                const myBlock = blocks.find((b) => b.objectId === patternObj.id);
-                if (myBlock !== undefined) {
-                    labelledBlockExists = true;
-                    for (const b of blocks) {
-                        if (b.objectId !== patternObj.id &&
-                            b.range.start === myBlock.range.start &&
-                            b.range.end === myBlock.range.end) {
-                            coLabelCount++;
-                        }
-                    }
-                }
-            }
-        }
-
-        const r3 = mkRow();
-        r3.appendChild(mkLabel("Pattern", {
-            width: W.leftLabel,
-            disabled: !patternRowActive,
-        }));
-
-        const patternButton = document.createElement("button");
-        patternButton.className = "insp-btn-create";
-        if (!patternRowActive) patternButton.classList.add("disabled");
-
-        // Button text varies with state. Single-object
-        // selection shows the labelled-block tag the
-        // button will create or jump to; empty or multi-
-        // select shows just the verb "Create" since no
-        // specific identifier applies.
-        if (patternObj !== null) {
-            const tag = "$" + patternObj.id;
-            patternButton.textContent = (labelledBlockExists ? "Go to " : "Create ") + tag;
-        } else {
-            patternButton.textContent = "Create";
-        }
-
-        if (patternObj !== null) {
-            const objId = patternObj.id;
-            patternButton.addEventListener("click", () => {
-                if (labelledBlockExists) {
-                    this._emitEdit({
-                        kind: "goToObjectInCode",
-                        objectId: objId,
-                    });
-                } else {
-                    this._emitEdit({
-                        kind: "createPatternBlock",
-                        objectId: objId,
-                    });
-                }
-            });
-        }
-        r3.appendChild(patternButton);
-
-        // +N co-label indicator. Rendered only when the
-        // selected object's labelled block has at least
-        // one co-label (another object sharing the same
-        // chain). The right margin doubles as the
-        // spacer that keeps the indicator from
-        // crowding into the Repeats label below; when
-        // there's no indicator the row's normal flex
-        // gap is the only spacing between button and
-        // Repeats label.
-        if (labelledBlockExists && coLabelCount > 0) {
-            const coLabel = document.createElement("span");
-            coLabel.className = "insp-co-label-count";
-            coLabel.textContent = "+" + coLabelCount;
-            r3.appendChild(coLabel);
-        }
-
-        // Repeats field. Curve-only: only curves have a
-        // visible cursor sweeping along a path where "how
-        // many copies of the pattern fit" is meaningful.
-        // Active when the single-selected object is a curve;
-        // greyed for any other selection (multi-select,
-        // sprite-only, trigger-only, empty). The setter in
-        // sceneEditor silently ignores sprites and triggers
-        // in the selection, so a stray emit from a mixed
-        // selection would be a no-op, but the inspector
-        // grey gate is what the user sees first. Aggregates
-        // across the curve slice only — sprites and
-        // triggers don't carry patternRepeats so including
-        // them in the aggregate would always read undefined
-        // and clutter the "varies" check.
-        const patternRepeatsActive = ctx.isSingle
-            && ctx.singleKind === "curve"
-            && objs.curves.length === 1;
-        const patternRepeatsAgg = aggregateString(objs.curves, "patternRepeats");
-        r3.appendChild(mkLabel("Repeats", {
-            width: W.patternRepeatsLabel,
-            disabled: !patternRepeatsActive,
-        }));
-        r3.appendChild(this._buildEditableField({
-            value: patternRepeatsAgg === "varies" ? "" : patternRepeatsAgg,
-            numeric: true,
-            width: W.patternRepeats,
-            editable: patternRepeatsActive,
-            validator: (c) => validateNumber(c, { min: 1 }),
-            editKind: "setPatternRepeats",
-            spinStep: 1,
-        }));
-
-        band.appendChild(r3);
 
         return band;
     },

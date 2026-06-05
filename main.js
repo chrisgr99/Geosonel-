@@ -124,6 +124,8 @@ import {
     setStateOnSelection,
     setHideOnCurves,
     setNameOnSelection,
+    setTimeLagMultiplierOnSelection,
+    setTimeLagIntervalOnSelection,
     translateSelection,
     scaleCurveAxis,
     scaleSelectionAroundAnchor,
@@ -3542,6 +3544,14 @@ async function main() {
             } else if (edit.kind === "setName") {
                 await applySceneEdit((data) =>
                     setNameOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setTimeLagMultiplier") {
+                await applySceneEdit((data) =>
+                    setTimeLagMultiplierOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setTimeLagInterval") {
+                await applySceneEdit((data) =>
+                    setTimeLagIntervalOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "translateSelection") {
                 await applySceneEdit((data) =>

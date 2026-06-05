@@ -57,13 +57,13 @@ export const fieldMethods = {
      * applied iff the saved name conflicts with another
      * object's name in the scene.
      *
-     * @param {{ value: string, editable: boolean, conflict: boolean, objId: string | null }} opts
+     * @param {{ value: string, editable: boolean, conflict: boolean, objId: string | null, width?: number }} opts
      * @returns {HTMLDivElement}
      */
     _buildNameField(opts) {
         const el = document.createElement("div");
         el.className = "insp-field";
-        el.style.width = `${W.name}px`;
+        el.style.width = `${opts.width ?? W.name}px`;
 
         if (!opts.editable) {
             el.classList.add("disabled");

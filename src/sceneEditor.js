@@ -985,6 +985,34 @@ export function setHideOnCurves(data, selection, value) {
 export function setNameOnSelection(data, selection, value) {
     setStringFieldOnSelection(data, selection, "name", value);
 }
+/**
+ * Set the Time Lag In Object multiplier (Band 1) on every
+ * selected object. The value arrives as the validated numeric
+ * string from the inspector; stored as a number. Mutates
+ * `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setTimeLagMultiplierOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "timeLagMultiplier", n);
+}
+
+/**
+ * Set the Time Lag In Object interval (Band 1) on every
+ * selected object — a token from the shared interval menu.
+ * Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setTimeLagIntervalOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "timeLagInterval", value);
+}
 
 // --- Band 2 (Geometry and visual) write paths ---
 //

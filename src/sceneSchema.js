@@ -42,6 +42,19 @@
 // @ts-check
 
 import { DEFAULT_BEAT_INTERVAL, allBeatIntervalTokens } from "./beatIntervals.js";
+import { INTERVAL_TOKENS, DEFAULT_INTERVAL } from "./intervalMenu.js";
+
+/**
+ * Time Lag In Object (Band 1, GeoSonixV2): a multiplier times an
+ * interval chosen from the shared interval menu. The lag is the
+ * multiplier counted in that interval's units. Shared verbatim by
+ * curves, triggers and sprites. Default 0 × "Off" = no lag.
+ * @type {FieldDef[]}
+ */
+const TIME_LAG_FIELDS = [
+    { key: "timeLagMultiplier", label: "Time Lag", type: "number", default: 0, min: 0 },
+    { key: "timeLagInterval", label: "Time Lag Interval", type: "enum", default: DEFAULT_INTERVAL, enumValues: INTERVAL_TOKENS },
+];
 
 /**
  * @typedef {Object} FieldDef
@@ -201,6 +214,7 @@ export const CURVE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
     { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "passive", "disabled"] },
+    ...TIME_LAG_FIELDS,
     // Deprecated; see the CURVE_FIELDS JSDoc above. Honoured
     // by the runtime for backward compatibility; not surfaced
     // in the inspector.
@@ -235,6 +249,7 @@ export const TRIGGER_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
     { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "disabled"] },
+    ...TIME_LAG_FIELDS,
     { key: "x", label: "X", type: "number", default: 0 },
     { key: "y", label: "Y", type: "number", default: 0 },
     { key: "size", label: "Trigger Size", type: "number", default: 0.35 },
@@ -258,6 +273,7 @@ export const SPRITE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
     { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "passive", "disabled"] },
+    ...TIME_LAG_FIELDS,
     { key: "x", label: "X", type: "number", default: 0 },
     { key: "y", label: "Y", type: "number", default: 0 },
     { key: "vx", label: "VX", type: "number", default: 0 },

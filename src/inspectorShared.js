@@ -27,6 +27,16 @@ export const W = {
     // Text fields.
     name: 280,
 
+    // Band 1 (GeoSonixV2) Object name field — narrower than the
+    // standalone `name` width so it shares row 2 with the Time
+    // Lag control.
+    objectName: 150,
+    // Time Lag In Object: a narrow multiplier field, the "x"
+    // glyph, then the shared interval dropdown.
+    timeLagLabel: 56,
+    timeLagMult: 44,
+    timeLagInterval: 84,
+
     // Band 3 function-name and cyclePattern fields. Sized
     // to match the Name field width so the right edge of
     // Band 3 lines up with Band 1's Name row.

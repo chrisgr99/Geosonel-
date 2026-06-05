@@ -457,6 +457,12 @@ export class Curve {
          * @type {"active" | "passive" | "disabled"}
          */
         this.state = opts.state ?? "active";
+        // Time Lag In Object (Band 1, GeoSonixV2): a multiplier
+        // counted in units of an interval from the shared interval
+        // menu. Behaviour (how the lag delays the object) is TBD;
+        // these are model/inspector scaffolding for now.
+        this.timeLagMultiplier = opts.timeLagMultiplier ?? 0;
+        this.timeLagInterval = opts.timeLagInterval ?? "Off";
 
         /**
          * When true the curve is hidden: its geometry does
@@ -719,6 +725,12 @@ export class Trigger {
          * @type {"active" | "disabled"}
          */
         this.state = opts.state ?? "active";
+        // Time Lag In Object (Band 1, GeoSonixV2): a multiplier
+        // counted in units of an interval from the shared interval
+        // menu. Behaviour (how the lag delays the object) is TBD;
+        // these are model/inspector scaffolding for now.
+        this.timeLagMultiplier = opts.timeLagMultiplier ?? 0;
+        this.timeLagInterval = opts.timeLagInterval ?? "Off";
 
         this.x = opts.x ?? 0;
         this.y = opts.y ?? 0;
@@ -840,6 +852,12 @@ export class Sprite {
          * @type {"active" | "passive" | "disabled"}
          */
         this.state = opts.state ?? "active";
+        // Time Lag In Object (Band 1, GeoSonixV2): a multiplier
+        // counted in units of an interval from the shared interval
+        // menu. Behaviour (how the lag delays the object) is TBD;
+        // these are model/inspector scaffolding for now.
+        this.timeLagMultiplier = opts.timeLagMultiplier ?? 0;
+        this.timeLagInterval = opts.timeLagInterval ?? "Off";
 
         this.x = opts.x ?? 0;
         this.y = opts.y ?? 0;
