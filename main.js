@@ -152,6 +152,9 @@ import {
     setVariabilityOnSelection,
     setPatternRepeatsOnCurves,
     setCycleSpeedsOnSelection,
+    setStartAtCycleOnSelection,
+    setStopAtCycleOnSelection,
+    setTriggerSyncToBeatOnSelection,
     setCanHitOnSelection,
     setHasHitFunctionOnSelection,
     setCanBeHitOnSelection,
@@ -3663,6 +3666,18 @@ async function main() {
             } else if (edit.kind === "setCycleSpeeds") {
                 await applySceneEdit((data) =>
                     setCycleSpeedsOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setStartAtCycle") {
+                await applySceneEdit((data) =>
+                    setStartAtCycleOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setStopAtCycle") {
+                await applySceneEdit((data) =>
+                    setStopAtCycleOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setTriggerSyncToBeat") {
+                await applySceneEdit((data) =>
+                    setTriggerSyncToBeatOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCanHit") {
                 await applySceneEdit((data) =>

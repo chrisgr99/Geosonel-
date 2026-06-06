@@ -116,6 +116,15 @@
     outline: none;
 }
 
+/* Locked Active Beats field (Euclidean mode): read-only and
+ * generated, so it drops the editable mint frame but keeps the
+ * value at full contrast (unlike .disabled, which mutes the text).
+ * default cursor signals it isn't a text-entry field. */
+.insp-beat-field.locked {
+    border-color: transparent;
+    cursor: default;
+}
+
 .insp-row {
     display: flex;
     align-items: center;

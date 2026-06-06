@@ -294,8 +294,8 @@ export class Inspector {
         panel.appendChild(this._buildBandIdentity(ctx));
         panel.appendChild(this._buildBandGeometry(ctx));
         panel.appendChild(this._buildBandCallbackSlots(ctx));
-        panel.appendChild(this._buildBandAutoMessageInterval(ctx));
         panel.appendChild(this._buildBandBeatPoints(ctx));
+        panel.appendChild(this._buildBandCycle(ctx));
 
         // Structural break separating the per-object
         // bands above from the engine-driven bands below.

@@ -525,6 +525,8 @@ export class Curve {
          * @type {number}
          */
         this.stopAtCycle = opts.stopAtCycle ?? -1;
+        /** @type {number} Band 6: cycle index the curve starts on (0 = from the start). */
+        this.startAtCycle = opts.startAtCycle ?? 0;
 
         // --- Cursor ---
         /** Cursor extent right of curve direction, canvas units. */
@@ -783,6 +785,8 @@ export class Trigger {
         this.note = opts.note ?? null;
         /** Arbitrary payload available as this.* in functions. */
         this.payload = opts.payload ?? null;
+        /** @type {string} Band 6: shared-interval token the trigger's firing syncs to ("Off" = no sync). */
+        this.triggerSyncToBeat = opts.triggerSyncToBeat ?? "Off";
 
         /**
          * Seed-variation dial. 0 (default) locks the trigger; a
@@ -985,6 +989,10 @@ export class Sprite {
          * @type {string}
          */
         this.cycleSpeeds = opts.cycleSpeeds ?? "1";
+        /** @type {number} Band 6: cycle index the sprite starts on (0 = from the start). */
+        this.startAtCycle = opts.startAtCycle ?? 0;
+        /** @type {number} Band 6: cycle index the sprite stops on (-1 = never stop). */
+        this.stopAtCycle = opts.stopAtCycle ?? -1;
 
         /**
          * Seed-variation dial. 0 (default) locks the sprite; a

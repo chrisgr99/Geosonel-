@@ -2028,6 +2028,44 @@ export function setCycleSpeedsOnSelection(data, selection, value) {
 }
 
 /**
+ * Set Start at Cycle (Band 6) on the curve and sprite slices of
+ * the selection. Cycle index >= 0; the inspector field validates,
+ * so this just stores the integer. Mutates `data`.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setStartAtCycleOnSelection(data, selection, value) {
+    const n = Math.max(0, Math.round(Number(value)));
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, { sprites: selection.sprites, curves: selection.curves }, "startAtCycle", n);
+}
+
+/**
+ * Set Stop at Cycle (Band 6) on the curve and sprite slices. -1
+ * means never stop; any integer is accepted. Mutates `data`.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setStopAtCycleOnSelection(data, selection, value) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, { sprites: selection.sprites, curves: selection.curves }, "stopAtCycle", n);
+}
+
+/**
+ * Set Trigger Sync To Beat (Band 6) on the TRIGGER slice — a token
+ * from the shared interval menu ("Off" = no sync). Mutates `data`.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setTriggerSyncToBeatOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, { triggers: selection.triggers }, "triggerSyncToBeat", String(value));
+}
+
+/**
  * Set the canHit field across the selection.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection

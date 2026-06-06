@@ -64,6 +64,12 @@ export const W = {
     // Kept tight so all four Euclidean row-1 groups fit one line.
     beatStackLabel: 44,
     beatNum: 40,
+    // Band 6 (Cycle): Cycle Speeds string field. Widened to hold a
+    // longer speed list while keeping Band 6's row 1 no wider than
+    // the inspector's longest rows (the Band 3 callback rows). At
+    // 168 the row totals ~410px, under that ~450px ceiling.
+    cycleSpeedsShort: 168,
+    // Start/Stop at Cycle reuse beatNum (40).
 
     // Band 1 cycle duration numeric field. Small width
     // since the value is typically a single-digit master-

@@ -26,14 +26,21 @@ import {
     validateActiveBeatsCount,
     validateBeatShift,
     validateRepeats,
+    validateCycleSpeeds,
+    validateStopAtCycle,
 } from "./curveFieldValidation.js";
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 
 export const bandExtraMethods = {
 
     /**
-     * Band 3 — Callback slots. Four rows: hasHit,
-     * beenHit, autoMessage, onTick. Each row carries a row label, a
+     * Band 3 — Msg Functions (callback slots) + Automessage.
+     * Four callback rows in order hasHit, beenHit, onTick,
+     * autoMessage, then an Automessage Interval row — all in ONE
+     * band (the former separate Automessage Interval band is
+     * merged in here, no dividing line, so the interval sits with
+     * the autoMessage slot it configures). Each callback row
+     * carries a row label, a
      * Can-X checkbox, a function-name field, and a
      * Create or Go-to button. Every row activates for
      * any non-empty selection regardless of kinds,
@@ -93,10 +100,11 @@ export const bandExtraMethods = {
         const canTickAgg = aggregateBoolean(objs.all, "canTick");
         const onTickFunctionAgg = aggregateString(objs.all, "onTickFunction");
 
-        // Four slot rows driven by a small config table
-        // so they share one construction loop. autoMessage
-        // fires at the object's Automessage Interval (Band 4);
-        // the other three are collision / per-tick callbacks.
+        // Four slot rows driven by a small config table so they
+        // share one construction loop. autoMessage is LAST among
+        // the callbacks; its Automessage Interval row is appended
+        // right below it (same band, no divider) since the
+        // interval configures the autoMessage callback's fire rate.
         /** @type {Array<{
          *   label: string,
          *   slotKey: "hasHit" | "beenHit" | "autoMessage" | "onTick",
@@ -108,10 +116,12 @@ export const bandExtraMethods = {
         const slotRows = [
             { label: "hasHit", slotKey: "hasHit", canEditKind: "setCanHit", canAgg: canHitAgg, funcEditKind: "setHasHitFunction", funcAgg: hasHitFunctionAgg },
             { label: "beenHit", slotKey: "beenHit", canEditKind: "setCanBeHit", canAgg: canBeHitAgg, funcEditKind: "setBeenHitFunction", funcAgg: beenHitFunctionAgg },
-            { label: "autoMessage", slotKey: "autoMessage", canEditKind: "setCanAutoMessage", canAgg: canAutoMessageAgg, funcEditKind: "setAutoMessageFunction", funcAgg: autoMessageFunctionAgg },
             { label: "onTick", slotKey: "onTick", canEditKind: "setCanTick", canAgg: canTickAgg, funcEditKind: "setOnTickFunction", funcAgg: onTickFunctionAgg },
+            { label: "autoMessage", slotKey: "autoMessage", canEditKind: "setCanAutoMessage", canAgg: canAutoMessageAgg, funcEditKind: "setAutoMessageFunction", funcAgg: autoMessageFunctionAgg },
         ];
-        for (const row of slotRows) {
+        // Build one callback slot row: label + Can-X checkbox +
+        // function-name field + Create/Go-to button.
+        const buildSlotRow = (row) => {
             const r = mkRow();
             r.appendChild(mkLabel(row.label, { width: W.leftLabel, disabled: !slotActive }));
             r.appendChild(mkCheckbox({
@@ -122,26 +132,17 @@ export const bandExtraMethods = {
                     ? () => this._onBooleanCheckboxClick(row.canEditKind, row.canAgg)
                     : undefined,
             }));
-
-            // Field value and placeholder. Aggregate
-            // disagreement renders blank; the placeholder
-            // hint is the proposed default name when the
-            // field is empty and the selection is a single
-            // object.
+            // Aggregate disagreement renders blank; the placeholder
+            // is the proposed default name for a single object.
             const fieldValue = row.funcAgg === "varies" ? "" : row.funcAgg;
             const placeholder = singleObj !== null
                 ? proposedFunctionName(row.slotKey, singleObj)
                 : "";
-            // Effective name for existence-and-button
-            // purposes: typed value if non-empty, else
-            // the proposed default. Empty effective name
-            // (multi-object with no typed value) means
-            // there's no name to look up or scaffold and
-            // the button stays disabled.
+            // Effective name: typed value, else the proposed
+            // default; empty means nothing to look up / scaffold.
             const effectiveName = fieldValue.length > 0 ? fieldValue : placeholder;
             const functionExists = effectiveName.length > 0
                 && this._functionExistsInScene(effectiveName);
-
             r.appendChild(this._buildSlotField({
                 value: fieldValue,
                 placeholder,
@@ -150,9 +151,6 @@ export const bandExtraMethods = {
                 functionExists,
                 editKind: row.funcEditKind,
             }));
-
-            // Button. Disabled when slot Can-X unchecked,
-            // multi-object selected, or no name to act on.
             const canChecked = row.canAgg === true;
             const buttonEnabled = canChecked && singleObj !== null && effectiveName.length > 0;
             const buttonLabel = functionExists ? "Go to" : "Create";
@@ -163,50 +161,45 @@ export const bandExtraMethods = {
                 functionName: effectiveName,
                 functionExists,
             }));
+            return r;
+        };
 
-            band.appendChild(r);
-        }
+        // Automessage Interval row — the autoMessage callback's
+        // fire rate (the shared interval dropdown). The wrapped
+        // label sits in the left-label column; an 18px checkbox-
+        // column spacer puts the dropdown in the same column as the
+        // callback rows' function fields. Rendered ABOVE the
+        // autoMessage slot, because the interval must be defined
+        // for the autoMessage callback to have meaning.
+        const buildIntervalRow = () => {
+            const intervalAgg = aggregateString(objs.all, "autoMessageInterval");
+            const ri = mkRow();
+            ri.appendChild(mkLabel("Automessage\nInterval", {
+                width: W.leftLabel,
+                disabled: !slotActive,
+                multiline: true,
+            }));
+            const spacer = document.createElement("div");
+            spacer.style.width = "18px";
+            spacer.style.flexShrink = "0";
+            ri.appendChild(spacer);
+            ri.appendChild(this._buildDropdownField({
+                options: INTERVAL_OPTIONS,
+                value: intervalAgg === "varies" ? "" : intervalAgg,
+                width: W.timeLagInterval,
+                editable: slotActive,
+                editKind: "setAutoMessageInterval",
+            }));
+            return ri;
+        };
 
-        return band;
-    },
-
-    /**
-     * Band 4 — Automessage Interval. A single control: the
-     * shared interval / note-duration dropdown (no multiplier),
-     * which sets the rate at which each selected object's
-     * autoMessage callback (Band 3) fires. GeoSonix's three
-     * per-source dropdowns (Cursor / Trigger / Curve) collapse
-     * into this one field. Universal across kinds — every kind
-     * carries the autoMessageInterval field — so the row is
-     * active for any non-empty selection and greys only when
-     * the selection is empty. The value aggregates across the
-     * whole selection; "varies" renders as a blank trigger, and
-     * choosing a token commits it to every selected object.
-     *
-     * @param {ReturnType<typeof buildSelectionContext>} ctx
-     */
-    _buildBandAutoMessageInterval(ctx) {
-        const band = document.createElement("div");
-        band.className = "insp-band";
-
-        const objs = selectedObjects(this._scene, this._selection);
-        const active = ctx.total > 0;
-        const intervalAgg = aggregateString(objs.all, "autoMessageInterval");
-
-        const r = mkRow();
-        r.appendChild(mkLabel("Automessage\nInterval", {
-            width: W.leftLabel,
-            disabled: !active,
-            multiline: true,
-        }));
-        r.appendChild(this._buildDropdownField({
-            options: INTERVAL_OPTIONS,
-            value: intervalAgg === "varies" ? "" : intervalAgg,
-            width: W.timeLagInterval,
-            editable: active,
-            editKind: "setAutoMessageInterval",
-        }));
-        band.appendChild(r);
+        // Render order: the three collision / per-tick callbacks,
+        // then the Automessage Interval, then the autoMessage slot.
+        band.appendChild(buildSlotRow(slotRows[0])); // hasHit
+        band.appendChild(buildSlotRow(slotRows[1])); // beenHit
+        band.appendChild(buildSlotRow(slotRows[2])); // onTick
+        band.appendChild(buildIntervalRow());
+        band.appendChild(buildSlotRow(slotRows[3])); // autoMessage
 
         return band;
     },
@@ -389,6 +382,10 @@ export const bandExtraMethods = {
                 value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
                 width: W.beatString,
                 editable: active,
+                // In Euclidean the pattern is generated from the
+                // parameters, so lock it (read-only) — it's a
+                // reference, not directly editable.
+                locked: mode === "euclidean",
                 beatsPerBar: bpbForBars,
                 kind: "pattern",
                 editKind: "setActiveBeats",
@@ -409,6 +406,81 @@ export const bandExtraMethods = {
             }));
             band.appendChild(rS);
         }
+
+        return band;
+    },
+
+    /**
+     * Band 6 — Cycle. Two lines:
+     *   1. Cycle Speeds (short field) + Start at Cycle + Stop at
+     *      Cycle. These are cursor-cycle controls, so they apply to
+     *      curves and sprites and grey for trigger-only / empty.
+     *      Start default 0 (from the beginning), Stop default -1
+     *      (never stop).
+     *   2. Trigger Sync To Beat — the shared interval dropdown
+     *      ("Off" = no sync). Applies to triggers; greys otherwise.
+     * GeoSonix's Cursor Speed / Cycle Time / Time Lock are dropped.
+     *
+     * @param {ReturnType<typeof buildSelectionContext>} ctx
+     */
+    _buildBandCycle(ctx) {
+        const band = document.createElement("div");
+        band.className = "insp-band";
+
+        const objs = selectedObjects(this._scene, this._selection);
+        const cycleObjs = [...objs.curves, ...objs.sprites];
+        const cycleActive = ctx.hasCurves || ctx.hasSprites;
+        const triggerActive = ctx.hasTriggers;
+
+        const speedsAgg = aggregateString(cycleObjs, "cycleSpeeds");
+        const startAgg = aggregateString(cycleObjs, "startAtCycle");
+        const stopAgg = aggregateString(cycleObjs, "stopAtCycle");
+
+        const r1 = mkRow();
+        r1.appendChild(mkLabel("Cycle\nSpeeds", { width: W.beatStackLabel, disabled: !cycleActive, multiline: true }));
+        r1.appendChild(this._buildEditableField({
+            value: speedsAgg === "varies" ? "" : speedsAgg,
+            width: W.cycleSpeedsShort,
+            editable: cycleActive,
+            validator: validateCycleSpeeds,
+            editKind: "setCycleSpeeds",
+            selectOnFocus: false,
+        }));
+        r1.appendChild(mkLabel("Start at\nCycle", { width: W.beatStackLabel, disabled: !cycleActive, multiline: true }));
+        r1.appendChild(this._buildEditableField({
+            value: startAgg === "varies" ? "" : startAgg,
+            numeric: true,
+            width: W.beatNum,
+            editable: cycleActive,
+            validator: (c) => validateNumber(c, { min: 0, integer: true }),
+            editKind: "setStartAtCycle",
+            spinStep: 1,
+            selectOnFocus: false,
+        }));
+        r1.appendChild(mkLabel("Stop at\nCycle", { width: W.beatStackLabel, disabled: !cycleActive, multiline: true }));
+        r1.appendChild(this._buildEditableField({
+            value: stopAgg === "varies" ? "" : stopAgg,
+            numeric: true,
+            width: W.beatNum,
+            editable: cycleActive,
+            validator: validateStopAtCycle,
+            editKind: "setStopAtCycle",
+            spinStep: 1,
+            selectOnFocus: false,
+        }));
+        band.appendChild(r1);
+
+        const syncAgg = aggregateString(objs.triggers, "triggerSyncToBeat");
+        const r2 = mkRow();
+        r2.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.leftLabel, disabled: !triggerActive, multiline: true }));
+        r2.appendChild(this._buildDropdownField({
+            options: INTERVAL_OPTIONS,
+            value: syncAgg === "varies" ? "" : syncAgg,
+            width: W.timeLagInterval,
+            editable: triggerActive,
+            editKind: "setTriggerSyncToBeat",
+        }));
+        band.appendChild(r2);
 
         return band;
     },

@@ -139,8 +139,16 @@ or GO TO when it does (opens it for editing) — the GeoSonix Show/Create idea u
 into one contextual button. autoMessage's firing rate is governed by the Automessage
 Interval band below. These four callbacks ARE the procedural pattern model (section 3). As in GXW, the callbacks are plain functions in the code tab: CREATE makes the named function, GO TO navigates to it. What commands and context API the callback bodies may call is TO BE DEFINED later; for now the rows plus the create / go-to scaffolding and the named functions are what gets built.
 
-### Band 4 — Automessage Interval (CONFIRMED)
-STATUS: IMPLEMENTED (slice 4, awaiting Chris's use-validation). New one-row band
+### Band 4 — Automessage Interval (CONFIRMED — now MERGED into Band 3)
+STATUS (2026-06-05 rework, Chris): Band 4 is no longer a separate band. The Msg Functions
+band (Band 3) now lists the four callbacks in order hasHit, beenHit, onTick, autoMessage,
+and the Automessage Interval dropdown is appended as the row directly below the autoMessage
+slot — same band, NO dividing line (saves the band border + padding). So everything that
+configures autoMessage (its function slot + its fire-rate interval) sits together. The
+autoMessageInterval field/setter/dispatch are unchanged; only the rendering moved
+(_buildBandAutoMessageInterval removed; its row folded into _buildBandCallbackSlots).
+
+ORIGINAL (superseded layout): STATUS: IMPLEMENTED (slice 4, awaiting Chris's use-validation). New one-row band
 (`_buildBandAutoMessageInterval`, wired into _render after Band 3) holding a single shared
 interval dropdown — no multiplier, no per-source names. New model field
 `autoMessageInterval` (enum, default "Off") on all three kinds, with
@@ -188,9 +196,19 @@ sprites as well as curves.] The Beat Points mode dropdown offers None, Normal, a
 
 FIELDS. Beats/Cycle sets the number of beats per cycle (e.g. 32). Active Beats is a compact string where `x` marks an active beat and `.` an inactive one, with `|` separating them into bars, e.g. `x.xx|x.x.|x.x.|xxxx`. Beat Strength is a string of single digits 0 to 9 (NOT space-separated), one per beat, giving each beat's strength, e.g. `6555`. Both the Active-Beats pattern and the Beat-Strength string LOOP: when either reaches its end it restarts from the beginning and keeps applying to successive beats, and the strength advances one digit per beat whether or not that beat is active.
 
-### Band 6 — Cycle (CONFIRMED retained; field behaviour TBD)
-Fully retained from GeoSonix (Cycle Speeds, Stop at Cycle, Cursor Speed, Cycle Time,
-Time Lock, Trigger Sync To Beat). [TO DEFINE: the actual behaviour of these fields in V2.]
+### Band 6 — Cycle (CONFIRMED; reworked from GeoSonix)
+STATUS: IMPLEMENTED (slice 6, awaiting Chris's use-validation). Reviewed with Chris before
+building. Two lines:
+- Line 1 (curves & sprites; greyed for triggers/empty): Cycle Speeds (a SHORT field, much
+  narrower than GeoSonix) + Start at Cycle (default 0, the cycle the object begins on) +
+  Stop at Cycle (default -1 = never stop). Start/Stop are small numeric fields like
+  GeoSonix's Stop at Cycle. New model fields startAtCycle (curves+sprites) and stopAtCycle
+  (added to sprites; was curve-only); cycleSpeeds reused.
+- Line 2 (triggers; greyed otherwise): Trigger Sync To Beat — the SHARED interval/note-
+  duration dropdown (Off, 384th … 4 × Wh), default "Off". New field triggerSyncToBeat on
+  triggers.
+DROPPED from GeoSonix: Cursor Speed, Cycle Time, Time Lock. Field BEHAVIOUR (how
+start/stop/sync drive the engine) is still TBD — model + inspector scaffolding for now.
 
 ### Remaining bands — TO DO
 Notes & Harmony: DEFERRED — left undefined for now. Intended to be some merge of what GeoSonix and GXW each had for harmony; Chris needs to think it through further before it is specified. Status strip: still to do.

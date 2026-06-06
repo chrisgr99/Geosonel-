@@ -916,6 +916,18 @@ export const fieldMethods = {
             input.disabled = true;
             return input;
         }
+        if (opts.locked) {
+            // Read-only but still readable (NOT greyed) — used for
+            // the Euclidean Active Beats pattern, which is generated
+            // from the parameters and shown for reference. readOnly
+            // blocks editing; the .locked style drops the editable
+            // mint frame to signal it's not directly editable while
+            // keeping the value at full contrast.
+            input.readOnly = true;
+            input.tabIndex = -1;
+            input.classList.add("locked");
+            return input;
+        }
 
         const bar = Math.max(1, Math.round(Number(opts.beatsPerBar)) || 1);
         const isPattern = opts.kind === "pattern";

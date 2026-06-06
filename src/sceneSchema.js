@@ -246,6 +246,10 @@ export const CURVE_FIELDS = [
     { key: "vy", label: "VY", type: "number", default: 0 },
     { key: "curveThickness", label: "Curve Thickness", type: "number", default: 1 },
     { key: "color", label: "Color", type: "color", default: "#7dd68a" },
+    // Band 6 (Cycle): startAtCycle / stopAtCycle are the cycle
+    // indices the object begins and ends on. start 0 = from the
+    // beginning; stop -1 = never stop.
+    { key: "startAtCycle", label: "Start at Cycle", type: "integer", default: 0, min: 0 },
     { key: "stopAtCycle", label: "Stop at Cycle", type: "integer", default: -1 },
     { key: "cursorR", label: "Cursor R", type: "number", default: 0 },
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
@@ -278,6 +282,9 @@ export const TRIGGER_FIELDS = [
     { key: "color", label: "Color", type: "color", default: "#7db8d6" },
     { key: "note", label: "Note", type: "integer", default: null },
     { key: "payload", label: "Payload", type: "object", default: null },
+    // Band 6 (Cycle): a trigger's firing can sync to a beat
+    // interval from the shared note-duration menu ("Off" = no sync).
+    { key: "triggerSyncToBeat", label: "Trigger Sync To Beat", type: "enum", default: "Off", enumValues: INTERVAL_TOKENS },
     // Seed-variation dial; see CURVE_FIELDS. Triggers carry only
     // a position offset (no starting velocity).
     { key: "variability", label: "Variability", type: "number", default: 0, min: 0 },
@@ -307,6 +314,9 @@ export const SPRITE_FIELDS = [
     { key: "cursorL", label: "Cursor L", type: "number", default: 0 },
     { key: "cursorThickness", label: "Cursor Thickness", type: "number", default: 2 },
     { key: "cycleSpeeds", label: "Speeds", type: "string", default: "1" },
+    // Band 6 (Cycle): sprites cycle too, so they carry start/stop.
+    { key: "startAtCycle", label: "Start at Cycle", type: "integer", default: 0, min: 0 },
+    { key: "stopAtCycle", label: "Stop at Cycle", type: "integer", default: -1 },
     // Seed-variation dial; see CURVE_FIELDS. Sprites carry both a
     // position and a starting-velocity offset.
     { key: "variability", label: "Variability", type: "number", default: 0, min: 0 },
