@@ -70,63 +70,33 @@ export const bandObjectMethods = {
     },
 
     /**
-     * Band 1 — Identity. Three rows. Row 1: Object ID
-     * is read-only and greyed for multi-select; a single
-     * State dropdown is editable for any non-empty selection
-     * and defaults to Active. The dropdown is the three-state
-     * `state` field: Active / Hide Cursor / Disable for curves
-     * and sprites, Active / Disable for triggers (a trigger
-     * has no cursor, so no passive state). "Hide Cursor"
-     * stores the value "passive". The separate
-     * `hide` schema field (which controls whether a
-     * curve's geometry renders, independent of the cursor)
-     * has been dropped from the inspector but stays in the
-     * schema so a hand-edited scene.json can still toggle
-     * it; the JSON tab is the only surface for that field
-     * now. The user-typed Name field that earlier versions
-     * of the inspector exposed has been dropped under the
-     * cursor-as-collider reshape; the schema field stays
-     * in place for future re-surfacing, but only the
-     * system-assigned id is shown.
+     * Identity band (GeosonixV2). Two rows.
      *
-     * Row 2 is the cycle duration row, which reads as
-     * "Cycles In [N] beats" with the small numeric field
-     * (the underlying schema key is beatsPerCycle) sitting
-     * between the "Cycles In" label on the left and the
-     * "beats" units suffix on the right. The field is
-     * universal across kinds since curves, sprites, and
-     * triggers all carry a cycle counter, but greys for
-     * trigger-only selections since triggers cannot self-
-     * fire under the cursor-as-collider model and their
-     * cycle counter is internal-only.
+     * Row 1: Object ID + State. Object ID is read-only
+     * ("locked" styling) on single-select and blank-greyed on
+     * multi-select (the id is per-object unique). State is a
+     * three-state radio group on the same row — Active / No
+     * Cursor / Disable for curves and sprites, Active / Disable
+     * for triggers (no cursor). The labels map to the `state`
+     * field's values active / passive / disabled ("No Cursor"
+     * stores "passive").
      *
-     * Row 3 is the pattern row: a static "Pattern"
-     * label plus one button whose text incorporates
-     * the labelled-block tag the button targets. With
-     * a single object selected the button reads
-     * "Create $id" when no labelled block for the
-     * selected object exists in behaviors.js, or "Go
-     * to $id" when one does. When the selected
-     * object's labelled block is part of a chain
-     * shared with other objects (section 9), a small
-     * "+N" indicator follows the button showing the
-     * count of co-labels (other objects sharing the
-     * same block). Multi-select and empty selections
-     * grey the row and shorten the button text to
-     * just "Create" with no identifier. Existence
-     * check and co-label count are strictly
-     * labelled-block-based: scene.labelledBlocks is
-     * scanned for an entry whose objectId matches the
-     * selected object's id, then for sibling entries
-     * that share the same source range (the loader
-     * emits one entry per label in a chain, all
-     * sharing the chain's range). The button routes
-     * through two edit kinds: createPatternBlock when
-     * no block exists (scaffolds $id: sound("") at
-     * the end of behaviors.js via
-     * scaffoldPatternBlock) and goToObjectInCode
-     * when one does (scrolls the Code tab to the
-     * block's declaration line).
+     * Row 2: Object Name + Time Lag. Object Name reuses the
+     * `name` schema field but is rendered BLANK and
+     * non-editable for now — there is no defined way to author
+     * object names yet, and the legacy `name` may hold stale
+     * values we don't surface; it becomes editable and binds to
+     * `name` once the authoring semantics are designed. Time Lag
+     * is a multiplier numeric field × an interval chosen from the
+     * shared interval menu (the "×" reads "times"); it writes the
+     * timeLagMultiplier and timeLagInterval fields. Its runtime
+     * behaviour (how the lag delays the object) is still TBD.
+     *
+     * GXW's old Identity rows (the Hide Cursor / Mute control, the
+     * cycle-duration row, and the Strudel pattern row) are gone:
+     * the cycle controls moved to the Beat Points and Cycle bands,
+     * and the pattern row was dropped with Strudel. See DESIGN.md
+     * section 4.
      *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
@@ -269,31 +239,29 @@ export const bandObjectMethods = {
     },
 
     /**
-     * Band 2 — Geometry and visual. Starting State's X and Y
-     * fields are universal (any non-empty selection) and
-     * write to the object's starting position; vX and vY
-     * apply to sprites and curves and grey for trigger-only
-     * selections since triggers don't move under physics
-     * and carry no vx/vy fields. Curve dimensions and Curve
-     * Thickness activate when curves are in the selection;
-     * cursor extents and Cursor Thickness extend to curves
-     * and sprites; sprite/trigger size activates
-     * when the selection is exclusively that kind; colour
-     * activates for any non-empty selection (curves, sprites,
-     * and triggers all carry a per-object colour).
+     * Transform & appearance band (GeosonixV2). Rows:
+     *   - Initial Conditions: X, Y (universal, the starting
+     *     position) and vX, vY (the starting velocity; apply to
+     *     curves and sprites, grey for trigger-only since triggers
+     *     don't move under physics).
+     *   - Dimension: ONE merged size row. When curves are selected
+     *     it shows Length + Width (the bbox dimensions) and Line
+     *     Width (curve thickness); for a sprite-only or trigger-only
+     *     selection it shows a single Size value (sprite
+     *     displayDiameter / trigger size).
+     *   - Cursor: Cursor Length (the R and L extents) + Cursor Width
+     *     (cursor thickness); applies to curves and sprites.
+     *   - Color + Variability on one row: a single colour (no
+     *     when-inactive colour) with the seed-variation dial beside
+     *     it. Colour is active for any non-empty selection.
+     * There is no Z coordinate anywhere.
      *
-     * Starting State's four fields and Curve Size W/H use
-     * absolute-set semantics: the user types a value and
-     * every applicable selected object's coordinate becomes
-     * that value. This works for single-select (typing 5 in
-     * a field showing 3 sets X=5), uniform multi-select
-     * (typing 0 sets every selected object's X to 0), and
-     * varies multi-select (typing 0 in a blank "varies"
-     * field snaps every selected object to X=0 regardless of
-     * starting value). The other Band 2 fields (sizes,
-     * cursor extents, thicknesses, colour) also commit their
-     * typed value as the new value for every applicable
-     * selected object.
+     * Position X/Y and the curve Length/Width fields use
+     * absolute-set semantics: the typed value becomes that
+     * coordinate/dimension on every applicable selected object —
+     * so single-select, uniform multi-select, and a blank "varies"
+     * multi-select all flow through one primitive. The other fields
+     * commit their typed value the same way.
      *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */

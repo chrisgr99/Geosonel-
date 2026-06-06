@@ -1,179 +1,82 @@
 /**
- * Property Inspector module.
+ * Property Inspector module (GeosonixV2).
  *
- * Renders the form-based property inspector that lives in
- * the Properties tab. The form is always rendered —
- * nothing-selected state shows every band with all fields
- * greyed and a "No selection" handle in the title bar.
- * When at least one object is selected, the same bands
- * populate with that object's data and the appropriate
- * fields un-grey based on which kinds are present in the
- * selection.
+ * Renders the form-based property inspector in the Properties
+ * tab. The form is ALWAYS rendered — the nothing-selected state
+ * shows every band with all fields greyed and "No selection" in
+ * the title bar. With a selection, the bands populate from the
+ * selected object(s) and each control un-greys based on which
+ * kinds are present; controls that don't apply to a kind stay in
+ * place but grey, so the layout never shifts. Values aggregate
+ * across the selection: a uniform value shows, a divergent one
+ * renders blank ("varies") and committing applies the typed value
+ * to every applicable object.
  *
- * Cursor-as-collider stage. Inspector renders Bands 1
- * (Identity), 2 (Geometry / visual), and 3 (Callback
- * slots). Band 3 exposes three Code-tab callback slots
- * (hasHit, beenHit, onTick) defined in sections 27 and
- * 28 of DESIGN.md; each row carries a Can-X checkbox,
- * a function-name field, and a Create or Go-to button.
- * Band 1's bottom row is the cycle-pattern authoring
- * row: a static "Pattern for This Object" label plus
- * one button that reads either "Create $id" or "Go to
- * $id" depending on whether a labelled block for the
- * selected object exists in behaviors.js. The canCycle
- * gate is derived from cursor extents and mute
- * (cursor-as-collider model).
+ * Structure. The Inspector class holds _scene, _selection, and
+ * the edit callback; the per-band builders are mixed onto the
+ * prototype via Object.assign from three modules — fieldMethods
+ * (inspectorFields.js, the field/widget builders), bandObjectMethods
+ * (inspectorBandsObject.js, the title bar + Identity + Transform
+ * bands), and bandExtraMethods (inspectorBandsExtra.js, the Msg
+ * Functions, Beat Points, Cycle, middle-area, and global bands).
+ * Selection helpers live in inspectorSelection.js, shared widths in
+ * inspectorShared.js, small widgets in inspectorWidgets.js.
  *
- * Band 1 — Identity. Three rows. Row 1: Object ID
- * (read-only, greyed for multi-select), Hide Cursor
- * (editable for any non-empty selection, stored in
- * scene.json's `mute` field, suppresses cursor
- * rendering and the firing that depends on it per the
- * cursor-as-collider model). Row 2
- * is the cycle duration row, reading as "Cycles In [N]
- * beats" with the schema's beatsPerCycle field as the
- * editable number between the label and the units. The
- * cycle duration field is universal across kinds but
- * greys for trigger-only selections since triggers
- * cannot self-fire under the cursor-as-collider model.
- * Row 3 is the pattern row: a static "Pattern" label
- * plus one button whose text incorporates the labelled-
- * block tag the button targets. With a single object
- * selected the button reads "Create $id" when no
- * labelled block for the selected object exists in
- * behaviors.js, or "Go to $id" when one does. When the
- * selected object's labelled block is part of a chain
- * shared with other objects (section 9), a small "+N"
- * indicator follows the button showing the count of
- * co-labels (other objects sharing the same block).
- * Multi-select and empty selections grey the row and
- * shorten the button text to just "Create" with no
- * identifier.
- * The user-typed Name field that earlier inspector
- * versions exposed has been dropped; the schema field
- * stays in place for future re-surfacing.
+ * Render order (_render, top to bottom): title bar; Identity;
+ * Transform & appearance; Msg Functions (the four callbacks plus
+ * the Automessage Interval, all ONE band); Beat Points; Cycle; a
+ * separator; the reserved middle area (per-object voice); a heavy
+ * separator; the global band (Sound Engine); a bottom spacer. The
+ * bands and their fields are documented in DESIGN.md section 4 —
+ * that section is kept in sync with this code, the source of truth.
  *
- * Band 2 — Geometry / visual. Starting State carries the
- * object's starting position (X, Y, universal for any
- * non-empty selection) and starting velocity (vX, vY,
- * active when the selection contains at least one sprite
- * or curve, greyed for trigger-only selections since
- * triggers don't move under physics); Curve Size W/H and
- * Curve Thickness activate when curves are in the
- * selection; Cursor R/L and Cursor Thickness extend to
- * curves and sprites under the cursor-as-collider model
- * and grey when all selected curves and sprites are
- * muted (the sprite cursor line itself is drawn in a
- * later commit); Sprite/Trigger Size
- * activates when the selection is exclusively that kind
- * (the row's label tracks which); Color activates for any
- * non-empty selection since curves, sprites, and triggers
- * all carry a per-object colour. Starting State's
- * four numeric fields and Curve Size W/H use absolute-
- * set semantics — typing a value commits that value as
- * the new coordinate (or dimension or velocity
- * component) for every applicable selected object — so
- * single-select, uniform multi-select, and varies
- * multi-select all flow through the same primitive.
+ * Bands in brief:
+ *   - Identity: Object ID (read-only) + State (Active / No Cursor /
+ *     Disable radio); Object Name (a blank, non-editable
+ *     placeholder for now) + Time Lag (multiplier × shared interval).
+ *   - Transform & appearance: Initial Conditions (X, Y, vX, vY);
+ *     one Dimension row (curve Length/Width + Line Width, or a single
+ *     sprite/trigger Size); Cursor Length/Width; Color + Variability.
+ *     No Z anywhere.
+ *   - Msg Functions: callbacks hasHit, beenHit, onTick, autoMessage —
+ *     each a Can-X checkbox + function-name field + one contextual
+ *     Create / Go-to button (Create scaffolds slotName_objectId in
+ *     behaviors.js, e.g. autoMessage_CRV1; Go-to navigates). The
+ *     Automessage Interval dropdown sits in this band ABOVE the
+ *     autoMessage row (its rate must be defined first).
+ *   - Beat Points (curves/sprites): mode None / Normal / Euclidean.
+ *     Active Beats and Beat Strength are a live-input field
+ *     (_buildBeatStringField) — one char per keystroke, "." or SPACE
+ *     for a dot and any other key for "x" (Beat Strength is digits or
+ *     a dot), with bar "|" separators managed live. Euclidean is a
+ *     starter: its parameters regenerate the pattern (euclidean.js)
+ *     and that generated pattern field is locked read-only.
+ *   - Cycle: Cycle Speeds + Start/Stop at Cycle (curves/sprites);
+ *     Trigger Sync To Beat (triggers).
+ *   - Below the separators: the carried-over GXW multi-engine voice
+ *     (middle area) and Sound Engine (global) bands.
  *
- * Band 3 — Callback slots. Three rows: hasHit, beenHit,
- * onTick. Each row carries a row label, a Can-X
- * checkbox, a function-name field, and a Create or
- * Go-to button. Every row activates for any non-empty
- * selection regardless of kinds, since the slot
- * vocabulary is shared across curves, triggers, and
- * sprites.
- *
- * Create / Go-to buttons. Operative for all three
- * slots. Both disable when the slot's Can-X checkbox
- * is unchecked or when the selection isn't single-
- * object. When checked and a single object is
- * selected, the displayed function name (or the
- * proposed default if the field is empty) is looked up
- * in scene.functionMap. Found triggers the Go-to label
- * and a goToFunction edit; not-found triggers the
- * Create label and a createFunctionStub edit. The
- * function-name field's text renders muted when the
- * named function doesn't yet exist in behaviors.js —
- * a low-key cue that the slot's not yet wired up.
- * Default proposed name when the field is empty is
- * slotName_objectId, e.g. onTick_sp_a3f7.
- *
- * cyclePattern field. The schema field exists on every
- * source but is not directly editable through the
- * inspector. Stage A3 of the pattern-authoring pivot
- * added the pattern row at the bottom of Band 1, whose
- * Create / Go-to button navigates into the Code tab
- * where labelled-statement blocks of the form
- * $objectId: expression act as the authoring surface
- * per section 28. Stage A4 will land Cmd-Enter routing
- * that promotes a labelled block's expression body to
- * the named object's cyclePattern field in scene.json;
- * until then, existing cyclePattern values keep firing
- * through the runtime but the Code-tab blocks are the
- * place to draft and revise.
- *
- * Stage 1 inert pieces. The function-name fields
- * accept any text without validation. A future stage
- * will add validateFunctionName for the three function
- * fields.
- *
- * Edit lifecycle. Editable fields share a validator-driven
- * commit lifecycle: hard errors squiggle red and refuse to
- * commit (Enter retains focus, blur silently reverts);
- * soft warnings squiggle yellow and commit; ok values
- * commit cleanly. Soft squiggles are transient — they
- * appear at commit time and are gone after the scene
- * reloads, except for Name's duplicate-name check which
- * runs at render time so the squiggle persists until the
- * conflict is resolved.
- *
- * Numeric fields support scroll-wheel adjustment. Hovering
- * over a numeric field and rotating the wheel nudges the
- * value in 0.3 increments — wheel up to increase, wheel
- * down to decrease. The validator clamps during scrolling
- * so field-specific bounds act as soft walls. Each wheel
- * event emits a fresh edit so the canvas, the JSON tab,
- * and any other scene-derived UI track the value
- * continually as the user scrolls. Wheel emits bypass the
- * keyboard commit's destruction-blur guard because wheel
- * scrolling doesn't focus the field.
- *
- * Greying rules.
- *   - Universal fields (Starting State X/Y, Hide Cursor)
- *     are active for any non-empty selection.
- *   - Object ID is active only for single-object
- *     selections; greyed for multi-select since the id
- *     is per-object unique.
- *   - Sprite/Trigger Size is active only when the selection
- *     is exclusively sprites or exclusively triggers; the
- *     row's label tracks which.
- *   - Curve Size and Curve Thickness are active only when
- *     at least one curve is selected. Cursor Size (R / L)
- *     and Cursor Thickness extend to curves and sprites
- *     and grey when all of them are muted.
- *   - Color is active when any object is present; curves,
- *     sprites, and triggers all carry a per-object
- *     colour.
- *   - Band 3 callback slots are universal: every row
- *     activates for any non-empty selection regardless
- *     of kinds.
- *   - Band 1's pattern row activates only for single-
- *     object selections.
+ * Edit lifecycle. Most editable fields share a validator-driven
+ * commit: hard errors squiggle red and refuse to commit (Enter
+ * keeps focus, blur reverts); soft warnings squiggle yellow and
+ * commit; ok values commit cleanly. Numeric fields support
+ * scroll-wheel nudging with the validator clamping as soft walls.
+ * The Beat Points strings are the exception — a custom live <input>
+ * that coerces and re-bars on each keystroke and commits on
+ * Enter/blur. Every commit emits an edit through the callback;
+ * main.js applies it to scene.json and re-runs the scene, which
+ * calls setScene() and triggers a full re-render.
  *
  * The Inspector exposes setSelection(), setScene(), and
- * setEditCallback(); main.js wires the three together so
- * the inspector tracks selection changes, scene reloads,
- * and edit commits.
+ * setEditCallback(); main.js wires the three so the inspector
+ * tracks selection changes, scene reloads, and edit commits.
  *
- * Aesthetic tracks GeoSonix closely: dark grey panel,
- * lighter grey field fills (visible even when empty so
- * each field's footprint reads), bright white labels and
- * values for active fields, muted grey for disabled
- * fields, green frames on editable fields, green-filled
- * checkboxes, green stepper dots on numeric fields. See
- * main.css for the .insp-* class styles that produce this
- * look.
+ * Look & feel tracks GeoSonix: inspector background #3e3e3e, field
+ * fill #646464, 2px mint #789678 frames on editable fields, white
+ * values, muted grey for disabled, dense rows. The styles live in
+ * css/inspector.css (the loaded stylesheet) and css/layout.css (the
+ * #inspector-area background). NOTE: main.css is NOT loaded by
+ * index.html — do not edit it for inspector styling.
  */
 
 // @ts-check

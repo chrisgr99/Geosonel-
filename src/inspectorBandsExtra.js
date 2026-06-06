@@ -42,15 +42,14 @@ export const bandExtraMethods = {
      * the autoMessage slot it configures). Each callback row
      * carries a row label, a
      * Can-X checkbox, a function-name field, and a
-     * Create or Go-to button. Every row activates for
+     * Create or Go-to button. Every callback row activates for
      * any non-empty selection regardless of kinds,
      * since the slot vocabulary is shared across
-     * curves, triggers, and sprites. The canCycle gate
-     * is gone (cursor presence is derived from cursor
-     * extents and mute), the cycle duration
-     * (beatsPerCycle) field lives on Band 1's second
-     * row, and the cycle-pattern authoring row is the
-     * third row of Band 1.
+     * curves, triggers, and sprites. The Automessage Interval
+     * row (the shared interval dropdown writing
+     * autoMessageInterval) is rendered ABOVE the autoMessage
+     * slot, because the interval is the autoMessage callback's
+     * fire rate and must be defined for it to mean anything.
      *
      * Read binding aggregates each field across the
      * entire selection (objs.all). Multi-select
