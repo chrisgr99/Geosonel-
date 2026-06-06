@@ -109,7 +109,7 @@ const HARMONY_OVERRIDE_FIELDS = [
  */
 const CALLBACK_SLOT_FIELDS = [
     { key: "cyclePattern", label: "Cycle Pattern", type: "string", default: "" },
-    { key: "beatsPerCycle", label: "Beats/Cycle", type: "number", default: 4, min: 0 },
+    { key: "beatsPerCycle", label: "Beats/Cycle", type: "number", default: 16, min: 0 },
     {
         key: "beatInterval",
         label: "Beat Interval",
@@ -117,12 +117,31 @@ const CALLBACK_SLOT_FIELDS = [
         default: DEFAULT_BEAT_INTERVAL,
         enumValues: allBeatIntervalTokens(),
     },
+    // Beat Points (Band 5): a beat-points rhythm for curves and
+    // sprites (not triggers). mode None/Normal/Euclidean; the
+    // Active Beats pattern (x active, . inactive, | bar split)
+    // and Beat Strength digit string both loop. Stored lowercase
+    // for mode to match validateBeatPointsMode.
+    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "none", enumValues: ["none", "normal", "euclidean"] },
+    { key: "activeBeats", label: "Active Beats", type: "string", default: "x" },
+    { key: "strength", label: "Beat Strength", type: "string", default: "9" },
+    // Euclidean-mode parameters (Band 5, shown only when
+    // beatPointsMode === "euclidean"). The pattern is generated
+    // from these by src/euclidean.js generateEuclideanPattern.
+    { key: "beatsPerBar", label: "Beats/Bar", type: "integer", default: 1, min: 1 },
+    { key: "activeBeatsCount", label: "Active Beats Count", type: "integer", default: 0, min: 0 },
+    { key: "beatShift", label: "Beat Shift", type: "integer", default: 0 },
+    { key: "repeats", label: "Beat Repeats", type: "integer", default: 1, min: 1 },
     { key: "canHit", label: "Can Hit", type: "boolean", default: false },
     { key: "hasHitFunction", label: "Has Hit Function", type: "functionRef", default: "" },
     { key: "canBeHit", label: "Can Be Hit", type: "boolean", default: false },
     { key: "beenHitFunction", label: "Been Hit Function", type: "functionRef", default: "" },
     { key: "canAutoMessage", label: "Can Auto Message", type: "boolean", default: false },
     { key: "autoMessageFunction", label: "Auto Message Function", type: "functionRef", default: "" },
+    // Automessage Interval (Band 4): the rate at which the
+    // autoMessage callback fires, a token from the shared
+    // interval menu. Default "Off" = never.
+    { key: "autoMessageInterval", label: "Automessage Interval", type: "enum", default: DEFAULT_INTERVAL, enumValues: INTERVAL_TOKENS },
     { key: "canTick", label: "Can Tick", type: "boolean", default: false },
     { key: "onTickFunction", label: "On Tick Function", type: "functionRef", default: "" },
 ];

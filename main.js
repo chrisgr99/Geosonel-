@@ -142,6 +142,13 @@ import {
     setCyclePatternOnSelection,
     setBeatsPerCycleOnSelection,
     setBeatIntervalOnSelection,
+    setBeatPointsModeOnSelection,
+    setActiveBeatsOnSelection,
+    setStrengthOnSelection,
+    setBeatsPerBarOnSelection,
+    setActiveBeatsCountOnSelection,
+    setBeatShiftOnSelection,
+    setRepeatsOnSelection,
     setVariabilityOnSelection,
     setPatternRepeatsOnCurves,
     setCycleSpeedsOnSelection,
@@ -153,6 +160,7 @@ import {
     setOnTickFunctionOnSelection,
     setCanAutoMessageOnSelection,
     setAutoMessageFunctionOnSelection,
+    setAutoMessageIntervalOnSelection,
     scaffoldCallbackSlotFunction,
     scaffoldPatternBlock,
     addLabelToBlock,
@@ -3616,6 +3624,34 @@ async function main() {
                 await applySceneEdit((data) =>
                     setBeatIntervalOnSelection(data, edit.selection, edit.value),
                 );
+            } else if (edit.kind === "setBeatPointsMode") {
+                await applySceneEdit((data) =>
+                    setBeatPointsModeOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setActiveBeats") {
+                await applySceneEdit((data) =>
+                    setActiveBeatsOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setStrength") {
+                await applySceneEdit((data) =>
+                    setStrengthOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatsPerBar") {
+                await applySceneEdit((data) =>
+                    setBeatsPerBarOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setActiveBeatsCount") {
+                await applySceneEdit((data) =>
+                    setActiveBeatsCountOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatShift") {
+                await applySceneEdit((data) =>
+                    setBeatShiftOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setRepeats") {
+                await applySceneEdit((data) =>
+                    setRepeatsOnSelection(data, edit.selection, edit.value),
+                );
             } else if (edit.kind === "setVariability") {
                 await applySceneEdit((data) =>
                     setVariabilityOnSelection(data, edit.selection, edit.value),
@@ -3659,6 +3695,10 @@ async function main() {
             } else if (edit.kind === "setAutoMessageFunction") {
                 await applySceneEdit((data) =>
                     setAutoMessageFunctionOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setAutoMessageInterval") {
+                await applySceneEdit((data) =>
+                    setAutoMessageIntervalOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setSceneEngine") {
                 // Inspector global band's Sound Engine

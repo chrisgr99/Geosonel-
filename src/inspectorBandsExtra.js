@@ -19,6 +19,15 @@ import {
     mkRow,
     proposedFunctionName,
 } from "./inspectorWidgets.js";
+import { INTERVAL_OPTIONS } from "./intervalMenu.js";
+import {
+    validateNumber,
+    validateBeatsPerBar,
+    validateActiveBeatsCount,
+    validateBeatShift,
+    validateRepeats,
+} from "./curveFieldValidation.js";
+import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 
 export const bandExtraMethods = {
 
@@ -156,6 +165,249 @@ export const bandExtraMethods = {
             }));
 
             band.appendChild(r);
+        }
+
+        return band;
+    },
+
+    /**
+     * Band 4 — Automessage Interval. A single control: the
+     * shared interval / note-duration dropdown (no multiplier),
+     * which sets the rate at which each selected object's
+     * autoMessage callback (Band 3) fires. GeoSonix's three
+     * per-source dropdowns (Cursor / Trigger / Curve) collapse
+     * into this one field. Universal across kinds — every kind
+     * carries the autoMessageInterval field — so the row is
+     * active for any non-empty selection and greys only when
+     * the selection is empty. The value aggregates across the
+     * whole selection; "varies" renders as a blank trigger, and
+     * choosing a token commits it to every selected object.
+     *
+     * @param {ReturnType<typeof buildSelectionContext>} ctx
+     */
+    _buildBandAutoMessageInterval(ctx) {
+        const band = document.createElement("div");
+        band.className = "insp-band";
+
+        const objs = selectedObjects(this._scene, this._selection);
+        const active = ctx.total > 0;
+        const intervalAgg = aggregateString(objs.all, "autoMessageInterval");
+
+        const r = mkRow();
+        r.appendChild(mkLabel("Automessage\nInterval", {
+            width: W.leftLabel,
+            disabled: !active,
+            multiline: true,
+        }));
+        r.appendChild(this._buildDropdownField({
+            options: INTERVAL_OPTIONS,
+            value: intervalAgg === "varies" ? "" : intervalAgg,
+            width: W.timeLagInterval,
+            editable: active,
+            editKind: "setAutoMessageInterval",
+        }));
+        band.appendChild(r);
+
+        return band;
+    },
+
+    /**
+     * Band 5 — Beat Points (formerly GeoSonix's "Curve Beat
+     * Points"). Available for curves OR sprites, never triggers;
+     * the whole band greys when the selection has no curve and
+     * no sprite. Three rows:
+     *   1. mode dropdown (None / Normal / Euclidean, extensible)
+     *      plus Beats/Cycle (the cycle's beat count).
+     *   2. Active Beats — a compact x/./| string (x active, .
+     *      inactive, | bar separator) that loops.
+     *   3. Beat Strength — a 0-9 digit string, one per beat,
+     *      that loops independently.
+     * All fields aggregate across the selected curves and
+     * sprites; "varies" renders blank and a committed value
+     * applies to every selected curve and sprite. Triggers in a
+     * mixed selection are excluded by the setters.
+     *
+     * @param {ReturnType<typeof buildSelectionContext>} ctx
+     */
+    _buildBandBeatPoints(ctx) {
+        const band = document.createElement("div");
+        // insp-band-beatpoints tightens the row gap so the dense
+        // Euclidean row 1 (mode + Beats/Cycle + Beat Interval +
+        // Beats/Bar) fits on one line no wider than other rows.
+        band.className = "insp-band insp-band-beatpoints";
+
+        const objs = selectedObjects(this._scene, this._selection);
+        const active = ctx.hasCurves || ctx.hasSprites;
+        const bpObjs = [...objs.curves, ...objs.sprites];
+
+        const modeAgg = aggregateString(bpObjs, "beatPointsMode");
+        const mode = modeAgg === "varies" ? "" : modeAgg;
+        const beatsPerCycleAgg = aggregateString(bpObjs, "beatsPerCycle");
+        // cycleDuration bounds the Active-Beats-count and Repeats
+        // clamps. Falls back to 16 when the aggregate isn't a
+        // clean single value (varies / empty multi-select).
+        const cycleDur = (() => {
+            const n = Number(beatsPerCycleAgg);
+            return Number.isFinite(n) && n >= 1 ? n : 16;
+        })();
+
+        // Row 1: the mode dropdown, always present. Beats/Cycle
+        // follows once a non-none mode is chosen; euclidean adds
+        // Beat Interval and Beats/Bar on the same row.
+        const r1 = mkRow();
+        r1.appendChild(mkLabel("Beat\nPoints", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+        r1.appendChild(this._buildDropdownField({
+            options: [
+                { value: "none", label: "None" },
+                { value: "normal", label: "Normal" },
+                { value: "euclidean", label: "Euclidean" },
+            ],
+            value: mode,
+            width: W.beatPointsMode,
+            editable: active,
+            editKind: "setBeatPointsMode",
+        }));
+
+        if (mode === "normal" || mode === "euclidean") {
+            r1.appendChild(mkLabel("Beats/\nCycle", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            r1.appendChild(this._buildEditableField({
+                value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
+                numeric: true,
+                width: W.beatNum,
+                editable: active,
+                validator: (c) => validateNumber(c, { min: 1 }),
+                editKind: "setBeatsPerCycle",
+                spinStep: 1,
+                selectOnFocus: false,
+            }));
+        }
+        // Beat Interval is Euclidean-only; Beats/Bar shows in
+        // both modes — it is the time signature's beat count (e.g.
+        // 3 for 3/4), and it groups the Active Beats / Beat
+        // Strength strings into bars with `|` separators.
+        if (mode === "euclidean") {
+            const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
+            r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            r1.appendChild(this._buildDropdownField({
+                options: BEAT_INTERVAL_TOKENS.map((t) => ({ value: t.token, label: t.label })),
+                value: beatIntervalAgg === "varies" ? "" : beatIntervalAgg,
+                width: W.beatInterval,
+                editable: active,
+                editKind: "setBeatInterval",
+            }));
+        }
+        if (mode === "normal" || mode === "euclidean") {
+            const beatsPerBarAgg = aggregateString(bpObjs, "beatsPerBar");
+            r1.appendChild(mkLabel("Beats/\nBar", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            r1.appendChild(this._buildEditableField({
+                value: beatsPerBarAgg === "varies" ? "" : beatsPerBarAgg,
+                numeric: true,
+                width: W.beatNum,
+                editable: active,
+                validator: validateBeatsPerBar,
+                editKind: "setBeatsPerBar",
+                spinStep: 1,
+                selectOnFocus: false,
+            }));
+        }
+        band.appendChild(r1);
+
+        // Euclidean generator parameters (Euclidean only): the
+        // Active Beats COUNT (k), Beat Shift, and Repeats. The
+        // count is the INPUT the pattern is generated from, as
+        // opposed to the Active Beats pattern string shown below.
+        if (mode === "euclidean") {
+            const countAgg = aggregateString(bpObjs, "activeBeatsCount");
+            const shiftAgg = aggregateString(bpObjs, "beatShift");
+            const repeatsAgg = aggregateString(bpObjs, "repeats");
+
+            const rE = mkRow();
+            // Indent this row so the Active Beats COUNT lines up
+            // directly under the Beats/Cycle field in row 1 — it is
+            // "how many of those cycle beats are active", and the
+            // alignment portrays that relationship (and keeps this
+            // count's label out of the left column, where the
+            // Active Beats pattern string's label sits below).
+            // Spacer width = leftLabel + row gap + mode dropdown.
+            const rEIndent = document.createElement("div");
+            rEIndent.style.width = `${W.beatStackLabel + 3 + W.beatPointsMode}px`;
+            rEIndent.style.flexShrink = "0";
+            rE.appendChild(rEIndent);
+            rE.appendChild(mkLabel("Active\nBeats", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            rE.appendChild(this._buildEditableField({
+                value: countAgg === "varies" ? "" : countAgg,
+                numeric: true,
+                width: W.beatNum,
+                editable: active,
+                validator: (c) => validateActiveBeatsCount(c, cycleDur),
+                editKind: "setActiveBeatsCount",
+                spinStep: 1,
+                selectOnFocus: false,
+            }));
+            rE.appendChild(mkLabel("Beat\nShift", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            rE.appendChild(this._buildEditableField({
+                value: shiftAgg === "varies" ? "" : shiftAgg,
+                numeric: true,
+                width: W.beatNum,
+                editable: active,
+                validator: validateBeatShift,
+                editKind: "setBeatShift",
+                spinStep: 1,
+                selectOnFocus: false,
+            }));
+            rE.appendChild(mkLabel("Repeats", { width: W.beatStackLabel, disabled: !active }));
+            rE.appendChild(this._buildEditableField({
+                value: repeatsAgg === "varies" ? "" : repeatsAgg,
+                numeric: true,
+                width: W.beatNum,
+                editable: active,
+                validator: (c) => validateRepeats(c, cycleDur),
+                editKind: "setRepeats",
+                spinStep: 1,
+                selectOnFocus: false,
+            }));
+            band.appendChild(rE);
+        }
+
+        // Active Beats pattern string + Beat Strength digit
+        // string, shown for BOTH Normal and Euclidean. In Normal
+        // the pattern is typed directly; in Euclidean it is the
+        // generated result, and Beat Strength still sets per-beat
+        // velocity. Both strings loop.
+        if (mode === "normal" || mode === "euclidean") {
+            const activeBeatsAgg = aggregateString(bpObjs, "activeBeats");
+            const strengthAgg = aggregateString(bpObjs, "strength");
+            // Beats/Bar drives the live bar grouping in both fields.
+            const bpbForBars = (() => {
+                const n = Number(aggregateString(bpObjs, "beatsPerBar"));
+                return Number.isFinite(n) && n >= 1 ? Math.round(n) : 1;
+            })();
+
+            const rA = mkRow();
+            rA.appendChild(mkLabel("Active\nBeats", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            rA.appendChild(this._buildBeatStringField({
+                value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
+                width: W.beatString,
+                editable: active,
+                beatsPerBar: bpbForBars,
+                kind: "pattern",
+                editKind: "setActiveBeats",
+                ariaLabel: "Active Beats",
+            }));
+            band.appendChild(rA);
+
+            const rS = mkRow();
+            rS.appendChild(mkLabel("Beat\nStrength", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            rS.appendChild(this._buildBeatStringField({
+                value: strengthAgg === "varies" ? "" : strengthAgg,
+                width: W.beatString,
+                editable: active,
+                beatsPerBar: bpbForBars,
+                kind: "strength",
+                editKind: "setStrength",
+                ariaLabel: "Beat Strength",
+            }));
+            band.appendChild(rS);
         }
 
         return band;

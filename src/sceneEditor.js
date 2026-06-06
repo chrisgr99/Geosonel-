@@ -32,6 +32,7 @@
 
 import { generateId, ensureIdCounters } from "./idGen.js";
 import { isValidBeatInterval } from "./beatIntervals.js";
+import { generateEuclideanPattern } from "./euclidean.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
@@ -531,9 +532,13 @@ export function stripObsoleteFields(data) {
     const obsoletePerKind = {
         curves: [
             "cycleDuration", "cycleBeats",
-            "beatsPerBar", "beatOffset",
-            "beatPointsMode", "activeBeatsCount", "beatShift",
-            "repeats", "activeBeats", "strength",
+            "beatOffset",
+            // NOTE: beatPointsMode, activeBeats, strength, beatsPerBar,
+            // activeBeatsCount, beatShift and repeats were on this
+            // obsolete list (stripped at the Strudel pivot) but are
+            // REVIVED as live V2 Band 5 (Beat Points) fields, so they
+            // must NOT be stripped — removing them here was the cause
+            // of Beat Points edits silently reverting on every reload.
             "beatsAreTriggers", "hitBeat", "hitTrigger",
             "beat", "sweep",
             "canCycle", "cyclePatternLocation",
@@ -1760,6 +1765,182 @@ export function setBeatsPerCycleOnSelection(data, selection, value) {
     const n = Math.max(1, Math.round(Number(value)));
     if (!Number.isFinite(n)) return;
     setFieldOnSelection(data, selection, "beatsPerCycle", n);
+    regenerateAndRebarForSelection(data, selection);
+}
+
+/**
+ * Re-group the Active Beats and Beat Strength strings of every
+ * selected curve/sprite into bars of `beatsPerBar` (via
+ * repipeWithBars), optionally REGENERATING the Active Beats
+ * pattern from the Euclidean generator inputs first.
+ *
+ * `regenerate` is true only when a Euclidean PARAMETER changed
+ * (beatsPerCycle, activeBeatsCount, beatShift, repeats, or
+ * switching into euclidean): the pattern is freshly generated as a
+ * STARTER. When the composer instead edits the Active Beats string
+ * directly, or only Beats/Bar changes, `regenerate` is false and
+ * the existing (possibly hand-tweaked) pattern is preserved and
+ * merely re-barred — so a Euclidean pattern is a starting point the
+ * composer can then tweak further (Chris). Beat Strength is always
+ * just re-barred. Objects in mode "none" are left untouched.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} regenerate
+ */
+function applyBeatFieldFormatting(data, selection, regenerate) {
+    /** @type {Array<[string, Iterable<number> | undefined]>} */
+    const arrays = [
+        ["sprites", selection.sprites],
+        ["triggers", selection.triggers],
+        ["curves", selection.curves],
+    ];
+    for (const [arrayKey, indexes] of arrays) {
+        if (indexes === undefined) continue;
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (const idx of indexes) {
+            if (idx < 0 || idx >= arr.length) continue;
+            const entry = arr[idx];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            const mode = entry.beatPointsMode;
+            if (mode !== "normal" && mode !== "euclidean") continue;
+            const bar = Math.max(1, Math.round(Number(entry.beatsPerBar ?? 1)) || 1);
+            if (regenerate && mode === "euclidean") {
+                const n = Math.max(1, Math.round(Number(entry.beatsPerCycle ?? 16)) || 1);
+                const k = Math.max(0, Math.round(Number(entry.activeBeatsCount ?? 0)) || 0);
+                const shift = Math.round(Number(entry.beatShift ?? 0)) || 0;
+                const reps = Math.max(1, Math.round(Number(entry.repeats ?? 1)) || 1);
+                entry.activeBeats = repipeWithBars(generateEuclideanPattern(n, k, shift, reps), bar);
+            } else {
+                // Absent (a brand-new object that has never had the
+                // field written) falls back to the schema default
+                // "x" — NOT "" — so switching into a beat-points
+                // mode doesn't wipe the default single active beat.
+                // An explicitly-emptied string is a real "" and is
+                // preserved.
+                entry.activeBeats = repipeWithBars(
+                    typeof entry.activeBeats === "string" ? entry.activeBeats : "x", bar);
+            }
+            // Beat Strength absent -> schema default "9".
+            entry.strength = repipeWithBars(
+                typeof entry.strength === "string" ? entry.strength : "9", bar);
+        }
+    }
+}
+
+/** Re-bar both beat strings without regenerating — preserves any
+ * hand-edited Active Beats pattern. Used when the composer types
+ * into a string field or changes Beats/Bar. */
+function rebarBeatFieldsForSelection(data, selection) {
+    applyBeatFieldFormatting(data, selection, false);
+}
+
+/** Regenerate the Euclidean Active Beats starter pattern then
+ * re-bar. Used when a Euclidean parameter changes or the mode
+ * switches into euclidean. */
+function regenerateAndRebarForSelection(data, selection) {
+    applyBeatFieldFormatting(data, selection, true);
+}
+
+/**
+ * Re-bar an x/./digit string: strip every existing `|` and
+ * whitespace, then reinsert a `|` after each group of
+ * `beatsPerBar` characters. No trailing pipe — a pipe is placed
+ * only BETWEEN bars, so the bar lines grow and shrink to match
+ * the string's length automatically. Recovered from GXW history
+ * (commit 62285f5; removed in 022ca24 at the Strudel pivot).
+ * @param {string} s
+ * @param {number} beatsPerBar
+ * @returns {string}
+ */
+function repipeWithBars(s, beatsPerBar) {
+    if (typeof s !== "string") return "";
+    const stripped = s.replace(/[|\s]/g, "");
+    // beatsPerBar of 1 (or less) draws NO bar lines — the value is
+    // just the bare x/. (or digit) string.
+    if (beatsPerBar <= 1) return stripped;
+    let result = "";
+    for (let i = 0; i < stripped.length; i++) {
+        result += stripped[i];
+        if ((i + 1) % beatsPerBar === 0 && i < stripped.length - 1) {
+            result += "|";
+        }
+    }
+    return result;
+}
+
+/**
+ * Set the Beat Points mode (Band 5) across the selection — a
+ * lowercase token (none / normal / euclidean). Mutates `data`.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeatPointsModeOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "beatPointsMode", String(value));
+    // Switching into euclidean fills the pattern from the current
+    // generator inputs straight away.
+    regenerateAndRebarForSelection(data, selection);
+}
+
+/**
+ * Set the Active Beats pattern (Band 5) across the selection —
+ * the x / . / | string. Mutates `data`.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setActiveBeatsOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "activeBeats", String(value));
+    rebarBeatFieldsForSelection(data, selection);
+}
+
+/**
+ * Set the Beat Strength digit string (Band 5) across the
+ * selection. Mutates `data`.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setStrengthOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "strength", String(value));
+    rebarBeatFieldsForSelection(data, selection);
+}
+
+/**
+ * Set a numeric Euclidean beat-points parameter (Band 5) across
+ * the selection. The inspector field validates and clamps
+ * before emitting, so this stores the value as a number.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeatsPerBarOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (Number.isFinite(n)) setFieldOnSelection(data, selection, "beatsPerBar", Math.round(n));
+    rebarBeatFieldsForSelection(data, selection);
+}
+
+/** @see setBeatsPerBarOnSelection */
+export function setActiveBeatsCountOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (Number.isFinite(n)) setFieldOnSelection(data, selection, "activeBeatsCount", Math.round(n));
+    regenerateAndRebarForSelection(data, selection);
+}
+
+/** @see setBeatsPerBarOnSelection */
+export function setBeatShiftOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (Number.isFinite(n)) setFieldOnSelection(data, selection, "beatShift", Math.round(n));
+    regenerateAndRebarForSelection(data, selection);
+}
+
+/** @see setBeatsPerBarOnSelection */
+export function setRepeatsOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (Number.isFinite(n)) setFieldOnSelection(data, selection, "repeats", Math.round(n));
+    regenerateAndRebarForSelection(data, selection);
 }
 
 /**
@@ -1919,6 +2100,18 @@ export function setCanAutoMessageOnSelection(data, selection, value) {
  */
 export function setAutoMessageFunctionOnSelection(data, selection, value) {
     setStringFieldOnSelection(data, selection, "autoMessageFunction", String(value));
+}
+
+/**
+ * Set the Automessage Interval (Band 4) on every selected
+ * object — a token from the shared interval menu that sets the
+ * autoMessage callback's fire rate. Mutates `data` in place.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setAutoMessageIntervalOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "autoMessageInterval", String(value));
 }
 
 /**

@@ -640,7 +640,7 @@ export class Curve {
          * 4/4.
          * @type {number}
          */
-        this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+        this.beatsPerCycle = opts.beatsPerCycle ?? 16;
         /**
          * Beat-interval token naming the unit each
          * beatsPerCycle count refers to. Valid tokens are
@@ -653,6 +653,20 @@ export class Curve {
          * @type {string}
          */
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
+        /** @type {"none" | "normal" | "euclidean"} Beat Points mode (Band 5). */
+        this.beatPointsMode = opts.beatPointsMode ?? "none";
+        /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */
+        this.activeBeats = opts.activeBeats ?? "x";
+        /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
+        this.strength = opts.strength ?? "9";
+        /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
+        this.beatsPerBar = opts.beatsPerBar ?? 1;
+        /** @type {number} Euclidean: count of active beats to distribute. */
+        this.activeBeatsCount = opts.activeBeatsCount ?? 0;
+        /** @type {number} Euclidean: rotational shift in slots. */
+        this.beatShift = opts.beatShift ?? 0;
+        /** @type {number} Euclidean: internal repeat count. */
+        this.repeats = opts.repeats ?? 1;
 
         /** @type {boolean} */
         this.canHit = opts.canHit ?? false;
@@ -668,6 +682,8 @@ export class Curve {
         this.canAutoMessage = opts.canAutoMessage ?? false;
         /** @type {string} */
         this.autoMessageFunction = opts.autoMessageFunction ?? "";
+        /** @type {string} Automessage Interval (Band 4): autoMessage fire rate. */
+        this.autoMessageInterval = opts.autoMessageInterval ?? "Off";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
@@ -787,9 +803,23 @@ export class Trigger {
         /** @type {string} */
         this.cyclePattern = opts.cyclePattern ?? "";
         /** @type {number} */
-        this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+        this.beatsPerCycle = opts.beatsPerCycle ?? 16;
         /** @type {string} */
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
+        /** @type {"none" | "normal" | "euclidean"} Beat Points mode (Band 5). */
+        this.beatPointsMode = opts.beatPointsMode ?? "none";
+        /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */
+        this.activeBeats = opts.activeBeats ?? "x";
+        /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
+        this.strength = opts.strength ?? "9";
+        /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
+        this.beatsPerBar = opts.beatsPerBar ?? 1;
+        /** @type {number} Euclidean: count of active beats to distribute. */
+        this.activeBeatsCount = opts.activeBeatsCount ?? 0;
+        /** @type {number} Euclidean: rotational shift in slots. */
+        this.beatShift = opts.beatShift ?? 0;
+        /** @type {number} Euclidean: internal repeat count. */
+        this.repeats = opts.repeats ?? 1;
 
         /** @type {boolean} */
         this.canHit = opts.canHit ?? false;
@@ -805,6 +835,8 @@ export class Trigger {
         this.canAutoMessage = opts.canAutoMessage ?? false;
         /** @type {string} */
         this.autoMessageFunction = opts.autoMessageFunction ?? "";
+        /** @type {string} Automessage Interval (Band 4): autoMessage fire rate. */
+        this.autoMessageInterval = opts.autoMessageInterval ?? "Off";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
@@ -970,9 +1002,23 @@ export class Sprite {
         /** @type {string} */
         this.cyclePattern = opts.cyclePattern ?? "";
         /** @type {number} */
-        this.beatsPerCycle = opts.beatsPerCycle ?? 4;
+        this.beatsPerCycle = opts.beatsPerCycle ?? 16;
         /** @type {string} */
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
+        /** @type {"none" | "normal" | "euclidean"} Beat Points mode (Band 5). */
+        this.beatPointsMode = opts.beatPointsMode ?? "none";
+        /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */
+        this.activeBeats = opts.activeBeats ?? "x";
+        /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
+        this.strength = opts.strength ?? "9";
+        /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
+        this.beatsPerBar = opts.beatsPerBar ?? 1;
+        /** @type {number} Euclidean: count of active beats to distribute. */
+        this.activeBeatsCount = opts.activeBeatsCount ?? 0;
+        /** @type {number} Euclidean: rotational shift in slots. */
+        this.beatShift = opts.beatShift ?? 0;
+        /** @type {number} Euclidean: internal repeat count. */
+        this.repeats = opts.repeats ?? 1;
 
         /** @type {boolean} */
         this.canHit = opts.canHit ?? false;
@@ -988,6 +1034,8 @@ export class Sprite {
         this.canAutoMessage = opts.canAutoMessage ?? false;
         /** @type {string} */
         this.autoMessageFunction = opts.autoMessageFunction ?? "";
+        /** @type {string} Automessage Interval (Band 4): autoMessage fire rate. */
+        this.autoMessageInterval = opts.autoMessageInterval ?? "Off";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;

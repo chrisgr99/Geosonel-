@@ -92,6 +92,30 @@
     margin: 3px 0;
 }
 
+/* Band 5 (Beat Points): the Euclidean mode's first row packs
+ * four label+control groups (mode, Beats/Cycle, Beat Interval,
+ * Beats/Bar). A tighter inter-control gap keeps that row no
+ * wider than the rest of the inspector. */
+.insp-band-beatpoints .insp-row {
+    gap: 3px;
+}
+
+/* Band 5 Active Beats / Beat Strength live-input fields. They
+ * carry .insp-field for the fill/border/size, but are real
+ * <input> elements (for simple caret control), so reset the
+ * input chrome and override the flex display .insp-field sets. */
+.insp-beat-field {
+    display: inline-block;
+    font-family: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+    outline: none;
+}
+
+.insp-beat-field:focus {
+    outline: none;
+}
+
 .insp-row {
     display: flex;
     align-items: center;

@@ -52,6 +52,19 @@ export const W = {
     // "Length" uses the standard leftLabel column).
     dimWidthLabel: 44,
 
+    // Band 5 Beat Points: mode dropdown (None/Normal/Euclidean),
+    // and the wide Active Beats / Beat Strength string fields.
+    // Mode dropdown trimmed so the dense Euclidean row 1 stays no
+    // wider than other inspector rows.
+    beatPointsMode: 84,
+    beatString: 280,
+    // Euclidean-mode compact two-line labels (Beat Points,
+    // Beats/Cycle, Beat Interval, Beats/Bar, Active Beats, Beat
+    // Shift, Repeats) and the small numeric fields beside them.
+    // Kept tight so all four Euclidean row-1 groups fit one line.
+    beatStackLabel: 44,
+    beatNum: 40,
+
     // Band 1 cycle duration numeric field. Small width
     // since the value is typically a single-digit master-
     // beat count (4 by default).
@@ -67,7 +80,7 @@ export const W = {
     // lines ("Beat" / "Interval") so its column is narrower
     // than the single-line text would need, making room for
     // the Speeds field that follows in the same row.
-    beatInterval: 84,
+    beatInterval: 76,
     beatIntervalLabel: 60,
 
     // Band 1 cycle duration row's cycleSpeeds field and

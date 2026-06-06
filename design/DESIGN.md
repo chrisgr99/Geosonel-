@@ -140,6 +140,13 @@ into one contextual button. autoMessage's firing rate is governed by the Automes
 Interval band below. These four callbacks ARE the procedural pattern model (section 3). As in GXW, the callbacks are plain functions in the code tab: CREATE makes the named function, GO TO navigates to it. What commands and context API the callback bodies may call is TO BE DEFINED later; for now the rows plus the create / go-to scaffolding and the named functions are what gets built.
 
 ### Band 4 — Automessage Interval (CONFIRMED)
+STATUS: IMPLEMENTED (slice 4, awaiting Chris's use-validation). New one-row band
+(`_buildBandAutoMessageInterval`, wired into _render after Band 3) holding a single shared
+interval dropdown — no multiplier, no per-source names. New model field
+`autoMessageInterval` (enum, default "Off") on all three kinds, with
+setAutoMessageIntervalOnSelection + setAutoMessageInterval dispatch. Sets the autoMessage
+callback's fire rate; active for any non-empty selection, aggregates across it.
+
 Collapses GeoSonix's three separate interval dropdowns (Cursor, Trigger, Curve) into a
 SINGLE field, which IS the shared interval / note-duration dropdown (just the dropdown,
 no multiplier). It applies its value to whatever object or objects are currently
@@ -147,6 +154,32 @@ selected, and sets the rate of the autoMessage callback. The per-source names (c
 trigger / curve) are dropped.
 
 ### Band 5 — Beat Points (CONFIRMED; retained, renamed)
+STATUS: IMPLEMENTED (slice 5, awaiting Chris's use-validation). New band
+`_buildBandBeatPoints` (wired into _render after Band 4), three rows: mode dropdown
+(None/Normal/Euclidean) + Beats/Cycle; Active Beats string; Beat Strength string. Active
+for curves OR sprites, greyed for triggers/empty. Reuses existing beatsPerCycle field +
+validateActiveBeats / validateStrength validators; new model fields beatPointsMode
+(default "none", lowercase to match the validator), activeBeats, strength on all three
+kinds, with setBeatPointsMode / setActiveBeats / setStrength setters + dispatch. Beat
+Interval and Beats/Bar from the GeoSonix reference are intentionally NOT included (the
+design's V2 field list is mode, Beats/Cycle, Active Beats, Beat Strength).
+
+EUCLIDEAN MODE (2026-06-05, Chris via reference image): selecting Euclidean in the mode
+dropdown reveals more fields, GeoSonix-style. The band is now mode-conditional:
+- None: just the mode dropdown.
+- Normal: Beats/Cycle, then the Active Beats x/./| string and the Beat Strength digit
+  string (as before).
+- Euclidean: row 1 = Beats/Cycle + Beat Interval + Beats/Bar; row 2 = Active Beats (a
+  COUNT k, not a string) + Beat Shift + Repeats. New model fields beatsPerBar,
+  activeBeatsCount, beatShift, repeats (all three kinds) using the pre-existing validators;
+  the pattern generator src/euclidean.js generateEuclideanPattern(cycleDuration, count,
+  shift, repeats) already exists.
+INTERPRETATION/OPEN (confirm with Chris): (a) Beat Interval + Beats/Bar shown only in
+Euclidean here, not Normal; (b) Euclidean drops the Beat Strength field (image shows none);
+(c) the euclidean PARAMS are stored but NOT yet wired to regenerate the activeBeats string
+or to drive runtime — that generation/behaviour stays TBD with the rest of Band 5; (d) the
+Euclidean row 1 is field-dense and may need the wider (~816px) panel.
+
 Formerly GeoSonix's "Curve Beat Points." Retained almost exactly as in GeoSonix (the
 beat-points dropdown, Active Beats, Beat Strength), but renamed to just "Beat Points",
 dropping the curve-specificity. Enabled when a curve OR a sprite is selected; NOT

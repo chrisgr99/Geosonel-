@@ -881,4 +881,166 @@ export const fieldMethods = {
             this._scene.functionMap, name,
         );
     },
+
+    /**
+     * Live-editing field for Band 5's Active Beats and Beat
+     * Strength. Each keystroke is coerced to a single legal
+     * character and bar `|` separators are maintained as the
+     * string grows and shrinks:
+     *   - kind "pattern" (Active Beats): "." stays a dot; any other
+     *     typed character becomes a lowercase "x"; pipes/whitespace
+     *     typed or pasted are dropped (bars are auto-managed).
+     *   - kind "strength" (Beat Strength): only digits 0-9 are
+     *     accepted; everything else is rejected.
+     * After every edit the pipe-free logical string is re-grouped
+     * into bars of opts.beatsPerBar characters (mirrors
+     * sceneEditor.repipeWithBars), with the caret preserved in
+     * logical position. Commit (Enter or blur) emits opts.editKind
+     * with the barred value; the matching setter re-bars it.
+     *
+     * @param {{ value: string, width: number, editable: boolean,
+     *   beatsPerBar: number, kind: "pattern" | "strength",
+     *   editKind: string, ariaLabel?: string }} opts
+     * @returns {HTMLInputElement}
+     */
+    _buildBeatStringField(opts) {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "insp-field insp-beat-field";
+        input.style.width = `${opts.width}px`;
+        input.spellcheck = false;
+        if (opts.ariaLabel) input.setAttribute("aria-label", opts.ariaLabel);
+        input.value = opts.value ?? "";
+        if (!opts.editable) {
+            input.classList.add("disabled");
+            input.disabled = true;
+            return input;
+        }
+
+        const bar = Math.max(1, Math.round(Number(opts.beatsPerBar)) || 1);
+        const isPattern = opts.kind === "pattern";
+        /** @param {string} ch */
+        // A dot can be entered with EITHER the period or the SPACE
+        // bar (space is the natural "rest" key while tapping in a
+        // rhythm). In Active Beats any other key becomes "x"; in
+        // Beat Strength a dot or space becomes a dot, digits 0-9
+        // pass through, and everything else is rejected. (Note:
+        // space is checked before the whitespace-drop rule, so it
+        // maps to "." rather than being discarded; tabs/newlines
+        // and pipes are still dropped.)
+        const transform = isPattern
+            ? (ch) => (ch === "." || ch === " " ? "." : (/[|\s]/.test(ch) ? null : "x"))
+            : (ch) => (ch === "." || ch === " " ? "." : (/[0-9]/.test(ch) ? ch : null));
+        const toLogical = (s) => s.replace(/\|/g, "");
+
+        // Re-bar input.value, restoring the caret to its logical
+        // (pipe-free) position. Call after any content change.
+        const reformat = () => {
+            const disp = input.value;
+            const caret = input.selectionStart ?? disp.length;
+            let logicalCaret = 0;
+            for (let i = 0; i < caret; i++) if (disp[i] !== "|") logicalCaret++;
+            const next = barizeBeatString(toLogical(disp), bar);
+            let off = next.length;
+            let count = 0;
+            for (let i = 0; i <= next.length; i++) {
+                if (count === logicalCaret) { off = i; break; }
+                if (i < next.length && next[i] !== "|") count++;
+            }
+            input.value = next;
+            input.setSelectionRange(off, off);
+        };
+
+        input.addEventListener("beforeinput", (e) => {
+            const t = e.inputType;
+            if (t === "insertText" || t === "insertFromPaste" || t === "insertReplacementText") {
+                e.preventDefault();
+                let ins = "";
+                for (const ch of (e.data ?? "")) {
+                    const r = transform(ch);
+                    if (r !== null) ins += r;
+                }
+                const start = input.selectionStart ?? input.value.length;
+                const end = input.selectionEnd ?? start;
+                input.value = input.value.slice(0, start) + ins + input.value.slice(end);
+                input.setSelectionRange(start + ins.length, start + ins.length);
+                reformat();
+            } else if (t === "deleteContentBackward") {
+                e.preventDefault();
+                let start = input.selectionStart ?? 0;
+                const end = input.selectionEnd ?? start;
+                if (start !== end) {
+                    input.value = input.value.slice(0, start) + input.value.slice(end);
+                    input.setSelectionRange(start, start);
+                } else {
+                    // Skip an auto-inserted pipe so backspace removes
+                    // a real character, not a separator.
+                    if (start > 0 && input.value[start - 1] === "|") start--;
+                    if (start > 0) {
+                        input.value = input.value.slice(0, start - 1) + input.value.slice(start);
+                        input.setSelectionRange(start - 1, start - 1);
+                    }
+                }
+                reformat();
+            } else if (t === "deleteContentForward") {
+                e.preventDefault();
+                let start = input.selectionStart ?? 0;
+                const end = input.selectionEnd ?? start;
+                if (start !== end) {
+                    input.value = input.value.slice(0, start) + input.value.slice(end);
+                } else {
+                    if (start < input.value.length && input.value[start] === "|") start++;
+                    if (start < input.value.length) {
+                        input.value = input.value.slice(0, start) + input.value.slice(start + 1);
+                    }
+                }
+                input.setSelectionRange(start, start);
+                reformat();
+            } else if (t.startsWith("insert")) {
+                e.preventDefault();
+            }
+        });
+
+        let committed = false;
+        const commit = () => {
+            if (committed) return;
+            committed = true;
+            this._emitEdit({ kind: opts.editKind, value: input.value });
+        };
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                commit();
+                input.blur();
+            }
+        });
+        input.addEventListener("blur", () => commit());
+
+        return input;
+    },
 };
+
+/**
+ * Re-bar an x/./digit string: strip every existing `|` and
+ * whitespace, then reinsert a `|` after each group of beatsPerBar
+ * characters (no trailing pipe). Mirrors sceneEditor's
+ * repipeWithBars so the live field and the committed value group
+ * identically.
+ * @param {string} s
+ * @param {number} beatsPerBar
+ * @returns {string}
+ */
+function barizeBeatString(s, beatsPerBar) {
+    if (typeof s !== "string") return "";
+    const stripped = s.replace(/[|\s]/g, "");
+    // beatsPerBar of 1 (or less) draws no bar lines.
+    if (beatsPerBar <= 1) return stripped;
+    let result = "";
+    for (let i = 0; i < stripped.length; i++) {
+        result += stripped[i];
+        if ((i + 1) % beatsPerBar === 0 && i < stripped.length - 1) {
+            result += "|";
+        }
+    }
+    return result;
+}
