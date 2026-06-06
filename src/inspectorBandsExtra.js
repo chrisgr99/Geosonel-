@@ -15,6 +15,7 @@ import {
 } from "./inspectorShared.js";
 import {
     mkCheckbox,
+    mkInlineLetter,
     mkLabel,
     mkRow,
     proposedFunctionName,
@@ -470,6 +471,17 @@ export const bandExtraMethods = {
         band.appendChild(r1);
 
         const syncAgg = aggregateString(objs.triggers, "triggerSyncToBeat");
+        // Time Lag In Object aggregates across the WHOLE selection
+        // (universal across kinds), independent of Trigger Sync.
+        const allObjs = [...objs.curves, ...objs.triggers, ...objs.sprites];
+        const anySelected = ctx.total > 0;
+        const timeLagMultAgg = aggregateString(allObjs, "timeLagMultiplier");
+        const timeLagIntervalAgg = aggregateString(allObjs, "timeLagInterval");
+        const timeLagIntervalValue =
+            (timeLagIntervalAgg === "varies" || timeLagIntervalAgg === "")
+                ? ""
+                : timeLagIntervalAgg;
+
         const r2 = mkRow();
         r2.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.leftLabel, disabled: !triggerActive, multiline: true }));
         r2.appendChild(this._buildDropdownField({
@@ -478,6 +490,39 @@ export const bandExtraMethods = {
             width: W.timeLagInterval,
             editable: triggerActive,
             editKind: "setTriggerSyncToBeat",
+        }));
+        // Time Lag In Object: moved here from Band 1 (to make room
+        // for Group). Universal across kinds — editable for any
+        // non-empty selection. Separated from Trigger Sync To Beat
+        // by a FIXED gap (not margin-left:auto) so the two read as
+        // unrelated controls without the field riding to the far
+        // edge when the inspector pane is widened; the fixed gap
+        // keeps this row no wider than the other inspector lines.
+        // A multiplier times an interval from the shared menu; the
+        // "x" reads "times". Runtime behaviour is still TBD.
+        const timeLagLabel = mkLabel("Time Lag", {
+            width: W.timeLagLabel,
+            disabled: !anySelected,
+        });
+        timeLagLabel.style.marginLeft = "40px";
+        r2.appendChild(timeLagLabel);
+        r2.appendChild(this._buildEditableField({
+            value: timeLagMultAgg === "varies" ? "" : timeLagMultAgg,
+            numeric: true,
+            width: W.timeLagMult,
+            editable: anySelected,
+            validator: (c) => validateNumber(c, { min: 0 }),
+            editKind: "setTimeLagMultiplier",
+            spinStep: 1,
+            selectOnFocus: false,
+        }));
+        r2.appendChild(mkInlineLetter("x", { disabled: !anySelected }));
+        r2.appendChild(this._buildDropdownField({
+            options: INTERVAL_OPTIONS,
+            value: timeLagIntervalValue,
+            width: W.timeLagInterval,
+            editable: anySelected,
+            editKind: "setTimeLagInterval",
         }));
         band.appendChild(r2);
 

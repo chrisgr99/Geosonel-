@@ -124,6 +124,7 @@ import {
     setStateOnSelection,
     setHideOnCurves,
     setNameOnSelection,
+    setGroupOnSelection,
     setTimeLagMultiplierOnSelection,
     setTimeLagIntervalOnSelection,
     translateSelection,
@@ -3557,6 +3558,10 @@ async function main() {
             } else if (edit.kind === "setName") {
                 await applySceneEdit((data) =>
                     setNameOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setGroup") {
+                await applySceneEdit((data) =>
+                    setGroupOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setTimeLagMultiplier") {
                 await applySceneEdit((data) =>

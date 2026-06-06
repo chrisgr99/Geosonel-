@@ -991,6 +991,19 @@ export function setNameOnSelection(data, selection, value) {
     setStringFieldOnSelection(data, selection, "name", value);
 }
 /**
+ * Set the Group (Band 1) on every selected object. An empty
+ * string clears membership (ungrouped); any other string is the
+ * group name. The inspector supplies either an existing name or
+ * a freshly prompted one. Mutates `data` in place.
+ *
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setGroupOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "group", String(value));
+}
+/**
  * Set the Time Lag In Object multiplier (Band 1) on every
  * selected object. The value arrives as the validated numeric
  * string from the inspector; stored as a number. Mutates

@@ -37,6 +37,11 @@ export const W = {
     timeLagMult: 44,
     timeLagInterval: 84,
 
+    // Band 1 (GeoSonixV2) Group control: a short "Group" label
+    // and a dropdown wide enough to show a typical group name.
+    groupLabel: 44,
+    group: 120,
+
     // Band 3 function-name and cyclePattern fields. Sized
     // to match the Name field width so the right edge of
     // Band 3 lines up with Band 1's Name row.

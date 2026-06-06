@@ -236,6 +236,11 @@ export const CURVE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
     { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "passive", "disabled"] },
+    // Group membership (Band 1). Empty string = ungrouped. A
+    // group name lets a selector address every object tagged
+    // with it; the inspector offers existing names plus a
+    // "New group…" prompt. See DESIGN.md section 3 (substrate).
+    { key: "group", label: "Group", type: "string", default: "" },
     ...TIME_LAG_FIELDS,
     // Deprecated; see the CURVE_FIELDS JSDoc above. Honoured
     // by the runtime for backward compatibility; not surfaced
@@ -275,6 +280,7 @@ export const TRIGGER_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
     { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "disabled"] },
+    { key: "group", label: "Group", type: "string", default: "" },
     ...TIME_LAG_FIELDS,
     { key: "x", label: "X", type: "number", default: 0 },
     { key: "y", label: "Y", type: "number", default: 0 },
@@ -302,6 +308,7 @@ export const SPRITE_FIELDS = [
     { key: "id", label: "Object ID", type: "string", default: null },
     { key: "name", label: "Name", type: "string", default: "" },
     { key: "state", label: "State", type: "enum", default: "active", enumValues: ["active", "passive", "disabled"] },
+    { key: "group", label: "Group", type: "string", default: "" },
     ...TIME_LAG_FIELDS,
     { key: "x", label: "X", type: "number", default: 0 },
     { key: "y", label: "Y", type: "number", default: 0 },

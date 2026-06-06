@@ -349,12 +349,21 @@ export const fieldMethods = {
      * field's footprint stays visible so the row layout
      * doesn't shift when the gate flips.
      *
+     * onChange override: when opts.onChange is supplied it runs
+     * instead of the default _emitEdit on a change, receiving
+     * (selectedValue, selectElement). The Group dropdown uses this
+     * to intercept its "New group…" sentinel (prompt for a name)
+     * and its "None" value before committing. editKind is then
+     * optional. Returning the select element lets the handler
+     * reset el.value on a cancelled prompt.
+     *
      * @param {{
      *   options: Array<{value: string, label: string}>,
      *   value: string,
      *   width: number,
      *   editable: boolean,
-     *   editKind: string,
+     *   editKind?: string,
+     *   onChange?: (value: string, el: HTMLSelectElement) => void,
      * }} opts
      * @returns {HTMLSelectElement}
      */
@@ -379,7 +388,11 @@ export const fieldMethods = {
         el.value = opts.value;
         if (opts.editable) {
             el.addEventListener("change", () => {
-                this._emitEdit({ kind: opts.editKind, value: el.value });
+                if (typeof opts.onChange === "function") {
+                    opts.onChange(el.value, el);
+                } else {
+                    this._emitEdit({ kind: opts.editKind, value: el.value });
+                }
             });
         }
         return el;

@@ -1,7 +1,7 @@
 import {
     validateNumber,
 } from "./curveFieldValidation.js";
-import { INTERVAL_OPTIONS } from "./intervalMenu.js";
+import { promptDialog } from "./dialog.js";
 import {
     aggregateColor,
     aggregateCurveSize,
@@ -175,17 +175,6 @@ export const bandObjectMethods = {
         r1.appendChild(stateGroup);
         band.appendChild(r1);
 
-        // Aggregate the Time Lag In Object fields across the
-        // whole selection (universal across kinds). "varies"
-        // renders as a blank field / blank dropdown trigger; a
-        // typed value or chosen interval commits uniformly.
-        const timeLagMultAgg = aggregateString(objs.all, "timeLagMultiplier");
-        const timeLagIntervalAgg = aggregateString(objs.all, "timeLagInterval");
-        const timeLagIntervalValue =
-            (timeLagIntervalAgg === "varies" || timeLagIntervalAgg === "")
-                ? ""
-                : timeLagIntervalAgg;
-
         // Object Name: reuses GXW's `name` field, but rendered
         // BLANK and non-editable for now. There is no defined way
         // to author object names yet, and the legacy `name` holds
@@ -205,37 +194,119 @@ export const bandObjectMethods = {
             objId: null,
             width: W.objectName,
         }));
-        // Time Lag In Object: a multiplier times an interval
-        // from the shared interval menu. The "x" reads as
-        // "times"; the lag is denominated in the chosen
-        // interval. Universal across kinds — editable for any
-        // non-empty selection. Behaviour is TBD; this is model
-        // and inspector scaffolding for now.
-        r2.appendChild(mkLabel("Time Lag", {
-            width: W.timeLagLabel,
+        // Group (Band 1). Group membership is universal across
+        // kinds — editable for any non-empty selection. The
+        // dropdown offers every group name already defined in the
+        // scene, plus None (ungroup), plus a "New group…" entry
+        // that prompts for a name. Time Lag formerly sat here; it
+        // moved to the Cycle band to make room. See _buildGroupField.
+        r2.appendChild(mkLabel("Group", {
+            width: W.groupLabel,
             disabled: !togglesEnabled,
         }));
-        r2.appendChild(this._buildEditableField({
-            value: timeLagMultAgg === "varies" ? "" : timeLagMultAgg,
-            numeric: true,
-            width: W.timeLagMult,
-            editable: togglesEnabled,
-            validator: (c) => validateNumber(c, { min: 0 }),
-            editKind: "setTimeLagMultiplier",
-            spinStep: 1,
-            selectOnFocus: false,
-        }));
-        r2.appendChild(mkInlineLetter("x", { disabled: !togglesEnabled }));
-        r2.appendChild(this._buildDropdownField({
-            options: INTERVAL_OPTIONS,
-            value: timeLagIntervalValue,
-            width: W.timeLagInterval,
-            editable: togglesEnabled,
-            editKind: "setTimeLagInterval",
-        }));
+        r2.appendChild(this._buildGroupField(objs.all, togglesEnabled));
         band.appendChild(r2);
 
         return band;
+    },
+
+    /**
+     * Build the Band 1 Group dropdown.
+     *
+     * Display rule (Chris's spec): with NO groups defined anywhere
+     * in the scene the trigger is BLANK; with groups defined, an
+     * object in a group shows that group's name and an ungrouped
+     * object shows "None". A divergent multi-select shows blank.
+     *
+     * Options: every distinct group name currently in the scene,
+     * a "None" entry (only when groups exist) that clears
+     * membership, and a "New group…" entry that prompts for a name
+     * and assigns it. Joining is limited to names that already
+     * exist; new names are born through the prompt (or, later,
+     * through construction code's setGroup).
+     *
+     * Internals: the stored `group` field is "" (ungrouped) or a
+     * name. The "None" option carries value "" so an ungrouped
+     * object selects it when groups exist, and falls through to a
+     * blank trigger when none do (no None option present). "New
+     * group…" and the varies state use sentinel values that match
+     * no real option, handled in onChange before any commit.
+     *
+     * @param {any[]} selectedObjs  The selected objects (all kinds).
+     * @param {boolean} editable
+     * @returns {HTMLSelectElement}
+     */
+    _buildGroupField(selectedObjs, editable) {
+        const NEW_SENTINEL = " __newgroup__";
+        const VARIES_SENTINEL = " __varies__";
+
+        const names = this._collectGroupNames();
+        const hasGroups = names.length > 0;
+
+        const groupAgg = aggregateString(selectedObjs, "group");
+        // The select value that produces the right trigger text:
+        // a real name selects its option; "" selects None when
+        // groups exist (else no match -> blank); varies -> a
+        // non-matching sentinel -> blank.
+        const displayValue = groupAgg === "varies" ? VARIES_SENTINEL : groupAgg;
+
+        /** @type {Array<{value: string, label: string}>} */
+        const options = [];
+        if (hasGroups) {
+            options.push({ value: "", label: "None" });
+            for (const n of names) options.push({ value: n, label: n });
+        }
+        options.push({ value: NEW_SENTINEL, label: "New group…" });
+
+        return this._buildDropdownField({
+            options,
+            value: displayValue,
+            width: W.group,
+            editable,
+            onChange: (value, el) => {
+                if (value === NEW_SENTINEL) {
+                    // Reset the visible trigger immediately; the
+                    // prompt is async and a successful create will
+                    // re-render the whole inspector anyway.
+                    el.value = displayValue;
+                    promptDialog({
+                        title: "New group",
+                        description: "Name the group these objects join.",
+                        okLabel: "Create",
+                    }).then((name) => {
+                        const trimmed = (name ?? "").trim();
+                        if (trimmed !== "") {
+                            this._emitEdit({ kind: "setGroup", value: trimmed });
+                        }
+                    });
+                    return;
+                }
+                // A real name joins that group; "" (the None
+                // option) clears membership.
+                this._emitEdit({ kind: "setGroup", value });
+            },
+        });
+    },
+
+    /**
+     * Collect the distinct, sorted group names defined across the
+     * whole scene (every curve, trigger, and sprite). Empty
+     * strings (ungrouped) are excluded. Returns [] before the
+     * scene loads. The Group dropdown uses this for its
+     * join-an-existing-group options.
+     * @returns {string[]}
+     */
+    _collectGroupNames() {
+        if (this._scene === null) return [];
+        const set = new Set();
+        for (const arr of [this._scene.curves, this._scene.triggers, this._scene.sprites]) {
+            if (!Array.isArray(arr)) continue;
+            for (const obj of arr) {
+                const g = obj && typeof obj.group === "string" ? obj.group : "";
+                if (g !== "") set.add(g);
+            }
+        }
+        return [...set].sort();
     },
 
     /**

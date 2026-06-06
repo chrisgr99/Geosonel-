@@ -457,6 +457,10 @@ export class Curve {
          * @type {"active" | "passive" | "disabled"}
          */
         this.state = opts.state ?? "active";
+        // Group membership (Band 1, GeoSonixV2): "" = ungrouped,
+        // else a group name a selector can address. See DESIGN.md
+        // section 3 (the substrate).
+        this.group = opts.group ?? "";
         // Time Lag In Object (Band 1, GeoSonixV2): a multiplier
         // counted in units of an interval from the shared interval
         // menu. Behaviour (how the lag delays the object) is TBD;
@@ -748,6 +752,10 @@ export class Trigger {
          * @type {"active" | "disabled"}
          */
         this.state = opts.state ?? "active";
+        // Group membership (Band 1, GeoSonixV2): "" = ungrouped,
+        // else a group name a selector can address. See DESIGN.md
+        // section 3 (the substrate).
+        this.group = opts.group ?? "";
         // Time Lag In Object (Band 1, GeoSonixV2): a multiplier
         // counted in units of an interval from the shared interval
         // menu. Behaviour (how the lag delays the object) is TBD;
@@ -898,6 +906,10 @@ export class Sprite {
          * @type {"active" | "passive" | "disabled"}
          */
         this.state = opts.state ?? "active";
+        // Group membership (Band 1, GeoSonixV2): "" = ungrouped,
+        // else a group name a selector can address. See DESIGN.md
+        // section 3 (the substrate).
+        this.group = opts.group ?? "";
         // Time Lag In Object (Band 1, GeoSonixV2): a multiplier
         // counted in units of an interval from the shared interval
         // menu. Behaviour (how the lag delays the object) is TBD;
