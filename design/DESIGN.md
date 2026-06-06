@@ -44,6 +44,89 @@ promoted to the primary authoring model.
 [TODO: the authoring surface for writing these callbacks; the context/API available
 inside them; how the harmony layer maps their output; the enhancements Chris has in mind.]
 
+### Reference example: the GeoSonix code tab (the target authoring model)
+GeoSonix's code tab could define an ENTIRE scene procedurally, and we want the same kind
+of thing. A representative script (pasted by Chris) builds 200 ellipse-arranged curves —
+each with a cursor and a trigger — then defines a per-firing message function:
+
+```
+var nLines = 200;
+clear();
+rotate();
+center(0, 0);
+zoom(75);
+rewind();
+setBPM(80);
+setChord(chmin7);
+//Ellipse curves
+var circleRadius  = -8;
+var triggerCircle = 9;
+for(var lineIndex = 0;  lineIndex < nLines;  lineIndex++) {
+    var angle = map(lineIndex, 0, nLines, 0, TWO_PI);
+    addLine(lineIndex, 
+        {x: lineIndex/nLines * 10,  y: circleRadius  * sin(angle)},
+        {x: triggerCircle * cos(angle),  y: triggerCircle * sin(angle)});
+}
+setColor("lines", 50, 150, 91, 255);
+setColor("cursors", 55,  99,  190, 200);
+setColor("triggers", 230,  40,  160, 200);
+setLineThickness("lines",1);
+setLineThickness("cursors",3);
+clearSelection();
+//Custom function
+function addLine(lineIndex, start, end) {
+    id=addCurve(1000 + lineIndex);
+    setGroup("lines");
+    setPointAt(0, start.x, start.y);
+    setPointAt(1, end.x, end.y);
+    var id = addCursor(lineIndex);
+    setGroup("cursors");
+    setCurve();
+    setCursorWidth(id, .2+.2* lineIndex / nLines,0);
+    setPattern("3 -6 3 -6");
+    setSpeed(0.2 + lineIndex / (nLines*50));
+    addTrigger(2000 + lineIndex,end.x, end.y);
+    setGroup(2000 + lineIndex,"triggers");
+}
+function triggerMessage() {
+    if (_score.hasBackgroundImage) {
+        note = this.note?this.note:mapHarmony(this.cursor.r,0,1);
+        vel = map(this.cursor.g,0,1,60,90);
+    } else {
+        note = this.note?this.note:mapHarmony(this.cursor.angle,0,359);
+        vel = map(this.cursor.x,-triggerCircle,triggerCircle,100,50);
+    }
+    dur = map(this.b,0,1,500,2500);
+    midi.note(this.port,this.channel,note,vel,dur,100)
+}
+```
+
+It shows TWO API surfaces sharing one code tab:
+- Scene construction, run once: global setup (clear, center, zoom, rewind, setBPM,
+  setChord); object creation via a stateful CURRENT-OBJECT builder (addCurve / addCursor /
+  addTrigger create and select an object; setGroup / setPointAt / setPattern / setSpeed /
+  setCursorWidth then act on the current object); group styling (setColor / setLineThickness
+  by group name); and math helpers (map, sin, cos, TWO_PI) — all plain JS with vars, loops,
+  and user functions like addLine.
+- The message-function / callback surface, run per firing event (triggerMessage): a `this`
+  firing context — this.cursor.r / .g / .angle / .x, this.note, this.b (beat position),
+  this.port, this.channel, plus _score.hasBackgroundImage — with mapHarmony mapping a
+  continuous value to a pitch against the current chord, and note output (GeoSonix
+  midi.note, which becomes our playNote).
+
+Notable for the GeosonixV2 design: GeoSonix patterns were simple scale-degree sequences
+("3 -6 3 -6"), and pitches were often derived by mapHarmony from a continuous value rather
+than spelled out — so the harmony layer (Tonal) plus scale-degree mapping is central, and
+the deterministic Strudel evaluator is a complement to it, not the main path. And a code
+surface builds the scene itself, not just per-object behaviour.
+
+OPEN QUESTION (where the design paused, 2026-06-06): should procedural scene-construction
+code build the SAME scene the canvas renders and the inspector edits — code and inspector
+as two views of one scene — and should the engine design cover the scene-construction API
+alongside the callbacks now, or do the callback API first with construction as a parallel
+track? Also on the table: inventory Chris's GeoSonix scores in ~/Documents/Geosonix Scores
+for the full command vocabulary before drafting the API.
+
 ## 4. The property inspector (as built)
 The inspector was restructured band by band with Chris to follow GeoSonix's object
 inspector more closely while remaining its own thing. This section describes the
@@ -221,3 +304,54 @@ geometric heart, largely unchanged.
 The Strudel mini-notation language; the two-pass firing engine; the Code-tab Strudel
 tooling (autocomplete, Ctrl-hover tooltips, and the shelved readability work); the
 composition mirror; mapClip feeding mini-notation.
+
+## 10. Engine migration map (step-1 triage)
+The keep / change / remove decision per file and subsystem, worked through with Chris
+before designing the engine. The new engine IS the procedural-fire and output spine of
+the old firing engine, driven by the simulation and the callbacks; the Strudel pattern
+machinery is removed; Strudel survives only as an on-demand deterministic evaluator
+reached from procedural code.
+
+KEEP (the spine, largely as-is): runtime.js (superdough sound output); midiSender.js
+(MIDI to the GeoSonel port); simulation.js (cursors, cycles, cycleProgress — the local
+clock that positions firing); transport.js and transportBar.js (master clock, BPM, play
+state); canvasCollision.js (collision detection feeding hasHit / beenHit); behaviors.js
+(the procedural callback bodies — the authoring home); auditionBar.js and the seed/ folder
+(mutation and audition); oklch.js (colour conversion behind the pixel reads). From
+firingEngine.js, keep the procedural-fire and output spine: fireImmediateNote /
+fireImmediateSound / fireImmediateValue, the superdough-versus-MIDI dispatch with its
+output-mode switch and MIDI panic, applyVoiceInjection / applyVoiceEnvelope and the
+VOICE_ENVELOPES table, the seam guard (setSeamBoundary), the firing-event flash signal,
+and lazy sample loading.
+
+CHANGE (kept but reframed): patternParse.js is kept ONLY as the on-demand deterministic
+pattern evaluator — compile a pattern string and query one cycle into events, called
+procedurally; never a live engine. signals.js reduces to the procedural colour reads:
+keep imageSignalsFromOKLCh (the OKLCh-to-ten-values colour math) feeding the callback
+context's pixel reads (ctx.pxLt, ctx.pxR, and so on), and keep mapClip as a plain numeric
+clamp-and-remap helper. firingEngine.js reduces to the spine above with the pattern
+machinery removed. debugTap.js becomes a plain variadic print(...) that writes its
+arguments to the message area, space-separated, no labels. The Code tab loses its
+Strudel-language tooling but keeps the editor and the accessibility aids (parenthesis
+highlighting, speak-on-hover) repurposed for JavaScript, and its autocomplete is swapped
+to JavaScript completion — keywords, in-scope variables and functions, and the GXW
+procedural API (playNote, playSound, the colour reads, print).
+
+REMOVE: from firingEngine.js, the two-pass pattern engine — compile-to-Strudel-pattern and
+query scheduling, Pass 1 populate and Pass 2 refresh, the one-cycle-ahead scheduling, the
+per-source dirty-flag and cycle bookkeeping, and the per-tick snapshot capture for dynamic
+signals. firingContext.js (the live Pass-2 context pointer). The Strudel signal patterns
+in signals.js — the px* signal() wrappers, installImageSignals and its window globals, the
+getFiringContext dependency, and mapClip's Strudel-Pattern form. diskMirror.js and
+mirrorPush.js (the composition mirror). The strudel/codemirror Strudel tooling —
+mini-notation autocomplete, the Control-hover Strudel documentation tooltips, and the
+Strudel-pattern syntax highlighting.
+
+STILL TBD (for the section-3 engine design): how a pattern's playback rate is set (the
+object's local cursor clock, locked to the global BPM, is the likely default, with the
+global clock available); how cross-cycle pattern modifiers pick their cycle index when a
+static pattern repeats; the precise procedural shape of the on-demand pattern call; and
+what becomes of the cursor-target highlight and the old labelled-block model
+(cursorTargets.js / patternHighlight.js) now that pattern authoring is procedural. Also a
+cleanup detail: reconcile the two runtime files (src/strudelRuntime.js versus
+src/strudel/runtime.js) during the build.
