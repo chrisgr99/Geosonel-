@@ -1,0 +1,134 @@
+// Unit tests for beat-point derivation (src/beatPoints.js), the
+// normal / euclidean paths.
+//
+// These walk the activeBeats x/dot string and the strength digit
+// string — pure string work, no DOM and no Strudel runtime — so they
+// run under `node --test`. The Strudel path is NOT exercised here: it
+// needs window + the loaded Strudel globals and is verified in the
+// browser. beatPoints imports patternParse, which is self-contained
+// (it only touches `window` inside its function body), so importing
+// the module offline is safe as long as the Strudel path isn't called.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import { deriveCurveBeatPoints } from "../src/beatPoints.js";
+
+function curve(fields) {
+    return { id: "CRV1", beatPointsMode: "normal", activeBeats: "", strength: "", beatPattern: "", ...fields };
+}
+
+test("mode none yields no beat points", () => {
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "none", activeBeats: "x.x." }));
+    assert.deepEqual(r.positions, []);
+    assert.deepEqual(r.strengths, []);
+    assert.deepEqual(r.inactivePositions, []);
+});
+
+test("normal: every-slot pattern places a beat per x at slot fraction", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x.x.", strength: "9595" }));
+    assert.deepEqual(r.positions, [0, 0.5]);
+    assert.deepEqual(r.strengths, [9, 9]);
+});
+
+test("normal: dot slots become inactive positions (drawn small, not fired)", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x.x.", strength: "9595" }));
+    // x at slots 0,2 (active); . at slots 1,3 (inactive) -> .25, .75
+    assert.deepEqual(r.positions, [0, 0.5]);
+    assert.deepEqual(r.inactivePositions, [0.25, 0.75]);
+});
+
+test("normal: all-rest pattern is all inactive positions", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "....", strength: "9999" }));
+    assert.deepEqual(r.positions, []);
+    assert.deepEqual(r.inactivePositions, [0, 0.25, 0.5, 0.75]);
+});
+
+test("normal: strengths align slot-for-slot, including on rest slots", () => {
+    // active at slots 0 and 3 of 4; strengths read at those slots (7 and 4).
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x..x", strength: "7654" }));
+    assert.deepEqual(r.positions, [0, 0.75]);
+    assert.deepEqual(r.strengths, [7, 4]);
+});
+
+test("bars and whitespace are layout only and ignored", () => {
+    const a = deriveCurveBeatPoints(curve({ activeBeats: "x.x.|x.x.", strength: "9999|9999", beatPointsMode: "normal" }));
+    // 8 slots, x at 0,2,4,6 -> fractions 0, .25, .5, .75
+    assert.deepEqual(a.positions, [0, 0.25, 0.5, 0.75]);
+    assert.deepEqual(a.strengths, [9, 9, 9, 9]);
+});
+
+test("missing or non-digit strength slot falls back to default 9", () => {
+    // strength string shorter than active-beats string.
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "xxxx", strength: "12" }));
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
+    assert.deepEqual(r.strengths, [1, 2, 9, 9]);
+});
+
+test("strength digit 0 is a real zero-strength beat (still a beat point)", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "xx", strength: "09" }));
+    assert.deepEqual(r.positions, [0, 0.5]);
+    assert.deepEqual(r.strengths, [0, 9]);
+});
+
+test("euclidean uses the same activeBeats-string path", () => {
+    // euclidean stores its generated pattern in activeBeats; derivation
+    // is identical to normal.
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "euclidean", activeBeats: "x..x..x.", strength: "99999999" }));
+    assert.deepEqual(r.positions, [0, 0.375, 0.75]);
+    assert.deepEqual(r.strengths, [9, 9, 9]);
+});
+
+test("all-rest pattern yields no beat points", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "....", strength: "9999" }));
+    assert.deepEqual(r.positions, []);
+    assert.deepEqual(r.strengths, []);
+});
+
+test("empty activeBeats yields no beat points", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "", strength: "" }));
+    assert.deepEqual(r.positions, []);
+    assert.deepEqual(r.strengths, []);
+});
+
+test("uppercase X is also treated as a beat", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "X.", strength: "9" }));
+    assert.deepEqual(r.positions, [0]);
+    assert.deepEqual(r.strengths, [9]);
+});
+
+// --- Strudel mode: flat space-separated sequences parse natively
+// (no engine). Operator patterns route to the engine and aren't
+// exercised here.
+
+test("strudel flat: 'x x x x' places four even beats, no engine", () => {
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "strudel", beatPattern: "x x x x" }));
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
+    assert.deepEqual(r.strengths, [9, 9, 9, 9]);
+});
+
+test("strudel flat: '0 3 ~ 9' reads digit strengths; the rest is an inactive position", () => {
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "strudel", beatPattern: "0 3 ~ 9" }));
+    assert.deepEqual(r.positions, [0, 0.25, 0.75]);
+    assert.deepEqual(r.strengths, [0, 3, 9]);
+    assert.deepEqual(r.inactivePositions, [0.5]);
+});
+
+test("strudel flat: off-grid eighths via rests, rests recorded as inactive", () => {
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "strudel", beatPattern: "x ~ x ~ x ~ x ~" }));
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
+    assert.deepEqual(r.strengths, [9, 9, 9, 9]);
+    assert.deepEqual(r.inactivePositions, [0.125, 0.375, 0.625, 0.875]);
+});
+
+test("strudel flat: extra whitespace between tokens is tolerated", () => {
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "strudel", beatPattern: "  x   x  " }));
+    assert.deepEqual(r.positions, [0, 0.5]);
+    assert.deepEqual(r.strengths, [9, 9]);
+});
+
+test("strudel empty pattern yields no beat points", () => {
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "strudel", beatPattern: "   " }));
+    assert.deepEqual(r.positions, []);
+    assert.deepEqual(r.strengths, []);
+});

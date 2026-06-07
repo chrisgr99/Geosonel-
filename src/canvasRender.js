@@ -4,9 +4,21 @@ import {
 } from "./canvasShared.js";
 import { applyBrightnessReduction } from "./imageTransform.js";
 import { getPreference } from "./preferences.js";
-import { parsePatternToPositions } from "./strudel/patternParse.js";
+import { deriveCurveBeatPoints } from "./beatPoints.js";
 import { buildOKLChBuffer } from "./strudel/oklch.js";
 import { sampleCurve } from "./curveGeometry.js";
+
+/**
+ * Beat-point diamond sizing (§3.1a). An ACTIVE beat draws at the
+ * default trigger size (0.35 canvas units, the schema default for
+ * a trigger's `size`) times the score's triggerScale, so it reads
+ * exactly like a normal trigger and scales with zoom the same way.
+ * An INACTIVE beat (rest) draws at this fraction of the active
+ * radius — visibly smaller, marking the grid without competing
+ * with the accents.
+ */
+const BEAT_POINT_ACTIVE_UNITS = 0.35;
+const BEAT_POINT_INACTIVE_RATIO = 0.5;
 
 /**
  * Rendering method bundle for the Canvas module (prototype-mixin
@@ -303,133 +315,134 @@ export const renderMethods = {
     },
 
     _drawCurveMarkers(curve) {
-        const positions = this._curveMarkerPositions.get(curve.id);
-        if (positions === undefined || positions.length === 0) return;
+        const active = this._curveMarkerPositions.get(curve.id);
+        const inactive = this._curveInactiveBeatPositions.get(curve.id);
+        const hasActive = active !== undefined && active.length > 0;
+        const hasInactive = inactive !== undefined && inactive.length > 0;
+        if (!hasActive && !hasInactive) return;
 
         const ctx = this.ctx;
-
-        // Markers render as miniature triggers per section
-        // 28's marker layout interpretation: image-filled
-        // with the trigger boundary colour, rotated so two
-        // opposite vertices lie along the curve's tangent
-        // at the sample point. Marker size is constant in
-        // CSS pixels rather than scaled with zoom so the
-        // markers stay legible at every zoom level without
-        // disappearing when zoomed out or overwhelming the
-        // curve when zoomed in. 5 px half-size sits a touch
-        // above the typical trigger pixel radius at default
-        // zoom, so a marker reads visually as a slightly
-        // chunkier trigger — enough to register as a beat
-        // position without competing with the curve itself.
-        const halfPx = 5;
-
         ctx.lineWidth = 1.5;
 
+        // Beat-point diamonds are sized RELATIVE to a trigger and
+        // scale with zoom like one. The size reflects whether the
+        // beat will SOUND, not just whether it fires: a LARGE
+        // diamond (a default trigger's radius, 0.35 units × the
+        // score's triggerScale) is a beat with strength > 0 — it
+        // will be heard; a SMALL diamond (0.7× that) is a silent
+        // position — a strength-0 beat (fires onActiveBeat but at
+        // zero velocity, so inaudible) OR a rest/dot (no beat at
+        // all). The 0.7 is applied to the floored large radius so
+        // the difference holds even at far zoom-out. Small
+        // diamonds are a visual aid for reading the pattern on the
+        // curve; they have no effect on firing. Orientation
+        // follows the curve tangent, as before.
+        const scale = this._scene === null ? 1 : this._scene.triggerScale;
+        const largeR = Math.max(3, BEAT_POINT_ACTIVE_UNITS * scale * this.pixelsPerUnit);
+        const smallR = largeR * BEAT_POINT_INACTIVE_RATIO;
+        const strengths = this._curveBeatStrengths.get(curve.id);
+
         // Firing-event flash. The persistent-until-superseded
-        // semantics for curves mean at most one marker on
-        // this curve carries the yellow stroke at any time;
-        // the value lives in _curveFlashAbsoluteFractional
-        // and equals the GXW-cycle position of the most
-        // recently fired beat. Per-marker match against the
-        // stored value drives the stroke override, with the
-        // FIRING_FLASH_MATCH_EPS tolerance guarding against
-        // any rounding-error drift. Curves with no entry in
-        // the registry (never fired, or just rewound) draw
-        // every marker in the regular boundary colour.
+        // semantics for curves mean at most one marker on this
+        // curve carries the yellow stroke at any time; the value
+        // lives in _curveFlashAbsoluteFractional and equals the
+        // GXW-cycle position of the most recently fired beat.
+        // Per-marker match drives the stroke override, with
+        // FIRING_FLASH_MATCH_EPS guarding rounding drift. Only
+        // beats fire (active positions), so only they can flash —
+        // including a small strength-0 beat.
         const flashAbsFrac = this._curveFlashAbsoluteFractional.get(curve.id);
 
-        for (const t of positions) {
-            const sample = sampleCurve(curve.shape, t);
-            if (sample === null) continue;
-            const px = this.toPixelX(sample.x);
-            const py = this.toPixelY(sample.y);
-            const axes = pixelTangentAndPerp(sample.tx, sample.ty);
-
-            ctx.beginPath();
-            ctx.moveTo(px + axes.tx * halfPx, py + axes.ty * halfPx);
-            ctx.lineTo(px + axes.px * halfPx, py + axes.py * halfPx);
-            ctx.lineTo(px - axes.tx * halfPx, py - axes.ty * halfPx);
-            ctx.lineTo(px - axes.px * halfPx, py - axes.py * halfPx);
-            ctx.closePath();
-
-            const isFlashing = flashAbsFrac !== undefined &&
-                Math.abs(t - flashAbsFrac) < FIRING_FLASH_MATCH_EPS;
-            ctx.fillStyle = isFlashing
-                ? FIRING_FLASH_COLOUR
-                : this._sampleImageAt(sample.x, sample.y);
-            ctx.fill();
-            ctx.strokeStyle = isFlashing
-                ? FIRING_FLASH_COLOUR
-                : OBJECT_BOUNDARY_COLOUR;
-            ctx.stroke();
+        // Rests/dots (always small) first so audible (large)
+        // diamonds paint on top where they happen to overlap.
+        if (hasInactive) {
+            for (const t of inactive) {
+                this._paintBeatDiamond(curve, t, smallR, false);
+            }
+        }
+        if (hasActive) {
+            for (let i = 0; i < active.length; i++) {
+                const t = active[i];
+                const s = strengths !== undefined ? strengths[i] : 0;
+                const r = s > 0 ? largeR : smallR;
+                const isFlashing = flashAbsFrac !== undefined &&
+                    Math.abs(t - flashAbsFrac) < FIRING_FLASH_MATCH_EPS;
+                this._paintBeatDiamond(curve, t, r, isFlashing);
+            }
         }
     },
 
     /**
-     * Refresh the cached pattern-event marker positions for
-     * every curve in the current scene. Walks the scene's
-     * curves, parses each curve's cyclePattern via
-     * parsePatternToPositions, multiplies the resulting
-     * positions by the curve's patternRepeats to lay out N
-     * copies of the pattern around the curve (each repeat
-     * occupies 1/N of the curve's parameter range), and
-     * stores the result in _curveMarkerPositions keyed by
-     * curve id. Curves whose cyclePattern is empty, fails to
-     * parse (e.g. strudel engine not loaded yet), or
-     * otherwise produces no positions are absent from the
-     * map after the refresh — absent entries render no
-     * markers, so the visual outcome is a curve with no
-     * diamonds. The map is cleared on every refresh so a
-     * curve that was removed from the scene since the last
-     * refresh loses its entry naturally.
+     * Paint one beat-point diamond at curve parameter `t` with
+     * vertex radius `r` (pixels). Image-filled with the trigger
+     * boundary stroke, or solid firing-flash colour when
+     * `flashing`. No-op when the curve sample is undefined.
+     * @param {any} curve
+     * @param {number} t
+     * @param {number} r
+     * @param {boolean} flashing
+     */
+    _paintBeatDiamond(curve, t, r, flashing) {
+        const sample = sampleCurve(curve.shape, t);
+        if (sample === null) return;
+        const ctx = this.ctx;
+        const px = this.toPixelX(sample.x);
+        const py = this.toPixelY(sample.y);
+        const axes = pixelTangentAndPerp(sample.tx, sample.ty);
+
+        ctx.beginPath();
+        ctx.moveTo(px + axes.tx * r, py + axes.ty * r);
+        ctx.lineTo(px + axes.px * r, py + axes.py * r);
+        ctx.lineTo(px - axes.tx * r, py - axes.ty * r);
+        ctx.lineTo(px - axes.px * r, py - axes.py * r);
+        ctx.closePath();
+
+        ctx.fillStyle = flashing ? FIRING_FLASH_COLOUR : this._sampleImageAt(sample.x, sample.y);
+        ctx.fill();
+        ctx.strokeStyle = flashing ? FIRING_FLASH_COLOUR : OBJECT_BOUNDARY_COLOUR;
+        ctx.stroke();
+    },
+
+    /**
+     * Refresh the cached beat-point diamond positions for every
+     * curve in the current scene. Walks the scene's curves and
+     * derives each curve's beat points from its Band-5 Beat
+     * Points fields (beatPointsMode + the activeBeats / strength
+     * strings, or the Strudel beatPattern) via
+     * deriveCurveBeatPoints, storing the cycle-fraction positions
+     * in _curveMarkerPositions and the aligned strengths in
+     * _curveBeatStrengths, both keyed by curve id. Curves with
+     * mode "none", an empty pattern, or a Strudel pattern that
+     * cannot parse yet (engine not loaded) produce no positions
+     * and are absent from the maps — absent entries render no
+     * diamonds. _curveMarkerValues stays empty (beat points
+     * carry strength, not a Strudel value); the collision
+     * detector reads a struck beat point's value as null.
      *
-     * Cheap to call: parsing is fast (small patterns) and
-     * runs only on setScene and on strudel-runtime status
-     * transitions, not on every render-loop frame.
+     * This REPLACES the old cyclePattern-driven marker source —
+     * cyclePattern is a dead Strudel-era firing path (§3.6); its
+     * remaining references are swept in the §10 cleanup slice.
+     *
+     * Cheap to call: derivation is a short string walk (and a
+     * one-cycle parse for Strudel mode), run only on setScene and
+     * on Strudel-runtime status transitions, not per frame.
      */
     _refreshCurveMarkerPositions() {
         this._curveMarkerPositions.clear();
         this._curveMarkerValues.clear();
+        this._curveBeatStrengths.clear();
+        this._curveInactiveBeatPositions.clear();
         if (this._scene === null) return;
         for (const curve of this._scene.curves) {
             if (typeof curve.id !== "string" || curve.id.length === 0) continue;
-            if (typeof curve.cyclePattern !== "string" || curve.cyclePattern.length === 0) continue;
-            const result = parsePatternToPositions(curve.cyclePattern);
-            if (!result.ok || result.positions.length === 0) continue;
-            // The in-cycle Haps, in the same order as
-            // result.positions (parsePatternToPositions filters
-            // both by begin in [0, 1) in one pass), so a Hap's
-            // value lines up with its begin position. Iterating
-            // these rather than result.positions lets the marker
-            // value travel alongside the position into the
-            // aligned values array below.
-            const inRange = result.haps.filter(
-                (h) => h.begin >= 0 && h.begin < 1,
-            );
-            if (inRange.length === 0) continue;
-            // Lay out patternRepeats copies of the pattern
-            // around the curve. Each repeat occupies 1/N of
-            // the curve's parameter range; within a repeat,
-            // pattern positions map proportionally. Default
-            // 1 reproduces the pre-patternRepeats single-
-            // pattern layout. Defensive Math.max + Math.round
-            // against hand-edited or AI-edited scenes that
-            // store a non-integer or zero/negative value.
-            const repeats = Math.max(1, Math.round(
-                typeof curve.patternRepeats === "number" ? curve.patternRepeats : 1,
-            ));
-            /** @type {number[]} */
-            const positions = [];
-            /** @type {any[]} */
-            const values = [];
-            for (let i = 0; i < repeats; i++) {
-                for (const h of inRange) {
-                    positions.push((i + h.begin) / repeats);
-                    values.push(h.value);
-                }
+            const { positions, strengths, inactivePositions } = deriveCurveBeatPoints(curve);
+            if (positions.length > 0) {
+                this._curveMarkerPositions.set(curve.id, positions);
+                this._curveBeatStrengths.set(curve.id, strengths);
             }
-            this._curveMarkerPositions.set(curve.id, positions);
-            this._curveMarkerValues.set(curve.id, values);
+            if (inactivePositions.length > 0) {
+                this._curveInactiveBeatPositions.set(curve.id, inactivePositions);
+            }
         }
     },
 

@@ -271,21 +271,47 @@ export class Canvas {
         /**
          * Cached pattern-event marker VALUES per curve, keyed
          * by curve id and index-aligned with the same curve's
-         * entry in _curveMarkerPositions. Each value is the
-         * strudel Hap value the curve's cyclePattern assigns at
-         * that beat position (e.g. {s:"bd"} or {note:60,
-         * s:"piano"}) — the native superdough value object.
-         * Populated alongside the positions in
-         * _refreshCurveMarkerPositions so the two arrays share
-         * indices: marker i on curve C is at positions[i] and
-         * carries values[i]. Consumed by the collision detector
-         * to hand a struck marker's value to the curve's beenTriggered
-         * (ctx.hitValue / ctx.playMarker); the draw path ignores
-         * it. Cleared and rebuilt on the same refreshes as the
-         * positions map.
+         * entry in _curveMarkerPositions. In the GeoSonixV2 beat-
+         * point model these are no longer Strudel Hap values — a
+         * beat point carries a STRENGTH, not a sound value — so
+         * this map stays EMPTY under the new source (the
+         * collision detector then reads a struck beat point's
+         * value as null, and ctx.hitValue / ctx.playMarker are
+         * inert on beat-point hits). Kept declared because the
+         * collision detector still index-reads it defensively;
+         * the deeper removal of the marker-value path rides with
+         * the §10 cyclePattern cleanup slice. Strengths live in
+         * _curveBeatStrengths instead.
          * @type {Map<string, any[]>}
          */
         this._curveMarkerValues = new Map();
+
+        /**
+         * Cached beat-point STRENGTHS per curve, keyed by curve
+         * id and index-aligned with _curveMarkerPositions: beat
+         * point i on curve C is at positions[i] and accents at
+         * strengths[i] (0-9, the Beat Strength digit, the natural
+         * map to note velocity). Derived from the Band-5 Beat
+         * Points fields in _refreshCurveMarkerPositions and read
+         * by the onActiveBeat firing path (§3.6). Cleared and
+         * rebuilt on the same refreshes as the positions map.
+         * @type {Map<string, number[]>}
+         */
+        this._curveBeatStrengths = new Map();
+
+        /**
+         * Cached INACTIVE beat-point positions per curve, keyed by
+         * curve id: the rest slots (a "." in normal/euclidean, a
+         * "~" in a flat Strudel pattern). Drawn as smaller diamonds
+         * to show the beat grid, but never fired and not collision
+         * targets — so they live apart from _curveMarkerPositions
+         * (which the collision detector and onActiveBeat firing
+         * read). Derived in _refreshCurveMarkerPositions and used
+         * only by the draw path. Strudel operator patterns expose
+         * no rests, so those curves have no entry here.
+         * @type {Map<string, number[]>}
+         */
+        this._curveInactiveBeatPositions = new Map();
 
         /**
          * Transport reference. Used to subscribe to the
