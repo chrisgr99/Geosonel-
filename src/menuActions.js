@@ -301,6 +301,9 @@ export function installMenuActions(ctx) {
             case "run-scene":
                 ctx.runScene();
                 break;
+            case "run-setup":
+                if (typeof ctx.runSetup === "function") ctx.runSetup();
+                break;
 
             // --- Application menu ---
             case "show-about":

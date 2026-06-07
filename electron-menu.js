@@ -390,6 +390,11 @@ function buildTemplate() {
           accelerator: 'CmdOrCtrl+Return',
           click: () => send('run-scene'),
         },
+        {
+          label: 'Run Setup',
+          accelerator: 'Shift+CmdOrCtrl+Return',
+          click: () => send('run-setup'),
+        },
       ],
     },
 

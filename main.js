@@ -92,6 +92,8 @@ import { installEditMenu } from "./src/editMenu.js";
 import { installAppMenu } from "./src/appMenu.js";
 import { installMenuActions, pushMenuState, pushRecentScoresToMenu, pushBackupsToMenu } from "./src/menuActions.js";
 import { SceneLoader } from "./src/sceneLoader.js";
+import { createSceneOps } from "./src/sceneOps.js";
+import { createBuilder, builderGlobals, MATH_GLOBALS } from "./src/construction.js";
 import { DiskMirror } from "./src/diskMirror.js";
 import { MirrorPush } from "./src/mirrorPush.js";
 import { AiBatchDialog } from "./src/aiBatchDialog.js";
@@ -996,6 +998,67 @@ async function main() {
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
         }
+    };
+
+    /**
+     * Run the Code tab's SETUP section: execute its setup() function with the
+     * scene-construction API in scope (the bare globals addCurve / addTrigger /
+     * setGroup / set / position / … plus map / sin / cos / TWO_PI), against the
+     * current scene.json, then persist the merged scene and reload it.
+     *
+     * Construction is an id-keyed SELECTIVE MERGE (sceneOps): a re-run changes
+     * only the fields setup() explicitly sets and retains everything else,
+     * including the user's hand edits, so it is safe to re-run against a living
+     * scene. clear() inside setup() is the explicit full reset. This is the same
+     * scene the canvas tools and inspector edit — it does not touch playback.
+     *
+     * Stage 1 of the engine build (DESIGN section 3, subsection 5): the SETUP
+     * surface wired to the substrate. The RUN section, the per-object callbacks,
+     * and the firing flow are later stages.
+     */
+    const runSetup = async () => {
+        const sceneFile = session.bundle.getFile("scene.json");
+        const behaviorsFile = session.bundle.getFile("behaviors.js");
+        if (sceneFile === null) {
+            messages.write("No scene.json in this score.", "error");
+            return;
+        }
+        if (behaviorsFile === null) {
+            messages.write("No Code tab (behaviors.js) in this score.", "error");
+            return;
+        }
+        const parsed = parseScene(sceneFile.content);
+        if (!parsed.ok) {
+            messages.write(`Cannot run setup while scene.json has a parse error: ${parsed.error}`, "error");
+            return;
+        }
+        // Build the operation set and builder over the parsed scene, expose the
+        // construction verbs + math helpers as globals, and run setup().
+        const ops = createSceneOps(parsed.data, { selection: canvas.getSelection() });
+        const builder = createBuilder(ops);
+        const api = {
+            ...builderGlobals(builder),
+            ...MATH_GLOBALS,
+            // Minimal score-level setter for now; the fuller score-setup verbs
+            // (background, harmony, view) arrive with the score-handle wiring.
+            setBPM: (n) => { const v = Number(n); if (Number.isFinite(v)) parsed.data.bpm = v; },
+        };
+        const result = sceneLoader.runSetup(behaviorsFile.content, api);
+        if (!result.ok) {
+            messages.write(result.error ?? "Setup failed.", "error");
+            return;
+        }
+        if (!result.ranSetup) {
+            messages.write("No setup() function found in the Code tab.");
+            return;
+        }
+        // Persist the merged scene, refresh the JSON view if it is showing, and
+        // rebuild the live Scene so the canvas and inspector reflect the result.
+        const newText = stringifyScene(parsed.data);
+        session.bundle.updateContent("scene.json", newText);
+        editor.refreshActiveTabFromBundle();
+        await runScene();
+        messages.write("Setup run.");
     };
 
     /**
@@ -4310,7 +4373,7 @@ async function main() {
             performSelectAll,
             performToggleMute,
         });
-        installRunMenu({ runScene });
+        installRunMenu({ runScene, runSetup });
         installAppMenu({ diskMirror, messages });
     }
 
@@ -4341,6 +4404,7 @@ async function main() {
         performSelectAll,
         performToggleMute,
         runScene: () => { void runScene(); },
+        runSetup: () => { void runSetup(); },
         toggleFocusCanvas,
         toggleAutoZoom,
     });

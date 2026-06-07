@@ -204,6 +204,86 @@ export class SceneLoader {
 
         return { success: true, scene, error: null };
     }
+
+    /**
+     * Run the SETUP section of a behaviors.js source: execute the script and
+     * call its top-level setup() function, with a construction API supplied as
+     * globals so the body reads like the GeoSonix reference example (bare
+     * addCurve / setGroup / set / … calls). This is the Stage-1 wiring of the
+     * scene-construction substrate (DESIGN section 3, subsection 5).
+     *
+     * It does NOT touch the scene model itself: the construction API the caller
+     * passes is a builder bound to the caller's parsed scene.json data, so the
+     * mutation lands on that data and the caller persists and reloads it. The
+     * load path above is entirely separate and unchanged — this method only
+     * borrows the same parse, labelled-block strip, and error-formatting helpers.
+     *
+     * Labelled $-blocks (the Strudel-era pattern blocks) are stripped before
+     * execution exactly as load() strips them, so they do not run here either.
+     *
+     * @param {string} behaviorsSource  The current behaviors.js text.
+     * @param {Record<string, any>} api  Construction globals (builder verbs,
+     *   math helpers, and any score-level setters) injected into the script's
+     *   scope by name. print(...) is added automatically from setPrint.
+     * @returns {{ok: boolean, ranSetup: boolean, error: string | null}}
+     *   ok=false on a syntax/runtime error (error set); ok=true otherwise, with
+     *   ranSetup=true iff a setup() function was found and called.
+     */
+    runSetup(behaviorsSource, api) {
+        const parseResult = extractTopLevelFunctionNames(behaviorsSource);
+        if (!parseResult.ok) {
+            return { ok: false, ranSetup: false, error: parseResult.error };
+        }
+        const { strippedSource } = splitLabelledStatements(parseResult.ast, behaviorsSource);
+        return executeSetupScript(strippedSource, api ?? {}, this._print);
+    }
+}
+
+/**
+ * Execute a stripped behaviors.js source with a construction API in scope and
+ * call its setup() if present. Mirrors executeScript's wrapper shape (same
+ * "use strict" prefix and sourceURL, so the calibrated line-number offset still
+ * applies), but injects the api's keys as named parameters — the bare globals
+ * the construction code calls — instead of harvesting a function map.
+ *
+ * @param {string} source  Stripped behaviours source.
+ * @param {Record<string, any>} api  Name→value globals (functions and numbers).
+ * @param {(...args: any[]) => void} printFn  Diagnostic sink, exposed as print(...).
+ * @returns {{ok: boolean, ranSetup: boolean, error: string | null}}
+ */
+function executeSetupScript(source, api, printFn) {
+    const names = Object.keys(api);
+    const values = names.map((n) => api[n]);
+    // Provide the same `score` and `print` globals the load wrapper provides, so
+    // any existing top-level statements in behaviors.js (e.g. setting
+    // score.kinematics) execute here without a ReferenceError. The construction
+    // api keys are injected as additional bare globals. score.kinematics changes
+    // are not persisted by setup (they ride on the next load, which re-reads
+    // behaviors.js); a fresh defaults object is enough to keep the script running.
+    const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
+    const body =
+        SCRIPT_PREFIX +
+        source +
+        `\n;var __gxwRanSetup = (typeof setup === "function");` +
+        `\nif (__gxwRanSetup) { setup(); }` +
+        `\nreturn __gxwRanSetup;` +
+        `\n//# sourceURL=${BEHAVIORS_FILENAME}`;
+
+    let fn;
+    try {
+        // eslint-disable-next-line no-new-func
+        fn = new Function(...names, "print", "score", body);
+    } catch (err) {
+        return { ok: false, ranSetup: false, error: formatBehavioursRuntimeError("Syntax error", err, source) };
+    }
+
+    let ran;
+    try {
+        ran = fn(...values, typeof printFn === "function" ? printFn : () => {}, scoreGlobal);
+    } catch (err) {
+        return { ok: false, ranSetup: false, error: formatBehavioursRuntimeError("Runtime error", err, source) };
+    }
+    return { ok: true, ranSetup: ran === true, error: null };
 }
 
 /**

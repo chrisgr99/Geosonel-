@@ -18,6 +18,9 @@ import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
 /**
  * @typedef {Object} RunMenuContext
  * @property {() => void} runScene
+ * @property {() => void} [runSetup]  Run the Code tab's SETUP section
+ *   (construction code) against the current scene, then reload. Optional so
+ *   older callers that pass only runScene still work.
  */
 
 /**
@@ -30,25 +33,41 @@ export function installRunMenu(ctx) {
         return;
     }
 
-    const dropdown = buildDropdown([
+    /** @type {Array<{label: string, shortcut?: string, action: () => void}>} */
+    const items = [
         {
             label: "Run Scene",
             shortcut: "\u2318\u23CE",
             action: () => ctx.runScene(),
         },
-    ]);
+    ];
+    if (typeof ctx.runSetup === "function") {
+        // Run Setup executes the SETUP construction code, then reloads \u2014 a
+        // superset of Run Scene when setup() builds the scene. Cmd-Shift-Enter.
+        items.push({
+            label: "Run Setup",
+            shortcut: "\u2318\u21E7\u23CE",
+            action: () => ctx.runSetup(),
+        });
+    }
+
+    const dropdown = buildDropdown(items);
 
     document.body.appendChild(dropdown);
     wireDropdown(runItem, dropdown);
 
-    // Global keyboard shortcut: Cmd-Enter runs the scene. This
-    // works even while focus is in the CodeMirror editor, which
-    // is the primary expected location.
+    // Global keyboard shortcuts. Cmd-Enter runs the scene; Cmd-Shift-Enter runs
+    // setup. Both work while focus is in the CodeMirror editor, the primary
+    // expected location.
     window.addEventListener("keydown", (e) => {
         const meta = e.metaKey || e.ctrlKey;
         if (meta && e.key === "Enter") {
             e.preventDefault();
-            ctx.runScene();
+            if (e.shiftKey && typeof ctx.runSetup === "function") {
+                ctx.runSetup();
+            } else {
+                ctx.runScene();
+            }
         }
     });
 }

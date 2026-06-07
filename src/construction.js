@@ -165,3 +165,66 @@ export function createBuilder(ops) {
 
     return builder;
 }
+
+/**
+ * Flatten a builder into a set of BARE GLOBAL functions for the SETUP section
+ * of the code tab, so construction code reads like the GeoSonix reference
+ * example — clear(), addCurve(id), setGroup(name), set(field, value), … —
+ * rather than builder.addCurve(...). The setup runner injects these as globals
+ * in the script's scope. Each wrapper forwards to the builder; the chainable
+ * builder return is harmless when called as a bare statement.
+ *
+ * @param {ReturnType<typeof createBuilder>} builder
+ * @returns {Record<string, Function>}
+ */
+export function builderGlobals(builder) {
+    return {
+        clear: () => builder.clear(),
+        addCurve: (id) => builder.addCurve(id),
+        addTrigger: (id) => builder.addTrigger(id),
+        addSprite: (id) => builder.addSprite(id),
+        select: (selector) => builder.select(selector),
+        ids: (selector) => builder.ids(selector),
+        set: (field, value) => builder.set(field, value),
+        setOn: (selector, field, value) => builder.setOn(selector, field, value),
+        setColor: (color) => builder.setColor(color),
+        setName: (name) => builder.setName(name),
+        setSpeed: (cycleSpeeds) => builder.setSpeed(cycleSpeeds),
+        setGroup: (name) => builder.setGroup(name),
+        groupOn: (selector, name) => builder.groupOn(selector, name),
+        position: (x, y) => builder.position(x, y),
+        positionOn: (selector, x, y) => builder.positionOn(selector, x, y),
+    };
+}
+
+/**
+ * Linear remap, the GeoSonix/Processing map(value, inLo, inHi, outLo, outHi). A
+ * zero input span returns outLo rather than dividing by zero.
+ * @param {number} value @param {number} inLo @param {number} inHi
+ * @param {number} outLo @param {number} outHi @returns {number}
+ */
+function map(value, inLo, inHi, outLo, outHi) {
+    if (inHi === inLo) return outLo;
+    return outLo + ((Number(value) - inLo) * (outHi - outLo)) / (inHi - inLo);
+}
+
+/**
+ * Convenience math globals for SETUP construction code, matching the bare names
+ * GeoSonix scripts use (sin, cos, TWO_PI, map, …). Numbers and Math functions;
+ * the setup runner injects them alongside the builder globals. random() is plain
+ * (non-seeded) here — construction is authoring, not the deterministic per-tick
+ * replay path; seeded randomness belongs to the firing-flow callbacks.
+ */
+export const MATH_GLOBALS = {
+    PI: Math.PI,
+    TWO_PI: Math.PI * 2,
+    HALF_PI: Math.PI / 2,
+    sin: Math.sin, cos: Math.cos, tan: Math.tan,
+    abs: Math.abs, sqrt: Math.sqrt, pow: Math.pow,
+    floor: Math.floor, round: Math.round, ceil: Math.ceil,
+    min: Math.min, max: Math.max,
+    map,
+    random: (lo, hi) => (lo === undefined
+        ? Math.random()
+        : Number(lo) + Math.random() * (Number(hi) - Number(lo))),
+};

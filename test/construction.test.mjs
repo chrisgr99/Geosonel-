@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createSceneOps } from "../src/sceneOps.js";
-import { createBuilder } from "../src/construction.js";
+import { createBuilder, builderGlobals, MATH_GLOBALS } from "../src/construction.js";
 
 function freshBuild() {
     const data = { curves: [], triggers: [], sprites: [] };
@@ -90,6 +90,36 @@ test("a small reference-style build composes, and re-running merges", () => {
     assert.equal(data.triggers.length, 3, "re-run addressed, did not duplicate");
     assert.equal(data.triggers[1].color, "gold", "hand edit retained through re-run");
     assert.equal(data.triggers[1].x, 11, "construction re-applied position");
+});
+
+test("builderGlobals expose bare verbs that mutate the scene (the SETUP surface)", () => {
+    // Mirror what the setup runner does: build ops + builder, flatten to bare
+    // globals, and call them the way a setup() body would.
+    const data = { curves: [], triggers: [], sprites: [] };
+    const ops = createSceneOps(data);
+    const g = builderGlobals(createBuilder(ops));
+    g.clear();
+    const id = g.addTrigger("TRG1");
+    g.setColor("#f0f");
+    g.position(3, 4);
+    g.setGroup("ring");
+    g.set("note", 64);
+    assert.equal(id, "TRG1");
+    const t = data.triggers[0];
+    assert.equal(t.color, "#f0f");
+    assert.equal(t.x, 3);
+    assert.equal(t.y, 4);
+    assert.equal(t.group, "ring");
+    assert.equal(t.note, 64);
+    assert.deepEqual(g.ids("ring"), ["TRG1"]);
+});
+
+test("MATH_GLOBALS.map is the linear remap, with a safe zero-span", () => {
+    assert.equal(MATH_GLOBALS.map(5, 0, 10, 0, 100), 50);
+    assert.equal(MATH_GLOBALS.map(0, 0, 4, -1, 1), -1);
+    assert.equal(MATH_GLOBALS.map(3, 2, 2, 9, 9), 9); // zero input span -> outLo
+    assert.equal(MATH_GLOBALS.TWO_PI, Math.PI * 2);
+    assert.equal(typeof MATH_GLOBALS.sin, "function");
 });
 
 test("clear resets the scene", () => {
