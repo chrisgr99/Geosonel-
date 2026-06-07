@@ -486,7 +486,21 @@ export const fieldMethods = {
                 });
             }
             label.appendChild(input);
-            label.appendChild(document.createTextNode(o.label));
+            // A label may carry a "\n" to wrap onto two lines (e.g.
+            // "Hide\nCursor"), which narrows that option so the row fits.
+            // The explicit <br> overrides the label's nowrap.
+            if (o.label.includes("\n")) {
+                const span = document.createElement("span");
+                span.style.lineHeight = "1.05";
+                const lines = o.label.split("\n");
+                for (let j = 0; j < lines.length; j++) {
+                    if (j > 0) span.appendChild(document.createElement("br"));
+                    span.appendChild(document.createTextNode(lines[j]));
+                }
+                label.appendChild(span);
+            } else {
+                label.appendChild(document.createTextNode(o.label));
+            }
             group.appendChild(label);
         }
         return group;
@@ -553,6 +567,34 @@ export const fieldMethods = {
         swatch.className = "insp-color-swatch";
         swatch.style.backgroundColor = initialHex || placeholderColour;
         el.appendChild(swatch);
+
+        // Swatch-only mode: no hex-text field — just the colour square.
+        // Clicking it opens the OS picker; committing a pick emits the
+        // colour edit. Used where the row has no room for the hex text
+        // (the Color swatch riding on the Cursor row).
+        if (opts.swatchOnly) {
+            el.classList.add("swatch-only");
+            if (!opts.editable) return el;
+            const picker = document.createElement("input");
+            picker.type = "color";
+            picker.className = "insp-color-picker";
+            picker.value = normaliseHexForPicker(initialHex, placeholderColour);
+            el.appendChild(picker);
+            swatch.style.cursor = "pointer";
+            swatch.addEventListener("click", () => picker.click());
+            let committedSwatch = false;
+            picker.addEventListener("change", () => {
+                const result = validateHexColor(picker.value);
+                if (result.kind === "hard") return;
+                swatch.style.backgroundColor = result.value;
+                if (committedSwatch) return;
+                if (result.value !== initialHex) {
+                    committedSwatch = true;
+                    this._emitEdit({ kind: "setColor", value: result.value });
+                }
+            });
+            return el;
+        }
 
         const text = document.createElement("div");
         text.className = "insp-color-text";

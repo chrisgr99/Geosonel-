@@ -273,6 +273,11 @@ export const CURVE_FIELDS = [
     // Gaussian spread of the per-seed position (and, for kinds
     // that carry one, velocity) offset. See src/seed/seedOffset.js.
     { key: "variability", label: "Variability", type: "number", default: 0, min: 0 },
+    // Mutability placeholders (Band 2): position and size mutation amounts.
+    // The velocity amount reuses the existing `variability` field. Scaffolding
+    // - the seed/mutation engine does not read these yet (behaviour TBD).
+    { key: "mutatePosition", label: "Mutate Position", type: "number", default: 0, min: 0 },
+    { key: "mutateSize", label: "Mutate Size", type: "number", default: 0, min: 0 },
     ...CALLBACK_SLOT_FIELDS,
     ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
@@ -301,6 +306,11 @@ export const TRIGGER_FIELDS = [
     // Seed-variation dial; see CURVE_FIELDS. Triggers carry only
     // a position offset (no starting velocity).
     { key: "variability", label: "Variability", type: "number", default: 0, min: 0 },
+    // Mutability placeholders (Band 2): position and size mutation amounts.
+    // The velocity amount reuses the existing `variability` field. Scaffolding
+    // - the seed/mutation engine does not read these yet (behaviour TBD).
+    { key: "mutatePosition", label: "Mutate Position", type: "number", default: 0, min: 0 },
+    { key: "mutateSize", label: "Mutate Size", type: "number", default: 0, min: 0 },
     ...CALLBACK_SLOT_FIELDS,
     ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,
@@ -334,6 +344,11 @@ export const SPRITE_FIELDS = [
     // Seed-variation dial; see CURVE_FIELDS. Sprites carry both a
     // position and a starting-velocity offset.
     { key: "variability", label: "Variability", type: "number", default: 0, min: 0 },
+    // Mutability placeholders (Band 2): position and size mutation amounts.
+    // The velocity amount reuses the existing `variability` field. Scaffolding
+    // - the seed/mutation engine does not read these yet (behaviour TBD).
+    { key: "mutatePosition", label: "Mutate Position", type: "number", default: 0, min: 0 },
+    { key: "mutateSize", label: "Mutate Size", type: "number", default: 0, min: 0 },
     ...CALLBACK_SLOT_FIELDS,
     ...VOICE_FIELDS,
     ...HARMONY_OVERRIDE_FIELDS,

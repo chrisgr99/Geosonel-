@@ -6,7 +6,7 @@ export const W = {
     leftLabel: 78,
 
     // ID field — short generated identifier (e.g. "sp_a3f7").
-    idField: 80,
+    idField: 66,
 
     // Inline labels next to the row's leftmost field group,
     // sized to the shortest text that fits at 10pt.
@@ -14,13 +14,14 @@ export const W = {
     mute: 40,          // "Mute" — deprecated width key from the old single Mute control; superseded by the three-state `state` field (Active / Hide Cursor / Disable) on Band 1's row 1
     state: 40,         // the Band 1 object State control — now a horizontal radio group (Active / Hide Cursor / Disable; triggers show Active / Disable). The radios are content-sized on their own row with no visible label, so no fixed pixel width is imposed; this key marks the State control's binding. (Was the dropdown's label/field width before the radio-group conversion.)
     curveThick: 72,    // "Curve\nLine Width" — wide enough that "Line Width" stays on one line (2-line label, not 3)
-    cursorThick: 60,   // "Cursor\nWidth" multiline
+    cursorThick: 48,   // "Cursor\nWidth" multiline label — tightened
+    cursorWidthField: 44,  // the Cursor Width numeric field — narrower than the curve Line Width field (W.thickness)
 
     // Numeric fields.
     posXY: 60,         // Position X, Y (legacy; superseded by startState)
     startState: 60,    // Starting State X, Y, vX, vY — four fields share the row at curve-size width (60) to match the visual weight of the surrounding rows
     sizeWH: 60,        // Curve Size W, H
-    cursorRL: 50,      // Cursor R, L
+    cursorRL: 44,      // Cursor R, L (narrowed)
     thickness: 60,     // Curve/Cursor Thickness
     spriteTriggerSize: 60,
 
@@ -52,6 +53,10 @@ export const W = {
     // the Color field on the same row (GeoSonixV2). Fits the
     // word "Variability" at 11pt.
     variabilityLabel: 72,
+
+    // Band 2 Mutability row numeric fields (Position / Velocity /
+    // Size). Narrow — sized for a two-decimal amount like 0.11.
+    mutability: 48,
 
     // Band 2 curve "Width" inline label, between the two curve
     // size fields on the Dimension row (the first field's label

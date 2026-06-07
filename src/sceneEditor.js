@@ -1963,6 +1963,31 @@ export function setVariabilityOnSelection(data, selection, value) {
 }
 
 /**
+ * Set the Mutability "Position" amount (Band 2) — a placeholder
+ * scaffolding field; the mutation engine does not read it yet. Mutates `data`.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setMutatePositionOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "mutatePosition", Math.max(0, n));
+}
+
+/**
+ * Set the Mutability "Size" amount (Band 2) — a placeholder scaffolding field.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setMutateSizeOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "mutateSize", Math.max(0, n));
+}
+
+/**
  * Set the beatInterval field across the selection. Stored as
  * a token string from beatIntervals.js's TOKENS table (e.g.
  * "Qtr", "8th", "Dot 16th"). Invalid tokens silently no-op,

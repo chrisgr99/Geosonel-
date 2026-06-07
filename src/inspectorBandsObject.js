@@ -78,7 +78,7 @@ export const bandObjectMethods = {
      * three-state radio group on the same row — Active / No
      * Cursor / Disable for curves and sprites, Active / Disable
      * for triggers (no cursor). The labels map to the `state`
-     * field's values active / passive / disabled ("No Cursor"
+     * field's values active / passive / disabled ("Hide Cursor"
      * stores "passive").
      *
      * Row 2: Object Name + Time Lag. Object Name reuses the
@@ -136,7 +136,7 @@ export const bandObjectMethods = {
         const stateOptions = hasCursorKinds
             ? [
                 { value: "active", label: "Active" },
-                { value: "passive", label: "No Cursor" },
+                { value: "passive", label: "Hide\nCursor" },
                 { value: "disabled", label: "Disable" },
             ]
             : [
@@ -596,53 +596,69 @@ export const bandObjectMethods = {
         r3.appendChild(this._buildEditableField({
             value: cursorThicknessAgg === "varies" ? "" : cursorThicknessAgg,
             numeric: true,
-            width: W.thickness,
+            width: W.cursorWidthField,
             editable: !cursorExtentDisabled,
             spinLive: true,
             validator: (c) => validateNumber(c, { min: 0 }),
             editKind: "setCursorThickness",
         }));
-        band.appendChild(r3);
-
-        // Color + Variability on one row. Color is universal
-        // across kinds — curves, sprites, and triggers all carry
-        // a per-object colour; editable for any non-empty
-        // selection, including when the value varies (typing
-        // commits the typed colour to every selected object).
-        // There is no separate when-inactive colour.
-        //
-        // Variability (GeoSonixV2: moved up here, to the right of
-        // the colour field) is the seed-variation dial, also
-        // universal: 0 (default) locks the object; a positive
-        // value scales how much its start position (and velocity,
-        // for sprites and curves) is nudged by the global seed.
+        // Color label + SWATCH ride on the right of the Cursor row
+        // (swatch only — no hex text; the swatch carries the standard
+        // field border). Universal across kinds; editable for any
+        // non-empty selection. A fixed left margin on the label pushes
+        // the pair right so the swatch sits toward the vY column
+        // (estimated; kept short of vY so the row never exceeds the
+        // Initial Conditions line, and it stays put when the pane widens).
         const colorAgg = aggregateColor(objs);
-        const variabilityActive = ctx.total > 0;
-        const variabilityAgg = aggregateString(objs.all, "variability");
-
-        const r5 = mkRow();
-        r5.appendChild(mkLabel("Color", { width: W.leftLabel, disabled: !colorActive }));
-        r5.appendChild(this._buildColorField({
+        const colorLabel = mkLabel("Color", { disabled: !colorActive });
+        colorLabel.style.marginLeft = "24px";
+        r3.appendChild(colorLabel);
+        r3.appendChild(this._buildColorField({
             hex: colorAgg === "varies" ? "" : colorAgg,
             editable: colorActive,
             varies: colorAgg === "varies",
+            swatchOnly: true,
         }));
-        const variabilityLabel = mkLabel("Variability", {
-            width: W.variabilityLabel,
-            disabled: !variabilityActive,
-        });
-        variabilityLabel.style.marginLeft = "14px";
-        r5.appendChild(variabilityLabel);
-        r5.appendChild(this._buildEditableField({
-            value: variabilityAgg === "varies" ? "" : variabilityAgg,
-            numeric: true,
-            width: W.spriteTriggerSize,
-            editable: variabilityActive,
-            spinLive: true,
-            validator: (c) => validateNumber(c, { min: 0 }),
-            editKind: "setVariability",
-        }));
-        band.appendChild(r5);
+        band.appendChild(r3);
+
+        // Mutability row. The per-object seed-variation amounts the
+        // mutation/audition system applies, split by aspect: Position,
+        // Velocity, Size. VELOCITY reuses the existing `variability`
+        // field (the live seed-variation dial) so today's behaviour is
+        // preserved. Position and Size are PLACEHOLDERS — backed by
+        // mutatePosition / mutateSize so values persist, but the seed
+        // engine doesn't read them yet (the full per-aspect feature is
+        // TBD). Universal across kinds; narrow two-decimal fields.
+        const mutabilityActive = ctx.total > 0;
+        const variabilityAgg = aggregateString(objs.all, "variability");
+        const mutatePositionAgg = aggregateString(objs.all, "mutatePosition");
+        const mutateSizeAgg = aggregateString(objs.all, "mutateSize");
+
+        const mkMutabilityField = (agg, editKind) =>
+            this._buildEditableField({
+                value: agg === "varies" ? "" : agg,
+                numeric: true,
+                width: W.mutability,
+                editable: mutabilityActive,
+                spinLive: true,
+                spinStep: 0.01,
+                validator: (c) => validateNumber(c, { min: 0 }),
+                editKind,
+            });
+
+        const r6 = mkRow();
+        r6.appendChild(mkLabel("Mutability", { width: W.leftLabel, disabled: !mutabilityActive }));
+        r6.appendChild(mkLabel("Position", { disabled: !mutabilityActive }));
+        r6.appendChild(mkMutabilityField(mutatePositionAgg, "setMutatePosition"));
+        const velLabel = mkLabel("Velocity", { disabled: !mutabilityActive });
+        velLabel.style.marginLeft = "10px";
+        r6.appendChild(velLabel);
+        r6.appendChild(mkMutabilityField(variabilityAgg, "setVariability"));
+        const sizeLabel = mkLabel("Size", { disabled: !mutabilityActive });
+        sizeLabel.style.marginLeft = "10px";
+        r6.appendChild(sizeLabel);
+        r6.appendChild(mkMutabilityField(mutateSizeAgg, "setMutateSize"));
+        band.appendChild(r6);
 
         return band;
     },

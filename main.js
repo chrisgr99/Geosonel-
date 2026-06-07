@@ -153,6 +153,8 @@ import {
     setBeatShiftOnSelection,
     setRepeatsOnSelection,
     setVariabilityOnSelection,
+    setMutatePositionOnSelection,
+    setMutateSizeOnSelection,
     setPatternRepeatsOnCurves,
     setCycleSpeedsOnSelection,
     setStartAtCycleOnSelection,
@@ -3695,6 +3697,14 @@ async function main() {
             } else if (edit.kind === "setVariability") {
                 await applySceneEdit((data) =>
                     setVariabilityOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setMutatePosition") {
+                await applySceneEdit((data) =>
+                    setMutatePositionOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setMutateSize") {
+                await applySceneEdit((data) =>
+                    setMutateSizeOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setPatternRepeats") {
                 await applySceneEdit((data) =>

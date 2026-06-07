@@ -611,6 +611,24 @@
     cursor: default;
 }
 
+/* Swatch-only mode: collapse the 130px field box to a small field-style box
+ * (the standard mint border + fill) sized to the swatch, with padding so
+ * there is some clearance between the colour patch and the border — reads
+ * like every other field, just showing a colour. Used by the Color swatch
+ * riding on the Cursor row. The base .insp-color.disabled rule mutes the
+ * border when the field is greyed. */
+.insp-color.swatch-only {
+    width: auto;
+    background-color: #646464;
+    border: 2px solid #789678;
+    padding: 0 5px;
+}
+.insp-color.swatch-only .insp-color-swatch {
+    width: 30px;
+    height: 12px;
+    border: none;
+}
+
 .insp-color-swatch {
     width: 32px;
     height: 14px;

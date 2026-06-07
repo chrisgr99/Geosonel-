@@ -617,6 +617,8 @@ export class Curve {
          * @type {number}
          */
         this.variability = opts.variability ?? 0;
+        this.mutatePosition = opts.mutatePosition ?? 0;
+        this.mutateSize = opts.mutateSize ?? 0;
 
         // --- Callback slots ---
         // Section-27 four-slot model: hasCollided / beenTriggered /
@@ -807,6 +809,8 @@ export class Trigger {
          * @type {number}
          */
         this.variability = opts.variability ?? 0;
+        this.mutatePosition = opts.mutatePosition ?? 0;
+        this.mutateSize = opts.mutateSize ?? 0;
 
         // --- Callback slots ---
         // Section-27 model. Triggers do not self-fire under
@@ -1018,6 +1022,8 @@ export class Sprite {
          * @type {number}
          */
         this.variability = opts.variability ?? 0;
+        this.mutatePosition = opts.mutatePosition ?? 0;
+        this.mutateSize = opts.mutateSize ?? 0;
 
         // --- Callback slots ---
         // Section-27 model. See Curve for the full

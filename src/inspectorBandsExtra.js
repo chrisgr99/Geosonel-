@@ -198,7 +198,7 @@ export const bandExtraMethods = {
             spacer.style.width = `${W.leftLabel + 24}px`;
             spacer.style.flexShrink = "0";
             ri.appendChild(spacer);
-            const lbl = mkLabel("Automessage Interval", { disabled: !slotActive });
+            const lbl = mkLabel("Interval", { disabled: !slotActive });
             lbl.style.textAlign = "left";
             ri.appendChild(lbl);
             ri.appendChild(this._buildDropdownField({
