@@ -36,7 +36,7 @@ export const bandExtraMethods = {
 
     /**
      * Band 3 — Msg Functions (callback slots) + Automessage.
-     * Four callback rows in order hasHit, beenHit, onTick,
+     * Four callback rows in order collided, triggered, onTick,
      * autoMessage, then an Automessage Interval row — all in ONE
      * band (the former separate Automessage Interval band is
      * merged in here, no dividing line, so the interval sits with
@@ -91,31 +91,32 @@ export const bandExtraMethods = {
         // placeholder and a disabled button.
         const singleObj = (ctx.isSingle && objs.all.length === 1) ? objs.all[0] : null;
 
-        const canHitAgg = aggregateBoolean(objs.all, "canHit");
-        const hasHitFunctionAgg = aggregateString(objs.all, "hasHitFunction");
-        const canBeHitAgg = aggregateBoolean(objs.all, "canBeHit");
-        const beenHitFunctionAgg = aggregateString(objs.all, "beenHitFunction");
+        const canCollideAgg = aggregateBoolean(objs.all, "canCollide");
+        const collidedFunctionAgg = aggregateString(objs.all, "collidedFunction");
+        const canBeTriggeredAgg = aggregateBoolean(objs.all, "canBeTriggered");
+        const triggeredFunctionAgg = aggregateString(objs.all, "triggeredFunction");
         const canAutoMessageAgg = aggregateBoolean(objs.all, "canAutoMessage");
         const autoMessageFunctionAgg = aggregateString(objs.all, "autoMessageFunction");
         const canTickAgg = aggregateBoolean(objs.all, "canTick");
         const onTickFunctionAgg = aggregateString(objs.all, "onTickFunction");
 
-        // Four slot rows driven by a small config table so they
-        // share one construction loop. autoMessage is LAST among
-        // the callbacks; its Automessage Interval row is appended
-        // right below it (same band, no divider) since the
-        // interval configures the autoMessage callback's fire rate.
+        // Slot rows driven by a small config table so they share one
+        // construction loop. collided (active) and triggered (passive)
+        // are the collision pair; autoMessage is LAST among the
+        // callbacks, with its Automessage Interval row appended right
+        // below it (same band, no divider) since the interval configures
+        // the autoMessage callback's fire rate.
         /** @type {Array<{
          *   label: string,
-         *   slotKey: "hasHit" | "beenHit" | "autoMessage" | "onTick",
-         *   canEditKind: "setCanHit" | "setCanBeHit" | "setCanAutoMessage" | "setCanTick",
+         *   slotKey: "collided" | "triggered" | "autoMessage" | "onTick",
+         *   canEditKind: "setCanCollide" | "setCanBeTriggered" | "setCanAutoMessage" | "setCanTick",
          *   canAgg: boolean | "varies",
-         *   funcEditKind: "setHasHitFunction" | "setBeenHitFunction" | "setAutoMessageFunction" | "setOnTickFunction",
+         *   funcEditKind: "setCollidedFunction" | "setTriggeredFunction" | "setAutoMessageFunction" | "setOnTickFunction",
          *   funcAgg: string | "varies",
          * }>} */
         const slotRows = [
-            { label: "hasHit", slotKey: "hasHit", canEditKind: "setCanHit", canAgg: canHitAgg, funcEditKind: "setHasHitFunction", funcAgg: hasHitFunctionAgg },
-            { label: "beenHit", slotKey: "beenHit", canEditKind: "setCanBeHit", canAgg: canBeHitAgg, funcEditKind: "setBeenHitFunction", funcAgg: beenHitFunctionAgg },
+            { label: "collided", slotKey: "collided", canEditKind: "setCanCollide", canAgg: canCollideAgg, funcEditKind: "setCollidedFunction", funcAgg: collidedFunctionAgg },
+            { label: "triggered", slotKey: "triggered", canEditKind: "setCanBeTriggered", canAgg: canBeTriggeredAgg, funcEditKind: "setTriggeredFunction", funcAgg: triggeredFunctionAgg },
             { label: "onTick", slotKey: "onTick", canEditKind: "setCanTick", canAgg: canTickAgg, funcEditKind: "setOnTickFunction", funcAgg: onTickFunctionAgg },
             { label: "autoMessage", slotKey: "autoMessage", canEditKind: "setCanAutoMessage", canAgg: canAutoMessageAgg, funcEditKind: "setAutoMessageFunction", funcAgg: autoMessageFunctionAgg },
         ];

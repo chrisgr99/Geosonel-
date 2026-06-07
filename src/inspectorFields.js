@@ -25,7 +25,7 @@ export const fieldMethods = {
      * states toggle. (The object's three-state `state` field is
      * a separate dropdown control, not routed through here.)
      *
-     * @param {"setHide" | "setCanHit" | "setCanBeHit" | "setCanTick"} kind
+     * @param {"setHide" | "setCanCollide" | "setCanBeTriggered" | "setCanTick"} kind
      * @param {boolean | "varies"} currentState
      */
     _onBooleanCheckboxClick(kind, currentState) {
@@ -837,14 +837,14 @@ export const fieldMethods = {
      * or createFunctionStub when it does not. The slotKey
      * tags the createFunctionStub edit so main.js can
      * dispatch the binding mutator (one of
-     * setHasHitFunctionOnSelection,
-     * setBeenHitFunctionOnSelection,
+     * setCollidedFunctionOnSelection,
+     * setTriggeredFunctionOnSelection,
      * setOnTickFunctionOnSelection).
      *
      * @param {{
      *   label: string,
      *   disabled: boolean,
-     *   slotKey: "hasHit" | "beenHit" | "onTick",
+     *   slotKey: "collided" | "triggered" | "onTick",
      *   functionName: string,
      *   functionExists: boolean,
      * }} opts

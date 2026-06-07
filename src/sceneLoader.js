@@ -19,8 +19,8 @@
  *      function expression or arrow, AND to split out every
  *      top-level $objectId: expression labelled statement.
  *      The function names are the identifiers a scene.json
- *      function-ref field can refer to (hasHitFunction,
- *      beenHitFunction, onTickFunction). The labelled
+ *      function-ref field can refer to (collidedFunction,
+ *      triggeredFunction, onTickFunction). The labelled
  *      statements are pattern blocks per section 28; they
  *      are extracted into a separate list and their source
  *      ranges in the executable stream are replaced with

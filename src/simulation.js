@@ -1002,8 +1002,8 @@ export class Simulation {
         /**
          * Keys of collision callback slots that threw and are
          * therefore disabled for the rest of the session. A key
-         * is `${slot}:${objectId}`, e.g. "beenHit:TRG3" or
-         * "hasHit:SPR1", so an object's beenHit and hasHit are
+         * is `${slot}:${objectId}`, e.g. "triggered:TRG3" or
+         * "collided:SPR1", so an object's triggered and collided are
          * disabled independently. Mirrors _onTickDisabled: a
          * throwing collision callback is caught, parked here so
          * it isn't called again, and the error logged once.
@@ -1021,7 +1021,7 @@ export class Simulation {
          * main.js routes a note spec to the firing engine's
          * fireImmediateNote, a sound spec to fireImmediateSound,
          * and a value spec (a raw strudel Hap value, used by a
-         * curve beenHit's ctx.playMarker) to fireImmediateValue.
+         * curve triggered's ctx.playMarker) to fireImmediateValue.
          * Null until setAudioSink runs, so the context methods
          * no-op and the simulation still runs headless. The
          * simulation holds no audio knowledge beyond forwarding
@@ -1068,9 +1068,9 @@ export class Simulation {
 
     /**
      * Dispatch a collision detected canvas-side. Fires the
-     * target's beenHit first, then the collider's hasHit,
+     * target's triggered first, then the collider's collided,
      * each only when that object enables the matching slot
-     * (canBeHit / canHit) and names a function that resolves
+     * (canBeTriggered / canCollide) and names a function that resolves
      * in the scene's functionMap. Either callback is optional
      * and independent.
      *
@@ -1087,7 +1087,7 @@ export class Simulation {
      * when the collider and target lists are built (in
      * canvasCollision). Passive removes a source's cursor, so a
      * passive object is excluded as a COLLIDER but stays a
-     * valid TARGET (its beenHit still runs). Disabled is
+     * valid TARGET (its triggered still runs). Disabled is
      * excluded as BOTH collider and target. By the time a pair
      * reaches this dispatch, it is already a legal
      * collider/target pair, so this method faithfully runs the
@@ -1096,33 +1096,33 @@ export class Simulation {
      * @param {{colliderId: string, colliderKind: "curve" | "sprite",
      *          targetId: string, targetKind: "curve" | "trigger" | "sprite",
      *          hitSpeed: number, markerValue?: any}} event
-     * @returns {{beenHitFired: boolean, hasHitFired: boolean}}  Whether each
+     * @returns {{triggeredFired: boolean, collidedFired: boolean}}  Whether each
      *     callback actually ran (gate passed + function resolved). The canvas
-     *     uses beenHitFired to flash a struck trigger.
+     *     uses triggeredFired to flash a struck trigger.
      */
     dispatchCollision(event) {
-        if (this._scene === null) return { beenHitFired: false, hasHitFired: false };
+        if (this._scene === null) return { triggeredFired: false, collidedFired: false };
         if (event === null || typeof event !== "object") {
-            return { beenHitFired: false, hasHitFired: false };
+            return { triggeredFired: false, collidedFired: false };
         }
         const hitSpeed = (typeof event.hitSpeed === "number"
             && Number.isFinite(event.hitSpeed)) ? event.hitSpeed : 0;
         // The struck marker's strudel value, present only for a
         // curve-marker hit; undefined for a trigger (or any
-        // future sprite) target. Passed to the beenHit side
+        // future sprite) target. Passed to the triggered side
         // only, where self is the marker-owning curve, so
         // ctx.hitValue / ctx.playMarker read and sound through
         // that curve's own voice rather than the collider's.
         const markerValue = event.markerValue;
-        // Target's beenHit first, then the collider's hasHit —
+        // Target's triggered first, then the collider's collided —
         // the firing order the collision model specifies.
-        const beenHitFired = this._runCollisionCallback(
-            "beenHit", event.targetId, event.targetKind,
+        const triggeredFired = this._runCollisionCallback(
+            "triggered", event.targetId, event.targetKind,
             event.colliderId, event.colliderKind, hitSpeed, markerValue);
-        const hasHitFired = this._runCollisionCallback(
-            "hasHit", event.colliderId, event.colliderKind,
+        const collidedFired = this._runCollisionCallback(
+            "collided", event.colliderId, event.colliderKind,
             event.targetId, event.targetKind, hitSpeed, undefined);
-        return { beenHitFired, hasHitFired };
+        return { triggeredFired, collidedFired };
     }
 
     /**
@@ -1130,21 +1130,21 @@ export class Simulation {
      * enabled and resolves, building the fresh context the
      * callback reads and writes through.
      *
-     * slot is "beenHit" or "hasHit". The gate boolean and the
-     * function-name field differ by slot: beenHit is gated by
-     * canBeHit and named by beenHitFunction; hasHit is gated
-     * by canHit and named by hasHitFunction. selfId/selfKind
-     * identify the object whose callback runs; otherId/
+     * slot is "triggered" or "collided". The gate boolean and the
+     * function-name field differ by slot: triggered is gated by
+     * canBeTriggered and named by triggeredFunction; collided is
+     * gated by canCollide and named by collidedFunction. selfId/
+     * selfKind identify the object whose callback runs; otherId/
      * otherKind identify the object on the other side of the
-     * collision (the collider for beenHit, the target for
-     * hasHit). Both ends see the same hitSpeed.
+     * collision (the collider for triggered, the target for
+     * collided). Both ends see the same hitSpeed.
      *
      * The context exposes reads — own id and kind, the other
      * object's id and kind, the transport (beat, time, bpm),
      * and hitSpeed — the two emitters playNote / playSound,
      * which forward to the same audio sink the patterns and
      * onTick use, keyed by the firing object's id so the sound
-     * carries this object's voice — and, on the beenHit side of
+     * carries this object's voice — and, on the triggered side of
      * a curve-marker hit, the struck marker's strudel value as
      * the read hitValue (a copy, or null off the marker path)
      * plus playMarker(amplitude?, duration?), which sounds that
@@ -1157,14 +1157,14 @@ export class Simulation {
      * first error is logged once to the console and the message
      * area, mirroring onTick.
      *
-     * @param {"beenHit" | "hasHit"} slot
+     * @param@param {"triggered" | "collided"} slot
      * @param {string} selfId
      * @param {string} selfKind
      * @param {string} otherId
      * @param {string} otherKind
      * @param {number} hitSpeed
      * @param {any} [markerValue]  The struck marker's strudel value on a
-     *     curve-marker beenHit; undefined otherwise. Surfaced as ctx.hitValue
+     *     curve-marker triggered; undefined otherwise. Surfaced as ctx.hitValue
      *     and replayed by ctx.playMarker.
      * @returns {boolean}  True if the callback function was invoked
      *     (gate enabled, name resolved, not session-disabled), else false.
@@ -1174,8 +1174,8 @@ export class Simulation {
         if (typeof selfId !== "string" || selfId === "") return false;
         const obj = this._findSceneObject(selfId);
         if (obj === null) return false;
-        const gateField = slot === "beenHit" ? "canBeHit" : "canHit";
-        const fnField = slot === "beenHit" ? "beenHitFunction" : "hasHitFunction";
+        const gateField = slot === "triggered" ? "canBeTriggered" : "canCollide";
+        const fnField = slot === "triggered" ? "triggeredFunction" : "collidedFunction";
         if (obj[gateField] !== true) return false;
         const name = obj[fnField];
         if (typeof name !== "string" || name === "") return false;
@@ -1197,11 +1197,11 @@ export class Simulation {
             otherKind,
             hitSpeed,
             // The struck marker's strudel value on a curve-marker
-            // beenHit, handed back as a shallow copy so the author
+            // triggered, handed back as a shallow copy so the author
             // can read or reshape it without corrupting the cached
             // marker value the canvas reuses. null when this hit
-            // carried no marker value (a trigger beenHit, or the
-            // hasHit side).
+            // carried no marker value (a trigger triggered, or the
+            // collided side).
             hitValue: (markerValue !== null && typeof markerValue === "object"
                 && !Array.isArray(markerValue)) ? { ...markerValue } : null,
             beat,
@@ -1258,7 +1258,7 @@ export class Simulation {
              * the value's gain (e.g. map ctx.hitSpeed to loudness),
              * duration is the note window in seconds (pitched
              * values only; defaults to the immediate-fire default).
-             * No-op off the curve-marker beenHit path (no marker
+             * No-op off the curve-marker triggered path (no marker
              * value to play) or when the sink isn't wired.
              * @param {number} [amplitude]
              * @param {number} [duration]

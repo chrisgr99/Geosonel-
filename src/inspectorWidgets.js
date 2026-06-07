@@ -303,7 +303,7 @@ export function normaliseHexForPicker(hex, fallback) {
  * id, which the caller treats as no proposed name and
  * disables the Create button accordingly.
  *
- * @param {"hasHit" | "beenHit" | "onTick"} slotKey
+ * @param {"collided" | "triggered" | "onTick"} slotKey
  * @param {any} obj
  * @returns {string}
  */

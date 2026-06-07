@@ -23,10 +23,10 @@
  *                strudel mini-notation pattern in "Here" mode,
  *                or the name of a function in the Code tab in
  *                "Code Tab" mode.
- *   - hasHit   — fires when the source hits another source;
- *                bound function in hasHitFunction.
- *   - beenHit  — fires when the source is hit by another;
- *                bound function in beenHitFunction.
+ *   - collided  — fires when the source (the active collider)
+ *                hits another; bound function in collidedFunction.
+ *   - triggered — fires when the source is hit (the passive
+ *                target); bound function in triggeredFunction.
  *   - onTick   — fires every simulation tick; bound function
  *                in onTickFunction.
  *
@@ -35,7 +35,7 @@
  * size, colour, and an optional payload. Sprites additionally
  * carry position, velocity, mass, and displayDiameter.
  *
- * Function-name fields (hasHitFunction, beenHitFunction,
+ * Function-name fields (collidedFunction, triggeredFunction,
  * onTickFunction, and cyclePattern in "Code Tab" mode) hold
  * STRING NAMES of functions defined in the bundle's
  * behaviors.js file, not function references. The Scene also
@@ -675,14 +675,14 @@ export class Curve {
         this.repeats = opts.repeats ?? 1;
 
         /** @type {boolean} */
-        this.canHit = opts.canHit ?? false;
+        this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
-        this.hasHitFunction = opts.hasHitFunction ?? "";
+        this.collidedFunction = opts.collidedFunction ?? "";
 
         /** @type {boolean} */
-        this.canBeHit = opts.canBeHit ?? false;
+        this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
-        this.beenHitFunction = opts.beenHitFunction ?? "";
+        this.triggeredFunction = opts.triggeredFunction ?? "";
 
         /** @type {boolean} */
         this.canAutoMessage = opts.canAutoMessage ?? false;
@@ -834,14 +834,14 @@ export class Trigger {
         this.repeats = opts.repeats ?? 1;
 
         /** @type {boolean} */
-        this.canHit = opts.canHit ?? false;
+        this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
-        this.hasHitFunction = opts.hasHitFunction ?? "";
+        this.collidedFunction = opts.collidedFunction ?? "";
 
         /** @type {boolean} */
-        this.canBeHit = opts.canBeHit ?? false;
+        this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
-        this.beenHitFunction = opts.beenHitFunction ?? "";
+        this.triggeredFunction = opts.triggeredFunction ?? "";
 
         /** @type {boolean} */
         this.canAutoMessage = opts.canAutoMessage ?? false;
@@ -1041,14 +1041,14 @@ export class Sprite {
         this.repeats = opts.repeats ?? 1;
 
         /** @type {boolean} */
-        this.canHit = opts.canHit ?? false;
+        this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
-        this.hasHitFunction = opts.hasHitFunction ?? "";
+        this.collidedFunction = opts.collidedFunction ?? "";
 
         /** @type {boolean} */
-        this.canBeHit = opts.canBeHit ?? false;
+        this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
-        this.beenHitFunction = opts.beenHitFunction ?? "";
+        this.triggeredFunction = opts.triggeredFunction ?? "";
 
         /** @type {boolean} */
         this.canAutoMessage = opts.canAutoMessage ?? false;

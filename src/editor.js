@@ -541,8 +541,8 @@ export class TabbedEditor {
          * setScene; read by _emitCursorTargetIds when the
          * cursor in behaviors.js sits inside a top-level
          * FunctionDeclaration whose name needs to be looked
-         * up across each object's hasHitFunction /
-         * beenHitFunction / onTickFunction slots. Null
+         * up across each object's collidedFunction /
+         * triggeredFunction / onTickFunction slots. Null
          * before the first runScene; in that case the
          * highlight emits an empty id set so the canvas
          * stays at default colours.
@@ -1106,8 +1106,8 @@ export class TabbedEditor {
      * Provide the editor with the live scene so the
      * cursor-target highlight in behaviors.js can resolve
      * top-level function declarations back to the object
-     * ids that bind them in hasHitFunction /
-     * beenHitFunction / onTickFunction slots. Called by
+     * ids that bind them in collidedFunction /
+     * triggeredFunction / onTickFunction slots. Called by
      * main.js after each successful runScene, mirroring
      * setSelectedObjectIds and setKnownObjectIds. After
      * stashing the scene reference the editor re-emits the

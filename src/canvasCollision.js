@@ -230,7 +230,7 @@ export const collisionMethods = {
                 });
                 // Flash a struck trigger when its beenHit ran, via
                 // the markFiredTrigger hook wired for this path.
-                if (res !== null && typeof res === "object" && res.beenHitFired) {
+                if (res !== null && typeof res === "object" && res.triggeredFired) {
                     this.markFiredTrigger(trig.id);
                 }
             }
@@ -243,7 +243,7 @@ export const collisionMethods = {
             // yellow via markFiredCurveBeat, the same hook the
             // pattern-firing path uses, keyed by the marker's t.
             // dispatchCollision resolves a "curve" target through
-            // the curve's canBeHit / beenHitFunction fields.
+            // the curve's canBeTriggered / triggeredFunction fields.
             for (const m of markerTargets) {
                 if (col.kind === "curve" && col.id === m.curveId) continue;
                 const side = abx * (m.y - col.ay) - aby * (m.x - col.ax);
@@ -269,7 +269,7 @@ export const collisionMethods = {
                     hitSpeed,
                     markerValue: m.value,
                 });
-                if (res !== null && typeof res === "object" && res.beenHitFired) {
+                if (res !== null && typeof res === "object" && res.triggeredFired) {
                     this.markFiredCurveBeat(m.curveId, m.t);
                 }
             }

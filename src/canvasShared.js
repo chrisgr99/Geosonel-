@@ -101,7 +101,7 @@ export const OBJECT_BOUNDARY_COLOUR = "#7db8d6";
 // editor cursor logically owns when sitting inside a
 // labelled pattern block in behaviors.js or inside a
 // top-level function declaration whose name is bound to
-// any object's hasHitFunction / beenHitFunction /
+// any object's collidedFunction / triggeredFunction /
 // onTickFunction slot. Pure #ff00ff reads slightly cold;
 // nudging the red channel up to 0x44 keeps the warmth of
 // a CRT-era magenta while staying unmistakable against

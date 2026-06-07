@@ -2079,47 +2079,49 @@ export function setTriggerSyncToBeatOnSelection(data, selection, value) {
 }
 
 /**
- * Set the canHit field across the selection.
+ * Set the canCollide field (the collided/active-collision gate)
+ * across the selection.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {boolean} value
  */
-export function setCanHitOnSelection(data, selection, value) {
-    setBooleanFieldOnSelection(data, selection, "canHit", !!value, true);
+export function setCanCollideOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "canCollide", !!value, true);
 }
 
 /**
- * Set the hasHitFunction field across the selection.
- * Value is a function name string. No validation in
- * Stage 2B; the soft-error model leaves the slot inert
- * until the named function appears in scene.functionMap.
+ * Set the collidedFunction field across the selection.
+ * Value is a function name string; the soft-error model leaves
+ * the slot inert until the named function appears in
+ * scene.functionMap.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
  */
-export function setHasHitFunctionOnSelection(data, selection, value) {
-    setStringFieldOnSelection(data, selection, "hasHitFunction", String(value));
+export function setCollidedFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "collidedFunction", String(value));
 }
 
 /**
- * Set the canBeHit field across the selection.
+ * Set the canBeTriggered field (the triggered/passive-collision
+ * gate) across the selection.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {boolean} value
  */
-export function setCanBeHitOnSelection(data, selection, value) {
-    setBooleanFieldOnSelection(data, selection, "canBeHit", !!value, true);
+export function setCanBeTriggeredOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "canBeTriggered", !!value, true);
 }
 
 /**
- * Set the beenHitFunction field across the selection. See
- * setHasHitFunctionOnSelection for the validation note.
+ * Set the triggeredFunction field across the selection. See
+ * setCollidedFunctionOnSelection for the validation note.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
  */
-export function setBeenHitFunctionOnSelection(data, selection, value) {
-    setStringFieldOnSelection(data, selection, "beenHitFunction", String(value));
+export function setTriggeredFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "triggeredFunction", String(value));
 }
 
 /**
@@ -2144,7 +2146,7 @@ export function setCanAutoMessageOnSelection(data, selection, value) {
 
 /**
  * Set the autoMessageFunction field across the selection. See
- * setHasHitFunctionOnSelection for the validation note.
+ * setCollidedFunctionOnSelection for the validation note.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
@@ -2167,7 +2169,7 @@ export function setAutoMessageIntervalOnSelection(data, selection, value) {
 
 /**
  * Set the onTickFunction field across the selection. See
- * setHasHitFunctionOnSelection for the validation note.
+ * setCollidedFunctionOnSelection for the validation note.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
@@ -2201,7 +2203,7 @@ export function setOnTickFunctionOnSelection(data, selection, value) {
  *
  * @param {string} content  Current behaviors.js source.
  * @param {string} functionName  Identifier to scaffold.
- * @param {"hasHit" | "beenHit" | "onTick"} slotKey
+ * @param {"collided" | "triggered" | "onTick"} slotKey
  * @returns {{ newContent: string, alreadyExists: boolean }}
  */
 export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {

@@ -92,9 +92,9 @@ const HARMONY_OVERRIDE_FIELDS = [
 /**
  * Callback-slot fields shared by Curve, Trigger, and Sprite.
  * Every source kind carries the cyclePattern field and the
- * four Code-tab callback slots (hasHit, beenHit, autoMessage,
- * onTick), each guarded by a Can-X gate boolean (canHit,
- * canBeHit, canAutoMessage, canTick). autoMessage fires at the
+ * Code-tab callback slots (collided, triggered, autoMessage,
+ * onTick), each guarded by a Can-X gate boolean (canCollide,
+ * canBeTriggered, canAutoMessage, canTick). autoMessage fires at the
  * object's Automessage Interval (Band 4). The cyclePattern lives in the Band 4 CodeMirror
  * editor; cursor-as-collider derives self-firing from cursor
  * extents and the object's state, so there is no canCycle gate. The
@@ -132,10 +132,10 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "activeBeatsCount", label: "Active Beats Count", type: "integer", default: 0, min: 0 },
     { key: "beatShift", label: "Beat Shift", type: "integer", default: 0 },
     { key: "repeats", label: "Beat Repeats", type: "integer", default: 1, min: 1 },
-    { key: "canHit", label: "Can Hit", type: "boolean", default: false },
-    { key: "hasHitFunction", label: "Has Hit Function", type: "functionRef", default: "" },
-    { key: "canBeHit", label: "Can Be Hit", type: "boolean", default: false },
-    { key: "beenHitFunction", label: "Been Hit Function", type: "functionRef", default: "" },
+    { key: "canCollide", label: "Can Collide", type: "boolean", default: false },
+    { key: "collidedFunction", label: "Collided Function", type: "functionRef", default: "" },
+    { key: "canBeTriggered", label: "Can Be Triggered", type: "boolean", default: false },
+    { key: "triggeredFunction", label: "Triggered Function", type: "functionRef", default: "" },
     { key: "canAutoMessage", label: "Can Auto Message", type: "boolean", default: false },
     { key: "autoMessageFunction", label: "Auto Message Function", type: "functionRef", default: "" },
     // Automessage Interval (Band 4): the rate at which the

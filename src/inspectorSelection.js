@@ -162,7 +162,7 @@ export function selectedObjects(scene, selection) {
  * every object's field is falsy, or the string "varies" if
  * the values disagree. Empty list returns false (the field
  * has no representative value). Used by Band 1 for Mute and
- * by Band 3 for the canHit / canBeHit / canTick checkboxes
+ * by Band 3 for the canCollide / canBeTriggered / canTick checkboxes
  * so multi-select can render a tri-state checkbox indicating
  * divergence.
  *

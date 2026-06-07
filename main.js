@@ -158,10 +158,10 @@ import {
     setStartAtCycleOnSelection,
     setStopAtCycleOnSelection,
     setTriggerSyncToBeatOnSelection,
-    setCanHitOnSelection,
-    setHasHitFunctionOnSelection,
-    setCanBeHitOnSelection,
-    setBeenHitFunctionOnSelection,
+    setCanCollideOnSelection,
+    setCollidedFunctionOnSelection,
+    setCanBeTriggeredOnSelection,
+    setTriggeredFunctionOnSelection,
     setCanTickOnSelection,
     setOnTickFunctionOnSelection,
     setCanAutoMessageOnSelection,
@@ -3747,21 +3747,21 @@ async function main() {
                 await applySceneEdit((data) =>
                     setTriggerSyncToBeatOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setCanHit") {
+            } else if (edit.kind === "setCanCollide") {
                 await applySceneEdit((data) =>
-                    setCanHitOnSelection(data, edit.selection, edit.value),
+                    setCanCollideOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setHasHitFunction") {
+            } else if (edit.kind === "setCollidedFunction") {
                 await applySceneEdit((data) =>
-                    setHasHitFunctionOnSelection(data, edit.selection, edit.value),
+                    setCollidedFunctionOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setCanBeHit") {
+            } else if (edit.kind === "setCanBeTriggered") {
                 await applySceneEdit((data) =>
-                    setCanBeHitOnSelection(data, edit.selection, edit.value),
+                    setCanBeTriggeredOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setBeenHitFunction") {
+            } else if (edit.kind === "setTriggeredFunction") {
                 await applySceneEdit((data) =>
-                    setBeenHitFunctionOnSelection(data, edit.selection, edit.value),
+                    setTriggeredFunctionOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCanTick") {
                 await applySceneEdit((data) =>
@@ -3873,8 +3873,8 @@ async function main() {
                 }
                 /** @type {Record<string, (d: any, s: any, v: string) => void>} */
                 const setterByKind = {
-                    "hasHit": setHasHitFunctionOnSelection,
-                    "beenHit": setBeenHitFunctionOnSelection,
+                    "collided": setCollidedFunctionOnSelection,
+                    "triggered": setTriggeredFunctionOnSelection,
                     "autoMessage": setAutoMessageFunctionOnSelection,
                     "onTick": setOnTickFunctionOnSelection,
                 };
