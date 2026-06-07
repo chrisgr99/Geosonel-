@@ -588,6 +588,15 @@ selector resolution, plus the id-keyed selective-merge rule. It is the single se
 surface calls. It wraps and re-exports the existing sceneEditor.js set*OnSelection functions
 rather than duplicating them, so the inspector path is unchanged and the new surfaces share it.
 
+STATUS (built, with one deviation): src/sceneOps.js now exists as a createSceneOps(data)
+factory implementing the five operations, the selectors, and the selective merge. It does NOT
+wrap sceneEditor as sketched above — it REIMPLEMENTS the per-entry field write, because
+sceneEditor transitively imports acorn from an https URL and so cannot load offline (under
+node tests). The inspector keeps its sceneEditor path; the two share the same field-write
+semantics, and unifying them behind one writer is a later cleanup if it earns its keep. The
+module is self-contained (depends only on idGen), not yet wired to any surface, and has no
+test yet.
+
 A new module, src/sceneHandles.js, holds the object handle and the score handle: the live
 property views (reads from the Scene and the simulation, writes through sceneOps) and the
 selector lookup by id, current, all, selection, and group. The callback context becomes a

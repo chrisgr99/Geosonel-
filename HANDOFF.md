@@ -10,16 +10,15 @@ GXW is a browser-based JavaScript generative music app, the successor to GeoSoni
 
 ## Where to read for depth
 
-At the start of any session, read these two files. Both are small and always relevant.
+The one design file to read at the start of any session is design/DESIGN.md. Since the GeosonixV2 pivot it is the single, self-contained design document for the current direction: sections 1 through 10 inline, covering the vision, what carries over, the procedural pattern model (the centrepiece, still being designed), the inspector as built, and the engine migration map. It is a draft skeleton being filled in with Chris over successive sessions, so expect TODO markers in the unfinished sections.
 
-design/sections/section-01-vision.md gives the project vision in three short paragraphs (about 1 KB). design/DESIGN.md is the master index, listing all section files and their topics (about 3 KB).
+The Strudel-era design is archived at design-strudel/ as read-only reference. That folder holds the old DESIGN.md, its per-section files under design-strudel/sections/, the old TODO.md, and the inspector-field audit. Consult it only when you need the pre-pivot rationale; it does not describe the current direction.
 
 For deeper reading as needed:
 
-- design/sections/section-NN-*.md holds the per-section design files. Sections 27 and 28 were superseded by the v2.5 fold-back and now exist as forwarding stubs pointing at the destinations of their content.
-- design/TODO.md tracks pending work organised by component and is the authoritative list of what is yet to do.
 - The git log is the authoritative history of what has shipped.
 - src/ holds the current implementation, useful when reasoning about what the code actually does today.
+- DESIGN.md section 10 is the engine migration keep/change/remove map, the most current account of which subsystems survive the pivot and how.
 
 ## Current state
 
