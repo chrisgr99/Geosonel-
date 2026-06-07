@@ -531,7 +531,7 @@ export const renderMethods = {
             // Firing-event flash check, computed up front so
             // it can override both the interior fill and the
             // boundary stroke. When the trigger is currently
-            // flashing (beenHit just fired), the entire
+            // flashing (beenTriggered just fired), the entire
             // diamond paints solid red — fill plus stroke
             // — for FIRING_FLASH_DURATION_MS, then reverts
             // naturally on the next frame past the window.

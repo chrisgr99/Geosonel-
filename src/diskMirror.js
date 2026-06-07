@@ -37,7 +37,7 @@
  *     README.md                  written once on first connect
  *     <score name 1>/
  *       scene.json
- *       behaviours.js
+ *       script.js
  *       <image file, if any>
  *     <score name 2>/
  *       ...
@@ -51,7 +51,7 @@
  *
  *   Polling once per second (skipped while the document is
  *   hidden) checks the modification time of scene.json and
- *   behaviours.js for the currently-watched score. When a
+ *   script.js for the currently-watched score. When a
  *   change is detected, a 500ms settle timer starts; further
  *   changes during settle reset the timer. When settle fires,
  *   the bundle is read from disk in one operation and a single
@@ -95,7 +95,7 @@ const SETTLE_MS = 500;
 
 const README_FILENAME = "README.md";
 const SCENE_FILENAME = "scene.json";
-const BEHAVIOURS_FILENAME = "behaviours.js";
+const SCRIPT_FILENAME = "script.js";
 const ACTIVE_SCORE_FILENAME = "_active.txt";
 
 const README_BODY =
@@ -111,7 +111,7 @@ score editor.
   - <score name>/            one folder per score, containing:
       - scene.json           declarative score data (objects,
                              transport, harmony, display scales)
-      - behaviours.js        named JavaScript functions referenced
+      - script.js        named JavaScript functions referenced
                              by scene.json
       - <image file>         optional background image
 
@@ -124,10 +124,10 @@ GXW:
   2. Edit the relevant files in that score's folder.
   3. GXW will reload the score within ~1.5 seconds.
 
-When adding a new behaviour to a score: write behaviours.js
+When adding a new behaviour to a score: write script.js
 first (defining the function), then scene.json (referencing
 it). When removing a behaviour: write scene.json first
-(removing the reference), then behaviours.js (removing the
+(removing the reference), then script.js (removing the
 function definition). Following this order avoids a momentary
 inconsistency where scene.json references a function that
 doesn't yet exist (or no longer exists).
@@ -352,7 +352,7 @@ export class DiskMirror {
         try {
             const folder = await this._getOrCreateScoreFolder(bundle.name);
             await this._writeTextFile(folder, SCENE_FILENAME, bundle.getFile(SCENE_FILENAME)?.content ?? "");
-            await this._writeTextFile(folder, BEHAVIOURS_FILENAME, bundle.getFile(BEHAVIOURS_FILENAME)?.content ?? "");
+            await this._writeTextFile(folder, SCRIPT_FILENAME, bundle.getFile(SCRIPT_FILENAME)?.content ?? "");
             if (bundle.imageName !== null) {
                 const img = bundle.getBinaryFile(bundle.imageName);
                 if (img !== null) {
@@ -374,12 +374,12 @@ export class DiskMirror {
         try {
             const folder = await this._getOrCreateScoreFolder(record.name);
             const sceneFile = record.files[SCENE_FILENAME];
-            const behavioursFile = record.files[BEHAVIOURS_FILENAME];
+            const behavioursFile = record.files[SCRIPT_FILENAME];
             if (sceneFile !== undefined && typeof sceneFile.content === "string") {
                 await this._writeTextFile(folder, SCENE_FILENAME, sceneFile.content);
             }
             if (behavioursFile !== undefined && typeof behavioursFile.content === "string") {
-                await this._writeTextFile(folder, BEHAVIOURS_FILENAME, behavioursFile.content);
+                await this._writeTextFile(folder, SCRIPT_FILENAME, behavioursFile.content);
             }
             if (record.imageName !== null) {
                 const img = record.files[record.imageName];
@@ -407,7 +407,7 @@ export class DiskMirror {
             const bundle = new Bundle(name);
             for await (const [entryName, entry] of folder.entries()) {
                 if (entry.kind !== "file") continue;
-                if (entryName === SCENE_FILENAME || entryName === BEHAVIOURS_FILENAME) {
+                if (entryName === SCENE_FILENAME || entryName === SCRIPT_FILENAME) {
                     const file = await entry.getFile();
                     const text = await file.text();
                     const mime = entryName === SCENE_FILENAME ? "application/json" : "text/javascript";
@@ -422,7 +422,7 @@ export class DiskMirror {
                 if (f.kind === "binary") bundle.imageName = f.name;
             }
             if (bundle.getFile(SCENE_FILENAME) === null) return null;
-            if (bundle.getFile(BEHAVIOURS_FILENAME) === null) return null;
+            if (bundle.getFile(SCRIPT_FILENAME) === null) return null;
             return bundle;
         } catch (err) {
             this._handleOpError(`read score "${name}"`, err);
@@ -646,7 +646,7 @@ export class DiskMirror {
         }
 
         let changed = false;
-        for (const fileName of [SCENE_FILENAME, BEHAVIOURS_FILENAME]) {
+        for (const fileName of [SCENE_FILENAME, SCRIPT_FILENAME]) {
             try {
                 const handle = await folder.getFileHandle(fileName, { create: false });
                 const file = await handle.getFile();

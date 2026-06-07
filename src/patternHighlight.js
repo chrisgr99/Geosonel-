@@ -1,7 +1,7 @@
 /**
  * Selection-driven source-binding highlighting plus
  * orphan-label flagging plus muted-state badge for
- * behaviors.js.
+ * script.js.
  *
  * Stage A5 of the section-28 pattern-authoring sequence,
  * extended to cover the full source-binding surface, an
@@ -17,9 +17,9 @@
  *     block (label name plus colon).
  *   - The name of a top-level function declaration whose
  *     name follows the slotName_objectId convention, where
- *     slotName is one of hasHit, beenHit, or onTick.
+ *     slotName is one of hasCollided, beenTriggered, or onTick.
  * Both point at the same conceptual thing: a piece of
- * behaviors.js source bound to a scene object. The green
+ * script.js source bound to a scene object. The green
  * visually ties the canvas's current focus to the code
  * that handles it. Inactive bindings stay in the default
  * name-token pink.
@@ -46,7 +46,7 @@
  * identifier of any source whose object is currently
  * muted in the scene. The marker is a virtual DOM
  * element rendered by Decoration.widget, not source
- * text, so behaviors.js stays untouched on mute toggles
+ * text, so script.js stays untouched on mute toggles
  * and the bundle doesn't dirty when a curve gets muted
  * via Cmd-Shift-M or the inspector checkbox. The marker
  * text mirrors a label form ("$mute:") so the visual
@@ -208,7 +208,7 @@ const muteBadgeDecoration = Decoration.widget({
  * Code-tab callback slots; the object id follows the
  * trailing underscore. Sorted with the longest prefix
  * first so the matching loop's startsWith probes don't
- * cause beenHit to be mistaken for a name starting with
+ * cause beenTriggered to be mistaken for a name starting with
  * the shorter onTick prefix (which doesn't actually
  * conflict here, but keeping prefixes sorted by length is
  * the safe convention for prefix matching).

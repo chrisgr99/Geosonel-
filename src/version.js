@@ -9,7 +9,7 @@
  * landing as one commit, typically a single working session).
  * Patch-level differences inside a milestone don't usually
  * earn a bump. DATA_FORMAT_VERSION advances only when the
- * shape of scene.json or behaviours.js changes in a way that
+ * shape of scene.json or script.js changes in a way that
  * older loaders can't read forward-compatibly.
  *
  * Versions are strings rather than numbers so we can use dotted
@@ -26,7 +26,7 @@ export const APP_VERSION = "0.1";
 
 /**
  * Score-data format version. Tracks the structure of
- * scene.json and behaviours.js, not the app version. Two
+ * scene.json and script.js, not the app version. Two
  * apps with the same data format version can read each
  * other's scores.
  */

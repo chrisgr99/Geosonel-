@@ -709,7 +709,7 @@ export const fieldMethods = {
      * the field is empty (the proposed default function
      * name), and a render-time muted treatment for the
      * typed text when the named function doesn't exist in
-     * behaviors.js. Both muted treatments use inline
+     * script.js. Both muted treatments use inline
      * opacity so the field reads correctly without
      * dedicated CSS in this commit.
      *
@@ -734,14 +734,12 @@ export const fieldMethods = {
         el.className = "insp-field insp-slot-field";
         el.style.width = `${opts.width}px`;
 
-        // Function-doesn't-exist muted treatment for typed
-        // names. Placeholder text gets its own muted
-        // styling below; this branch handles the case where
-        // the user has typed (or stored) a name that
-        // doesn't resolve in scene.functionMap yet.
-        if (opts.editable && !opts.functionExists && opts.value !== "") {
-            el.style.opacity = "0.55";
-        }
+        // A proposed (or typed) function name that doesn't exist in
+        // the Script tab yet is NOT dimmed: the field and its name stay
+        // in the enabled state, and the Create button to the right is
+        // the sole signal that the function isn't created yet (it
+        // flips to Go to once it exists). Only a disabled row (below)
+        // greys the field.
 
         if (!opts.editable) {
             el.classList.add("disabled");
@@ -752,76 +750,61 @@ export const fieldMethods = {
         el.setAttribute("contenteditable", "plaintext-only");
         el.setAttribute("spellcheck", "false");
 
-        const showPlaceholder = () => {
-            el.textContent = opts.placeholder;
+        // The displayed name is the committed binding if there is one,
+        // otherwise the proposed default — shown as ORDINARY editable
+        // content (not a cleared-on-focus placeholder). So a click lands
+        // the caret where you clicked and the proposed name stays put for
+        // editing (the common case: tweak it). The .placeholder-shown
+        // class marks the unbound/proposed case but renders identically
+        // to a committed value; only the Create button signals it isn't
+        // created yet.
+        const baseline = opts.value !== "" ? opts.value : opts.placeholder;
+        el.textContent = baseline;
+        if (opts.value === "" && opts.placeholder !== "") {
             el.classList.add("placeholder-shown");
-            el.style.opacity = "0.55";
-        };
-        const clearPlaceholder = () => {
-            el.textContent = "";
-            el.classList.remove("placeholder-shown");
-            el.style.opacity = "";
-        };
-
-        if (opts.value !== "") {
-            el.textContent = opts.value;
-        } else if (opts.placeholder !== "") {
-            showPlaceholder();
         }
 
-        // Mouse-aware focus selection with placeholder-clear
-        // hook. The onFocus callback runs first on every
-        // focus regardless of origin and clears the
-        // placeholder if one is shown, after which the tab-
-        // vs-mouse branching applies (tab selects-all on
-        // the now-empty field — a harmless no-op; mouse
-        // leaves the caret at the click position).
-        wireFocusSelect(el, {
-            onFocus: () => {
-                if (el.classList.contains("placeholder-shown")) {
-                    clearPlaceholder();
-                }
-            },
-        });
+        // Mouse-aware focus: a click leaves the caret at the click
+        // position; Tab selects-all so the first keystroke replaces the
+        // whole name. No placeholder clearing.
+        wireFocusSelect(el);
 
+        // Commit only when the user actually CHANGES the field from what
+        // was shown. Leaving the proposed name untouched does NOT bind it
+        // — the Create button is how an unedited proposal gets bound and
+        // scaffolded; editing it to a different name commits that name.
+        // The committed flag guards the detached-blur double-emit after a
+        // commit re-renders the inspector.
         let committed = false;
-        const tryCommit = () => {
-            const candidate = el.textContent ?? "";
+        const commitIfChanged = () => {
             if (committed) return;
-            if (candidate !== opts.value) {
-                committed = true;
-                this._emitEdit({ kind: opts.editKind, value: candidate });
-            }
+            const candidate = el.textContent ?? "";
+            if (candidate === baseline) return;
+            // Clearing an already-unbound field is a no-op, not an edit.
+            if (candidate === "" && opts.value === "") return;
+            committed = true;
+            this._emitEdit({ kind: opts.editKind, value: candidate });
         };
 
         el.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 e.preventDefault();
-                tryCommit();
+                commitIfChanged();
                 return;
             }
             if (e.key === "Escape") {
                 e.preventDefault();
-                if (opts.value !== "") {
-                    el.textContent = opts.value;
-                    el.style.opacity = opts.functionExists ? "" : "0.55";
-                } else if (opts.placeholder !== "") {
-                    showPlaceholder();
-                } else {
-                    el.textContent = "";
-                    el.style.opacity = "";
-                }
+                el.textContent = baseline;
                 el.blur();
                 return;
             }
         });
         el.addEventListener("blur", () => {
-            tryCommit();
-            if (
-                el.textContent === "" &&
-                opts.placeholder !== ""
-            ) {
-                showPlaceholder();
+            commitIfChanged();
+            // If the field was emptied on an unbound slot without
+            // committing, restore the proposed name display.
+            if (!committed && el.textContent === "" && opts.value === "" && opts.placeholder !== "") {
+                el.textContent = opts.placeholder;
             }
         });
 
@@ -833,18 +816,18 @@ export const fieldMethods = {
      * row (rows 3 through 5). Disabled state uses the
      * existing insp-btn-create.disabled styling. Enabled
      * click routes to one of two edits: goToFunction when
-     * the named function already exists in behaviors.js,
+     * the named function already exists in script.js,
      * or createFunctionStub when it does not. The slotKey
      * tags the createFunctionStub edit so main.js can
      * dispatch the binding mutator (one of
-     * setCollidedFunctionOnSelection,
-     * setTriggeredFunctionOnSelection,
+     * setHasCollidedFunctionOnSelection,
+     * setBeenTriggeredFunctionOnSelection,
      * setOnTickFunctionOnSelection).
      *
      * @param {{
      *   label: string,
      *   disabled: boolean,
-     *   slotKey: "collided" | "triggered" | "onTick",
+     *   slotKey: "hasCollided" | "beenTriggered" | "onActiveBeat" | "onTick",
      *   functionName: string,
      *   functionExists: boolean,
      * }} opts

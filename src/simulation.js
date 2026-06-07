@@ -287,7 +287,7 @@ const MIN_AUDIO_FIRE_INTERVAL = 0.03125;
 
 // The motion feel knobs — drag (damping), jitter (anti-trap
 // agitation), and coast (minimum coast speed) — are score-wide
-// and set from behaviours.js via the `score.kinematics` object;
+// and set from script.js via the `score.kinematics` object;
 // their defaults live in DEFAULT_KINEMATICS (scene.js) and
 // _stepSprites reads them per sub-step from this._scene.kinematics.
 // They moved here from module constants so a score carries its own
@@ -993,7 +993,7 @@ export class Simulation {
          * every sub-step, so a throwing callback is caught and
          * its id parked here to avoid calling it again and
          * flooding the console / message area. Cleared on
-         * every setScene, so a behaviours.js reload or any
+         * every setScene, so a script.js reload or any
          * scene re-run re-enables the callback for another
          * attempt.
          * @type {Set<string>}
@@ -1002,12 +1002,12 @@ export class Simulation {
         /**
          * Keys of collision callback slots that threw and are
          * therefore disabled for the rest of the session. A key
-         * is `${slot}:${objectId}`, e.g. "triggered:TRG3" or
-         * "collided:SPR1", so an object's triggered and collided are
+         * is `${slot}:${objectId}`, e.g. "beenTriggered:TRG3" or
+         * "hasCollided:SPR1", so an object's beenTriggered and hasCollided are
          * disabled independently. Mirrors _onTickDisabled: a
          * throwing collision callback is caught, parked here so
          * it isn't called again, and the error logged once.
-         * Cleared on every setScene, so a behaviours.js reload
+         * Cleared on every setScene, so a script.js reload
          * or any scene re-run re-enables the slot.
          * @type {Set<string>}
          */
@@ -1021,7 +1021,7 @@ export class Simulation {
          * main.js routes a note spec to the firing engine's
          * fireImmediateNote, a sound spec to fireImmediateSound,
          * and a value spec (a raw strudel Hap value, used by a
-         * curve triggered's ctx.playMarker) to fireImmediateValue.
+         * curve beenTriggered's ctx.playMarker) to fireImmediateValue.
          * Null until setAudioSink runs, so the context methods
          * no-op and the simulation still runs headless. The
          * simulation holds no audio knowledge beyond forwarding
@@ -1068,7 +1068,7 @@ export class Simulation {
 
     /**
      * Dispatch a collision detected canvas-side. Fires the
-     * target's triggered first, then the collider's collided,
+     * target's beenTriggered first, then the collider's hasCollided,
      * each only when that object enables the matching slot
      * (canBeTriggered / canCollide) and names a function that resolves
      * in the scene's functionMap. Either callback is optional
@@ -1087,7 +1087,7 @@ export class Simulation {
      * when the collider and target lists are built (in
      * canvasCollision). Passive removes a source's cursor, so a
      * passive object is excluded as a COLLIDER but stays a
-     * valid TARGET (its triggered still runs). Disabled is
+     * valid TARGET (its beenTriggered still runs). Disabled is
      * excluded as BOTH collider and target. By the time a pair
      * reaches this dispatch, it is already a legal
      * collider/target pair, so this method faithfully runs the
@@ -1096,33 +1096,33 @@ export class Simulation {
      * @param {{colliderId: string, colliderKind: "curve" | "sprite",
      *          targetId: string, targetKind: "curve" | "trigger" | "sprite",
      *          hitSpeed: number, markerValue?: any}} event
-     * @returns {{triggeredFired: boolean, collidedFired: boolean}}  Whether each
+     * @returns {{beenTriggeredFired: boolean, hasCollidedFired: boolean}}  Whether each
      *     callback actually ran (gate passed + function resolved). The canvas
-     *     uses triggeredFired to flash a struck trigger.
+     *     uses beenTriggeredFired to flash a struck trigger.
      */
     dispatchCollision(event) {
-        if (this._scene === null) return { triggeredFired: false, collidedFired: false };
+        if (this._scene === null) return { beenTriggeredFired: false, hasCollidedFired: false };
         if (event === null || typeof event !== "object") {
-            return { triggeredFired: false, collidedFired: false };
+            return { beenTriggeredFired: false, hasCollidedFired: false };
         }
         const hitSpeed = (typeof event.hitSpeed === "number"
             && Number.isFinite(event.hitSpeed)) ? event.hitSpeed : 0;
         // The struck marker's strudel value, present only for a
         // curve-marker hit; undefined for a trigger (or any
-        // future sprite) target. Passed to the triggered side
+        // future sprite) target. Passed to the beenTriggered side
         // only, where self is the marker-owning curve, so
         // ctx.hitValue / ctx.playMarker read and sound through
         // that curve's own voice rather than the collider's.
         const markerValue = event.markerValue;
-        // Target's triggered first, then the collider's collided —
+        // Target's beenTriggered first, then the collider's hasCollided —
         // the firing order the collision model specifies.
-        const triggeredFired = this._runCollisionCallback(
-            "triggered", event.targetId, event.targetKind,
+        const beenTriggeredFired = this._runCollisionCallback(
+            "beenTriggered", event.targetId, event.targetKind,
             event.colliderId, event.colliderKind, hitSpeed, markerValue);
-        const collidedFired = this._runCollisionCallback(
-            "collided", event.colliderId, event.colliderKind,
+        const hasCollidedFired = this._runCollisionCallback(
+            "hasCollided", event.colliderId, event.colliderKind,
             event.targetId, event.targetKind, hitSpeed, undefined);
-        return { triggeredFired, collidedFired };
+        return { beenTriggeredFired, hasCollidedFired };
     }
 
     /**
@@ -1130,21 +1130,21 @@ export class Simulation {
      * enabled and resolves, building the fresh context the
      * callback reads and writes through.
      *
-     * slot is "triggered" or "collided". The gate boolean and the
-     * function-name field differ by slot: triggered is gated by
-     * canBeTriggered and named by triggeredFunction; collided is
-     * gated by canCollide and named by collidedFunction. selfId/
+     * slot is "beenTriggered" or "hasCollided". The gate boolean and the
+     * function-name field differ by slot: beenTriggered is gated by
+     * canBeTriggered and named by beenTriggeredFunction; hasCollided is
+     * gated by canCollide and named by hasCollidedFunction. selfId/
      * selfKind identify the object whose callback runs; otherId/
      * otherKind identify the object on the other side of the
-     * collision (the collider for triggered, the target for
-     * collided). Both ends see the same hitSpeed.
+     * collision (the collider for beenTriggered, the target for
+     * hasCollided). Both ends see the same hitSpeed.
      *
      * The context exposes reads — own id and kind, the other
      * object's id and kind, the transport (beat, time, bpm),
      * and hitSpeed — the two emitters playNote / playSound,
      * which forward to the same audio sink the patterns and
      * onTick use, keyed by the firing object's id so the sound
-     * carries this object's voice — and, on the triggered side of
+     * carries this object's voice — and, on the beenTriggered side of
      * a curve-marker hit, the struck marker's strudel value as
      * the read hitValue (a copy, or null off the marker path)
      * plus playMarker(amplitude?, duration?), which sounds that
@@ -1157,14 +1157,14 @@ export class Simulation {
      * first error is logged once to the console and the message
      * area, mirroring onTick.
      *
-     * @param@param {"triggered" | "collided"} slot
+     * @param@param {"beenTriggered" | "hasCollided"} slot
      * @param {string} selfId
      * @param {string} selfKind
      * @param {string} otherId
      * @param {string} otherKind
      * @param {number} hitSpeed
      * @param {any} [markerValue]  The struck marker's strudel value on a
-     *     curve-marker triggered; undefined otherwise. Surfaced as ctx.hitValue
+     *     curve-marker beenTriggered; undefined otherwise. Surfaced as ctx.hitValue
      *     and replayed by ctx.playMarker.
      * @returns {boolean}  True if the callback function was invoked
      *     (gate enabled, name resolved, not session-disabled), else false.
@@ -1174,8 +1174,8 @@ export class Simulation {
         if (typeof selfId !== "string" || selfId === "") return false;
         const obj = this._findSceneObject(selfId);
         if (obj === null) return false;
-        const gateField = slot === "triggered" ? "canBeTriggered" : "canCollide";
-        const fnField = slot === "triggered" ? "triggeredFunction" : "collidedFunction";
+        const gateField = slot === "beenTriggered" ? "canBeTriggered" : "canCollide";
+        const fnField = slot === "beenTriggered" ? "beenTriggeredFunction" : "hasCollidedFunction";
         if (obj[gateField] !== true) return false;
         const name = obj[fnField];
         if (typeof name !== "string" || name === "") return false;
@@ -1197,11 +1197,11 @@ export class Simulation {
             otherKind,
             hitSpeed,
             // The struck marker's strudel value on a curve-marker
-            // triggered, handed back as a shallow copy so the author
+            // beenTriggered, handed back as a shallow copy so the author
             // can read or reshape it without corrupting the cached
             // marker value the canvas reuses. null when this hit
-            // carried no marker value (a trigger triggered, or the
-            // collided side).
+            // carried no marker value (a trigger beenTriggered, or the
+            // hasCollided side).
             hitValue: (markerValue !== null && typeof markerValue === "object"
                 && !Array.isArray(markerValue)) ? { ...markerValue } : null,
             beat,
@@ -1258,7 +1258,7 @@ export class Simulation {
              * the value's gain (e.g. map ctx.hitSpeed to loudness),
              * duration is the note window in seconds (pitched
              * values only; defaults to the immediate-fire default).
-             * No-op off the curve-marker triggered path (no marker
+             * No-op off the curve-marker beenTriggered path (no marker
              * value to play) or when the sink isn't wired.
              * @param {number} [amplitude]
              * @param {number} [duration]
@@ -1350,7 +1350,7 @@ export class Simulation {
      * @param {import("./scene.js").Scene | null} scene
      */
     setScene(scene) {
-        // A scene re-run (behaviours.js reload, inspector or
+        // A scene re-run (script.js reload, inspector or
         // canvas edit) re-enables any onTick or collision
         // callback that a throw disabled earlier this session.
         this._onTickDisabled.clear();
@@ -3017,7 +3017,7 @@ export class Simulation {
             ? this._scene.spriteScale
             : 1;
         // Score-wide motion feel, read once per sub-step from the
-        // scene's kinematics (set by the composer in behaviours.js
+        // scene's kinematics (set by the composer in script.js
         // via score.kinematics; falls back to the defaults if a
         // scene lacks the field). Each is a guarded non-negative
         // number: drag is the impulse-damping rate, jitter the

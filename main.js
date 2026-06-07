@@ -4,7 +4,7 @@
  * Wires up every component and owns the score session. The
  * current score's data and behaviour are kept in two files
  * inside the bundle \u2014 scene.json (declarative data) and
- * behaviors.js (named functions) \u2014 which the scene loader
+ * script.js (named functions) \u2014 which the scene loader
  * stitches together on demand (Cmd-Enter or Run menu) to
  * produce a Scene that the canvas renders on top of the grid.
  *
@@ -29,7 +29,7 @@
  * Current milestone scope:
  *   - Scene data model (Scene, Curve, Trigger, Sprite).
  *   - Scene loader that builds a Scene from scene.json plus
- *     behaviors.js, with named function references resolved
+ *     script.js, with named function references resolved
  *     against the behavior file's top-level declarations.
  *   - Canvas rendering of scenes (static).
  *   - Editor with Properties (JSON) and Behaviors (JS) tabs,
@@ -119,10 +119,10 @@ import {
     fillEmptyNames,
     cleanLegacyShapeFields,
     cleanLegacySceneFields,
+    renameLegacyScriptFile,
     fillMissingCanvasSize,
     fillMissingEngine,
     stripObsoleteFields,
-    migrateBehaviorsFilename,
     setStateOnSelection,
     setHideOnCurves,
     setNameOnSelection,
@@ -159,9 +159,11 @@ import {
     setStopAtCycleOnSelection,
     setTriggerSyncToBeatOnSelection,
     setCanCollideOnSelection,
-    setCollidedFunctionOnSelection,
+    setHasCollidedFunctionOnSelection,
     setCanBeTriggeredOnSelection,
-    setTriggeredFunctionOnSelection,
+    setBeenTriggeredFunctionOnSelection,
+    setCanActiveBeatOnSelection,
+    setOnActiveBeatFunctionOnSelection,
     setCanTickOnSelection,
     setOnTickFunctionOnSelection,
     setCanAutoMessageOnSelection,
@@ -567,7 +569,7 @@ async function main() {
             // token map now that the engine can parse patterns:
             // a score opened before Load Engine built no tokens
             // (parsePatternToPositions no-ops without the engine),
-            // and the behaviours.js doc hasn't changed since, so
+            // and the script.js doc hasn't changed since, so
             // a forced recompute is the only trigger that picks
             // up the now-parseable patterns without a user edit.
             editor.recomputeActiveBeatTokens();
@@ -650,7 +652,7 @@ async function main() {
             firingEngine.fireImmediateSound(sourceId, spec);
         } else if (spec.type === "value") {
             // A raw strudel Hap value replayed by a curve
-            // beenHit's ctx.playMarker: route through the same
+            // beenTriggered's ctx.playMarker: route through the same
             // voice + output path the pattern uses so the struck
             // marker sounds like the curve firing that beat.
             firingEngine.fireImmediateValue(
@@ -911,7 +913,7 @@ async function main() {
 
     // --- Scene loader ---
     const sceneLoader = new SceneLoader();
-    // Expose print(...) to behaviours.js, writing its formatted
+    // Expose print(...) to script.js, writing its formatted
     // arguments to the message area. A diagnostic the composer
     // can drop into any callback to trace values.
     sceneLoader.setPrint((...args) => {
@@ -928,7 +930,7 @@ async function main() {
     });
 
     /**
-     * Load the current score's scene.json and behaviours.js,
+     * Load the current score's scene.json and script.js,
      * build a Scene, and update the canvas. Executes from the
      * in-memory bundle state — the explicit-save model means
      * Run no longer commits to disk first; Cmd-S is the only
@@ -937,7 +939,17 @@ async function main() {
      * failure.
      */
     runScene = async () => {
-        await runBundleMigrations();
+        // One-time filename normalisation: a pre-rename score carries a
+        // behaviors.js file; rename it in place to script.js so the loader
+        // finds it and the Script tab renders. Refresh the editor's tab bar
+        // and persist so it doesn't re-run every load. This is the ONLY
+        // legacy-file handling — no scene-data migration.
+        if (renameLegacyScriptFile(session.bundle)) {
+            editor.reloadFromBundle();
+            if (session.bundle.path !== null) {
+                await editor.save();
+            }
+        }
         await ensureIdentityFieldsAreFilled();
         const result = sceneLoader.load(session.bundle);
         if (result.success && result.scene !== null) {
@@ -1001,7 +1013,7 @@ async function main() {
     };
 
     /**
-     * Run the Code tab's SETUP section: execute its setup() function with the
+     * Run the Script tab's SETUP section: execute its setup() function with the
      * scene-construction API in scope (the bare globals addCurve / addTrigger /
      * setGroup / set / position / … plus map / sin / cos / TWO_PI), against the
      * current scene.json, then persist the merged scene and reload it.
@@ -1018,13 +1030,13 @@ async function main() {
      */
     const runSetup = async () => {
         const sceneFile = session.bundle.getFile("scene.json");
-        const behaviorsFile = session.bundle.getFile("behaviors.js");
+        const scriptFile = session.bundle.getFile("script.js");
         if (sceneFile === null) {
             messages.write("No scene.json in this score.", "error");
             return;
         }
-        if (behaviorsFile === null) {
-            messages.write("No Code tab (behaviors.js) in this score.", "error");
+        if (scriptFile === null) {
+            messages.write("No Script tab (script.js) in this score.", "error");
             return;
         }
         const parsed = parseScene(sceneFile.content);
@@ -1043,13 +1055,13 @@ async function main() {
             // (background, harmony, view) arrive with the score-handle wiring.
             setBPM: (n) => { const v = Number(n); if (Number.isFinite(v)) parsed.data.bpm = v; },
         };
-        const result = sceneLoader.runSetup(behaviorsFile.content, api);
+        const result = sceneLoader.runSetup(scriptFile.content, api);
         if (!result.ok) {
             messages.write(result.error ?? "Setup failed.", "error");
             return;
         }
         if (!result.ranSetup) {
-            messages.write("No setup() function found in the Code tab.");
+            messages.write("No setup() function found in the Script tab.");
             return;
         }
         // Persist the merged scene, refresh the JSON view if it is showing, and
@@ -1059,49 +1071,6 @@ async function main() {
         editor.refreshActiveTabFromBundle();
         await runScene();
         messages.write("Setup run.");
-    };
-
-    /**
-     * Run bundle-level migrations on the active score's
-     * files. Currently the only migration here renames a
-     * legacy behaviours.js file to behaviors.js (DESIGN.md
-     * v2.4 spelling change). Done before the scene-level
-     * fill pass below so the loader's behaviors.js lookup
-     * succeeds on a freshly-migrated bundle, and so the
-     * editor's tab bar refreshes to show the new label.
-     * Returns once any necessary migration has been
-     * applied. Steady-state (already-migrated) bundles are
-     * a no-op.
-     *
-     * Persistence: the rename is committed to disk inside
-     * this function so the migrated state survives a
-     * reload. Without an explicit save here the bundle
-     * would be re-migrated every page load, since Run
-     * Scene no longer auto-saves and there is no other
-     * path that would write the rename out.
-     */
-    const runBundleMigrations = async () => {
-        const renamed = migrateBehaviorsFilename(session.bundle);
-        if (renamed) {
-            // Re-render the editor so the tab bar picks up
-            // the new filename label, and so the renamed
-            // file is reachable through selectTab. The
-            // active tab survives the call iff its name
-            // didn't change — if it was "behaviours.js" the
-            // editor falls back to the inspector tab.
-            editor.reloadFromBundle();
-            // Persist the migrated bundle so the next page
-            // load doesn't re-run the rename pass. Save
-            // also clears the dirty flag the rename set
-            // via Bundle.markDirty, leaving the user a
-            // clean state on first paint. Skipped for
-            // untitled bundles (no path to save to); the
-            // first Save As will commit the migrated state
-            // along with anything else the user has done.
-            if (session.bundle.path !== null) {
-                await editor.save();
-            }
-        }
     };
 
     /**
@@ -2301,7 +2270,7 @@ async function main() {
      * the current scene's sprites, triggers, and curves —
      * into the corresponding set of object ids, and
      * dispatch it to the editor so the Stage A5 active-
-     * tag highlight in behaviors.js tracks the selection.
+     * tag highlight in script.js tracks the selection.
      * Labelled blocks whose dollar-prefixed label matches
      * one of the resolved ids render in accent green; all
      * others stay in the default pink.
@@ -2347,7 +2316,7 @@ async function main() {
     /**
      * Build the set of all object ids in the current
      * scene and dispatch it to the editor so the orphan-
-     * tag decoration in behaviors.js flags labelled
+     * tag decoration in script.js flags labelled
      * blocks whose ids no longer correspond to any
      * scene object. The decoration is a red wavy
      * underline on the $objectId: tag, reading as a
@@ -2382,7 +2351,7 @@ async function main() {
     /**
      * Build the set of object ids in the current scene that
      * are disabled (`state === "disabled"`), and dispatch it
-     * to the editor so the muted-tag decoration in behaviors.js
+     * to the editor so the muted-tag decoration in script.js
      * greys the binding identifiers (labelled-block labels and
      * callback function names) of every disabled source. Per
      * the three-state model, label decorations grey only for
@@ -2420,7 +2389,7 @@ async function main() {
 
     /**
      * Candidate name list for jumping to an object's first
-     * occurrence in behaviors.js. Per section 28's
+     * occurrence in script.js. Per section 28's
      * bidirectional navigation spec, an object's source can
      * appear in any of four forms: a labelled pattern block
      * with the dollar-prefixed tag, or one of three
@@ -2450,8 +2419,8 @@ async function main() {
     /**
      * Return true when the given object has at least one
      * labelled pattern block or default-named callback
-     * declaration in behaviors.js. Used by the canvas
-     * double-click handler to decide between the Code tab
+     * declaration in script.js. Used by the canvas
+     * double-click handler to decide between the Script tab
      * (scroll to existing source) and the Properties tab
      * (offer scaffold buttons) as the navigation target.
      *
@@ -2463,7 +2432,7 @@ async function main() {
      * selectTabAndScrollToFunction wouldn't navigate to
      * them either, so the navigation and the check stay
      * aligned: anything we'd take the user to lives
-     * inside behaviors.js, anything else means the
+     * inside script.js, anything else means the
      * Properties tab is the right destination.
      *
      * @param {string} objectId
@@ -2636,7 +2605,7 @@ async function main() {
      * moment it appears.
      *
      * When the source has a matching labelled pattern
-     * block in behaviors.js, the duplicate's id is
+     * block in script.js, the duplicate's id is
      * added to that block's label chain rather than
      * appended as a separate block elsewhere in the
      * file. The new label sits on its own line above
@@ -2654,7 +2623,7 @@ async function main() {
      * both objects share the same expression text and
      * editing the pattern in one place affects every
      * sharer (section 9). The duplicate appears in the
-     * Code tab inside the shared block immediately,
+     * Script tab inside the shared block immediately,
      * so a canvas double-click navigates there rather
      * than falling through to the Properties tab as
      * an apparent un-authored object. Sources without
@@ -2675,9 +2644,9 @@ async function main() {
      * so undoing a duplicate reverts the scene-level
      * state (object array, ids, positions) but leaves
      * the duplicate's label sitting on the source's
-     * chain in behaviors.js. The leftover label
+     * chain in script.js. The leftover label
      * references an id that no longer resolves and
-     * surfaces in the Code tab with the orphan-tag
+     * surfaces in the Script tab with the orphan-tag
      * red wavy underline, so the user can see and
      * clean it up if desired.
      *
@@ -2705,7 +2674,7 @@ async function main() {
         const oldCurveLen = currentScene !== null ? currentScene.curves.length : 0;
 
         // Capture the set of selected source ids whose
-        // labelled blocks exist in behaviors.js, so the
+        // labelled blocks exist in script.js, so the
         // duplicate path knows which mappings need a
         // chain extension. Section 9 specifies that
         // duplicating an object whose source has a
@@ -2752,9 +2721,9 @@ async function main() {
 
         // For each duplicate whose source had a
         // labelled block, add the duplicate's id to
-        // the source's existing chain in behaviors.js
+        // the source's existing chain in script.js
         // via addLabelToBlock. Each call re-parses
-        // behaviors.js so positions stay fresh as
+        // script.js so positions stay fresh as
         // labels accumulate; calls are sequential so
         // two duplicates from the same chain join in
         // mapping order. When several selected sources
@@ -2766,15 +2735,15 @@ async function main() {
         // labelledBlocks list picks up the new labels;
         // this is what flips objectHasCodeSource to
         // true for the duplicates and makes double-
-        // click navigate to the Code tab. Skipped
+        // click navigate to the Script tab. Skipped
         // entirely when no source in the selection had
         // a labelled block, so the typical duplicate-
         // a-fresh-object case doesn't pay for
-        // behaviors.js parsing or an extra runScene.
+        // script.js parsing or an extra runScene.
         if (sourceIdsWithBlocks.size > 0) {
-            const behaviorsFile = session.bundle.getFile("behaviors.js");
-            if (behaviorsFile !== null) {
-                let newContent = behaviorsFile.content;
+            const scriptFile = session.bundle.getFile("script.js");
+            if (scriptFile !== null) {
+                let newContent = scriptFile.content;
                 let changed = false;
                 for (const m of mappings) {
                     if (m.oldId === null) continue;
@@ -2786,7 +2755,7 @@ async function main() {
                     }
                 }
                 if (changed) {
-                    session.bundle.updateContent("behaviors.js", newContent);
+                    session.bundle.updateContent("script.js", newContent);
                     editor.refreshActiveTabFromBundle();
                     await runScene();
                 }
@@ -2831,7 +2800,7 @@ async function main() {
      * indexes don't outlive the array renumbering.
      *
      * When a deleted object has a labelled pattern block
-     * in behaviors.js, its label is trimmed from the
+     * in script.js, its label is trimmed from the
      * chain via removeLabelFromBlock. A chain with more
      * than one label keeps the remaining labels in the
      * stacked convention (one per line above the line
@@ -2840,11 +2809,11 @@ async function main() {
      * has the whole block removed, along with one blank-
      * line separator so adjacent blocks don't end up
      * with doubled gaps. Sources without a labelled
-     * block leave behaviors.js untouched.
+     * block leave script.js untouched.
      *
      * Multiple deletions in one gesture are processed
      * sequentially: each removeLabelFromBlock call
-     * re-parses behaviors.js so positions stay fresh as
+     * re-parses script.js so positions stay fresh as
      * earlier removals shift offsets. When several
      * deleted objects share one chain, each call trims
      * one more label; the final chain reflects all the
@@ -2853,7 +2822,7 @@ async function main() {
      * Undo. The scene.json mutation goes through
      * applyCanvasEdit so it lands on the undo stack;
      * Cmd-Z restores the deleted objects. The
-     * behaviors.js trim is not on the undo stack (no
+     * script.js trim is not on the undo stack (no
      * undo coverage for code-tab edits at this
      * milestone), so undoing a delete that touched
      * labelled blocks restores the scene-level objects
@@ -2862,7 +2831,7 @@ async function main() {
      * trimmed become orphans from the chain's
      * perspective — the chain no longer mentions them.
      * The user can re-run Cmd-Enter on the chain to
-     * re-author or hand-edit behaviors.js to restore
+     * re-author or hand-edit script.js to restore
      * the labels.
      */
     const performDeleteSelection = async () => {
@@ -2871,7 +2840,7 @@ async function main() {
         if (total === 0) return;
 
         // Capture the set of selected source ids whose
-        // labelled blocks exist in behaviors.js, before
+        // labelled blocks exist in script.js, before
         // the scene mutation lands. Same shape as the
         // capture in performDuplicate.
         /** @type {Set<string>} */
@@ -2908,7 +2877,7 @@ async function main() {
 
         // For each deleted object whose source had a
         // labelled block, trim its label from the chain
-        // in behaviors.js via removeLabelFromBlock. Each
+        // in script.js via removeLabelFromBlock. Each
         // call re-parses so positions stay fresh as
         // earlier removals shift offsets. After all
         // trims land, refresh the editor view and
@@ -2917,9 +2886,9 @@ async function main() {
         // state. Skipped entirely when no deleted
         // object had a labelled block.
         if (idsWithBlocks.size > 0) {
-            const behaviorsFile = session.bundle.getFile("behaviors.js");
-            if (behaviorsFile !== null) {
-                let newContent = behaviorsFile.content;
+            const scriptFile = session.bundle.getFile("script.js");
+            if (scriptFile !== null) {
+                let newContent = scriptFile.content;
                 let changed = false;
                 for (const id of idsWithBlocks) {
                     const result = removeLabelFromBlock(newContent, id);
@@ -2929,7 +2898,7 @@ async function main() {
                     }
                 }
                 if (changed) {
-                    session.bundle.updateContent("behaviors.js", newContent);
+                    session.bundle.updateContent("script.js", newContent);
                     editor.refreshActiveTabFromBundle();
                     await runScene();
                 }
@@ -3242,7 +3211,7 @@ async function main() {
      * Canvas path. When the cursor isn't on a label
      * (anywhere in the block body, a comment, a function
      * declaration, whitespace between chained labels, a
-     * non-Code tab, or the editor isn't focused), the
+     * non-Script tab, or the editor isn't focused), the
      * target is the canvas selection. Tri-state
      * semantics matching the inspector's Mute checkbox:
      * if every selected object is currently muted,
@@ -3269,16 +3238,16 @@ async function main() {
     const performToggleMute = async () => {
         // Check first whether the editor has the cursor
         // positioned on a labelled-block label in the
-        // Code tab. When it does, the keystroke targets
+        // Script tab. When it does, the keystroke targets
         // that specific label's object id rather than
         // the canvas selection; this is the cursor-mute
         // entry point introduced alongside the visual
         // mute feedback so the composer can mute or
-        // unmute a single curve from the Code tab
+        // unmute a single curve from the Script tab
         // without leaving the keyboard. Returns null when
         // the cursor isn't on a label (in the block body,
         // in a comment, in a function decl, in whitespace
-        // between chained labels, on a non-Code tab, or
+        // between chained labels, on a non-Script tab, or
         // when the editor isn't focused) so the caller
         // falls through to the canvas-selection path
         // below. See editor.js's deriveCursorMuteTarget
@@ -3521,7 +3490,7 @@ async function main() {
                     curves: edit.curves,
                 });
             }
-            // Stage A5: drive the Code tab's active-tag
+            // Stage A5: drive the Script tab's active-tag
             // highlight from the same selection. Labelled
             // blocks whose dollar-prefixed labels match
             // one of the selected object ids render in
@@ -3535,7 +3504,7 @@ async function main() {
             // Canvas double-click on an object. When the
             // object has at least one labelled pattern
             // block or default-named callback declaration
-            // in behaviors.js, switch to the Code tab and
+            // in script.js, switch to the Script tab and
             // scroll to whichever appears earliest in the
             // file. When neither exists (the user has not
             // yet authored a pattern or callback for the
@@ -3546,7 +3515,7 @@ async function main() {
             // natural next step.
             if (objectHasCodeSource(edit.objectId)) {
                 editor.selectTabAndScrollToFunction(
-                    "behaviors.js",
+                    "script.js",
                     candidatesForObject(edit.objectId),
                 );
             } else {
@@ -3751,17 +3720,25 @@ async function main() {
                 await applySceneEdit((data) =>
                     setCanCollideOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setCollidedFunction") {
+            } else if (edit.kind === "setHasCollidedFunction") {
                 await applySceneEdit((data) =>
-                    setCollidedFunctionOnSelection(data, edit.selection, edit.value),
+                    setHasCollidedFunctionOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCanBeTriggered") {
                 await applySceneEdit((data) =>
                     setCanBeTriggeredOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setTriggeredFunction") {
+            } else if (edit.kind === "setBeenTriggeredFunction") {
                 await applySceneEdit((data) =>
-                    setTriggeredFunctionOnSelection(data, edit.selection, edit.value),
+                    setBeenTriggeredFunctionOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCanActiveBeat") {
+                await applySceneEdit((data) =>
+                    setCanActiveBeatOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setOnActiveBeatFunction") {
+                await applySceneEdit((data) =>
+                    setOnActiveBeatFunctionOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCanTick") {
                 await applySceneEdit((data) =>
@@ -3845,7 +3822,7 @@ async function main() {
             } else if (edit.kind === "createFunctionStub") {
                 // Band 3 Create button. Three steps:
                 //   1. Scaffold a stub declaration in
-                //      behaviors.js (no-op if a function
+                //      script.js (no-op if a function
                 //      with the proposed name already
                 //      exists at the top level).
                 //   2. Bind the slot's function-name field
@@ -3854,27 +3831,28 @@ async function main() {
                 //      runs save + rebuild, so the new
                 //      function ends up in functionMap on
                 //      the next render of the inspector.
-                //   3. Switch the editor to behaviors.js
+                //   3. Switch the editor to script.js
                 //      and scroll the new declaration to
                 //      the top, so the composer can start
                 //      filling in the body immediately.
-                const behaviorsFile = session.bundle.getFile("behaviors.js");
-                if (behaviorsFile === null) {
-                    messages.write("No behaviors.js in this score.", "error");
+                const scriptFile = session.bundle.getFile("script.js");
+                if (scriptFile === null) {
+                    messages.write("No script.js in this score.", "error");
                     return;
                 }
                 const { newContent, alreadyExists } = scaffoldCallbackSlotFunction(
-                    behaviorsFile.content,
+                    scriptFile.content,
                     edit.proposedName,
                     edit.slotKey,
                 );
                 if (!alreadyExists) {
-                    session.bundle.updateContent("behaviors.js", newContent);
+                    session.bundle.updateContent("script.js", newContent);
                 }
                 /** @type {Record<string, (d: any, s: any, v: string) => void>} */
                 const setterByKind = {
-                    "collided": setCollidedFunctionOnSelection,
-                    "triggered": setTriggeredFunctionOnSelection,
+                    "hasCollided": setHasCollidedFunctionOnSelection,
+                    "beenTriggered": setBeenTriggeredFunctionOnSelection,
+                    "onActiveBeat": setOnActiveBeatFunctionOnSelection,
                     "autoMessage": setAutoMessageFunctionOnSelection,
                     "onTick": setOnTickFunctionOnSelection,
                 };
@@ -3884,16 +3862,16 @@ async function main() {
                         setter(data, edit.selection, edit.proposedName),
                     );
                 }
-                editor.selectTabAndScrollToFunction("behaviors.js", edit.proposedName);
+                editor.selectTabAndScrollToFunction("script.js", edit.proposedName);
             } else if (edit.kind === "goToFunction") {
-                editor.selectTabAndScrollToFunction("behaviors.js", edit.functionName);
+                editor.selectTabAndScrollToFunction("script.js", edit.functionName);
             } else if (edit.kind === "createPatternBlock") {
                 // Band 1 pattern row Create button. Append
                 // a $id: <expression> block at the end of
-                // behaviors.js, refresh the editor view,
+                // script.js, refresh the editor view,
                 // run the scene (so the loader picks up
                 // the new labelledBlocks entry), then
-                // switch to behaviors.js and scroll to the
+                // switch to script.js and scroll to the
                 // new block so the user can fill in or
                 // edit the pattern expression.
                 //
@@ -3909,9 +3887,9 @@ async function main() {
                 // an empty cyclePattern the function
                 // falls back to its built-in bd-sn
                 // starter.
-                const behaviorsFile = session.bundle.getFile("behaviors.js");
-                if (behaviorsFile === null) {
-                    messages.write("No behaviors.js in this score.", "error");
+                const scriptFile = session.bundle.getFile("script.js");
+                if (scriptFile === null) {
+                    messages.write("No script.js in this score.", "error");
                     return;
                 }
                 let defaultExpression = "";
@@ -3930,19 +3908,19 @@ async function main() {
                     }
                 }
                 const { newContent } = scaffoldPatternBlock(
-                    behaviorsFile.content,
+                    scriptFile.content,
                     edit.objectId,
                     defaultExpression,
                 );
-                session.bundle.updateContent("behaviors.js", newContent);
+                session.bundle.updateContent("script.js", newContent);
                 editor.refreshActiveTabFromBundle();
                 await runScene();
-                editor.selectTabAndScrollToFunction("behaviors.js", "$" + edit.objectId);
+                editor.selectTabAndScrollToFunction("script.js", "$" + edit.objectId);
             } else if (edit.kind === "goToObjectInCode") {
                 // Band 1 pattern row Go-to button. Per section
                 // 28's bidirectional navigation spec, the
                 // Go-to gesture targets the object's first
-                // occurrence in behaviors.js regardless of
+                // occurrence in script.js regardless of
                 // which form it takes — labelled block tag
                 // or any of the three callback-function name
                 // declarations. Pass the full candidate list
@@ -3955,7 +3933,7 @@ async function main() {
                 // callback declaration win when the file is
                 // ordered that way.
                 editor.selectTabAndScrollToFunction(
-                    "behaviors.js",
+                    "script.js",
                     candidatesForObject(edit.objectId),
                 );
             }
@@ -3968,7 +3946,7 @@ async function main() {
     // sequence. The editor's _tryPromoteLabelledBlock
     // detects whether the Cmd-Enter cursor sits inside a
     // top-level $objectId: expression block in
-    // behaviors.js; if so it calls the onPromotePattern
+    // script.js; if so it calls the onPromotePattern
     // callback wired to handlePromotePattern below. The
     // handler parses the expression, logs the result to
     // the messages console, and on parse success writes
@@ -4076,11 +4054,11 @@ async function main() {
     // scene.json stays the source of truth. The Code
     // editor is a working surface whose Cmd-Enter actions
     // explicitly commit intent to scene.json; this keeps
-    // scene.json AI-editable independently of behaviors.js.
+    // scene.json AI-editable independently of script.js.
     //
     // Edge case for same-id duplicates. A user may have
     // multiple labelled blocks for the same id in
-    // behaviors.js as pattern variants. Clearing on a
+    // script.js as pattern variants. Clearing on a
     // commented one would silently drop the pattern even
     // if a live one elsewhere still defines it. The editor
     // detects this and emits onClearPatternBlocked instead
@@ -4185,12 +4163,12 @@ async function main() {
     // Spacebar follows the universal music-app convention.
     // Active globally EXCEPT when focus is in a text-input
     // context (CodeMirror editor, input/textarea element, or
-    // contenteditable region) so typing into the Code tab
+    // contenteditable region) so typing into the Script tab
     // still inserts space characters naturally. The text-
     // context check mirrors the Delete-key handler below.
     //
     // Cmd-Period is the always-active alternative. Works
-    // everywhere including inside the Code tab and Properties
+    // everywhere including inside the Script tab and Properties
     // JSON tab, so the user can toggle playback without
     // leaving the editor. Cmd is the natural modifier for an
     // audio app on macOS (matches the convention in Logic,
@@ -4545,7 +4523,7 @@ async function main() {
         messages.write(
             "Recovery mode active (norun). A fresh empty bundle has been created. " +
             "Use the File menu to open a different score, or fix the broken one " +
-            "by switching to it and editing scene.json or behaviors.js by hand. " +
+            "by switching to it and editing scene.json or script.js by hand. " +
             "Reload without the norun query parameter once the issue is resolved.",
             "info",
         );
@@ -4851,9 +4829,9 @@ async function reconcileBundleWithDisk(bundle, mirror) {
     if (diskBundle === null) return bundle;
 
     const memScene = bundle.getFile("scene.json")?.content ?? "";
-    const memBeh = bundle.getFile("behaviours.js")?.content ?? "";
+    const memBeh = bundle.getFile("script.js")?.content ?? "";
     const diskScene = diskBundle.getFile("scene.json")?.content ?? "";
-    const diskBeh = diskBundle.getFile("behaviours.js")?.content ?? "";
+    const diskBeh = diskBundle.getFile("script.js")?.content ?? "";
     if (memScene === diskScene && memBeh === diskBeh) return bundle;
 
     // Preserve image from in-memory if disk doesn't have one.

@@ -40,7 +40,7 @@
  *   - clear()           Full reset: empty the object arrays. The monotonic id
  *                        counters are deliberately NOT reset, so ids stay unique
  *                        across a clear-and-rebuild and never silently rebind a
- *                        behaviors.js label.
+ *                        script.js label.
  *
  * Selectors. A selector addresses zero or more objects:
  *   - an id string ("CRV2", "TRG3", "SPR1") -> that one object;
@@ -52,7 +52,7 @@
  *
  * Why self-contained. The design sketch had sceneOps wrap sceneEditor's
  * set*OnSelection family directly. sceneEditor imports acorn from a URL for its
- * behaviors.js AST editing, which makes it unloadable under `node --test`, so
+ * script.js AST editing, which makes it unloadable under `node --test`, so
  * wrapping it would make this whole foundation untestable offline. Instead
  * sceneOps implements the generic field write itself (the same per-entry
  * assignment sceneEditor's internal setFieldOnSelection does) and shares only

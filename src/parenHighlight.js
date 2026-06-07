@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * Enclosing-parenthesis highlighting for the Code tab.
+ * Enclosing-parenthesis highlighting for the Script tab.
  *
  * An accessibility aid (for Chris: limited eyesight, macOS Zoom +
  * Speak Selection): make a Strudel pattern's nesting structure

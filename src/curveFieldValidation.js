@@ -650,10 +650,10 @@ export function validateRepeats(candidate, cycleDuration) {
  * Curve Hit Beat / Hit Trigger). Runtime value is either
  * the empty string (slot unbound) or a valid JavaScript
  * identifier matching a top-level function in the score's
- * behaviors.js file. The validator checks identifier syntax
+ * script.js file. The validator checks identifier syntax
  * and reserved-word membership; resolution against
  * functionMap happens at fire time, not commit time, so a
- * name that doesn't yet exist in behaviors.js still passes
+ * name that doesn't yet exist in script.js still passes
  * validation here — the soft-error model in the loader
  * (DESIGN.md §9) lets the slot stay inert until the user
  * types the function body, without blocking the bind.

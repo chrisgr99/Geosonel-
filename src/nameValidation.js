@@ -3,7 +3,7 @@
  *
  * Names are optional user-typed identifiers for sprites,
  * triggers, and curves. When set, they double as code-level
- * handles in behaviours.js (getSprite/getTrigger/getCurve
+ * handles in script.js (getSprite/getTrigger/getCurve
  * lookups), so they have to be valid JavaScript identifiers
  * to work in that role. The validation here is consulted by
  * the property inspector before committing a name edit, and
@@ -51,7 +51,7 @@ export const IDENTIFIER_PATTERN = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
  * Includes current keywords, future-reserved words, strict-
  * mode reserved words, and the boolean and null literals.
  * Kept inclusive: better to reject a few rare-but-legal
- * names than to let through one that breaks behaviors.js
+ * names than to let through one that breaks script.js
  * when used as a code handle.
  *
  * Exported for reuse by the function-name validator in

@@ -525,7 +525,7 @@ function renderStoragePanel(panel, ctx) {
         "Choosing a folder grants GXW permission to read and write " +
         "in it. The folder's contents are managed by GXW \u2014 each " +
         "score becomes a subfolder containing scene.json and " +
-        "behaviours.js. Disconnecting just forgets the folder; the " +
+        "script.js. Disconnecting just forgets the folder; the " +
         "files on disk are left in place.";
     panel.appendChild(help);
 }

@@ -698,7 +698,7 @@ export class StrudelRuntime {
      * console warning and returns; the caller (init) still
      * flips _initialized to true regardless. note()
      * patterns and any user-supplied samples('...') call
-     * from behaviors.js still work whether either default
+     * from script.js still work whether either default
      * bank loaded or not.
      *
      * Non-fatal on the missing-globals case: if
@@ -899,7 +899,7 @@ export class StrudelRuntime {
                 console.warn(
                     `StrudelRuntime: sprite "${label}" cycle slot names ` +
                     `"${sprite.cycle}" but no such function exists in ` +
-                    `behaviors.js; skipping audio.`,
+                    `script.js; skipping audio.`,
                 );
             } else {
                 try {

@@ -18,7 +18,7 @@ import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
 /**
  * @typedef {Object} RunMenuContext
  * @property {() => void} runScene
- * @property {() => void} [runSetup]  Run the Code tab's SETUP section
+ * @property {() => void} [runSetup]  Run the Script tab's SETUP section
  *   (construction code) against the current scene, then reload. Optional so
  *   older callers that pass only runScene still work.
  */

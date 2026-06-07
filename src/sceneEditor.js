@@ -357,35 +357,25 @@ export function cleanLegacySceneFields(data) {
 }
 
 /**
- * Rename the legacy bundle-level filename "behaviours.js" to
- * the v2.4 "behaviors.js". Bundle-level migration: doesn't
- * touch scene.json text. Preserves the file's content,
- * mimeType, and position in the bundle's file list.
+ * One-time bundle filename normalisation: a score created before the
+ * behaviors.js → script.js rename carries a "behaviors.js" file. Rename it in
+ * place to "script.js" (preserving content and mimeType) so the loader finds it
+ * and the editor renders the Script tab. Bundle-level only — does NOT touch
+ * scene.json or transform any data. No-op when the bundle already has
+ * script.js; if both exist, the legacy file is dropped (script.js is canonical).
  *
- * No-op when the bundle already has "behaviors.js" (whether
- * or not "behaviours.js" also exists — the new file wins).
- * If both names exist, the legacy file is removed without
- * merging content; the user's hand-edited migrations are
- * the recommended way to consolidate the two should they
- * ever coexist outside of an in-flight migration.
- *
- * Returns true iff a rename was performed.
+ * Returns true iff a rename/drop was performed.
  *
  * @param {import("./bundle.js").Bundle} bundle
  * @returns {boolean}
  */
-export function migrateBehaviorsFilename(bundle) {
-    const oldFile = bundle.getFile("behaviours.js");
-    if (oldFile === null) return false;
-    const newFile = bundle.getFile("behaviors.js");
-    if (newFile !== null) {
-        // Defensive: both exist. Drop the legacy one without
-        // merging — the user's behaviors.js is canonical.
-        bundle.removeFile("behaviours.js");
-        return true;
+export function renameLegacyScriptFile(bundle) {
+    const legacy = bundle.getFile("behaviors.js");
+    if (legacy === null) return false;
+    if (bundle.getFile("script.js") === null) {
+        bundle.addTextFile("script.js", legacy.content, legacy.mimeType);
     }
-    bundle.addTextFile("behaviors.js", oldFile.content, oldFile.mimeType);
-    bundle.removeFile("behaviours.js");
+    bundle.removeFile("behaviors.js");
     return true;
 }
 
@@ -705,10 +695,10 @@ export function addCurveAt(data, shape) {
  * overrides, beatsPerCycle, name, state, hide — carries
  * over verbatim.
  *
- * Labelled pattern blocks in behaviors.js are NOT
+ * Labelled pattern blocks in script.js are NOT
  * duplicated. The duplicate fires its inherited
  * cyclePattern from the moment it is created, but does
- * not appear in the Code tab until the user clicks
+ * not appear in the Script tab until the user clicks
  * Create on the inspector's pattern row. The Create
  * button uses the duplicate's existing cyclePattern as
  * the default expression for the scaffolded labelled
@@ -718,7 +708,7 @@ export function addCurveAt(data, shape) {
  * bd-sn starter. If the source's pattern was a variable
  * reference like drumPat, the duplicate's cyclePattern
  * is the same string, both objects resolve drumPat in
- * behaviors.js's scope to the same value, and the
+ * script.js's scope to the same value, and the
  * sharing is preserved through the variable.
  *
  * Mutates `data` in place. Returns an array of id mappings
@@ -788,7 +778,7 @@ export function duplicateSelection(data, selection, dx, dy) {
             // appears. If the source's cyclePattern is a
             // variable reference (e.g. "drumPat"), the
             // duplicate's resolves to the same value via
-            // behaviors.js's scope, giving true sharing.
+            // script.js's scope, giving true sharing.
             // If it's a literal expression, the duplicate
             // gets its own independent copy.
             if (kind === "sprite" || kind === "trigger") {
@@ -831,7 +821,7 @@ export function duplicateSelection(data, selection, dx, dy) {
  * objects fire the same pattern as their sources from the
  * moment they appear.
  *
- * No behaviors.js edits fire from this function. Pasted
+ * No script.js edits fire from this function. Pasted
  * objects do NOT join their source's labelled-block chain
  * (the way duplicates do via addLabelToBlock); the caller
  * intentionally keeps paste simpler than duplicate, so a
@@ -1643,7 +1633,7 @@ function setSceneVoiceSuperdoughField(data, field, value) {
  *
  * Universal across kinds: curves, triggers, and sprites
  * all carry a voice field per the schema. Triggers store
- * the field even though their beenHit firing path isn't
+ * the field even though their beenTriggered firing path isn't
  * wired yet, so the schema slot is in place when that
  * path arrives.
  *
@@ -1744,7 +1734,7 @@ function clampCanvasDimension(value) {
 // --- Callback slot write paths (section 27) ---
 //
 // Section 27 collapses the per-kind callback slots into
-// four uniform slots — cycle, hasHit, beenHit, onTick —
+// four uniform slots — cycle, hasCollided, beenTriggered, onTick —
 // shared across curves, triggers, and sprites. The ten
 // fields below each get one mutator, applied to every
 // kind in the selection because the slots are uniform
@@ -2079,7 +2069,7 @@ export function setTriggerSyncToBeatOnSelection(data, selection, value) {
 }
 
 /**
- * Set the canCollide field (the collided/active-collision gate)
+ * Set the canCollide field (the hasCollided/active-collision gate)
  * across the selection.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
@@ -2090,7 +2080,7 @@ export function setCanCollideOnSelection(data, selection, value) {
 }
 
 /**
- * Set the collidedFunction field across the selection.
+ * Set the hasCollidedFunction field across the selection.
  * Value is a function name string; the soft-error model leaves
  * the slot inert until the named function appears in
  * scene.functionMap.
@@ -2098,12 +2088,12 @@ export function setCanCollideOnSelection(data, selection, value) {
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
  */
-export function setCollidedFunctionOnSelection(data, selection, value) {
-    setStringFieldOnSelection(data, selection, "collidedFunction", String(value));
+export function setHasCollidedFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "hasCollidedFunction", String(value));
 }
 
 /**
- * Set the canBeTriggered field (the triggered/passive-collision
+ * Set the canBeTriggered field (the beenTriggered/passive-collision
  * gate) across the selection.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
@@ -2114,14 +2104,37 @@ export function setCanBeTriggeredOnSelection(data, selection, value) {
 }
 
 /**
- * Set the triggeredFunction field across the selection. See
- * setCollidedFunctionOnSelection for the validation note.
+ * Set the beenTriggeredFunction field across the selection. See
+ * setHasCollidedFunctionOnSelection for the validation note.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
  */
-export function setTriggeredFunctionOnSelection(data, selection, value) {
-    setStringFieldOnSelection(data, selection, "triggeredFunction", String(value));
+export function setBeenTriggeredFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "beenTriggeredFunction", String(value));
+}
+
+/**
+ * Set the canActiveBeat field (the onActiveBeat gate) across the
+ * selection. Applies to curves and sprites; the inspector greys it
+ * for triggers, but the field is shared so a stray write is harmless.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {boolean} value
+ */
+export function setCanActiveBeatOnSelection(data, selection, value) {
+    setBooleanFieldOnSelection(data, selection, "canActiveBeat", !!value, true);
+}
+
+/**
+ * Set the onActiveBeatFunction field across the selection. See
+ * setHasCollidedFunctionOnSelection for the validation note.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setOnActiveBeatFunctionOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "onActiveBeatFunction", String(value));
 }
 
 /**
@@ -2146,7 +2159,7 @@ export function setCanAutoMessageOnSelection(data, selection, value) {
 
 /**
  * Set the autoMessageFunction field across the selection. See
- * setCollidedFunctionOnSelection for the validation note.
+ * setHasCollidedFunctionOnSelection for the validation note.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
@@ -2169,7 +2182,7 @@ export function setAutoMessageIntervalOnSelection(data, selection, value) {
 
 /**
  * Set the onTickFunction field across the selection. See
- * setCollidedFunctionOnSelection for the validation note.
+ * setHasCollidedFunctionOnSelection for the validation note.
  * @param {any} data
  * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
  * @param {string} value
@@ -2179,11 +2192,11 @@ export function setOnTickFunctionOnSelection(data, selection, value) {
 }
 
 /**
- * Append a stub function declaration to behaviors.js for a
+ * Append a stub function declaration to script.js for a
  * Band 3 callback-slot binding (section 27 vocabulary).
- * Used by the inspector's Create button on the hasHit,
- * beenHit, or onTick rows when the proposed function name
- * doesn't yet exist in behaviors.js. The stub body is
+ * Used by the inspector's Create button on the hasCollided,
+ * beenTriggered, or onTick rows when the proposed function name
+ * doesn't yet exist in script.js. The stub body is
  * generic: section 27's ctx contract for the new slots is
  * still being settled, so the body stays empty for the
  * composer to fill in once that contract lands.
@@ -2201,9 +2214,9 @@ export function setOnTickFunctionOnSelection(data, selection, value) {
  * blank line separator so the existing structure is left
  * undisturbed and the new declaration is easy to find.
  *
- * @param {string} content  Current behaviors.js source.
+ * @param {string} content  Current script.js source.
  * @param {string} functionName  Identifier to scaffold.
- * @param {"collided" | "triggered" | "onTick"} slotKey
+ * @param {"hasCollided" | "beenTriggered" | "onActiveBeat" | "onTick"} slotKey
  * @returns {{ newContent: string, alreadyExists: boolean }}
  */
 export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
@@ -2221,14 +2234,14 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
     if (re.test(content)) {
         return { newContent: content, alreadyExists: true };
     }
-    const stub = `function ${functionName}(ctx) {\n    // Section 27 ${slotKey} slot callback.\n    // See DESIGN.md section 27 for ctx fields and return\n    // semantics.\n}\n`;
+    const stub = `function ${functionName}(ctx) {\n    \n}\n`;
     const trimmed = content.replace(/\s+$/, "");
     const separator = trimmed.length === 0 ? "" : "\n\n";
     return { newContent: `${trimmed}${separator}${stub}`, alreadyExists: false };
 }
 
 /**
- * Append a labelled pattern block to behaviors.js for the
+ * Append a labelled pattern block to script.js for the
  * given object id. Used by the inspector's Band 1 pattern
  * row Create button (Stage A3 of the section-28 pattern-
  * authoring sequence) when no labelled block for the
@@ -2262,7 +2275,7 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
  * no labelled block exists for the selected object, so the
  * no-duplicate case is gated on the read side; users
  * wanting additional variants type them directly in the
- * Code tab.
+ * Script tab.
  *
  * The expression body defaults to the bd-sn starter
  * described above, but the caller can override it via the
@@ -2275,7 +2288,7 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
  * the object is already playing instead of replacing it
  * with the generic starter.
  *
- * @param {string} content  Current behaviors.js source.
+ * @param {string} content  Current script.js source.
  * @param {string} objectId  Identifier of the object to tag.
  * @param {string} [defaultExpression]  Override for the
  *   expression body. When omitted or empty, the bd-sn
@@ -2315,13 +2328,13 @@ export function scaffoldPatternBlock(content, objectId, defaultExpression) {
  * loader and Cmd-Enter behaviour are unaffected; the
  * line-per-label layout is purely a readability
  * convention that makes co-labels easy to scan and edit
- * in the Code tab.
+ * in the Script tab.
  *
  * Used by the duplicate path in performDuplicate
  * (main.js): for each duplicated object whose source
  * has a labelled block, the duplicate's id joins the
  * source's chain rather than landing as a separate
- * block elsewhere in behaviors.js. This implements
+ * block elsewhere in script.js. This implements
  * section 9's shared-pattern model — duplicated objects
  * join their source's sharing group automatically, and
  * editing the pattern in one place affects every label
@@ -2350,12 +2363,12 @@ export function scaffoldPatternBlock(content, objectId, defaultExpression) {
  * Returns { newContent, added }. When no top-level
  * chain contains the source id, added is false and
  * newContent equals the input. Parse failures in
- * behaviors.js are also treated as a no-op (added is
+ * script.js are also treated as a no-op (added is
  * false, content unchanged), so a broken file doesn't
  * cascade into a chained edit that compounds the
  * error.
  *
- * @param {string} content  Current behaviors.js source.
+ * @param {string} content  Current script.js source.
  * @param {string} sourceId  Identifier of the source
  *   object whose chain to extend.
  * @param {string} newId  Identifier to add as a new
@@ -2428,7 +2441,7 @@ export function addLabelToBlock(content, sourceId, newId) {
  * is rebuilt in the stacked convention (one label per line
  * above a final line that carries the innermost label and
  * the expression). When the chain has only this one label,
- * the entire block is removed from behaviors.js, along with
+ * the entire block is removed from script.js, along with
  * one blank-line separator so adjacent blocks don't end up
  * with doubled gaps between them.
  *
@@ -2436,7 +2449,7 @@ export function addLabelToBlock(content, sourceId, newId) {
  * object whose source has a labelled block, the object's
  * label is trimmed from its chain via this helper. Deleted
  * objects without a labelled block skip the trim entirely;
- * behaviors.js is left untouched. Symmetric counterpart to
+ * script.js is left untouched. Symmetric counterpart to
  * addLabelToBlock on the duplicate path.
  *
  * Chain detection mirrors the loader's
@@ -2463,11 +2476,11 @@ export function addLabelToBlock(content, sourceId, newId) {
  *
  * Returns { newContent, removed }. When no top-level chain
  * contains the object id, removed is false and newContent
- * equals the input. Parse failures in behaviors.js are also
+ * equals the input. Parse failures in script.js are also
  * treated as a no-op (removed is false, content unchanged),
  * so a broken file doesn't cascade into a destructive edit.
  *
- * @param {string} content  Current behaviors.js source.
+ * @param {string} content  Current script.js source.
  * @param {string} objectId  Identifier of the object whose
  *   label to trim from its chain.
  * @returns {{ newContent: string, removed: boolean }}

@@ -1,7 +1,7 @@
 /**
  * Construction builder — the GeosonixV2 scene-construction API.
  *
- * This is the thin, stateful sugar layer the code tab's SETUP section uses to
+ * This is the thin, stateful sugar layer the script tab's SETUP section uses to
  * build a scene procedurally, the GeosonixV2 analogue of GeoSonix's standard
  * library (addCurve / addTrigger / setGroup / …). Every builder call desugars
  * to the operation set in sceneOps — create, set, group, position, select, and
@@ -168,7 +168,7 @@ export function createBuilder(ops) {
 
 /**
  * Flatten a builder into a set of BARE GLOBAL functions for the SETUP section
- * of the code tab, so construction code reads like the GeoSonix reference
+ * of the script tab, so construction code reads like the GeoSonix reference
  * example — clear(), addCurve(id), setGroup(name), set(field, value), … —
  * rather than builder.addCurve(...). The setup runner injects these as globals
  * in the script's scope. Each wrapper forwards to the builder; the chainable

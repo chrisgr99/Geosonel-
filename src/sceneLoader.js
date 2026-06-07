@@ -2,7 +2,7 @@
  * Scene loader.
  *
  * Builds a populated Scene from a score bundle's scene.json
- * and behaviors.js files. Replaces the earlier sketchRunner
+ * and script.js files. Replaces the earlier sketchRunner
  * that combined data and behaviour in a single sketch.js \u2014
  * DESIGN.md v2.4 splits the two so a property panel and AI
  * assistants can edit them independently.
@@ -14,23 +14,23 @@
  *      triggers, and sprites are walked and handed to
  *      scene.addCurve / addTrigger / addSprite.
  *
- *   2. Parse behaviors.js with Acorn to find every top-level
+ *   2. Parse script.js with Acorn to find every top-level
  *      function declaration and every const/let bound to a
  *      function expression or arrow, AND to split out every
  *      top-level $objectId: expression labelled statement.
  *      The function names are the identifiers a scene.json
- *      function-ref field can refer to (collidedFunction,
- *      triggeredFunction, onTickFunction). The labelled
+ *      function-ref field can refer to (hasCollidedFunction,
+ *      beenTriggeredFunction, onTickFunction). The labelled
  *      statements are pattern blocks per section 28; they
  *      are extracted into a separate list and their source
  *      ranges in the executable stream are replaced with
  *      whitespace so the calls inside them (note, s, stack,
  *      and so on) do not run at scene-load time. Cmd-Enter
- *      on a labelled block in the Code tab is the only
+ *      on a labelled block in the Script tab is the only
  *      path that activates one (Stage A4 of the section-28
  *      pattern-authoring sequence).
  *
- *   3. Execute the stripped behaviors.js inside a wrapper
+ *   3. Execute the stripped script.js inside a wrapper
  *      that returns a name-to-function map. The labelled
  *      pattern blocks have been replaced with whitespace by
  *      this point, so calls like note("c d e f") that would
@@ -45,12 +45,12 @@
  * the Scene as scene.functionMap and consulted by the
  * simulation when a slot fires. The labelled blocks are
  * attached as scene.labelledBlocks for the inspector's
- * pattern row and the Code tab's active-tag highlighting to
+ * pattern row and the Script tab's active-tag highlighting to
  * consume (Stages A3 through A5). Slot fields on Curve,
  * Trigger, and Sprite hold STRING NAMES throughout — the
  * loader passes them through to the constructors verbatim
  * and does NOT resolve them at load time. A name that
- * doesn't match any top-level function in behaviors.js is a
+ * doesn't match any top-level function in script.js is a
  * soft error: the slot stays inert at fire time and the
  * inspector eventually surfaces a warning, but the scene
  * still runs. This v2.4 model differs from the pre-v2.4
@@ -62,7 +62,7 @@
  * relevant source. JSON parse errors carry "position N" or
  * "line N column M" patterns we can convert to a 1-based line
  * number. JavaScript syntax errors come from Acorn with a
- * structured loc field. Runtime errors during behaviors.js
+ * structured loc field. Runtime errors during script.js
  * execution use the same offset-calibration trick as the old
  * runner so line numbers map back to the user's source rather
  * than the wrapper's body.
@@ -74,7 +74,7 @@ import { Scene, DEFAULT_KINEMATICS } from "./scene.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const SCRIPT_PREFIX = `"use strict";\n`;
-const BEHAVIORS_FILENAME = "behaviors.js";
+const SCRIPT_FILENAME = "script.js";
 
 /** Function-wrapper line offset, calibrated on first use. */
 /** @type {number | null} */
@@ -90,7 +90,7 @@ let calibratedOffset = null;
 export class SceneLoader {
     constructor() {
         /**
-         * Diagnostic print sink exposed to behaviours.js as the
+         * Diagnostic print sink exposed to script.js as the
          * global `print(...)`. Defaults to a no-op so the loader
          * runs headless; main.js wires it to the message area via
          * setPrint. See executeScript for how it reaches user code.
@@ -100,7 +100,7 @@ export class SceneLoader {
     }
 
     /**
-     * Set the diagnostic print sink that behaviours.js can call
+     * Set the diagnostic print sink that script.js can call
      * as print(...). Called once from main.js with a writer that
      * formats its arguments into the GXW message area.
      * @param {(...args: any[]) => void} fn
@@ -111,7 +111,7 @@ export class SceneLoader {
 
     /**
      * Load a Scene from the bundle's scene.json and
-     * behaviors.js files.
+     * script.js files.
      * @param {import("./bundle.js").Bundle} bundle
      * @returns {LoadResult}
      */
@@ -120,9 +120,9 @@ export class SceneLoader {
         if (sceneFile === null) {
             return errorResult("This score has no scene.json file.");
         }
-        const behaviorsFile = bundle.getFile(BEHAVIORS_FILENAME);
-        if (behaviorsFile === null) {
-            return errorResult(`This score has no ${BEHAVIORS_FILENAME} file.`);
+        const scriptFile = bundle.getFile(SCRIPT_FILENAME);
+        if (scriptFile === null) {
+            return errorResult(`This score has no script file.`);
         }
 
         // --- 1. Parse scene.json ---
@@ -138,21 +138,21 @@ export class SceneLoader {
             return errorResult("scene.json must be a JSON object at top level.");
         }
 
-        // --- 2. Parse behaviors.js with Acorn for function ---
+        // --- 2. Parse script.js with Acorn for function ---
         //        names and labelled pattern blocks.
-        const parseResult = extractTopLevelFunctionNames(behaviorsFile.content);
+        const parseResult = extractTopLevelFunctionNames(scriptFile.content);
         if (!parseResult.ok) {
             return errorResult(parseResult.error);
         }
         const functionNames = parseResult.names;
         const { strippedSource, labelledBlocks } =
-            splitLabelledStatements(parseResult.ast, behaviorsFile.content);
+            splitLabelledStatements(parseResult.ast, scriptFile.content);
 
-        // --- 3. Execute the stripped behaviors.js to get a ---
+        // --- 3. Execute the stripped script.js to get a ---
         //        function map. Labelled pattern blocks have
         //        been replaced with whitespace, so they do
         //        not run at load time. A `score` object is
-        //        passed in so behaviours.js can set score-wide
+        //        passed in so script.js can set score-wide
         //        kinematics (e.g. score.kinematics.jitter = 0.5);
         //        it is pre-filled with the defaults and read
         //        back after execution.
@@ -206,7 +206,7 @@ export class SceneLoader {
     }
 
     /**
-     * Run the SETUP section of a behaviors.js source: execute the script and
+     * Run the SETUP section of a script.js source: execute the script and
      * call its top-level setup() function, with a construction API supplied as
      * globals so the body reads like the GeoSonix reference example (bare
      * addCurve / setGroup / set / … calls). This is the Stage-1 wiring of the
@@ -221,7 +221,7 @@ export class SceneLoader {
      * Labelled $-blocks (the Strudel-era pattern blocks) are stripped before
      * execution exactly as load() strips them, so they do not run here either.
      *
-     * @param {string} behaviorsSource  The current behaviors.js text.
+     * @param {string} scriptSource  The current script.js text.
      * @param {Record<string, any>} api  Construction globals (builder verbs,
      *   math helpers, and any score-level setters) injected into the script's
      *   scope by name. print(...) is added automatically from setPrint.
@@ -229,24 +229,24 @@ export class SceneLoader {
      *   ok=false on a syntax/runtime error (error set); ok=true otherwise, with
      *   ranSetup=true iff a setup() function was found and called.
      */
-    runSetup(behaviorsSource, api) {
-        const parseResult = extractTopLevelFunctionNames(behaviorsSource);
+    runSetup(scriptSource, api) {
+        const parseResult = extractTopLevelFunctionNames(scriptSource);
         if (!parseResult.ok) {
             return { ok: false, ranSetup: false, error: parseResult.error };
         }
-        const { strippedSource } = splitLabelledStatements(parseResult.ast, behaviorsSource);
+        const { strippedSource } = splitLabelledStatements(parseResult.ast, scriptSource);
         return executeSetupScript(strippedSource, api ?? {}, this._print);
     }
 }
 
 /**
- * Execute a stripped behaviors.js source with a construction API in scope and
+ * Execute a stripped script.js source with a construction API in scope and
  * call its setup() if present. Mirrors executeScript's wrapper shape (same
  * "use strict" prefix and sourceURL, so the calibrated line-number offset still
  * applies), but injects the api's keys as named parameters — the bare globals
  * the construction code calls — instead of harvesting a function map.
  *
- * @param {string} source  Stripped behaviours source.
+ * @param {string} source  Stripped script source.
  * @param {Record<string, any>} api  Name→value globals (functions and numbers).
  * @param {(...args: any[]) => void} printFn  Diagnostic sink, exposed as print(...).
  * @returns {{ok: boolean, ranSetup: boolean, error: string | null}}
@@ -255,11 +255,11 @@ function executeSetupScript(source, api, printFn) {
     const names = Object.keys(api);
     const values = names.map((n) => api[n]);
     // Provide the same `score` and `print` globals the load wrapper provides, so
-    // any existing top-level statements in behaviors.js (e.g. setting
+    // any existing top-level statements in script.js (e.g. setting
     // score.kinematics) execute here without a ReferenceError. The construction
     // api keys are injected as additional bare globals. score.kinematics changes
     // are not persisted by setup (they ride on the next load, which re-reads
-    // behaviors.js); a fresh defaults object is enough to keep the script running.
+    // script.js); a fresh defaults object is enough to keep the script running.
     const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
     const body =
         SCRIPT_PREFIX +
@@ -267,21 +267,21 @@ function executeSetupScript(source, api, printFn) {
         `\n;var __gxwRanSetup = (typeof setup === "function");` +
         `\nif (__gxwRanSetup) { setup(); }` +
         `\nreturn __gxwRanSetup;` +
-        `\n//# sourceURL=${BEHAVIORS_FILENAME}`;
+        `\n//# sourceURL=${SCRIPT_FILENAME}`;
 
     let fn;
     try {
         // eslint-disable-next-line no-new-func
         fn = new Function(...names, "print", "score", body);
     } catch (err) {
-        return { ok: false, ranSetup: false, error: formatBehavioursRuntimeError("Syntax error", err, source) };
+        return { ok: false, ranSetup: false, error: formatScriptRuntimeError("Syntax error", err, source) };
     }
 
     let ran;
     try {
         ran = fn(...values, typeof printFn === "function" ? printFn : () => {}, scoreGlobal);
     } catch (err) {
-        return { ok: false, ranSetup: false, error: formatBehavioursRuntimeError("Runtime error", err, source) };
+        return { ok: false, ranSetup: false, error: formatScriptRuntimeError("Runtime error", err, source) };
     }
     return { ok: true, ranSetup: ran === true, error: null };
 }
@@ -336,7 +336,7 @@ function applyPieceLevelFields(scene, data) {
 
 /**
  * Sanitise the kinematics object the composer set on the
- * `score` global in behaviours.js. Each knob must be a finite
+ * `score` global in script.js. Each knob must be a finite
  * number >= 0; anything else (missing, NaN, string, negative)
  * falls back to the default. Returns a fresh object so the
  * Scene does not alias the loader's working copy.
@@ -356,7 +356,7 @@ function sanitizeKinematics(kin) {
 }
 
 /**
- * Use Acorn to parse the behaviours source and extract the
+ * Use Acorn to parse the script source and extract the
  * names of every top-level function declaration plus every
  * top-level const/let/var bound to a function expression or
  * arrow. Returns the AST too on success so callers can run
@@ -384,10 +384,10 @@ function extractTopLevelFunctionNames(source) {
         if (line !== null) {
             return {
                 ok: false,
-                error: `${BEHAVIORS_FILENAME} syntax error on line ${line}: ${message}`,
+                error: `script syntax error on line ${line}: ${message}`,
             };
         }
-        return { ok: false, error: `${BEHAVIORS_FILENAME} syntax error: ${message}` };
+        return { ok: false, error: `script syntax error: ${message}` };
     }
 
     /** @type {string[]} */
@@ -413,7 +413,7 @@ function extractTopLevelFunctionNames(source) {
 }
 
 /**
- * Walk a behaviours.js AST for top-level labelled statements
+ * Walk a script.js AST for top-level labelled statements
  * whose label is dollar-prefixed ($objectId form) and whose
  * body is an expression statement, directly or via a chain
  * of further dollar-prefixed labels. Each such labelled
@@ -444,8 +444,8 @@ function extractTopLevelFunctionNames(source) {
  * chain that mixes a dollar-prefixed label with a non-dollar
  * one is treated as ordinary code in the same way.
  *
- * @param {any} ast Acorn AST of the behaviours source.
- * @param {string} source Original behaviours source.
+ * @param {any} ast Acorn AST of the script source.
+ * @param {string} source Original script source.
  * @returns {{strippedSource: string, labelledBlocks: import("./scene.js").LabelledBlock[]}}
  */
 function splitLabelledStatements(ast, source) {
@@ -509,7 +509,7 @@ function splitLabelledStatements(ast, source) {
 }
 
 /**
- * Build a wrapper around the user behaviours source that,
+ * Build a wrapper around the user script source that,
  * after running the user's declarations, returns a
  * name-to-function map. The wrapper uses
  * `typeof name === "function"` guards so a name that Acorn
@@ -517,16 +517,16 @@ function splitLabelledStatements(ast, source) {
  * a const reassigned to a non-function) still doesn't crash
  * the wrapper.
  *
- * The wrapper also receives a `score` object so behaviours.js
+ * The wrapper also receives a `score` object so script.js
  * can set score-wide config (currently the kinematics knobs);
  * the object is mutated in place by the user's top-level
  * assignments and read back by the caller.
  *
  * @param {string} source
  * @param {string[]} functionNames
- * @param {any} scoreGlobal  The `score` object exposed to behaviours.js.
+ * @param {any} scoreGlobal  The `score` object exposed to script.js.
  * @param {(...args: any[]) => void} [printFn]  Diagnostic sink exposed to
- *   behaviours.js as the global print(...); defaults to a no-op. Passed as a
+ *   script.js as the global print(...); defaults to a no-op. Passed as a
  *   Function parameter (not prepended to the source) so it does not shift
  *   user line numbers for error reporting.
  * @returns {{ok: true, functions: Object<string, Function>} | {ok: false, error: string}}
@@ -539,7 +539,7 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
         SCRIPT_PREFIX +
         source +
         `\n;return { ${returnObjectEntries} };` +
-        `\n//# sourceURL=${BEHAVIORS_FILENAME}`;
+        `\n//# sourceURL=${SCRIPT_FILENAME}`;
 
     let fn;
     try {
@@ -551,7 +551,7 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
         // something Acorn didn't.
         return {
             ok: false,
-            error: formatBehavioursRuntimeError("Syntax error", err, source),
+            error: formatScriptRuntimeError("Syntax error", err, source),
         };
     }
 
@@ -561,7 +561,7 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
     } catch (err) {
         return {
             ok: false,
-            error: formatBehavioursRuntimeError("Runtime error", err, source),
+            error: formatScriptRuntimeError("Runtime error", err, source),
         };
     }
 
@@ -586,7 +586,7 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
  */
 function calibrateOffset() {
     const probeBody =
-        `"use strict";\nthrow new Error("__gxw_probe__");\n//# sourceURL=${BEHAVIORS_FILENAME}`;
+        `"use strict";\nthrow new Error("__gxw_probe__");\n//# sourceURL=${SCRIPT_FILENAME}`;
     try {
         // eslint-disable-next-line no-new-func
         new Function(probeBody)();
@@ -609,16 +609,16 @@ function getOffset() {
 }
 
 /**
- * Format an error from behaviours.js execution, with a line
+ * Format an error from script.js execution, with a line
  * number into the user's source where possible.
  * @param {string} kind
  * @param {unknown} err
  * @param {string} source
  * @returns {string}
  */
-function formatBehavioursRuntimeError(kind, err, source) {
+function formatScriptRuntimeError(kind, err, source) {
     if (!(err instanceof Error)) {
-        return `${BEHAVIORS_FILENAME} ${kind.toLowerCase()}: ${String(err)}`;
+        return `script ${kind.toLowerCase()}: ${String(err)}`;
     }
     const info = extractLineInfo(err);
     const name = err.name && err.name !== "Error" ? err.name : kind;
@@ -626,10 +626,10 @@ function formatBehavioursRuntimeError(kind, err, source) {
         const userLine = info.line - getOffset();
         const lineText = lineFromSource(source, userLine);
         if (lineText !== null && userLine >= 1) {
-            return `${BEHAVIORS_FILENAME} ${name} on line ${userLine}: ${err.message}\n  ${lineText.trim()}`;
+            return `script ${name} on line ${userLine}: ${err.message}\n  ${lineText.trim()}`;
         }
     }
-    return `${BEHAVIORS_FILENAME} ${name}: ${err.message}`;
+    return `script ${name}: ${err.message}`;
 }
 
 /**
@@ -692,8 +692,7 @@ function extractLineInfo(err) {
     }
     const stack = typeof err.stack === "string" ? err.stack : "";
     const patterns = [
-        /behaviors\.js:(\d+):(\d+)/,
-        /behaviours\.js:(\d+):(\d+)/,
+        /script\.js:(\d+):(\d+)/,
         /<anonymous>:(\d+):(\d+)/,
         /eval at.*:(\d+):(\d+)/,
     ];

@@ -92,8 +92,8 @@ const HARMONY_OVERRIDE_FIELDS = [
 /**
  * Callback-slot fields shared by Curve, Trigger, and Sprite.
  * Every source kind carries the cyclePattern field and the
- * Code-tab callback slots (collided, triggered, autoMessage,
- * onTick), each guarded by a Can-X gate boolean (canCollide,
+ * Code-tab callback slots (onActiveBeat, hasCollided, beenTriggered,
+ * autoMessage, onTick), each guarded by a Can-X gate boolean (canCollide,
  * canBeTriggered, canAutoMessage, canTick). autoMessage fires at the
  * object's Automessage Interval (Band 4). The cyclePattern lives in the Band 4 CodeMirror
  * editor; cursor-as-collider derives self-firing from cursor
@@ -104,7 +104,7 @@ const HARMONY_OVERRIDE_FIELDS = [
  * Function naming convention: each Code-tab slot's function
  * is named slotName_sourceId, e.g. hasHit_tr_a3f7,
  * beenHit_tr_a3f7, onTick_sp_b9c2. The cyclePattern's home
- * is the Band 4 editor and not the Code tab.
+ * is the Band 4 editor and not the Script tab.
  * @type {FieldDef[]}
  */
 const CALLBACK_SLOT_FIELDS = [
@@ -133,9 +133,16 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "beatShift", label: "Beat Shift", type: "integer", default: 0 },
     { key: "repeats", label: "Beat Repeats", type: "integer", default: 1, min: 1 },
     { key: "canCollide", label: "Can Collide", type: "boolean", default: false },
-    { key: "collidedFunction", label: "Collided Function", type: "functionRef", default: "" },
+    { key: "hasCollidedFunction", label: "Has Collided Function", type: "functionRef", default: "" },
     { key: "canBeTriggered", label: "Can Be Triggered", type: "boolean", default: false },
-    { key: "triggeredFunction", label: "Triggered Function", type: "functionRef", default: "" },
+    { key: "beenTriggeredFunction", label: "Been Triggered Function", type: "functionRef", default: "" },
+    // onActiveBeat (Band 3): fires when a cursor crosses one of this
+    // object's active beat points. Curves and sprites only (the UI
+    // greys it for triggers, which have no beat points). Its firing
+    // lands with the scheduler in the firing-flow stage; the slot is
+    // scaffolding for now.
+    { key: "canActiveBeat", label: "Can Active Beat", type: "boolean", default: false },
+    { key: "onActiveBeatFunction", label: "On Active Beat Function", type: "functionRef", default: "" },
     { key: "canAutoMessage", label: "Can Auto Message", type: "boolean", default: false },
     { key: "autoMessageFunction", label: "Auto Message Function", type: "functionRef", default: "" },
     // Automessage Interval (Band 4): the rate at which the

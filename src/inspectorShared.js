@@ -42,10 +42,11 @@ export const W = {
     groupLabel: 44,
     group: 120,
 
-    // Band 3 function-name and cyclePattern fields. Sized
-    // to match the Name field width so the right edge of
-    // Band 3 lines up with Band 1's Name row.
-    callbackField: 280,
+    // Band 3 callback function-name field. Sized so the callback
+    // row (leftLabel + checkbox + this field + Create/Go-to button)
+    // is no wider than the Initial Conditions row (X/Y/vX/vY), which
+    // is the inspector's widest line — we don't widen the pane past it.
+    callbackField: 224,
 
     // Band 2 Variability inline label, sitting to the right of
     // the Color field on the same row (GeoSonixV2). Fits the

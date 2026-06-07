@@ -103,7 +103,7 @@ export const PREFERENCES = [
         key: "enableStrudelAutocomplete",
         label: "Enable Autocompletion",
         description:
-            "Suggests Strudel function names, sample names, scale names, and notes as you type in the Code tab. Use the arrow keys to move through suggestions and Enter to accept the highlighted one; Escape closes the suggestion list.",
+            "Suggests Strudel function names, sample names, scale names, and notes as you type in the Script tab. Use the arrow keys to move through suggestions and Enter to accept the highlighted one; Escape closes the suggestion list.",
         type: "boolean",
         default: true,
         category: "Code Editor",
@@ -112,7 +112,7 @@ export const PREFERENCES = [
         key: "enableStrudelTooltips",
         label: "Function Documentation Tooltips",
         description:
-            "Hold the Control key and hover a function name in the Code tab to see its Strudel documentation: a short description, its parameters, and a usage example.",
+            "Hold the Control key and hover a function name in the Script tab to see its Strudel documentation: a short description, its parameters, and a usage example.",
         type: "boolean",
         default: true,
         category: "Code Editor",
@@ -121,7 +121,7 @@ export const PREFERENCES = [
         key: "codeSpeakOnHover",
         label: "Speak Code on Hover",
         description:
-            "When on, resting the pointer on a name in the Code tab — a function, method, signal, or keyword — speaks that name aloud after a short pause. Numbers and the contents of quoted strings stay silent. Toggle it from the ear button at the top-right of the Code editor, or here.",
+            "When on, resting the pointer on a name in the Script tab — a function, method, signal, or keyword — speaks that name aloud after a short pause. Numbers and the contents of quoted strings stay silent. Toggle it from the ear button at the top-right of the Code editor, or here.",
         type: "boolean",
         default: false,
         category: "Code Editor",

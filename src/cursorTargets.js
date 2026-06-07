@@ -2,7 +2,7 @@
  * Cursor-target id derivation.
  *
  * Exports deriveCursorTargetIds(source, from, to, scene),
- * which inspects every top-level statement of behaviors.js
+ * which inspects every top-level statement of script.js
  * whose source range overlaps the editor's current
  * selection range and unions the object ids those
  * statements logically own. A bare cursor (no selection)
@@ -20,8 +20,8 @@
  *     contributes.
  *
  *   - A FunctionDeclaration whose name appears in any
- *     curve, trigger, or sprite's collidedFunction,
- *     triggeredFunction, or onTickFunction slot. Every
+ *     curve, trigger, or sprite's hasCollidedFunction,
+ *     beenTriggeredFunction, or onTickFunction slot. Every
  *     binding object's id contributes.
  *
  * Any other top-level node (variable declaration, plain
@@ -58,8 +58,9 @@ import * as acorn from "https://esm.sh/acorn@8";
  * self-contained.
  */
 const CALLBACK_FIELD_NAMES = [
-    "collidedFunction",
-    "triggeredFunction",
+    "hasCollidedFunction",
+    "beenTriggeredFunction",
+    "onActiveBeatFunction",
     "onTickFunction",
 ];
 
@@ -143,8 +144,8 @@ function _collectIdsFromNode(node, scene, result) {
     // Function-declaration path. Look up the function name
     // across every object's three function-reference slots
     // and accumulate the object ids that bind it. The
-    // runtime Scene objects store collidedFunction /
-    // triggeredFunction / onTickFunction as string names; the
+    // runtime Scene objects store hasCollidedFunction /
+    // beenTriggeredFunction / onTickFunction as string names; the
     // simulation resolves those names against the Scene's
     // functionMap at fire time, but the names themselves
     // stay on the objects, which is what we compare against

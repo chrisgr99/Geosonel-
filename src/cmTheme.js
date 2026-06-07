@@ -2,7 +2,7 @@
  * Shared CodeMirror theme and highlighting.
  *
  * Two CodeMirror surfaces share the same look in GXW: the
- * Code tab's full-pane editor (mounted by TabbedEditor in
+ * Script tab's full-pane editor (mounted by TabbedEditor in
  * editor.js) and the property inspector's Band 4 cyclePattern
  * editor (mounted by patternEditor.js). Both should render
  * code with the same fonts, the same colour palette, and the

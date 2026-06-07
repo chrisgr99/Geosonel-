@@ -16,7 +16,7 @@
  * the gap stays visible in the numbering. This is the name-
  * stability property that the pattern-block and callback-
  * function conventions rely on — a labelled block $SPR4 in
- * behaviors.js stays meaningful as long as SPR4 exists, and
+ * script.js stays meaningful as long as SPR4 exists, and
  * recycling that number for a different freshly-created
  * sprite later would orphan or silently rebind the reference.
  *
@@ -32,7 +32,7 @@
  *
  * Hand-edited ids that don't match the conventional shape are
  * left alone by the fill pass and don't affect counter
- * advancement. References to such ids in behaviors.js are the
+ * advancement. References to such ids in script.js are the
  * user's responsibility to keep in sync; the system has no
  * opinion.
  *

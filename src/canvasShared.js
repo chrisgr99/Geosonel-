@@ -99,9 +99,9 @@ export const CURSOR_COLOUR = "#ffb060";
 export const OBJECT_BOUNDARY_COLOUR = "#7db8d6";
 // Bright magenta used to highlight the object(s) the
 // editor cursor logically owns when sitting inside a
-// labelled pattern block in behaviors.js or inside a
+// labelled pattern block in script.js or inside a
 // top-level function declaration whose name is bound to
-// any object's collidedFunction / triggeredFunction /
+// any object's hasCollidedFunction / beenTriggeredFunction /
 // onTickFunction slot. Pure #ff00ff reads slightly cold;
 // nudging the red channel up to 0x44 keeps the warmth of
 // a CRT-era magenta while staying unmistakable against
@@ -113,7 +113,7 @@ export const NO_IMAGE_FILL_COLOUR = "#404040";
 
 // Firing-event flash colour and timing. When the firing
 // engine dispatches an audio event for a curve or sprite
-// (or, in future, a trigger via beenHit), the corresponding
+// (or, in future, a trigger via beenTriggered), the corresponding
 // canvas object turns bright red as a visual confirmation
 // of the event firing. The flash replaces both the
 // interior fill (normally an image-sampled colour) and

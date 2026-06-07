@@ -407,20 +407,14 @@ const wrapTheme = EditorView.theme({
  * of the JSON view once the inspector covers every scene
  * field will simply drop the tab.
  *
- * behaviors.js and behaviours.js both show as "Code" per
- * section 28's terminology, which treats the behaviour file
- * as the score's source-code surface (callback functions,
- * labelled pattern blocks) rather than naming it after the
- * older "behaviours" concept. behaviors.js is the canonical
- * v2.4 filename; behaviours.js is the legacy spelling kept
- * here as a fallback so a bundle mid-migration (legacy
- * filename still present) renders the right tab label until
- * the rename pass runs.
+ * script.js shows as "Script" — the score's source-code
+ * surface (the SETUP construction code and the per-object
+ * callback functions). scene.json's tab has no label here
+ * (the JSON view is reached separately).
  */
 const TAB_LABELS = {
     "scene.json": "",
-    "behaviors.js": "Code",
-    "behaviours.js": "Code",
+    "script.js": "Script",
 };
 
 /**
@@ -539,10 +533,10 @@ export class TabbedEditor {
          * Live scene reference for the cursor-target highlight.
          * Set by main.js after every successful runScene via
          * setScene; read by _emitCursorTargetIds when the
-         * cursor in behaviors.js sits inside a top-level
+         * cursor in script.js sits inside a top-level
          * FunctionDeclaration whose name needs to be looked
-         * up across each object's collidedFunction /
-         * triggeredFunction / onTickFunction slots. Null
+         * up across each object's hasCollidedFunction /
+         * beenTriggeredFunction / onTickFunction slots. Null
          * before the first runScene; in that case the
          * highlight emits an empty id set so the canvas
          * stays at default colours.
@@ -569,11 +563,11 @@ export class TabbedEditor {
         /**
          * Compartment holding the Strudel autocomplete and
          * Ctrl-hover tooltip extensions. Reconfigured to an
-         * empty array on every non-Code tab so the popup
+         * empty array on every non-Script tab so the popup
          * and tooltip stay silent on scene.json and the
          * virtual Properties / Canvas tabs, and reconfigured
-         * to the live extension list when the Code tab
-         * (behaviors.js or behaviours.js) is active. The
+         * to the live extension list when the Script tab
+         * (script.js or script.js) is active. The
          * extension list inside is itself gated on the user's
          * Enable Autocompletion and Function Documentation
          * Tooltips preferences, so a flip of either control
@@ -669,11 +663,11 @@ export class TabbedEditor {
     /**
      * Compute the Strudel extension list for the currently
      * active tab, gated by the user's two preferences. Returns
-     * an empty array for any tab that isn't the Code tab
-     * (behaviors.js / behaviours.js), so the autocomplete
+     * an empty array for any tab that isn't the Script tab
+     * (script.js / script.js), so the autocomplete
      * popup and the Ctrl-hover tooltip stay silent on
      * scene.json and on the virtual Properties / Canvas
-     * tabs. When the Code tab is active, returns the live
+     * tabs. When the Script tab is active, returns the live
      * extensions for whichever of autocompletion and tooltip
      * the user has enabled — either preference being off
      * folds that extension out of the array without affecting
@@ -687,8 +681,7 @@ export class TabbedEditor {
      */
     _strudelExtensionsForActiveTab() {
         const isCodeTab =
-            this.activeName === "behaviors.js" ||
-            this.activeName === "behaviours.js";
+            this.activeName === "script.js";
         if (!isCodeTab) return [];
         return [
             isAutoCompletionEnabled(getPreference("enableStrudelAutocomplete")),
@@ -725,7 +718,7 @@ export class TabbedEditor {
      * compartment. The reconfigure honours the active-tab
      * gate, so flipping a preference on while a non-Code
      * tab is active leaves the compartment empty (the next
-     * selectTab into the Code tab picks up the new state).
+     * selectTab into the Script tab picks up the new state).
      *
      * Called once at construction; no unsubscribe is wired
      * because the editor lives for the duration of the
@@ -879,9 +872,9 @@ export class TabbedEditor {
      * equals the editor's current document. Cmd-Enter promote
      * is the case that motivates the guard: it mutates
      * scene.json (via applySceneEdit) but never touches
-     * behaviors.js, yet applySceneEdit calls
+     * script.js, yet applySceneEdit calls
      * refreshActiveTabFromBundle unconditionally. Without the
-     * guard, the active behaviors.js tab gets a
+     * guard, the active script.js tab gets a
      * full-document replace transaction that inserts the
      * same content it already has — a logical no-op as far
      * as text is concerned, but a real transaction in
@@ -942,7 +935,7 @@ export class TabbedEditor {
     /**
      * Set the editor's read-only state. Used by
      * aiBatchDialog (Phase 1B commit 4b.2) to lock the
-     * Code tab against keystrokes while the AI batch
+     * Script tab against keystrokes while the AI batch
      * confirm-to-apply dialog is visible.
      * EditorState.readOnly blocks user input — keystrokes
      * and paste — but still allows scrolling, selection
@@ -1027,7 +1020,7 @@ export class TabbedEditor {
      * (labelled-block label or callback function name)
      * of every source whose `mute` field is true. The
      * marker is a virtual DOM element (Decoration.widget),
-     * not source text, so behaviors.js stays untouched
+     * not source text, so script.js stays untouched
      * on mute toggles. Composes with active-tag and
      * orphan-tag at the decoration layer: a selected-
      * and-muted binding reads as the bright accent
@@ -1066,7 +1059,7 @@ export class TabbedEditor {
      * empty map sent on stop to clear the boxes.
      *
      * No tab gate here: the extension only holds tokens for the
-     * document currently in the editor, so when a non-Code tab
+     * document currently in the editor, so when a non-Script tab
      * is showing (scene.json, or the virtual Properties / Canvas
      * tabs) its token map is empty and the dispatch produces no
      * boxes. The canvas drives this only while the transport is
@@ -1104,10 +1097,10 @@ export class TabbedEditor {
 
     /**
      * Provide the editor with the live scene so the
-     * cursor-target highlight in behaviors.js can resolve
+     * cursor-target highlight in script.js can resolve
      * top-level function declarations back to the object
-     * ids that bind them in collidedFunction /
-     * triggeredFunction / onTickFunction slots. Called by
+     * ids that bind them in hasCollidedFunction /
+     * beenTriggeredFunction / onTickFunction slots. Called by
      * main.js after each successful runScene, mirroring
      * setSelectedObjectIds and setKnownObjectIds. After
      * stashing the scene reference the editor re-emits the
@@ -1134,7 +1127,7 @@ export class TabbedEditor {
      * top-level node containing the cursor (the original
      * behaviour); a non-empty selection unions the ids of
      * every owned region the selection overlaps. Active
-     * only on behaviors.js / behaviours.js — any other tab
+     * only on script.js / script.js — any other tab
      * fires an empty set so the canvas's highlight clears
      * as soon as the user switches away from the Code
      * tab. A null scene also fires empty so the highlight
@@ -1150,8 +1143,7 @@ export class TabbedEditor {
     _emitCursorTargetIds() {
         if (this.view === null) return;
         const isCodeTab =
-            this.activeName === "behaviors.js" ||
-            this.activeName === "behaviours.js";
+            this.activeName === "script.js";
         if (!isCodeTab || this._scene === null) {
             this.onCursorTargetIdsChange(new Set());
             return;
@@ -1428,7 +1420,7 @@ export class TabbedEditor {
                 run: () => {
                     // Stage A4: if the cursor sits inside a
                     // top-level labelled pattern block in
-                    // behaviors.js, promote the block's
+                    // script.js, promote the block's
                     // expression body to the named object's
                     // cyclePattern via the onPromotePattern
                     // callback. Otherwise fall through to the
@@ -1554,7 +1546,7 @@ export class TabbedEditor {
                     // are inactive when no completion is
                     // open and so don't conflict with
                     // anything else when the popup is
-                    // silent or the Code tab isn't active.
+                    // silent or the Script tab isn't active.
                     ...completionKeymap,
                     ...appKeymap,
                     indentWithTab,
@@ -1567,13 +1559,12 @@ export class TabbedEditor {
                 // Mod-Shift-' to read the enclosing
                 // ExpressionStatement at that offset. The
                 // isCodeTab callback gates the keymap
-                // command to behaviors.js / behaviours.js;
+                // command to script.js / script.js;
                 // on any other tab the command returns
                 // false so the keystroke falls through.
                 ...codeSpeechExtension({
                     isCodeTab: () =>
-                        this.activeName === "behaviors.js" ||
-                        this.activeName === "behaviours.js",
+                        this.activeName === "script.js",
                 }),
                 this._langCompartment.of(javascript()),
                 ...customDarkTheme(),
@@ -1597,7 +1588,7 @@ export class TabbedEditor {
                     // re-emit the cursor-target id set on
                     // either trigger. The acorn re-parse
                     // inside the helper is cheap for the
-                    // size of behaviors.js files composers
+                    // size of script.js files composers
                     // write; the same parse already runs on
                     // Mod-Enter and Ctrl-/ without a
                     // perceptible cost. A one-entry source-
@@ -1627,7 +1618,7 @@ export class TabbedEditor {
                     // pane size up to full body height (focus-
                     // canvas mode being the largest case), so
                     // every function declaration and labelled
-                    // pattern block in behaviors.js can land at
+                    // pattern block in script.js can land at
                     // row 0 regardless of where it sits in the
                     // file. The trade-off is some empty space
                     // visible when the user scrolls past the
@@ -1669,7 +1660,7 @@ export class TabbedEditor {
         btn.type = "button";
         btn.className = "code-speak-toggle";
         btn.setAttribute("aria-label", "Speak code on hover");
-        btn.title = "Speak code on hover. When on, resting the pointer on a name in the Code tab speaks it aloud after a short pause.";
+        btn.title = "Speak code on hover. When on, resting the pointer on a name in the Script tab speaks it aloud after a short pause.";
         // Ear icon (currentColor stroke so the pressed state's
         // colour shift is visible).
         btn.innerHTML =
@@ -1692,7 +1683,7 @@ export class TabbedEditor {
     }
 
     /**
-     * Show the speak toggle only on the Code tab and reflect the
+     * Show the speak toggle only on the Script tab and reflect the
      * current `codeSpeakOnHover` preference as its pressed state.
      * Called from _renderTabs (every tab change) and the
      * preference subscription.
@@ -1701,8 +1692,7 @@ export class TabbedEditor {
         const btn = this._codeSpeakToggleButton;
         if (!btn) return;
         const onCodeTab =
-            this.activeName === "behaviors.js" ||
-            this.activeName === "behaviours.js";
+            this.activeName === "script.js";
         btn.style.display = onCodeTab ? "" : "none";
         const active = getPreference("codeSpeakOnHover") === true;
         btn.classList.toggle("code-speak-toggle-active", active);
@@ -1846,7 +1836,7 @@ export class TabbedEditor {
      * so the user still sees the file rather than getting a
      * silent no-op.
      *
-     * @param {string} name  File name (e.g. "behaviors.js").
+     * @param {string} name  File name (e.g. "script.js").
      * @param {string | string[]} target  Function name, dollar-prefixed labelled-statement tag, or an array of either.
      */
     selectTabAndScrollToFunction(name, target) {
@@ -1919,7 +1909,7 @@ export class TabbedEditor {
      * CodeMirror editor area is hidden and the inspector
      * area is shown. Used by main.js as the navigation
      * target when a canvas double-click lands on an
-     * object that has no source in behaviors.js (no
+     * object that has no source in script.js (no
      * labelled pattern block and no default-named
      * callback declaration), so the user can use the
      * inspector's Create buttons to scaffold one.
@@ -1943,7 +1933,7 @@ export class TabbedEditor {
 
     /**
      * Toggle the wrap state of the dot-method chain at the
-     * cursor in behaviors.js / behaviours.js. The composer
+     * cursor in script.js / script.js. The composer
      * uses this to break a long chain across multiple lines
      * for readability under high zoom, or collapse a wrapped
      * chain back into one line when horizontal space allows.
@@ -2006,8 +1996,8 @@ export class TabbedEditor {
      */
     _toggleModifierChainWrap() {
         if (this.view === null) return false;
-        if (this.activeName !== "behaviors.js" &&
-            this.activeName !== "behaviours.js") return false;
+        if (this.activeName !== "script.js" &&
+            this.activeName !== "script.js") return false;
         const doc = this.view.state.doc;
         const source = doc.toString();
         const cursorPos = this.view.state.selection.main.head;
@@ -2189,7 +2179,7 @@ export class TabbedEditor {
      * a labelled block with `// $id: ...` or
      * `/* $id: ... *\/` both work.
      *
-     * Active only on behaviors.js / behaviours.js. The
+     * Active only on script.js / script.js. The
      * labelled-statement convention is part of the behaviour
      * file's authoring surface per section 28; other tabs
      * (the virtual inspector, scene.json, any additional
@@ -2207,8 +2197,8 @@ export class TabbedEditor {
      */
     _tryPromoteLabelledBlock() {
         if (this.view === null) return false;
-        if (this.activeName !== "behaviors.js" &&
-            this.activeName !== "behaviours.js") return false;
+        if (this.activeName !== "script.js" &&
+            this.activeName !== "script.js") return false;
         const source = this.view.state.doc.toString();
         const cursorPos = this.view.state.selection.main.head;
 
@@ -2337,7 +2327,7 @@ export class TabbedEditor {
      * the block's expression body, in whitespace between
      * labels of a chain, in a comment, in a callback
      * function declaration, or outside any labelled block
-     * — or when the active tab is not a Code tab.
+     * — or when the active tab is not a Script tab.
      *
      * "On a label" means the cursor position is within
      * the inclusive range [label.start, colonPos + 1] of
@@ -2364,7 +2354,7 @@ export class TabbedEditor {
      *
      * Used by main.js's performToggleMute to give the
      * Cmd-Shift-M keystroke a cursor-derived target when
-     * the editor has focus on the Code tab; when this
+     * the editor has focus on the Script tab; when this
      * method returns null the keystroke falls through to
      * the canvas-selection path.
      *
@@ -2378,8 +2368,8 @@ export class TabbedEditor {
      */
     deriveCursorMuteTarget() {
         if (this.view === null) return null;
-        if (this.activeName !== "behaviors.js" &&
-            this.activeName !== "behaviours.js") return null;
+        if (this.activeName !== "script.js" &&
+            this.activeName !== "script.js") return null;
         const source = this.view.state.doc.toString();
         const cursorPos = this.view.state.selection.main.head;
 
@@ -2466,7 +2456,7 @@ export class TabbedEditor {
      * Properties (form inspector) and Canvas (scene-level
      * canvas chrome per DESIGN.md Section 13.5), neither
      * of which backs onto a file in the bundle. Then the
-     * Code tabs (behaviors.js / behaviours.js) for the
+     * Script tabs (script.js / script.js) for the
      * authored source. Last comes scene.json, rendered
      * with an empty label — a deliberately anonymous
      * fallback tab the user can still click to reach the
@@ -2494,6 +2484,16 @@ export class TabbedEditor {
         // surface scene.json's dirty state and a third
         // signal for the same backing file would just
         // duplicate the cue.
+        // Script tab (script.js) — SECOND, right after Properties,
+        // so the composer reaches the source code before the canvas
+        // and the anonymous JSON tab. Tab order: Properties, Script,
+        // Canvas, then the unnamed JSON (scene.json) tab.
+        const renderedNames = new Set();
+        if (this.bundle.getFile("script.js") !== null) {
+            this.tabBar.appendChild(this._renderFileTab("script.js"));
+            renderedNames.add("script.js");
+        }
+
         this.tabBar.appendChild(
             this._renderVirtualTab(
                 VIRTUAL_TAB_CANVAS,
@@ -2502,21 +2502,11 @@ export class TabbedEditor {
             ),
         );
 
-        // File tabs in display order. Code tabs first so
-        // the composer reads function declarations and
-        // pattern blocks before the declarative scene data,
-        // and so the anonymous scene.json tab sits at the
-        // far right where it doesn't draw the eye. Both
-        // legacy and v2.4 behaviour filenames are listed so
-        // a bundle in either state renders correctly during
-        // the migration window.
-        const orderedNames = ["behaviors.js", "behaviours.js", "scene.json"];
-        const renderedNames = new Set();
-        for (const name of orderedNames) {
-            const file = this.bundle.getFile(name);
-            if (file === null) continue;
-            this.tabBar.appendChild(this._renderFileTab(name));
-            renderedNames.add(name);
+        // The anonymous scene.json (JSON) tab sits at the far right
+        // where it doesn't draw the eye.
+        if (this.bundle.getFile("scene.json") !== null) {
+            this.tabBar.appendChild(this._renderFileTab("scene.json"));
+            renderedNames.add("scene.json");
         }
 
         // Any remaining text files (e.g. resources/foo.js) in

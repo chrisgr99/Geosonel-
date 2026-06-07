@@ -16,7 +16,7 @@
 //                                     Until then, .gxs folders show in Finder as
 //                                     folders with the suffix visible.
 //       scene.json
-//       behaviors.js
+//       script.js
 //       <image file>                  optional, named per the score's imageName
 //       .gxw-meta.json                hidden, carries imageName and any other
 //                                     per-score metadata that doesn't fit in

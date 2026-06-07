@@ -201,7 +201,7 @@ export class Bundle {
          * Pinned-slot and displayBrightness mutations do
          * NOT fire content-change because they live in the
          * .gxw-meta.json sidecar rather than scene.json or
-         * behaviours.js, and the mirror does not surface
+         * script.js, and the mirror does not surface
          * the sidecar to AI tools. If a future need to
          * surface them arises, the relevant mutators can
          * be extended to emit then.
@@ -794,8 +794,8 @@ export class Bundle {
  * Produce the contents of a freshly-created score. The score
  * holds two text files: scene.json (declarative data, edited
  * via the Properties tab and a future property panel) and
- * behaviors.js (named function definitions, edited via the
- * Behaviors tab). The scene loader stitches them together
+ * script.js (named function definitions, edited via the
+ * Script tab). The scene loader stitches them together
  * at run time. See DESIGN.md v2.4 for the data and behaviour
  * split, and §9 for the slot-naming convention used in the
  * template below.
@@ -866,7 +866,7 @@ export function makeEmptyBundle(name) {
     );
 
     bundle.addTextFile(
-        "behaviors.js",
+        "script.js",
         `$CRV1: sound("bd sn bd sn");
 
 $CRV2: note("c4  e4 d4 f4  e4  g4  f4 a4");

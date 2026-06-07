@@ -9,7 +9,7 @@
  *
  * Keyboard shortcuts. Cmd-Z (Undo) and Cmd-Shift-Z (Redo)
  * listen at the window level with a focus filter that skips
- * text-editing surfaces \u2014 CodeMirror inside the Code tab,
+ * text-editing surfaces \u2014 CodeMirror inside the Script tab,
  * INPUT and TEXTAREA fields, and any contenteditable
  * element \u2014 so those surfaces continue to handle their
  * own native undo. Cmd-D (Duplicate) shares the same filter

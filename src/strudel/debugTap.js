@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * Per-note debug tap `p()` for the Code tab.
+ * Per-note debug tap `p()` for the Script tab.
  *
  * `p(pattern, label?)` wraps any pattern-valued sub-expression
  * (a signal, a sub-pattern) and returns an equivalent pattern

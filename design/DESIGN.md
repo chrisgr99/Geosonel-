@@ -25,7 +25,7 @@ mini-notation was not.
 ## 2. What carries over from GXW (paradigm-neutral)
 Re-derive from the archived design. Keep: the canvas and geometric objects (curves,
 sprites, triggers); image and pixel signals; sprite kinematics; collision callbacks
-(hasHit / beenHit); audio output (superdough plus the GeoSonel virtual MIDI port); the
+(hasCollided / beenTriggered); audio output (superdough plus the GeoSonel virtual MIDI port); the
 save and session system; the UI shell; and the creation / mutation + audition system.
 [TODO: re-state each, noting any changes the procedural model implies.]
 
@@ -36,16 +36,16 @@ engine. The procedural engine produces events directly, so the two-pass query go
 and the engine should become substantially simpler.
 
 EMERGING MODEL (from the Msg Functions band of the inspector): patterns are expressed as
-named procedural CALLBACKS on each object — hasHit and beenHit (collision), autoMessage
+named procedural CALLBACKS on each object — hasCollided and beenTriggered (collision), autoMessage
 (fires at the object's Automessage Interval), and onTick (per tick) — which generate
 notes and events imperatively, via ctx.playNote / ctx.playSound. This is GXW's existing
-procedural spine (behaviours.js onTick, the collision callbacks, playNote/playSound),
+procedural spine (script.js onTick, the collision callbacks, playNote/playSound),
 promoted to the primary authoring model.
 [TODO: the authoring surface for writing these callbacks; the context/API available
 inside them; how the harmony layer maps their output; the enhancements Chris has in mind.]
 
-### Reference example: the GeoSonix code tab (the target authoring model)
-GeoSonix's code tab could define an ENTIRE scene procedurally, and we want the same kind
+### Reference example: the GeoSonix script tab (the target authoring model)
+GeoSonix's script tab could define an ENTIRE scene procedurally, and we want the same kind
 of thing. A representative script (pasted by Chris) builds 200 ellipse-arranged curves —
 each with a cursor and a trigger — then defines a per-firing message function:
 
@@ -101,7 +101,7 @@ function triggerMessage() {
 }
 ```
 
-It shows TWO API surfaces sharing one code tab:
+It shows TWO API surfaces sharing one script tab:
 - Scene construction, run once: global setup (clear, center, zoom, rewind, setBPM,
   setChord); object creation via a stateful CURRENT-OBJECT builder (addCurve / addCursor /
   addTrigger create and select an object; setGroup / setPointAt / setPattern / setSpeed /
@@ -158,7 +158,7 @@ triggers, and sprites arrays whose entries carry the schema fields (sceneSchema.
 the fields per kind). This is what the inspector edits and what the save format serializes.
 Second, the LIVE form: the Scene object built by sceneLoader.js, holding Curve, Trigger, and
 Sprite instances (scene.js) plus a functionMap of the callback functions parsed out of
-behaviors.js. This is what the simulation reads. Third, the per-fire CONTEXT: the ctx object
+script.js. This is what the simulation reads. Third, the per-fire CONTEXT: the ctx object
 the simulation builds fresh for each callback invocation (simulation.js), a read-only
 snapshot of one object's state at firing time plus the emitters playNote, playSound, and
 applyForce.
@@ -186,8 +186,8 @@ Size. Cursor: cursorL, cursorR, cursorThickness. Appearance: color and its Varia
 points: beatPointsMode, beatsPerCycle, activeBeats, strength, beatsPerBar, and the Euclidean
 parameters activeBeatsCount, beatShift, repeats. Cycle: cycleSpeeds, startAtCycle,
 stopAtCycle, and a trigger's triggerSyncToBeat. Timing: timeLagMultiplier, timeLagInterval,
-and autoMessageInterval. Callback bindings: the Can-X gates canHit, canBeHit, canTick,
-canAutoMessage and the function-name fields hasHitFunction, beenHitFunction, onTickFunction,
+and autoMessageInterval. Callback bindings: the Can-X gates canCollide, canBeTriggered, canTick,
+canAutoMessage and the function-name fields hasCollidedFunction, beenTriggeredFunction, onTickFunction,
 autoMessageFunction.
 
 Beyond the stored fields, the handle exposes DERIVED reads that a callback needs and that the
@@ -220,7 +220,7 @@ The score handle is the live reference to score-level state and the transport, G
 `_score`. It reads and writes the piece-wide fields the Scene already holds: bpm, the output
 route (MIDI or superdough) and engine, the global superdough voice, the background image
 name, the canvas size, and the sprite kinematics knobs (drag, jitter, coast, turnDamping)
-that behaviors.js already sets through its score global. It also exposes a background read,
+that script.js already sets through its score global. It also exposes a background read,
 the GeoSonix `hasBackgroundImage` gate that the reference example branches on, grounded in
 GXW's imageName.
 
@@ -324,7 +324,7 @@ translateSelection, the canvas inspector's field edits). They are another caller
 not a separate path.
 
 The SAVE FORMAT is the serialized result of the operations: scene.json is the curves,
-triggers, and sprites the operations have built, and behaviors.js is the construction and
+triggers, and sprites the operations have built, and script.js is the construction and
 callback code. Because construction is a re-runnable merge, the save format and a construction
 script are two encodings of the same scene — the deepest form of one-scene-two-views, the
 same identity GeoSonix had where its snapshot command lines and its script API were one
@@ -362,7 +362,7 @@ incremental one — but the state MODEL is fixed here, not deferred.
 
 #### 5. The lifecycle and authoring-surface placement
 
-The code tab holds three kinds of section, all sitting on the substrate, settled with Chris as
+The script tab holds three kinds of section, all sitting on the substrate, settled with Chris as
 a Processing-style split.
 
 SETUP runs once, on demand. It holds scene construction: the create, position, set, and group
@@ -379,9 +379,9 @@ legitimately do nothing. The section NAME is still open — run is a placeholder
 update, and tick are candidates.
 
 The per-object CALLBACKS are the four named functions the Msg Functions band already binds:
-hasHit and beenHit (collision, gated by canHit and canBeHit), onTick (per tick, gated by
+hasCollided and beenTriggered (collision, gated by canCollide and canBeTriggered), onTick (per tick, gated by
 canTick), and autoMessage (at the object's Automessage Interval, gated by canAutoMessage).
-They live in behaviors.js as plain named functions, bound to objects by name through the
+They live in script.js as plain named functions, bound to objects by name through the
 functionMap the loader builds, and they receive the object handle as their context. This is
 GXW's existing callback spine (the simulation's dispatchCollision and per-sprite onTick,
 firing through fireImmediateNote / fireImmediateSound / fireImmediateValue), promoted to the
@@ -466,39 +466,37 @@ the whole channel), so pan is a NO-OP for MIDI output. Per-note MIDI expression 
 waits on MPE, a future possibility, not designed now.
 
 THE FIVE CALLBACKS. Each object binds up to five named procedural callbacks, and the firing
-taxonomy is which event fires which. collided fires on a curve or sprite whose cursor strikes a
-diamond — the active side of a collision. triggered fires on the diamond that was struck — the
-passive side. onBeatPoint fires when a cursor crosses an active beat point of its OWN curve or
-sprite; this is the melodic and rhythmic firing, GeoSonix's curveMessage, and it is a DISTINCT
-path from collided so a melody on one's own grid and a reaction to striking something elsewhere
-run different code. onTick fires at a fixed control rate (below). autoMessage fires at the
-object's Automessage Interval. The collided / triggered pair are plain past-tense verbs because
-they are the two halves of one collision; onBeatPoint and onTick carry the on- prefix because
-they are "on this event" callbacks. The naming was chosen for the ear as much as the eye — an
-earlier hitTrigger / triggerHit pair was rejected because the two read almost identically
-through Speak Selection.
+taxonomy is which event fires which. onActiveBeat fires when a cursor crosses an active beat of
+its OWN curve or sprite; this is the melodic and rhythmic firing, GeoSonix's curveMessage, the
+PRIMARY musical callback, so it LEADS the band. hasCollided fires on a curve or sprite whose
+cursor strikes a diamond — the active side of a collision. beenTriggered fires on the diamond
+that was struck — the passive side. onActiveBeat is a DISTINCT path from the collision callbacks,
+so a melody on one's own grid and a reaction to striking something elsewhere run different code.
+onTick fires at a fixed control rate (below). autoMessage fires at the object's Automessage
+Interval. The names carry the active/passive direction in English voice — hasCollided (this
+object did the colliding) versus beenTriggered (this object was beenTriggered) — descending from
+GXW's old hasCollided / beenTriggered pair; onActiveBeat and onTick carry the on- prefix as "on this event"
+callbacks. (An earlier hasCollided / beenTriggered pair, and before that hitTrigger / triggerHit, were
+stepping stones; the has/been voice was settled on for the clearest active-vs-passive reading.)
 
 A KEY UNIFICATION underlies this: a beat point and a trigger are the SAME object — a diamond —
 playing whichever role the moment calls for. A diamond placed along a curve as part of its
-pattern is a beat point; a free-standing diamond is a trigger. So collided and triggered
-describe collisions with diamonds, and onBeatPoint describes a cursor meeting the diamonds of
-its own pattern. collided is general enough to cover striking any object; triggered names the
-common case (a trigger being hit) and stretches to cover the rare others rather than
-sacrificing the collided / triggered symmetry.
+pattern is a beat point; a free-standing diamond is a trigger. So hasCollided and beenTriggered
+describe collisions with diamonds, and onActiveBeat describes a cursor meeting the diamonds of
+its own pattern. hasCollided is general enough to cover striking any object; beenTriggered names
+the common case (a trigger being hit) and stretches to cover the rare others rather than
+sacrificing the hasCollided / beenTriggered symmetry.
 
-This RENAMES and EXTENDS the Msg Functions band recorded in §4. The as-built hasHit becomes
-collided and beenHit becomes triggered; onBeatPoint is a NEW fifth slot, placed on the row just
-after triggered and shown only for curves and sprites that have beat points (never for
-triggers); onTick and autoMessage keep their names. The band order becomes collided, triggered,
-onBeatPoint, onTick, the Automessage Interval, then autoMessage. The schema field names and the
-inspector are updated to match when this is built.
+The Msg Functions band (§4) is built with these names, in the order onActiveBeat, hasCollided,
+beenTriggered, onTick, the Automessage Interval, then autoMessage. onActiveBeat shows only for
+curves and sprites that can carry beat points (never triggers); the others apply to all kinds.
 
 THE PER-STEP PIPELINE. Within one fine simulation step the order is: first onTick runs, so any
 steering force a script applies is in place before motion is computed; then motion integrates —
 cursors advance along their curves by their tempo-locked phase and sprites integrate their
 physics; then the step detects what happened — a cursor crossing one of its own beat points,
-and any collision between a cursor and a diamond; then the matching callbacks fire — onBeatPoint
-for a crossing, collided on the mover and triggered on the struck diamond for a collision; and
+and any collision between a cursor and a diamond; then the matching callbacks fire — onActiveBeat
+for a crossing, hasCollided on the mover and beenTriggered on the struck diamond for a collision; and
 last the step checks each object's Automessage Interval and fires autoMessage if it came due.
 Every note these callbacks emit is stamped with that step's audio time, so it sounds exactly
 when the step occurred.
@@ -524,7 +522,7 @@ object's own fields. On top of that the context carries the per-firing additions
 costs nothing, since it materialises only when a callback names it. The per-firing additions:
 for a collision, a full handle to the OTHER party — the diamond that was struck, or on the
 struck side the cursor that hit it — so its colour, position, and group read like any handle;
-for onBeatPoint, the beat just crossed, namely its index, the total beat count, and its
+for onActiveBeat, the beat just crossed, namely its index, the total beat count, and its
 STRENGTH from the Beat Strength string (the accent, the natural thing to map to velocity); for
 a collision, the impact SPEED at contact (hitSpeed) and the contact point; the first-fire and
 loop flags firstMessage (the first firing ever) and repeatMessage (the first after each cursor
@@ -690,28 +688,33 @@ There is NO Z coordinate anywhere. Label renames from GeoSonix/GXW: Length / Wid
 "Curve Size (W, H)"), Line Width (curve thickness), Cursor Length / Cursor Width.
 
 ### Msg Functions band (callbacks + Automessage Interval)
-The four named procedural callbacks — hasHit, beenHit, onTick, autoMessage — replace
-GeoSonix's two message functions (curveMelody / curveAutoMessage). Each callback is a row
-with a Can-X checkbox (canHit / canBeHit / canTick / canAutoMessage), a function-name
-field, and ONE contextual button: CREATE when the named function doesn't exist yet
-(scaffolds e.g. `autoMessage_<id>` in behaviors.js) or GO TO when it does (navigates to
-it). Fields: hasHitFunction / beenHitFunction / onTickFunction / autoMessageFunction.
+Five named procedural callbacks — onActiveBeat, hasCollided, beenTriggered, onTick,
+autoMessage — replace GeoSonix's message functions. Each callback is a row with a Can-X
+checkbox, a function-name field, and ONE contextual button: CREATE when the named function
+doesn't exist yet (scaffolds e.g. `onActiveBeat_<id>` in script.js) or GO TO when it does
+(navigates to it). Gates: canActiveBeat / canCollide / canBeTriggered / canTick /
+canAutoMessage. Function fields: onActiveBeatFunction / hasCollidedFunction /
+beenTriggeredFunction / onTickFunction / autoMessageFunction.
+
+The names carry their meaning in English voice so the active/passive distinction reads at a
+glance: hasCollided (the active mover that struck something) versus beenTriggered (the
+passive object that was struck), descending from GXW's old hasCollided / beenTriggered pair. onActiveBeat
+fires when a cursor crosses an active beat of the object's OWN rhythm (the GeoSonix curve
+message) — it is the primary musical callback, so it sits FIRST. It is shown only for curves
+and sprites that can carry beat points (greyed for triggers). The collision pair and onTick /
+autoMessage apply to all kinds.
 
 The Automessage Interval dropdown lives in THIS band (the formerly separate Automessage
 band is merged in, with no dividing line), rendered ABOVE the autoMessage callback —
 because the interval (the fire rate) must be defined for the autoMessage callback to have
 meaning. It is the shared interval dropdown (field `autoMessageInterval`, default "Off"),
 its control aligned with the callback rows' function-field column. So the band reads, top
-to bottom: hasHit, beenHit, onTick, Automessage Interval, autoMessage.
+to bottom: onActiveBeat, hasCollided, beenTriggered, onTick, Automessage Interval, autoMessage.
 
-These four callbacks ARE the procedural pattern model (section 3): plain functions in
-behaviors.js. The ctx/API available inside the callback bodies is still TO BE DEFINED.
-
-DESIGN UPDATE (§3.6, firing flow): these are RENAMED and EXTENDED by the firing-flow design —
-hasHit becomes collided, beenHit becomes triggered, and a NEW onBeatPoint slot (for curves and
-sprites with beat points) is added on the row just after triggered — so the band becomes
-collided, triggered, onBeatPoint, onTick, Automessage Interval, autoMessage. The as-built names
-above are what the code uses until that lands.
+These callbacks ARE the procedural pattern model (section 3): plain functions in script.js.
+The collision callbacks and onTick fire today; onActiveBeat's firing (a cursor crossing a beat
+point) lands with the scheduler in the firing flow (§3.6). The ctx/API available inside the
+callback bodies is defined by §3.6's firing context.
 
 ### Beat Points band
 Available for curves OR sprites (greyed for triggers / empty). A mode dropdown — None /
@@ -726,10 +729,10 @@ Normal / Euclidean / Strudel, extensible — drives what is shown:
   separate Beat Strength field is hidden — strength is carried inline in the one pattern. The
   field is a Strudel mini-notation expression (operators allowed) whose one-cycle event
   positions become the beat points. A numeric token is a beat AT that strength (a digit 0–9), a
-  tilde is a rest (no beat, no onBeatPoint), and a bare x is a beat at default strength. A 0 is a
-  beat at zero strength — onBeatPoint still fires, distinct from a rest, which fires nothing.
+  tilde is a rest (no beat, no onActiveBeat), and a bare x is a beat at default strength. A 0 is a
+  beat at zero strength — onActiveBeat still fires, distinct from a rest, which fires nothing.
   Because mini-notation subdivides unevenly, beats can fall OFF the even Beats/Cycle grid, which
-  is the reach it adds over the x/dot string. The crossed beat's strength reaches the onBeatPoint
+  is the reach it adds over the x/dot string. The crossed beat's strength reaches the onActiveBeat
   callback through the firing context (§3.6), where it can drive note velocity directly or be
   blended with the colour reads. This is an alternative AUTHORING of beat points, not a
   firing-time evaluator: it is parsed once per cycle by patternParse.js for positions and
@@ -839,7 +842,7 @@ reached from procedural code.
 KEEP (the spine, largely as-is): runtime.js (superdough sound output); midiSender.js
 (MIDI to the GeoSonel port); simulation.js (cursors, cycles, cycleProgress — the local
 clock that positions firing); transport.js and transportBar.js (master clock, BPM, play
-state); canvasCollision.js (collision detection feeding hasHit / beenHit); behaviors.js
+state); canvasCollision.js (collision detection feeding hasCollided / beenTriggered); script.js
 (the procedural callback bodies — the authoring home); auditionBar.js and the seed/ folder
 (mutation and audition); oklch.js (colour conversion behind the pixel reads). From
 firingEngine.js, keep the procedural-fire and output spine: fireImmediateNote /
@@ -857,7 +860,7 @@ keep imageSignalsFromOKLCh (the OKLCh-to-ten-values colour math) feeding the cal
 context's pixel reads (ctx.pxLt, ctx.pxR, and so on), and keep mapClip as a plain numeric
 clamp-and-remap helper. firingEngine.js reduces to the spine above with the pattern
 machinery removed. debugTap.js becomes a plain variadic print(...) that writes its
-arguments to the message area, space-separated, no labels. The Code tab loses its
+arguments to the message area, space-separated, no labels. The Script tab loses its
 Strudel-language tooling but keeps the editor and the accessibility aids (parenthesis
 highlighting, speak-on-hover) repurposed for JavaScript, and its autocomplete is swapped
 to JavaScript completion — keywords, in-scope variables and functions, and the GXW

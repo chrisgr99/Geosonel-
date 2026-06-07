@@ -37,7 +37,7 @@
  *
  * Use site. Called by main.js's Cmd-Enter promote-pattern
  * handler when the user presses Cmd-Enter on a labelled
- * $objectId: expression block in the Code tab (Stage A4
+ * $objectId: expression block in the Script tab (Stage A4
  * of the section-28 pattern-authoring sequence). On
  * parse success the positions are logged to the GXW
  * console and the body text is written to the matched

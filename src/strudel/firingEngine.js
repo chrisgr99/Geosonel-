@@ -1058,7 +1058,7 @@ export class PatternFiringEngine {
      * Fire a raw strudel Hap value immediately, dispatched a few
      * milliseconds ahead of the current audio time, through the
      * SAME voice + output path the pattern uses. The primitive
-     * behind a curve beenHit's ctx.playMarker: it sounds a struck
+     * behind a curve beenTriggered's ctx.playMarker: it sounds a struck
      * marker's own pattern event (the value the cyclePattern
      * assigned at that beat position) so it plays exactly as the
      * curve would have fired it.

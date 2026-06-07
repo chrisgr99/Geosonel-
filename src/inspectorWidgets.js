@@ -296,14 +296,14 @@ export function normaliseHexForPicker(hex, fallback) {
  * row's Create button (and the placeholder hint shown
  * when the field is empty). Convention is
  * slotName_objectId, e.g. onTick_sp_a3f7. The slot keys
- * (hasHit, beenHit, onTick) are valid JS identifiers and
+ * (hasCollided, beenTriggered, onTick) are valid JS identifiers and
  * the ids are generated as <kind>_<sixhex> which is also
  * identifier-safe, so the joined name passes JS-identifier
  * rules. Returns empty string when the object lacks an
  * id, which the caller treats as no proposed name and
  * disables the Create button accordingly.
  *
- * @param {"collided" | "triggered" | "onTick"} slotKey
+ * @param {"hasCollided" | "beenTriggered" | "onActiveBeat" | "onTick"} slotKey
  * @param {any} obj
  * @returns {string}
  */

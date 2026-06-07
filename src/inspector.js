@@ -38,10 +38,10 @@
  *     one Dimension row (curve Length/Width + Line Width, or a single
  *     sprite/trigger Size); Cursor Length/Width; Color + Variability.
  *     No Z anywhere.
- *   - Msg Functions: callbacks hasHit, beenHit, onTick, autoMessage —
+ *   - Msg Functions: callbacks hasCollided, beenTriggered, onTick, autoMessage —
  *     each a Can-X checkbox + function-name field + one contextual
  *     Create / Go-to button (Create scaffolds slotName_objectId in
- *     behaviors.js, e.g. autoMessage_CRV1; Go-to navigates). The
+ *     script.js, e.g. autoMessage_CRV1; Go-to navigates). The
  *     Automessage Interval dropdown sits in this band ABOVE the
  *     autoMessage row (its rate must be defined first).
  *   - Beat Points (curves/sprites): mode None / Normal / Euclidean.

@@ -7,11 +7,11 @@
  * corresponding source regions highlight in the editor.
  * The extension is an accessibility provision for low-
  * vision developers; full design lives in Section 31 of
- * DESIGN.md. v0.1 scope is the Code tab in GXW only,
- * reading behaviors.js for the active score.
+ * DESIGN.md. v0.1 scope is the Script tab in GXW only,
+ * reading script.js for the active score.
  *
  * Commit 1 lands the scaffold: a CodeMirror extension
- * wired into the Code tab, a single keyboard shortcut
+ * wired into the Script tab, a single keyboard shortcut
  * bound (Mod-Shift-'), the pointer position tracked across
  * the editor surface and mapped to a document position via
  * posAtCoords, the Lezer tree walked from that position up
@@ -100,11 +100,11 @@
  *
  * VariableDeclaration is not in Commit 4's scope; a line
  * like const x = 5 will still hit the no-match diagnostic.
- * If that pattern is common in real behaviors.js code, a
+ * If that pattern is common in real script.js code, a
  * follow-up commit can add it. Block bodies in arrow
  * functions also still fall to raw-text default since
  * Block isn't handled; concise arrow function bodies (the
- * common case in behaviors.js) work correctly.
+ * common case in script.js) work correctly.
  *
  * Commit 5 (this commit) adds three user-visible
  * affordances. (1) A CodeMirror hover tooltip surfaces
@@ -177,8 +177,8 @@
  *
  * The extension factory codeSpeechExtension takes an
  * isCodeTab callback that returns true iff the active tab
- * is the Code tab. The keymap command checks isCodeTab at
- * the top and returns false on non-Code tabs so the
+ * is the Script tab. The keymap command checks isCodeTab at
+ * the top and returns false on non-Script tabs so the
  * keystroke falls through cleanly. The factory pattern
  * keeps the speech layer decoupled from the TabbedEditor
  * class — the speech module knows nothing about tabs or

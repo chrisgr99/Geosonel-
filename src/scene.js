@@ -18,15 +18,15 @@
  * Can-X gate boolean:
  *
  *   - cycle    — fires on cycle start. Carries cyclePattern,
- *                cyclePatternLocation ("Here" or "Code Tab"),
+ *                cyclePatternLocation ("Here" or "Script tab"),
  *                and beatsPerCycle. cyclePattern is an inline
  *                strudel mini-notation pattern in "Here" mode,
- *                or the name of a function in the Code tab in
- *                "Code Tab" mode.
- *   - collided  — fires when the source (the active collider)
- *                hits another; bound function in collidedFunction.
- *   - triggered — fires when the source is hit (the passive
- *                target); bound function in triggeredFunction.
+ *                or the name of a function in the Script tab in
+ *                "Script tab" mode.
+ *   - hasCollided — fires when the source (the active collider)
+ *                hits another; bound function in hasCollidedFunction.
+ *   - beenTriggered — fires when the source is hit (the passive
+ *                target); bound function in beenTriggeredFunction.
  *   - onTick   — fires every simulation tick; bound function
  *                in onTickFunction.
  *
@@ -35,12 +35,12 @@
  * size, colour, and an optional payload. Sprites additionally
  * carry position, velocity, mass, and displayDiameter.
  *
- * Function-name fields (collidedFunction, triggeredFunction,
- * onTickFunction, and cyclePattern in "Code Tab" mode) hold
+ * Function-name fields (hasCollidedFunction, beenTriggeredFunction,
+ * onTickFunction, and cyclePattern in "Script tab" mode) hold
  * STRING NAMES of functions defined in the bundle's
- * behaviors.js file, not function references. The Scene also
+ * script.js file, not function references. The Scene also
  * carries a functionMap built by the scene loader at load
- * time, mapping each top-level function name in behaviors.js
+ * time, mapping each top-level function name in script.js
  * to its function reference; the simulation looks up names
  * against this map when firing. Empty-string slot fields mean
  * "no binding". A non-empty slot whose name doesn't resolve
@@ -62,7 +62,7 @@ import { DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
 
 /**
  * Default score-level kinematics (cinematics) tuning — the global
- * feel knobs for sprite motion. Set per score from behaviours.js
+ * feel knobs for sprite motion. Set per score from script.js
  * via the `score.kinematics` object (e.g. `score.kinematics.jitter
  * = 0.5`) and read by the simulation. Defined here as the single
  * source of truth: the Scene constructor seeds scene.kinematics
@@ -96,15 +96,15 @@ export const DEFAULT_KINEMATICS = { drag: 2, jitter: 1.0, coast: 0.2, turnDampin
 
 /**
  * One $objectId: expression labelled statement extracted from
- * behaviors.js at scene-load time. The loader walks the
+ * script.js at scene-load time. The loader walks the
  * top-level statements via Acorn, pulls out the ones whose
  * label is dollar-prefixed and whose body is an expression
  * statement, and attaches the resulting list to
  * Scene.labelledBlocks. The blocks are inert at scene-load:
  * the loader replaces their source ranges with whitespace
- * before executing behaviors.js, so the pattern constructor
+ * before executing script.js, so the pattern constructor
  * calls inside them do not run. The blocks are held here for
- * the Code tab and inspector to consult (active-tag
+ * the Script tab and inspector to consult (active-tag
  * highlighting, scaffolding, Cmd-Enter routing in the
  * section-28 pattern-authoring stages A3 through A5).
  *
@@ -117,7 +117,7 @@ export const DEFAULT_KINEMATICS = { drag: 2, jitter: 1.0, coast: 0.2, turnDampin
  *     mini-notation parser at Cmd-Enter time.
  * @property {{start: number, end: number}} range Character
  *     range of the whole labelled statement in the original
- *     behaviors.js source.
+ *     script.js source.
  */
 
 export class Scene {
@@ -267,43 +267,43 @@ export class Scene {
         // Global cinematics knobs for sprite motion: drag
         // (damping), jitter (anti-trap agitation), and coast
         // (minimum coast speed). Score-wide, not per object.
-        // Set from behaviours.js via the `score.kinematics`
+        // Set from script.js via the `score.kinematics`
         // object the loader exposes; seeded here with the
         // defaults so a scene always has the field, and the
         // loader overrides from whatever the composer set. The
         // simulation reads these each step. Travels with the
-        // score in behaviours.js, so playback is portable.
+        // score in script.js, so playback is portable.
         /** @type {{drag: number, jitter: number, coast: number}} */
         this.kinematics = { ...DEFAULT_KINEMATICS };
 
         // --- Function map ---
-        // Map of top-level function names in behaviors.js to
+        // Map of top-level function names in script.js to
         // their function references. Built by the scene loader
         // at load time and attached here for the simulation to
         // consult when firing a slot. Slot fields on Curve,
         // Trigger, and Sprite hold name strings; the simulation
         // resolves them against this map at fire time. An
         // unresolved name (typo, function deleted from
-        // behaviors.js without unbinding) is a soft error —
+        // script.js without unbinding) is a soft error —
         // the slot stays inert for that object and the
         // inspector surfaces a warning, but the scene runs.
         // Empty by default; populated only for scenes loaded
-        // through SceneLoader.load() with a behaviors.js file
+        // through SceneLoader.load() with a script.js file
         // present.
         /** @type {Object<string, Function>} */
         this.functionMap = {};
 
         // --- Labelled pattern blocks ---
         // List of $objectId: expression labelled statements
-        // extracted from behaviors.js by the scene loader
+        // extracted from script.js by the scene loader
         // (Stage A2 of the section-28 pattern-authoring
         // sequence). Each entry is one top-level labelled
-        // block found in behaviors.js. The blocks are inert
+        // block found in script.js. The blocks are inert
         // at scene-load: the loader replaces their source
         // ranges with whitespace before executing the file,
         // so a $spr1: note("c d e f") block does not call
         // note() at load time. Cmd-Enter on a block in the
-        // Code tab (Stage A4) is the only path that
+        // Script tab (Stage A4) is the only path that
         // activates one, writing the expression body to the
         // named object's cyclePattern field in scene.json.
         // The blocks are held here for later stages (A3
@@ -450,7 +450,7 @@ export class Curve {
          * and target, onTick runs. "passive": cursor removed,
          * so no self-firing and not a collider, but the curve
          * still moves, still runs onTick, is still a valid
-         * target (its beenHit runs), and renders at full
+         * target (its beenTriggered runs), and renders at full
          * colour. "disabled": fully inert — greyed, frozen,
          * out of collisions as both collider and target, no
          * firing, onTick does not run.
@@ -619,14 +619,14 @@ export class Curve {
         this.variability = opts.variability ?? 0;
 
         // --- Callback slots ---
-        // Section-27 four-slot model: hasHit / beenHit /
+        // Section-27 four-slot model: hasCollided / beenTriggered /
         // onTick are Code-tab slots, each guarded by a
         // Can-X gate. The cyclePattern carries the
         // strudel mini-notation pattern that fires when
         // the source has cursor extents and state "active"
         // (per the cursor-as-collider model). Function-
         // name fields hold STRING NAMES of functions in
-        // behaviors.js; empty string means no binding.
+        // script.js; empty string means no binding.
 
         /**
          * Strudel mini-notation pattern. Empty string
@@ -677,12 +677,14 @@ export class Curve {
         /** @type {boolean} */
         this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
-        this.collidedFunction = opts.collidedFunction ?? "";
+        this.hasCollidedFunction = opts.hasCollidedFunction ?? "";
 
         /** @type {boolean} */
         this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
-        this.triggeredFunction = opts.triggeredFunction ?? "";
+        this.beenTriggeredFunction = opts.beenTriggeredFunction ?? "";
+        this.canActiveBeat = opts.canActiveBeat ?? false;
+        this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
 
         /** @type {boolean} */
         this.canAutoMessage = opts.canAutoMessage ?? false;
@@ -746,7 +748,7 @@ export class Trigger {
         /**
          * Activity field. A trigger has no cursor, so it has no
          * "passive" state — only "active" (the default; normal,
-         * a valid target whose beenHit runs and which can
+         * a valid target whose beenTriggered runs and which can
          * auto-fire) and "disabled" (fully inert: greyed,
          * frozen, out of collisions as a target, no firing).
          * @type {"active" | "disabled"}
@@ -836,12 +838,14 @@ export class Trigger {
         /** @type {boolean} */
         this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
-        this.collidedFunction = opts.collidedFunction ?? "";
+        this.hasCollidedFunction = opts.hasCollidedFunction ?? "";
 
         /** @type {boolean} */
         this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
-        this.triggeredFunction = opts.triggeredFunction ?? "";
+        this.beenTriggeredFunction = opts.beenTriggeredFunction ?? "";
+        this.canActiveBeat = opts.canActiveBeat ?? false;
+        this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
 
         /** @type {boolean} */
         this.canAutoMessage = opts.canAutoMessage ?? false;
@@ -899,7 +903,7 @@ export class Sprite {
          * and target, physics and onTick run. "passive": cursor
          * removed, so no self-firing and not a collider, but
          * the sprite still moves, still runs onTick, is still a
-         * valid target (its beenHit runs), and renders at full
+         * valid target (its beenTriggered runs), and renders at full
          * colour. "disabled": fully inert — greyed, frozen (no
          * physics), out of collisions as both collider and
          * target, no firing, onTick does not run.
@@ -1043,12 +1047,14 @@ export class Sprite {
         /** @type {boolean} */
         this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
-        this.collidedFunction = opts.collidedFunction ?? "";
+        this.hasCollidedFunction = opts.hasCollidedFunction ?? "";
 
         /** @type {boolean} */
         this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
-        this.triggeredFunction = opts.triggeredFunction ?? "";
+        this.beenTriggeredFunction = opts.beenTriggeredFunction ?? "";
+        this.canActiveBeat = opts.canActiveBeat ?? false;
+        this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
 
         /** @type {boolean} */
         this.canAutoMessage = opts.canAutoMessage ?? false;

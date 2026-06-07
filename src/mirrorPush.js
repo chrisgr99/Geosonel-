@@ -5,7 +5,7 @@
  * renderer-side half of the composition mirror's write
  * path: subscribe to the active bundle's content-change
  * events, debounce ~500ms after the last change, then
- * package the bundle's scene.json text, behaviours.js
+ * package the bundle's scene.json text, script.js
  * text, and (if any) image bytes and dispatch to the
  * main process via window.gxwMirror.pushScore. The main-
  * process module (electron-mirror.js) takes the payload,
@@ -42,12 +42,12 @@
  *     into one push.
  *
  * Naming. The bundle's internal text file for the score's
- * callback code is named behaviors.js (American spelling).
- * The mirror writes it on disk as behaviours.js (British
+ * callback code is named script.js (American spelling).
+ * The mirror writes it on disk as script.js (British
  * spelling) per Section 15. The translation happens here:
  * we read bundle.getFile under the American name and pass
  * the content under the payload key behavioursJsText,
- * which the main process writes as behaviours.js.
+ * which the main process writes as script.js.
  *
  * What is not in scope for commit 2: validation of incoming
  * edits (Phase 1B), fs.watch round-trip (Phase 1B), the
@@ -55,7 +55,7 @@
  * description.md (Phase 1A commit 4), full active-score.json
  * schema (Phase 1A commit 4 — was originally planned for
  * commit 5 before the slot collapsed). This module pushes
- * the round-trip files (scene.json, behaviours.js, image)
+ * the round-trip files (scene.json, script.js, image)
  * and a partial active-score.json snapshot covering score
  * identity and sync timestamp; the rest builds on top in
  * later commits.
@@ -70,20 +70,20 @@ import * as acorn from "https://esm.sh/acorn@8";
 const DEBOUNCE_MS = 500;
 
 // Bundle's internal name for the callback-code file is
-// American behaviors.js; Section 15 specifies the mirror
-// surface uses British behaviours.js. The translation lives
+// American script.js; Section 15 specifies the mirror
+// surface uses British script.js. The translation lives
 // here: the payload field name is the mirror-surface name
 // (behavioursJsText) and the read from the bundle uses the
 // American name.
-const BUNDLE_BEHAVIORS_FILENAME = "behaviors.js";
+const BUNDLE_BEHAVIORS_FILENAME = "script.js";
 
 // Filename the mirror writes the callback-code file as on
 // disk. Phase 1B commit 2's applyBatch translates from
 // this mirror-surface name to BUNDLE_BEHAVIORS_FILENAME
-// when updating the bundle, so an AI's behaviours.js write
-// lands on the bundle's behaviors.js without the bundle
+// when updating the bundle, so an AI's script.js write
+// lands on the bundle's script.js without the bundle
 // having to know about the spelling difference.
-const MIRROR_BEHAVIOURS_FILENAME = "behaviours.js";
+const MIRROR_BEHAVIOURS_FILENAME = "script.js";
 const MIRROR_SCENE_FILENAME = "scene.json";
 
 export class MirrorPush {
@@ -761,7 +761,7 @@ export class MirrorPush {
      * Hand the pipeline a reference to the TabbedEditor.
      * Used by applyBatch to refresh the editor's tabs
      * from the bundle after an AI batch lands, so the
-     * JSON and Code tabs show the AI's edits rather than
+     * JSON and Script tabs show the AI's edits rather than
      * the bundle's pre-edit content. Called once from
      * main.js after the editor is constructed; null
      * during early startup and during teardown.
@@ -821,7 +821,7 @@ export class MirrorPush {
      * state. No user prompt needed.
      *
      * Validation pass mirrors what commit 2 established:
-     * scene.json must parse via parseScene; behaviours.js
+     * scene.json must parse via parseScene; script.js
      * must parse cleanly under Acorn; image entries are
      * accepted without validation. On any text-entry
      * validation failure the whole batch is rejected:
@@ -887,7 +887,7 @@ export class MirrorPush {
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
                     console.warn(
-                        `GXW: AI batch rejected — behaviours.js validation failed: ${msg}`,
+                        `GXW: AI batch rejected — script.js validation failed: ${msg}`,
                     );
                     await this._reportRejectionAndRollback(MIRROR_BEHAVIOURS_FILENAME, msg);
                     return;

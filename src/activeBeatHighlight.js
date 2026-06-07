@@ -1,8 +1,8 @@
 /**
- * Live active-token highlighting for the Code tab.
+ * Live active-token highlighting for the Script tab.
  *
  * Boxes the currently-sounding token of a curve's cyclePattern
- * in the behaviours.js editor as the curve's cursor sweeps,
+ * in the script.js editor as the curve's cursor sweeps,
  * mirroring the Strudel REPL's outline-the-active-event
  * behaviour. When a curve playing `s("bd sd hh")` reaches the
  * sd, the `sd` token in the source gets a white outline.

@@ -771,7 +771,7 @@ export const inputMethods = {
     /**
      * Double-click on a canvas object emits an
      * openObjectInCode edit so external host code can
-     * switch to the Code tab and scroll to the object's
+     * switch to the Script tab and scroll to the object's
      * source. Double-click on empty canvas background
      * emits a toggleTransport edit so external host code
      * can play/pause the transport. Single clicks that

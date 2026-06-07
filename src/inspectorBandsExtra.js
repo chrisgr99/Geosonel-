@@ -36,8 +36,8 @@ export const bandExtraMethods = {
 
     /**
      * Band 3 — Msg Functions (callback slots) + Automessage.
-     * Four callback rows in order collided, triggered, onTick,
-     * autoMessage, then an Automessage Interval row — all in ONE
+     * Five callback rows in order onActiveBeat, hasCollided, beenTriggered,
+     * onTick, autoMessage, then an Automessage Interval row — all in ONE
      * band (the former separate Automessage Interval band is
      * merged in here, no dividing line, so the interval sits with
      * the autoMessage slot it configures). Each callback row
@@ -48,9 +48,9 @@ export const bandExtraMethods = {
      * since the slot vocabulary is shared across
      * curves, triggers, and sprites. The Automessage Interval
      * row (the shared interval dropdown writing
-     * autoMessageInterval) is rendered ABOVE the autoMessage
-     * slot, because the interval is the autoMessage callback's
-     * fire rate and must be defined for it to mean anything.
+     * autoMessageInterval) is the autoMessage callback's fire
+     * rate; it is rendered at the BOTTOM of the band, below the
+     * autoMessage slot.
      *
      * Read binding aggregates each field across the
      * entire selection (objs.all). Multi-select
@@ -92,44 +92,57 @@ export const bandExtraMethods = {
         const singleObj = (ctx.isSingle && objs.all.length === 1) ? objs.all[0] : null;
 
         const canCollideAgg = aggregateBoolean(objs.all, "canCollide");
-        const collidedFunctionAgg = aggregateString(objs.all, "collidedFunction");
+        const hasCollidedFunctionAgg = aggregateString(objs.all, "hasCollidedFunction");
         const canBeTriggeredAgg = aggregateBoolean(objs.all, "canBeTriggered");
-        const triggeredFunctionAgg = aggregateString(objs.all, "triggeredFunction");
+        const beenTriggeredFunctionAgg = aggregateString(objs.all, "beenTriggeredFunction");
+        const canActiveBeatAgg = aggregateBoolean(objs.all, "canActiveBeat");
+        const onActiveBeatFunctionAgg = aggregateString(objs.all, "onActiveBeatFunction");
         const canAutoMessageAgg = aggregateBoolean(objs.all, "canAutoMessage");
         const autoMessageFunctionAgg = aggregateString(objs.all, "autoMessageFunction");
         const canTickAgg = aggregateBoolean(objs.all, "canTick");
         const onTickFunctionAgg = aggregateString(objs.all, "onTickFunction");
 
         // Slot rows driven by a small config table so they share one
-        // construction loop. collided (active) and triggered (passive)
-        // are the collision pair; autoMessage is LAST among the
-        // callbacks, with its Automessage Interval row appended right
-        // below it (same band, no divider) since the interval configures
-        // the autoMessage callback's fire rate.
+        // construction loop. Order: onActiveBeat FIRST (the primary
+        // musical callback — fires on each active beat of the object's
+        // own rhythm), then the collision pair hasCollided (active) /
+        // beenTriggered (passive), then onTick, then autoMessage LAST
+        // (its Automessage Interval row is appended right below it, same
+        // band, no divider, since the interval configures its fire rate).
+        // onActiveBeat applies to the beat-point-capable kinds (curves
+        // and sprites), greyed for trigger-only / empty selections —
+        // triggers have no beat points. Parallels the Beat Points band's
+        // own gating. (The firing itself lands with the scheduler.)
+        const activeBeatEnabled = slotActive && (ctx.hasCurves || ctx.hasSprites);
         /** @type {Array<{
          *   label: string,
-         *   slotKey: "collided" | "triggered" | "autoMessage" | "onTick",
-         *   canEditKind: "setCanCollide" | "setCanBeTriggered" | "setCanAutoMessage" | "setCanTick",
+         *   slotKey: "onActiveBeat" | "hasCollided" | "beenTriggered" | "autoMessage" | "onTick",
+         *   canEditKind: "setCanActiveBeat" | "setCanCollide" | "setCanBeTriggered" | "setCanAutoMessage" | "setCanTick",
          *   canAgg: boolean | "varies",
-         *   funcEditKind: "setCollidedFunction" | "setTriggeredFunction" | "setAutoMessageFunction" | "setOnTickFunction",
+         *   funcEditKind: "setOnActiveBeatFunction" | "setHasCollidedFunction" | "setBeenTriggeredFunction" | "setAutoMessageFunction" | "setOnTickFunction",
          *   funcAgg: string | "varies",
+         *   enabled?: boolean,
          * }>} */
         const slotRows = [
-            { label: "collided", slotKey: "collided", canEditKind: "setCanCollide", canAgg: canCollideAgg, funcEditKind: "setCollidedFunction", funcAgg: collidedFunctionAgg },
-            { label: "triggered", slotKey: "triggered", canEditKind: "setCanBeTriggered", canAgg: canBeTriggeredAgg, funcEditKind: "setTriggeredFunction", funcAgg: triggeredFunctionAgg },
+            { label: "onActiveBeat", slotKey: "onActiveBeat", canEditKind: "setCanActiveBeat", canAgg: canActiveBeatAgg, funcEditKind: "setOnActiveBeatFunction", funcAgg: onActiveBeatFunctionAgg, enabled: activeBeatEnabled },
+            { label: "hasCollided", slotKey: "hasCollided", canEditKind: "setCanCollide", canAgg: canCollideAgg, funcEditKind: "setHasCollidedFunction", funcAgg: hasCollidedFunctionAgg },
+            { label: "beenTriggered", slotKey: "beenTriggered", canEditKind: "setCanBeTriggered", canAgg: canBeTriggeredAgg, funcEditKind: "setBeenTriggeredFunction", funcAgg: beenTriggeredFunctionAgg },
             { label: "onTick", slotKey: "onTick", canEditKind: "setCanTick", canAgg: canTickAgg, funcEditKind: "setOnTickFunction", funcAgg: onTickFunctionAgg },
             { label: "autoMessage", slotKey: "autoMessage", canEditKind: "setCanAutoMessage", canAgg: canAutoMessageAgg, funcEditKind: "setAutoMessageFunction", funcAgg: autoMessageFunctionAgg },
         ];
         // Build one callback slot row: label + Can-X checkbox +
-        // function-name field + Create/Go-to button.
+        // function-name field + Create/Go-to button. A row may set its
+        // own `enabled` gate (onActiveBeat does); the rest default to
+        // slotActive (any non-empty selection).
         const buildSlotRow = (row) => {
+            const rowEnabled = row.enabled ?? slotActive;
             const r = mkRow();
-            r.appendChild(mkLabel(row.label, { width: W.leftLabel, disabled: !slotActive }));
+            r.appendChild(mkLabel(row.label, { width: W.leftLabel, disabled: !rowEnabled }));
             r.appendChild(mkCheckbox({
                 checked: row.canAgg === true,
                 varies: row.canAgg === "varies",
-                disabled: !slotActive,
-                onClick: slotActive
+                disabled: !rowEnabled,
+                onClick: rowEnabled
                     ? () => this._onBooleanCheckboxClick(row.canEditKind, row.canAgg)
                     : undefined,
             }));
@@ -148,12 +161,12 @@ export const bandExtraMethods = {
                 value: fieldValue,
                 placeholder,
                 width: W.callbackField,
-                editable: slotActive,
+                editable: rowEnabled,
                 functionExists,
                 editKind: row.funcEditKind,
             }));
             const canChecked = row.canAgg === true;
-            const buttonEnabled = canChecked && singleObj !== null && effectiveName.length > 0;
+            const buttonEnabled = rowEnabled && canChecked && singleObj !== null && effectiveName.length > 0;
             const buttonLabel = functionExists ? "Go to" : "Create";
             r.appendChild(this._buildSlotButton({
                 label: buttonLabel,
@@ -169,21 +182,25 @@ export const bandExtraMethods = {
         // fire rate (the shared interval dropdown). The wrapped
         // label sits in the left-label column; an 18px checkbox-
         // column spacer puts the dropdown in the same column as the
-        // callback rows' function fields. Rendered ABOVE the
-        // autoMessage slot, because the interval must be defined
-        // for the autoMessage callback to have meaning.
+        // callback rows' function fields. Rendered at the BOTTOM of
+        // the band, below the autoMessage slot.
         const buildIntervalRow = () => {
             const intervalAgg = aggregateString(objs.all, "autoMessageInterval");
             const ri = mkRow();
-            ri.appendChild(mkLabel("Automessage\nInterval", {
-                width: W.leftLabel,
-                disabled: !slotActive,
-                multiline: true,
-            }));
+            // INDENT the label to start at the callback rows' function-field
+            // column, so "Automessage Interval" reads as an indented sub-
+            // property of the autoMessage slot above it. The spacer spans the
+            // left-label + checkbox columns (W.leftLabel + the 6px row gap +
+            // the 18px checkbox); the row's own 6px gap then lands the label at
+            // the function-field column's left edge. Single line (vs the old
+            // two-line wrap) keeps the vertical padding like the other rows.
             const spacer = document.createElement("div");
-            spacer.style.width = "18px";
+            spacer.style.width = `${W.leftLabel + 24}px`;
             spacer.style.flexShrink = "0";
             ri.appendChild(spacer);
+            const lbl = mkLabel("Automessage Interval", { disabled: !slotActive });
+            lbl.style.textAlign = "left";
+            ri.appendChild(lbl);
             ri.appendChild(this._buildDropdownField({
                 options: INTERVAL_OPTIONS,
                 value: intervalAgg === "varies" ? "" : intervalAgg,
@@ -194,13 +211,14 @@ export const bandExtraMethods = {
             return ri;
         };
 
-        // Render order: the three collision / per-tick callbacks,
-        // then the Automessage Interval, then the autoMessage slot.
-        band.appendChild(buildSlotRow(slotRows[0])); // hasHit
-        band.appendChild(buildSlotRow(slotRows[1])); // beenHit
-        band.appendChild(buildSlotRow(slotRows[2])); // onTick
+        // Render order: onActiveBeat, hasCollided, beenTriggered,
+        // onTick, autoMessage, then the Automessage Interval LAST.
+        band.appendChild(buildSlotRow(slotRows[0])); // onActiveBeat
+        band.appendChild(buildSlotRow(slotRows[1])); // hasCollided
+        band.appendChild(buildSlotRow(slotRows[2])); // beenTriggered
+        band.appendChild(buildSlotRow(slotRows[3])); // onTick
+        band.appendChild(buildSlotRow(slotRows[4])); // autoMessage
         band.appendChild(buildIntervalRow());
-        band.appendChild(buildSlotRow(slotRows[3])); // autoMessage
 
         return band;
     },

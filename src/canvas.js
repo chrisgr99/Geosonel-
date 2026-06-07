@@ -279,7 +279,7 @@ export class Canvas {
          * _refreshCurveMarkerPositions so the two arrays share
          * indices: marker i on curve C is at positions[i] and
          * carries values[i]. Consumed by the collision detector
-         * to hand a struck marker's value to the curve's beenHit
+         * to hand a struck marker's value to the curve's beenTriggered
          * (ctx.hitValue / ctx.playMarker); the draw path ignores
          * it. Cleared and rebuilt on the same refreshes as the
          * positions map.
@@ -415,10 +415,10 @@ export class Canvas {
          * Set of object ids that should render with the
          * cursor-target magenta highlight. Driven by the
          * editor through setCursorTargetIds whenever the
-         * cursor in behaviors.js moves in or out of a
+         * cursor in script.js moves in or out of a
          * labelled pattern block or a top-level function
          * declaration that binds to a slot. Empty when the
-         * Code tab isn't active, when the cursor sits in
+         * Script tab isn't active, when the cursor sits in
          * a non-binding region, or before the first
          * runScene has provided a scene to the editor.
          * @type {Set<string>}
@@ -486,7 +486,7 @@ export class Canvas {
          * identical shape to _spriteFlashTimestamp.
          * Driven by Canvas.markFiredTrigger, which is the
          * hook the future sprite-trigger collision firing
-         * path will call when beenHit dispatches; no
+         * path will call when beenTriggered dispatches; no
          * driver exists yet, so the registry stays empty
          * in practice. The render branch in _drawTriggers
          * is wired so the visual lands the moment the
@@ -962,7 +962,7 @@ export class Canvas {
     /**
      * Replace the set of object ids that render with the
      * cursor-target magenta highlight. Driven by the
-     * editor on every behaviors.js cursor move and on
+     * editor on every script.js cursor move and on
      * every tab change. A set-equality short-circuit
      * avoids redrawing when the new set matches the
      * current one — selectionSet events in CodeMirror fire
@@ -1030,7 +1030,7 @@ export class Canvas {
 
     /**
      * Record that a trigger fired an audio event
-     * (canonically, the trigger's beenHit callback ran).
+     * (canonically, the trigger's beenTriggered callback ran).
      * Sets the trigger's flash timestamp to now and
      * schedules a redraw. Mirror of markFiredSprite for
      * the trigger render path. No driver exists yet —

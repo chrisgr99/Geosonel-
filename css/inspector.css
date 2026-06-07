@@ -549,9 +549,13 @@
  * restores it iff the field is empty. The two transitions
  * are managed by inspector.js's _buildSlotField helper.
  */
+/* A proposed (placeholder) function name renders in the SAME enabled
+ * style as a committed value — the Create button, not dimmed text,
+ * signals that the function doesn't exist yet. The class is retained
+ * for the focus-clear behaviour (clearing the proposal when the field
+ * gains focus); it no longer changes the appearance. */
 .insp-field.placeholder-shown {
-    color: #a8a8a8;
-    font-style: italic;
+    color: #ffffff;
 }
 
 /* Create button. Outlined green to match the function-binding
