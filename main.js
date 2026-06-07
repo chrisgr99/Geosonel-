@@ -149,6 +149,8 @@ import {
     setActiveBeatsOnSelection,
     setStrengthOnSelection,
     setBeatPatternOnSelection,
+    setCycleIntervalOnSelection,
+    setCycleCountOnSelection,
     setBeatsPerBarOnSelection,
     setActiveBeatsCountOnSelection,
     setBeatShiftOnSelection,
@@ -3682,6 +3684,14 @@ async function main() {
             } else if (edit.kind === "setBeatPattern") {
                 await applySceneEdit((data) =>
                     setBeatPatternOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCycleInterval") {
+                await applySceneEdit((data) =>
+                    setCycleIntervalOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setCycleCount") {
+                await applySceneEdit((data) =>
+                    setCycleCountOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setBeatsPerBar") {
                 await applySceneEdit((data) =>

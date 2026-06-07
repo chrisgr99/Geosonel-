@@ -131,6 +131,14 @@ const CALLBACK_SLOT_FIELDS = [
     // replacing the activeBeats / strength strings. Parsed for
     // positions at firing time (later stage); just stored here.
     { key: "beatPattern", label: "Beat Pattern", type: "string", default: "" },
+    // Strudel cycle length (beatPointsMode === "strudel"): the span
+    // the one-cycle mini-notation pattern maps across, given as a
+    // note-duration token times an integer count
+    // (cycleInterval × cycleCount). Replaces Beats/Cycle + Beats/Bar
+    // in Strudel mode. "Off" is excluded — a cycle must have length.
+    // Default Qtr × 16 = a sixteen-quarter-note cycle.
+    { key: "cycleInterval", label: "Cycle Length Interval", type: "enum", default: "Qtr", enumValues: INTERVAL_TOKENS.filter((t) => t !== "Off") },
+    { key: "cycleCount", label: "Cycle Length Count", type: "integer", default: 16, min: 1 },
     // Euclidean-mode parameters (Band 5, shown only when
     // beatPointsMode === "euclidean"). The pattern is generated
     // from these by src/euclidean.js generateEuclideanPattern.

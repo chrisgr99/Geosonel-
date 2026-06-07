@@ -69,6 +69,13 @@ export const W = {
     // wider than other inspector rows.
     beatPointsMode: 84,
     beatString: 280,
+    // Strudel-mode "Cycle Length" label — single line (unwrapped),
+    // wide enough to hold the full text at 10pt before the
+    // note-duration dropdown.
+    cycleLengthLabel: 76,
+    // Strudel-mode free-form Beat Pattern (mini-notation) field —
+    // wider than the x/dot beatString since expressions run long.
+    strudelPattern: 370,
     // Euclidean-mode compact two-line labels (Beat Points,
     // Beats/Cycle, Beat Interval, Beats/Bar, Active Beats, Beat
     // Shift, Repeats) and the small numeric fields beside them.

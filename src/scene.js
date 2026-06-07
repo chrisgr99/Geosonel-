@@ -668,6 +668,8 @@ export class Curve {
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
         this.beatPattern = opts.beatPattern ?? "";
+        this.cycleInterval = opts.cycleInterval ?? "Qtr";
+        this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
         this.beatsPerBar = opts.beatsPerBar ?? 1;
         /** @type {number} Euclidean: count of active beats to distribute. */
@@ -832,6 +834,8 @@ export class Trigger {
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
         this.beatPattern = opts.beatPattern ?? "";
+        this.cycleInterval = opts.cycleInterval ?? "Qtr";
+        this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
         this.beatsPerBar = opts.beatsPerBar ?? 1;
         /** @type {number} Euclidean: count of active beats to distribute. */
@@ -1044,6 +1048,8 @@ export class Sprite {
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
         this.beatPattern = opts.beatPattern ?? "";
+        this.cycleInterval = opts.cycleInterval ?? "Qtr";
+        this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
         this.beatsPerBar = opts.beatsPerBar ?? 1;
         /** @type {number} Euclidean: count of active beats to distribute. */

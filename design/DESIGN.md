@@ -717,15 +717,22 @@ point) lands with the scheduler in the firing flow (§3.6). The ctx/API availabl
 callback bodies is defined by §3.6's firing context.
 
 ### Beat Points band
-Available for curves OR sprites (greyed for triggers / empty). A mode dropdown — None /
-Normal / Euclidean / Strudel, extensible — drives what is shown:
+Available for curves OR sprites (greyed for triggers / empty). The band's lead label reads
+"Beat Pattern" in all modes — a reasonable description whether the pattern is x/dot, Euclidean-
+generated, or a Strudel mini-notation expression (the underlying field is still beatPointsMode).
+A mode dropdown — None / Normal / Euclidean / Strudel, extensible — drives what is shown:
 - None: just the mode dropdown.
 - Normal: Beats/Cycle + Beats/Bar; then the Active Beats pattern string and the Beat
   Strength string.
 - Euclidean: Beats/Cycle + Beat Interval + Beats/Bar; an indented Active Beats COUNT (k,
   aligned under Beats/Cycle) + Beat Shift + Repeats; then the generated Active Beats pattern
   (LOCKED, read-only) and the Beat Strength string.
-- Strudel: a single Strudel pattern field REPLACES the Active Beats x/dot field, and the
+- Strudel: the length spec changes — Beats/Cycle and Beats/Bar are BOTH replaced by a single
+  Cycle Length control: a note-duration dropdown (the shared interval menu, with "Off" excluded
+  since a cycle must have length) times an integer count, laid out `Cycle Length [dropdown] x
+  [count]`. The cycle length is `cycleInterval × cycleCount` (default Qtr × 16), and the one-cycle
+  mini-notation pattern maps across that span. Then a single Strudel
+  pattern field REPLACES the Active Beats x/dot field, and the
   separate Beat Strength field is hidden — strength is carried inline in the one pattern. The
   field is a Strudel mini-notation expression (operators allowed) whose one-cycle event
   positions become the beat points. A numeric token is a beat AT that strength (a digit 0–9), a

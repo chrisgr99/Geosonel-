@@ -1924,6 +1924,33 @@ export function setBeatPatternOnSelection(data, selection, value) {
 }
 
 /**
+ * Set the Strudel cycle-length note-duration token (Band 5,
+ * strudel mode) across the curve/sprite selection. The dropdown
+ * only emits valid INTERVAL_TOKENS (minus "Off"), so the value is
+ * stored as-is. Cycle length = cycleInterval × cycleCount.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setCycleIntervalOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, { sprites: selection.sprites, curves: selection.curves }, "cycleInterval", String(value));
+}
+
+/**
+ * Set the Strudel cycle-length integer multiplier (Band 5,
+ * strudel mode) across the curve/sprite selection. Clamped to a
+ * minimum of 1. Cycle length = cycleInterval × cycleCount.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setCycleCountOnSelection(data, selection, value) {
+    const n = Math.max(1, Math.round(Number(value)));
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, { sprites: selection.sprites, curves: selection.curves }, "cycleCount", n);
+}
+
+/**
  * Set a numeric Euclidean beat-points parameter (Band 5) across
  * the selection. The inspector field validates and clamps
  * before emitting, so this stores the value as a number.

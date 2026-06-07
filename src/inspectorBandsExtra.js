@@ -267,7 +267,10 @@ export const bandExtraMethods = {
         // follows once a non-none mode is chosen; euclidean adds
         // Beat Interval and Beats/Bar on the same row.
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Beat\nPoints", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+        // Lead label: "Beat Pattern" across all modes — a reasonable
+        // description whether the pattern is defined by x/dot, the
+        // Euclidean generator, or a Strudel mini-notation expression.
+        r1.appendChild(mkLabel("Beat\nPattern", { width: W.beatStackLabel, disabled: !active, multiline: true }));
         r1.appendChild(this._buildDropdownField({
             options: [
                 { value: "none", label: "None" },
@@ -281,7 +284,7 @@ export const bandExtraMethods = {
             editKind: "setBeatPointsMode",
         }));
 
-        if (mode === "normal" || mode === "euclidean" || mode === "strudel") {
+        if (mode === "normal" || mode === "euclidean") {
             r1.appendChild(mkLabel("Beats/\nCycle", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
                 value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
@@ -290,6 +293,34 @@ export const bandExtraMethods = {
                 editable: active,
                 validator: (c) => validateNumber(c, { min: 1 }),
                 editKind: "setBeatsPerCycle",
+                spinStep: 1,
+                selectOnFocus: false,
+            }));
+        }
+        // Strudel mode replaces Beats/Cycle + Beats/Bar with a single
+        // Cycle Length spec: a note-duration dropdown (the shared
+        // interval menu, minus "Off") times an integer count. The
+        // one-cycle mini-notation pattern maps across this span;
+        // cycle length = cycleInterval × cycleCount (§4).
+        if (mode === "strudel") {
+            const cycleIntervalAgg = aggregateString(bpObjs, "cycleInterval");
+            const cycleCountAgg = aggregateString(bpObjs, "cycleCount");
+            r1.appendChild(mkLabel("Cycle Length", { width: W.cycleLengthLabel, disabled: !active }));
+            r1.appendChild(this._buildDropdownField({
+                options: INTERVAL_OPTIONS.filter((o) => o.value !== "Off"),
+                value: cycleIntervalAgg === "varies" ? "" : cycleIntervalAgg,
+                width: W.beatInterval,
+                editable: active,
+                editKind: "setCycleInterval",
+            }));
+            r1.appendChild(mkInlineLetter("x", { disabled: !active }));
+            r1.appendChild(this._buildEditableField({
+                value: cycleCountAgg === "varies" ? "" : cycleCountAgg,
+                numeric: true,
+                width: W.beatNum,
+                editable: active,
+                validator: (c) => validateNumber(c, { min: 1 }),
+                editKind: "setCycleCount",
                 spinStep: 1,
                 selectOnFocus: false,
             }));
@@ -309,7 +340,7 @@ export const bandExtraMethods = {
                 editKind: "setBeatInterval",
             }));
         }
-        if (mode === "normal" || mode === "euclidean" || mode === "strudel") {
+        if (mode === "normal" || mode === "euclidean") {
             const beatsPerBarAgg = aggregateString(bpObjs, "beatsPerBar");
             r1.appendChild(mkLabel("Beats/\nBar", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
@@ -439,7 +470,7 @@ export const bandExtraMethods = {
             rP.appendChild(mkLabel("Pattern", { width: W.beatStackLabel, disabled: !active }));
             rP.appendChild(this._buildEditableField({
                 value: patternAgg === "varies" ? "" : patternAgg,
-                width: W.beatString,
+                width: W.strudelPattern,
                 editable: active,
                 validator: (c) => ({ kind: "ok", value: c }),
                 editKind: "setBeatPattern",
