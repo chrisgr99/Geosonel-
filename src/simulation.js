@@ -246,6 +246,7 @@ import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js"
 import { imageSignalsFromOKLCh } from "./strudel/signals.js";
 import { DEFAULT_KINEMATICS } from "./scene.js";
 import { computeOffset } from "./seed/seedOffset.js";
+import { deriveCurveBeatPoints } from "./beatPoints.js";
 
 /**
  * Simulation step in seconds. Determinism requires this to
@@ -709,6 +710,35 @@ class CurveRuntimeState {
         /** @type {string} */
         this._lastCycleSpeedsString =
             typeof curve.cycleSpeeds === "string" ? curve.cycleSpeeds : "1";
+
+        // --- Active-beat firing (§3.1b) ---
+        //
+        // The curve's ACTIVE beat points, derived from its Band-5
+        // Beat Points fields by deriveCurveBeatPoints and refreshed
+        // in setScene / refreshBeatPoints. _beatFractions are the
+        // cycle-fraction positions (the same f the diamonds draw
+        // at); _beatStrengths the aligned 0-9 accents. onActiveBeat
+        // fires as the cursor crosses each, in cursor-travel order.
+        /** @type {number[]} */
+        this._beatFractions = [];
+        /** @type {number[]} */
+        this._beatStrengths = [];
+        // Per-cycle firing cursor. _beatOrder is the active beats
+        // sorted by the progress at which THIS cycle's cursor
+        // reaches them (g = f for a forward cycle, 1 - f for a
+        // reversed one), rebuilt whenever the cycle or its
+        // direction changes; _beatNextIdx is the next entry to
+        // fire; _beatOrderSign / _lastBeatCycle record what the
+        // current order was built for. Null order forces a rebuild
+        // (also used to reset after a beat-points edit).
+        /** @type {Array<{g: number, f: number, strength: number, index: number}> | null} */
+        this._beatOrder = null;
+        /** @type {number} */
+        this._beatOrderSign = 0;
+        /** @type {number} */
+        this._lastBeatCycle = -1;
+        /** @type {number} */
+        this._beatNextIdx = 0;
     }
 }
 
@@ -1013,6 +1043,17 @@ export class Simulation {
          */
         this._collisionDisabled = new Set();
         /**
+         * Ids of curves whose onActiveBeat threw and is therefore
+         * disabled for the rest of the session, keyed
+         * "onActiveBeat:${curveId}". Mirrors _onTickDisabled /
+         * _collisionDisabled: a throwing onActiveBeat is caught,
+         * parked here so the cursor's next beat crossings don't
+         * re-call it and flood the log, and cleared on every
+         * setScene so a script reload re-enables it.
+         * @type {Set<string>}
+         */
+        this._activeBeatDisabled = new Set();
+        /**
          * Audio sink for procedural notes and sounds fired from a
          * sprite's onTick (and, later, collision) callbacks via
          * the context's playNote / playSound. Called with
@@ -1297,6 +1338,241 @@ export class Simulation {
     }
 
     /**
+     * Derive a curve's ACTIVE beat points from its Beat Points
+     * fields and store them on its runtime state, resetting the
+     * per-cycle firing order so the next step rebuilds. Called per
+     * curve in setScene and in refreshBeatPoints. Strudel patterns
+     * resolve to nothing until the engine loads (deriveCurveBeat-
+     * Points returns empty), which refreshBeatPoints then fills in.
+     * @param {any} curve
+     * @param {CurveRuntimeState} state
+     */
+    _applyCurveBeatPoints(curve, state) {
+        const bp = deriveCurveBeatPoints(curve);
+        state._beatFractions = bp.positions;
+        state._beatStrengths = bp.strengths;
+        state._beatOrder = null;
+    }
+
+    /**
+     * Re-derive every curve's beat points. Wired from main.js when
+     * the Strudel runtime transitions to "loaded", so a curve in
+     * strudel Beat-Points mode whose pattern couldn't parse at
+     * scene load (no engine yet) picks up its beats without a
+     * re-run — the firing analogue of canvas.refreshMarkers.
+     */
+    refreshBeatPoints() {
+        if (this._scene === null) return;
+        for (const c of this._scene.curves) {
+            if (typeof c.id !== "string") continue;
+            const state = this._curveState.get(c.id);
+            if (state !== undefined) this._applyCurveBeatPoints(c, state);
+        }
+    }
+
+    /**
+     * Detect the curve cursor crossing its own ACTIVE beat points
+     * this step and fire onActiveBeat for each. Phase-based: a beat
+     * at cycle-fraction f is reached when the cursor's cycle
+     * progress passes g (g = f forward, 1 - f reversed), so beats
+     * fire in cursor-travel order and at the same instant the
+     * diamond would be swept. A per-cycle index walks the sorted
+     * order; on a single cycle wrap any beats still pending in the
+     * finishing cycle are flushed before the next cycle's order is
+     * built, so an end-of-cycle beat is never dropped. Gated on the
+     * curve being active with canActiveBeat + a resolvable
+     * onActiveBeatFunction; a throw disables the curve's slot for
+     * the session.
+     * @param {any} curve
+     * @param {CurveRuntimeState} state
+     */
+    _detectActiveBeatCrossings(curve, state) {
+        const fractions = state._beatFractions;
+        if (fractions.length === 0) return;
+        if (this._scene === null) return;
+        if (curve.state !== "active") return;
+        if (curve.canActiveBeat !== true) return;
+        const fnName = curve.onActiveBeatFunction;
+        if (typeof fnName !== "string" || fnName === "") return;
+        const fn = this._scene.functionMap[fnName];
+        if (typeof fn !== "function") return;
+        const disableKey = "onActiveBeat:" + curve.id;
+        if (this._activeBeatDisabled.has(disableKey)) return;
+
+        const loopLen = cycleSpeedsLoopLength(state.speedList);
+        const sign = (loopLen > 0 && state.speedList[state.cycleCount % loopLen] < 0) ? -1 : 1;
+        const total = fractions.length;
+
+        const buildOrder = (s) => fractions
+            .map((f, i) => ({
+                g: s < 0 ? 1 - f : f,
+                f,
+                strength: state._beatStrengths[i],
+                index: i,
+            }))
+            .sort((a, b) => a.g - b.g);
+
+        // Progress below this counts as "at the cycle start", where
+        // the downbeat (g = 0) should fire; above it, a fresh build
+        // is a mid-cycle (re)arm — a live edit during playback or a
+        // newly grid-snapped curve — and must NOT replay the beats
+        // already behind the cursor.
+        const START_EPS = 0.02;
+
+        if (state._beatOrder === null
+            || state.cycleCount < state._lastBeatCycle
+            || state.cycleCount > state._lastBeatCycle + 1) {
+            // First run, rewind, snap, or a multi-cycle jump: build
+            // fresh for the current cycle with no flush (intermediate
+            // cycles' beats are not reconstructed — only possible at
+            // an unreachably fast tempo).
+            state._beatOrder = buildOrder(sign);
+            state._beatOrderSign = sign;
+            state._lastBeatCycle = state.cycleCount;
+            if (state.cycleProgress <= START_EPS) {
+                // At the cycle start: arm at 0 so the downbeat fires.
+                state._beatNextIdx = 0;
+            } else {
+                // Mid-cycle arm: skip beats already passed so they
+                // don't all replay at once.
+                let idx = 0;
+                while (idx < state._beatOrder.length
+                    && state._beatOrder[idx].g < state.cycleProgress) idx++;
+                state._beatNextIdx = idx;
+            }
+        } else if (state.cycleCount === state._lastBeatCycle + 1) {
+            // Single wrap: flush the finishing cycle's pending beats
+            // (all reached by progress 1), then build the new cycle.
+            while (state._beatNextIdx < state._beatOrder.length) {
+                const b = state._beatOrder[state._beatNextIdx++];
+                this._runOnActiveBeat(curve, fn, disableKey, b.index, total, b.strength, b.f);
+            }
+            state._beatOrder = buildOrder(sign);
+            state._beatOrderSign = sign;
+            state._lastBeatCycle = state.cycleCount;
+            state._beatNextIdx = 0;
+        } else if (sign !== state._beatOrderSign) {
+            // Same cycle but direction flipped (a cycleSpeeds edit
+            // mid-cycle): rebuild for the new direction, keeping
+            // already-fired beats from refiring by carrying the
+            // count of beats whose g is below the current progress.
+            state._beatOrder = buildOrder(sign);
+            state._beatOrderSign = sign;
+            let idx = 0;
+            while (idx < state._beatOrder.length
+                && state._beatOrder[idx].g <= state.cycleProgress) idx++;
+            state._beatNextIdx = idx;
+        }
+
+        const order = state._beatOrder;
+        const prog = state.cycleProgress;
+        while (state._beatNextIdx < order.length && order[state._beatNextIdx].g <= prog) {
+            const b = order[state._beatNextIdx++];
+            this._runOnActiveBeat(curve, fn, disableKey, b.index, total, b.strength, b.f);
+        }
+    }
+
+    /**
+     * Run one curve's onActiveBeat callback for a crossed beat. The
+     * context carries the beat's accent (strength 0-9, the natural
+     * map to note velocity), its index and the total beat count,
+     * the transport reads, and the playNote / playSound emitters
+     * (same immediate-fire path as the collision and onTick
+     * callbacks). A strength-0 beat still runs the callback — it is
+     * a real beat at zero velocity, distinct from a rest, which
+     * never reaches here. The full handle context (prev, random,
+     * the per-firing additions) lands in §3.2; this is the lean
+     * ctx. Also flashes the fired diamond yellow.
+     * @param {any} curve
+     * @param {(ctx: any) => void} fn
+     * @param {string} disableKey
+     * @param {number} beatIndex
+     * @param {number} beatCount
+     * @param {number} strength
+     * @param {number} fraction  The beat's cycle-fraction (for the flash).
+     */
+    _runOnActiveBeat(curve, fn, disableKey, beatIndex, beatCount, strength, fraction) {
+        const self = this;
+        const selfId = curve.id;
+        const simTime = this._simTime;
+        const bpm = this._transport.bpm;
+        const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
+        const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
+
+        const ctx = {
+            id: selfId,
+            kind: "curve",
+            // The crossed beat's accent and its place in the pattern.
+            strength,
+            beatIndex,
+            beatCount,
+            beat,
+            time: simTime,
+            bpm: bpmNum,
+            /**
+             * Fire a pitched note immediately through the active
+             * audio output. Positional args mirror the onTick and
+             * collision emitters: instrument sound (superdough
+             * only), MIDI note number or name, amplitude 0..1,
+             * duration seconds, articulation seconds.
+             * @param {string} [sound]
+             * @param {number|string} [note]
+             * @param {number} [amplitude]
+             * @param {number} [duration]
+             * @param {number} [articulation]
+             */
+            playNote(sound, note, amplitude, duration, articulation) {
+                if (self._audioSink === null) return;
+                self._audioSink(selfId, {
+                    type: "note",
+                    sound, note, amplitude, duration, articulation,
+                });
+            },
+            /**
+             * Fire a sample immediately through the active audio
+             * output. Positional args: bank, sample, amplitude.
+             * Silent under MIDI (use playNote with a percussion
+             * note number for MIDI drums).
+             * @param {string} [bank]
+             * @param {string} [sample]
+             * @param {number} [amplitude]
+             */
+            playSound(bank, sample, amplitude) {
+                if (self._audioSink === null) return;
+                self._audioSink(selfId, {
+                    type: "sound",
+                    bank, sample, amplitude,
+                });
+            },
+        };
+
+        try {
+            fn(ctx);
+        } catch (err) {
+            this._activeBeatDisabled.add(disableKey);
+            const detail = (err instanceof Error && typeof err.message === "string")
+                ? err.message
+                : String(err);
+            const line = `onActiveBeat disabled for ${selfId}: ${detail}`;
+            console.error("[onActiveBeat] " + line, err);
+            if (this._messageLogger !== null) {
+                try {
+                    this._messageLogger(line, "error");
+                } catch (_loggerErr) {
+                    // A logger fault must never destabilise the sim.
+                }
+            }
+        }
+
+        // Flash the fired beat's diamond yellow. The canvas matches
+        // by the beat's cycle-fraction (the same f the diamond drew
+        // at), so a strength-0 (small) beat flashes too.
+        if (this._canvas !== null && typeof this._canvas.markFiredCurveBeat === "function") {
+            this._canvas.markFiredCurveBeat(selfId, fraction);
+        }
+    }
+
+    /**
      * Find a live scene object (curve, trigger, or sprite) by
      * id, scanning all three arrays. Returns null when no
      * scene is loaded or the id isn't present. Used by the
@@ -1355,6 +1631,7 @@ export class Simulation {
         // callback that a throw disabled earlier this session.
         this._onTickDisabled.clear();
         this._collisionDisabled.clear();
+        this._activeBeatDisabled.clear();
         this._scene = scene;
         if (scene === null) {
             this._curveState.clear();
@@ -1399,6 +1676,7 @@ export class Simulation {
                     cycleDurationSeconds(bpm, c.beatsPerCycle, c.beatInterval),
                     true,
                 );
+                this._applyCurveBeatPoints(c, newState);
                 this._curveState.set(c.id, newState);
                 continue;
             }
@@ -1438,6 +1716,11 @@ export class Simulation {
                 existing._lastCycleSpeedsString = newCycleSpeedsStr;
                 existing.speedList = parseCycleSpeeds(newCycleSpeedsStr);
             }
+            // Re-derive beat points: a Beat Points edit (mode,
+            // active beats, strength, strudel pattern) changes which
+            // positions fire. _applyCurveBeatPoints resets the
+            // firing order so the next step rebuilds cleanly.
+            this._applyCurveBeatPoints(c, existing);
         }
         for (const id of [...this._curveState.keys()]) {
             if (!seenCurveIds.has(id)) this._curveState.delete(id);
@@ -2221,6 +2504,10 @@ export class Simulation {
         state.t = finalSpeed < 0
             ? 1 - state.cycleProgress
             : state.cycleProgress;
+
+        // Fire onActiveBeat for any of this curve's own active
+        // beats the cursor crossed this step (§3.1b).
+        this._detectActiveBeatCrossings(curve, state);
     }
 
     /**

@@ -570,6 +570,11 @@ async function main() {
             // rather than failing with a ReferenceError.
             installImageSignals();
             canvas.refreshMarkers();
+            // Re-derive the simulation's beat points too, so a
+            // strudel-mode curve fires onActiveBeat once the engine
+            // can parse its pattern (mirrors canvas.refreshMarkers
+            // for the firing side).
+            simulation.refreshBeatPoints();
             // Rebuild the Code-tab active-token highlighter's
             // token map now that the engine can parse patterns:
             // a score opened before Load Engine built no tokens
