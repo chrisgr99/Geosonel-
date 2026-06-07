@@ -71,6 +71,11 @@
 // @ts-check
 
 import { Scene, DEFAULT_KINEMATICS } from "./scene.js";
+import {
+    playNote as bareplayNote,
+    playSound as bareplaySound,
+    applyForce as bareApplyForce,
+} from "./callbackContext.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const SCRIPT_PREFIX = `"use strict";\n`;
@@ -544,7 +549,16 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
     let fn;
     try {
         // eslint-disable-next-line no-new-func
-        fn = new Function("score", "print", body);
+        // `score` and `print` plus the bare action emitters (playNote,
+        // playSound, applyForce) are passed as Function parameters so
+        // every top-level callback closes over them as bare names —
+        // no `this.` / `ctx.` prefix (§3.2/§3.3). They are stable
+        // singletons from callbackContext.js that route to whichever
+        // object the engine has set as the current firing context.
+        // Passed as parameters (not prepended to the source) so they
+        // do not shift user line numbers in error reports.
+        fn = new Function(
+            "score", "print", "playNote", "playSound", "applyForce", body);
     } catch (err) {
         // Acorn already caught syntax errors at parse time, but
         // belt-and-braces in case the new Function path catches
@@ -557,7 +571,10 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
 
     let raw;
     try {
-        raw = fn(scoreGlobal, typeof printFn === "function" ? printFn : () => {});
+        raw = fn(
+            scoreGlobal,
+            typeof printFn === "function" ? printFn : () => {},
+            bareplayNote, bareplaySound, bareApplyForce);
     } catch (err) {
         return {
             ok: false,

@@ -945,6 +945,13 @@ export class PatternFiringEngine {
             ? spec.sound
             : null;
         if (sound !== null) value.s = sound;
+        // Per-note stereo pan (§3.3), superdough only. Passed through
+        // as the value's pan field; MIDI has no per-note pan so it is
+        // ignored on that path. Carried for both the explicit
+        // positional/options pan and left unset otherwise.
+        if (typeof spec.pan === "number" && Number.isFinite(spec.pan)) {
+            value.pan = spec.pan;
+        }
 
         if (this._outputMode === "superdough") {
             // An early gate (articulation shorter than the

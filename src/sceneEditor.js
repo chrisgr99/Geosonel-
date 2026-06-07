@@ -2298,7 +2298,13 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
     if (re.test(content)) {
         return { newContent: content, alreadyExists: true };
     }
-    const stub = `function ${functionName}(ctx) {\n    \n}\n`;
+    // onActiveBeat uses the §3.2 model — the firing object is bound
+    // as `this` and the emitters (playNote / playSound) are bare — so
+    // its stub takes no parameter. The other slots still receive a
+    // `ctx` argument (their conversion to the same model follows).
+    const stub = slotKey === "onActiveBeat"
+        ? `function ${functionName}() {\n    \n}\n`
+        : `function ${functionName}(ctx) {\n    \n}\n`;
     const trimmed = content.replace(/\s+$/, "");
     const separator = trimmed.length === 0 ? "" : "\n\n";
     return { newContent: `${trimmed}${separator}${stub}`, alreadyExists: false };

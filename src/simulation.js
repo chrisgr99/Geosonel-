@@ -247,6 +247,8 @@ import { imageSignalsFromOKLCh } from "./strudel/signals.js";
 import { DEFAULT_KINEMATICS } from "./scene.js";
 import { computeOffset } from "./seed/seedOffset.js";
 import { deriveCurveBeatPoints } from "./beatPoints.js";
+import { buildNoteSpec, buildSoundSpec } from "./emitters.js";
+import { setCallbackContext, clearCallbackContext } from "./callbackContext.js";
 
 /**
  * Simulation step in seconds. Determinism requires this to
@@ -1498,56 +1500,56 @@ export class Simulation {
         const bpm = this._transport.bpm;
         const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
         const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
+        // The beat accent, normalized 0..1, is the default velocity:
+        // playNote(note) plays at the beat's strength. Exposed on the
+        // context as both `vel` and `velocity`.
+        const vel = strength / 9;
 
+        // The firing context is bound as the callback's `this`
+        // (§3.2): reads are `this.vel` / `this.velocity`, and the
+        // action functions are callable bare (playNote / playSound)
+        // because the same object is set as the ambient callback
+        // context below. playNote plays from the curve's note voice;
+        // playSound from its sound bank. Velocity defaults to vel.
         const ctx = {
             id: selfId,
             kind: "curve",
-            // The crossed beat's accent and its place in the pattern.
-            strength,
             beatIndex,
             beatCount,
+            vel,
+            velocity: vel,
             beat,
             time: simTime,
             bpm: bpmNum,
-            /**
-             * Fire a pitched note immediately through the active
-             * audio output. Positional args mirror the onTick and
-             * collision emitters: instrument sound (superdough
-             * only), MIDI note number or name, amplitude 0..1,
-             * duration seconds, articulation seconds.
-             * @param {string} [sound]
-             * @param {number|string} [note]
-             * @param {number} [amplitude]
-             * @param {number} [duration]
-             * @param {number} [articulation]
-             */
-            playNote(sound, note, amplitude, duration, articulation) {
+            /** @param {...any} args  playNote(note, vel?, dur?, pan?) or ("instrument", note, ...) or ({...}). */
+            playNote(...args) {
                 if (self._audioSink === null) return;
+                const s = buildNoteSpec(args, vel);
                 self._audioSink(selfId, {
                     type: "note",
-                    sound, note, amplitude, duration, articulation,
+                    sound: s.sound,
+                    note: s.note,
+                    amplitude: s.velocity,
+                    duration: s.duration,
+                    pan: s.pan,
                 });
             },
-            /**
-             * Fire a sample immediately through the active audio
-             * output. Positional args: bank, sample, amplitude.
-             * Silent under MIDI (use playNote with a percussion
-             * note number for MIDI drums).
-             * @param {string} [bank]
-             * @param {string} [sample]
-             * @param {number} [amplitude]
-             */
-            playSound(bank, sample, amplitude) {
+            /** @param {...any} args  playSound(sample, vel?) or ("bank", sample, vel?) or ({...}). */
+            playSound(...args) {
                 if (self._audioSink === null) return;
+                const s = buildSoundSpec(args, vel);
                 self._audioSink(selfId, {
                     type: "sound",
-                    bank, sample, amplitude,
+                    bank: s.bank,
+                    sample: s.sample,
+                    amplitude: s.velocity,
                 });
             },
         };
 
+        setCallbackContext(ctx);
         try {
-            fn(ctx);
+            fn.call(ctx);
         } catch (err) {
             this._activeBeatDisabled.add(disableKey);
             const detail = (err instanceof Error && typeof err.message === "string")
@@ -1562,6 +1564,8 @@ export class Simulation {
                     // A logger fault must never destabilise the sim.
                 }
             }
+        } finally {
+            clearCallbackContext();
         }
 
         // Flash the fired beat's diamond yellow. The canvas matches
