@@ -258,6 +258,21 @@ const DEFAULT_PLAYNOTE_DURATION_SECONDS = 0.25;
 const IMMEDIATE_FIRE_LOOKAHEAD_SECONDS = 0.03;
 
 /**
+ * Legacy cyclePattern auto-firing switch (§3.6). The GeoSonixV2
+ * procedural model fires curves and sprites through callbacks
+ * (onActiveBeat / onTick), NOT by auto-playing each object's
+ * cyclePattern. With this false, setScene registers no pattern
+ * sources, so tick()'s pattern loop is inert — the old pattern
+ * never sounds on its own. The IMMEDIATE-FIRE path that the
+ * callbacks use (fireImmediateNote / fireImmediateSound, which
+ * resolve the source via _findSourceById against the scene, not
+ * _sources) and the midiSender note-off pump in tick() are
+ * unaffected. The engine's full removal is the remaining §10
+ * cleanup; this flag turns its audible behaviour off now.
+ */
+const LEGACY_PATTERN_FIRING = false;
+
+/**
  * Debug flag for Pass 2 logging. When true, each Pass 2
  * refresh dispatch logs a one-line console message naming
  * the source, cycle index, fractional position, and the
@@ -1216,6 +1231,16 @@ export class PatternFiringEngine {
         this._scene = scene;
         if (scene === null) {
             this._sources.clear();
+            return;
+        }
+        // §3.6: legacy cyclePattern auto-firing disabled. Register no
+        // pattern sources so the old pattern never plays on its own;
+        // keep _scene (for the immediate-fire path's _findSourceById)
+        // and voice-sample preloading (so callback notes have their
+        // instruments ready).
+        if (!LEGACY_PATTERN_FIRING) {
+            this._sources.clear();
+            this._ensureVoiceSamplesForScene();
             return;
         }
         /** @type {Set<string>} */
