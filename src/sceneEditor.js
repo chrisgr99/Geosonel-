@@ -1912,6 +1912,18 @@ export function setStrengthOnSelection(data, selection, value) {
 }
 
 /**
+ * Set the Strudel beat-points pattern (Beat Points band, "strudel" mode) on
+ * the curve/sprite slices of the selection. A free-form mini-notation string;
+ * stored verbatim (parsed for beat positions at firing time, a later stage).
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeatPatternOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, { sprites: selection.sprites, curves: selection.curves }, "beatPattern", String(value));
+}
+
+/**
  * Set a numeric Euclidean beat-points parameter (Band 5) across
  * the selection. The inspector field validates and clamps
  * before emitting, so this stores the value as a number.

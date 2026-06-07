@@ -148,6 +148,7 @@ import {
     setBeatPointsModeOnSelection,
     setActiveBeatsOnSelection,
     setStrengthOnSelection,
+    setBeatPatternOnSelection,
     setBeatsPerBarOnSelection,
     setActiveBeatsCountOnSelection,
     setBeatShiftOnSelection,
@@ -3677,6 +3678,10 @@ async function main() {
             } else if (edit.kind === "setStrength") {
                 await applySceneEdit((data) =>
                     setStrengthOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeatPattern") {
+                await applySceneEdit((data) =>
+                    setBeatPatternOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setBeatsPerBar") {
                 await applySceneEdit((data) =>

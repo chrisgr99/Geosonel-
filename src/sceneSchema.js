@@ -122,9 +122,15 @@ const CALLBACK_SLOT_FIELDS = [
     // Active Beats pattern (x active, . inactive, | bar split)
     // and Beat Strength digit string both loop. Stored lowercase
     // for mode to match validateBeatPointsMode.
-    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "none", enumValues: ["none", "normal", "euclidean"] },
+    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "none", enumValues: ["none", "normal", "euclidean", "strudel"] },
     { key: "activeBeats", label: "Active Beats", type: "string", default: "x" },
     { key: "strength", label: "Beat Strength", type: "string", default: "9" },
+    // Strudel beat-points mode (beatPointsMode === "strudel"): a
+    // mini-notation expression whose one-cycle event positions and
+    // numeric tokens become the beat points and their strengths,
+    // replacing the activeBeats / strength strings. Parsed for
+    // positions at firing time (later stage); just stored here.
+    { key: "beatPattern", label: "Beat Pattern", type: "string", default: "" },
     // Euclidean-mode parameters (Band 5, shown only when
     // beatPointsMode === "euclidean"). The pattern is generated
     // from these by src/euclidean.js generateEuclideanPattern.

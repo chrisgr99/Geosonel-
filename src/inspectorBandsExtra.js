@@ -273,6 +273,7 @@ export const bandExtraMethods = {
                 { value: "none", label: "None" },
                 { value: "normal", label: "Normal" },
                 { value: "euclidean", label: "Euclidean" },
+                { value: "strudel", label: "Strudel" },
             ],
             value: mode,
             width: W.beatPointsMode,
@@ -280,7 +281,7 @@ export const bandExtraMethods = {
             editKind: "setBeatPointsMode",
         }));
 
-        if (mode === "normal" || mode === "euclidean") {
+        if (mode === "normal" || mode === "euclidean" || mode === "strudel") {
             r1.appendChild(mkLabel("Beats/\nCycle", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
                 value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
@@ -308,7 +309,7 @@ export const bandExtraMethods = {
                 editKind: "setBeatInterval",
             }));
         }
-        if (mode === "normal" || mode === "euclidean") {
+        if (mode === "normal" || mode === "euclidean" || mode === "strudel") {
             const beatsPerBarAgg = aggregateString(bpObjs, "beatsPerBar");
             r1.appendChild(mkLabel("Beats/\nBar", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
@@ -424,6 +425,27 @@ export const bandExtraMethods = {
                 ariaLabel: "Beat Strength",
             }));
             band.appendChild(rS);
+        }
+
+        // Strudel mode: a single mini-notation pattern field REPLACES
+        // the Active Beats x/dot string, and Beat Strength is hidden —
+        // strength is carried inline in the one pattern (digits 0–9,
+        // "~" rest, bare "x" default). It is a free-form text field
+        // (not the live x/dot input), parsed once per cycle by
+        // patternParse.js for positions and strengths (§4, §10).
+        if (mode === "strudel") {
+            const patternAgg = aggregateString(bpObjs, "beatPattern");
+            const rP = mkRow();
+            rP.appendChild(mkLabel("Pattern", { width: W.beatStackLabel, disabled: !active }));
+            rP.appendChild(this._buildEditableField({
+                value: patternAgg === "varies" ? "" : patternAgg,
+                width: W.beatString,
+                editable: active,
+                validator: (c) => ({ kind: "ok", value: c }),
+                editKind: "setBeatPattern",
+                selectOnFocus: false,
+            }));
+            band.appendChild(rP);
         }
 
         return band;
