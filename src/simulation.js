@@ -249,6 +249,7 @@ import { computeOffset } from "./seed/seedOffset.js";
 import { deriveCurveBeatPoints } from "./beatPoints.js";
 import { buildNoteSpec, buildSoundSpec } from "./emitters.js";
 import { setCallbackContext, clearCallbackContext } from "./callbackContext.js";
+import { sampleCurve } from "./curveGeometry.js";
 
 /**
  * Simulation step in seconds. Determinism requires this to
@@ -271,6 +272,21 @@ const SIM_DT = 1 / 240;
  * painted frames) to stay deterministic and repeatable.
  */
 const ONTICK_DT = 1 / 60;
+
+/**
+ * Shape the ten raw image-colour signals into the firing context's
+ * `col` namespace (lt = lightness, chr = chroma; r/g/y/b/or/li/cy/pu
+ * the hues). Grouped under `col` so the hue keys never collide with a
+ * position read like this.y. Shared by every callback's context.
+ * @param {{pxLt:number,pxChr:number,pxR:number,pxG:number,pxY:number,pxB:number,pxOr:number,pxLi:number,pxCy:number,pxPu:number}} px
+ */
+function colFromSignals(px) {
+    return {
+        lt: px.pxLt, chr: px.pxChr,
+        r: px.pxR, g: px.pxG, y: px.pxY, b: px.pxB,
+        or: px.pxOr, li: px.pxLi, cy: px.pxCy, pu: px.pxPu,
+    };
+}
 
 /**
  * Force-magnitude threshold below which a sub-step's onTick is
@@ -1270,6 +1286,11 @@ export class Simulation {
         // full (1.0); this.hitSpeed is the impact strength the author
         // maps to velocity when they want it (e.g. clamped to 0..1).
         const vel = 1;
+        // Colour beneath this object at the moment of the hit — the
+        // collider's cursor for a curve/sprite, or the struck diamond's
+        // position for a trigger — so this.col reads the pixel where
+        // the event happened.
+        const px = this._sampleColorUnderObject(obj, selfKind);
         const ctx = {
             id: selfId,
             kind: selfKind,
@@ -1280,6 +1301,7 @@ export class Simulation {
             hitSpeed,
             vel,
             velocity: vel,
+            col: colFromSignals(px),
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -1452,7 +1474,7 @@ export class Simulation {
             // (all reached by progress 1), then build the new cycle.
             while (state._beatNextIdx < state._beatOrder.length) {
                 const b = state._beatOrder[state._beatNextIdx++];
-                this._runOnActiveBeat(curve, fn, disableKey, b.index, total, b.strength, b.f);
+                this._runOnActiveBeat(curve, state, fn, disableKey, b.index, total, b.strength, b.f);
             }
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
@@ -1475,7 +1497,7 @@ export class Simulation {
         const prog = state.cycleProgress;
         while (state._beatNextIdx < order.length && order[state._beatNextIdx].g <= prog) {
             const b = order[state._beatNextIdx++];
-            this._runOnActiveBeat(curve, fn, disableKey, b.index, total, b.strength, b.f);
+            this._runOnActiveBeat(curve, state, fn, disableKey, b.index, total, b.strength, b.f);
         }
     }
 
@@ -1498,7 +1520,7 @@ export class Simulation {
      * @param {number} strength
      * @param {number} fraction  The beat's cycle-fraction (for the flash).
      */
-    _runOnActiveBeat(curve, fn, disableKey, beatIndex, beatCount, strength, fraction) {
+    _runOnActiveBeat(curve, state, fn, disableKey, beatIndex, beatCount, strength, fraction) {
         const self = this;
         const selfId = curve.id;
         const simTime = this._simTime;
@@ -1510,12 +1532,28 @@ export class Simulation {
         // context as both `vel` and `velocity`.
         const vel = strength / 9;
 
+        // Colour beneath the BEAT POINT — the pixel under the cursor as
+        // it crosses this beat, NOT the curve centre — so the author
+        // can map the colour behind each beat to its note (e.g. pitch
+        // from this.col.r). The beat point sits on the curve at
+        // parameter `fraction`, shifted by the curve's runtime offset
+        // (state.dx/dy) exactly as the diamond draws. Same ten signals
+        // as the onTick reads, via the same sampler; all zero with no
+        // canvas/image.
+        const sample = sampleCurve(curve.shape, fraction);
+        const oklch = (sample !== null
+            && this._canvas !== null
+            && typeof this._canvas.sampleImageOKLCh === "function")
+            ? this._canvas.sampleImageOKLCh(sample.x + state.dx, sample.y + state.dy)
+            : null;
+        const px = imageSignalsFromOKLCh(oklch);
+
         // The firing context is bound as the callback's `this`
-        // (§3.2): reads are `this.vel` / `this.velocity`, and the
-        // action functions are callable bare (playNote / playSound)
-        // because the same object is set as the ambient callback
-        // context below. playNote plays from the curve's note voice;
-        // playSound from its sound bank. Velocity defaults to vel.
+        // (§3.2): reads are `this.vel` / `this.velocity` / `this.col.*`,
+        // and the action functions are callable bare (playNote /
+        // playSound) because the same object is set as the ambient
+        // callback context below. playNote plays from the curve's note
+        // voice; playSound from its sound bank. Velocity defaults to vel.
         const ctx = {
             id: selfId,
             kind: "curve",
@@ -1523,6 +1561,8 @@ export class Simulation {
             beatCount,
             vel,
             velocity: vel,
+            // The ten image-colour signals beneath the beat point.
+            col: colFromSignals(px),
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -1609,6 +1649,44 @@ export class Simulation {
             }
         }
         return null;
+    }
+
+    /**
+     * Sample the ten image-colour signals beneath an object's relevant
+     * point: a curve's CURSOR (the curve sampled at its current
+     * parameter t, shifted by the runtime offset), a sprite's centre,
+     * or a trigger's position. Used by the collision callbacks so
+     * this.col reads the pixel under the object at the moment of the
+     * hit. Returns all-zero signals when there is no canvas or image,
+     * or the kind/state is unknown.
+     * @param {any} obj
+     * @param {string} kind
+     */
+    _sampleColorUnderObject(obj, kind) {
+        let x = 0;
+        let y = 0;
+        let ok = false;
+        if (kind === "curve") {
+            const st = this._curveState.get(obj.id);
+            const sample = sampleCurve(obj.shape, st !== undefined ? st.t : 0);
+            if (sample !== null) {
+                x = sample.x + (st !== undefined ? st.dx : 0);
+                y = sample.y + (st !== undefined ? st.dy : 0);
+                ok = true;
+            }
+        } else if (kind === "sprite") {
+            const st = this._spriteState.get(obj.id);
+            if (st !== undefined) { x = st.x; y = st.y; ok = true; }
+        } else if (kind === "trigger") {
+            x = numberOrZero(obj.x);
+            y = numberOrZero(obj.y);
+            ok = true;
+        }
+        const oklch = (ok && this._canvas !== null
+            && typeof this._canvas.sampleImageOKLCh === "function")
+            ? this._canvas.sampleImageOKLCh(x, y)
+            : null;
+        return imageSignalsFromOKLCh(oklch);
     }
 
     /**
@@ -3147,24 +3225,9 @@ export class Simulation {
             bpm: bpmNum,
             cyclePhase: state.cycleProgress,
             cycleCount: state.cycleCount,
-            // The ten image-colour signals beneath the sprite, grouped
-            // under `col` so the hue keys don't collide with the
-            // position reads (a bare `y` would clash with this.y). Read
-            // as this.col.r, this.col.y, this.col.lt, etc. (lt =
-            // lightness, chr = chroma; r/g/y/b/or/li/cy/pu the hues).
-            // Same values as the pattern signals (pxR etc.).
-            col: {
-                lt: px.pxLt,
-                chr: px.pxChr,
-                r: px.pxR,
-                g: px.pxG,
-                y: px.pxY,
-                b: px.pxB,
-                or: px.pxOr,
-                li: px.pxLi,
-                cy: px.pxCy,
-                pu: px.pxPu,
-            },
+            // The ten image-colour signals beneath the sprite. Read as
+            // this.col.r, this.col.y, this.col.lt, etc.
+            col: colFromSignals(px),
             /**
              * Apply a literal force this sub-step. The engine
              * divides by the sprite's mass and integrates over
