@@ -259,6 +259,20 @@ import { setCallbackContext, clearCallbackContext } from "./callbackContext.js";
 const SIM_DT = 1 / 240;
 
 /**
+ * onTick control rate (§3.6). onTick fires at a fixed 60 Hz in
+ * SIMULATION time — once every ONTICK_DT seconds of sim clock, not
+ * every fine step — so a non-trivial onTick body runs at the proven
+ * Processing/p5 draw() cadence instead of flooding at the 240 Hz
+ * fine-step rate. The fine steps integrate the force onTick sets
+ * between its calls (control-rate-modulating-a-finer-rate); applyForce
+ * uses ONTICK_DT so the per-call impulse equals what a continuous push
+ * would deliver over the control period. 60 divides 240 evenly, so
+ * onTick lands on every 4th fine step. Counted in sim time (not
+ * painted frames) to stay deterministic and repeatable.
+ */
+const ONTICK_DT = 1 / 60;
+
+/**
  * Force-magnitude threshold below which a sub-step's onTick is
  * treated as having applied no force (a dead zone). When the net
  * force a sprite's callback applies in a sub-step is at or below
@@ -912,6 +926,17 @@ class SpriteRuntimeState {
         // identically.
         /** @type {number} */
         this._lastAudioFireTime = -Infinity;
+
+        /**
+         * Net force magnitude from this sprite's most recent onTick
+         * call. onTick runs at 60 Hz but the fine steps integrate at
+         * 240 Hz, so the intermediate steps (between onTick calls)
+         * reuse this stored magnitude for the dead-zone / coast
+         * decision rather than recomputing a force that wasn't applied
+         * this step. Updated each time onTick runs; persists between.
+         * @type {number}
+         */
+        this._lastOnTickForceMag = 0;
     }
 }
 
@@ -998,6 +1023,14 @@ export class Simulation {
          * @type {number}
          */
         this._accumulator = 0;
+        /**
+         * Sim-time accumulator for the 60 Hz onTick control rate.
+         * Advanced by each fine step's dt; when it reaches ONTICK_DT
+         * the sprites' onTick callbacks run and it subtracts ONTICK_DT.
+         * Cleared on rewind so onTick timing restarts at t=0.
+         * @type {number}
+         */
+        this._onTickAccumulator = 0;
         /**
          * Canvas reference, set via setCanvas after
          * construction. Used only to sample the image's
@@ -1233,93 +1266,63 @@ export class Simulation {
         const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
         const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
 
+        // A collision has no beat accent, so velocity defaults to
+        // full (1.0); this.hitSpeed is the impact strength the author
+        // maps to velocity when they want it (e.g. clamped to 0..1).
+        const vel = 1;
         const ctx = {
             id: selfId,
             kind: selfKind,
+            // The other party in the collision: the struck diamond, or
+            // on the struck side the cursor that hit it.
             otherId,
             otherKind,
             hitSpeed,
-            // The struck marker's strudel value on a curve-marker
-            // beenTriggered, handed back as a shallow copy so the author
-            // can read or reshape it without corrupting the cached
-            // marker value the canvas reuses. null when this hit
-            // carried no marker value (a trigger beenTriggered, or the
-            // hasCollided side).
-            hitValue: (markerValue !== null && typeof markerValue === "object"
-                && !Array.isArray(markerValue)) ? { ...markerValue } : null,
+            vel,
+            velocity: vel,
             beat,
             time: simTime,
             bpm: bpmNum,
             /**
-             * Fire a pitched note immediately through the active
-             * audio output, the moment the collision callback
-             * runs. Same positional args as the onTick emitter:
-             * instrument sound name (superdough only), MIDI note
-             * number or name, amplitude 0..1, total duration in
-             * seconds, articulation in seconds. Routed through
-             * the firing engine's fireImmediateNote, keyed by
-             * this object's id so the note carries this object's
-             * voice. No collision-path rate limiting.
-             * @param {string} [sound]
-             * @param {number|string} [note]
-             * @param {number} [amplitude]
-             * @param {number} [duration]
-             * @param {number} [articulation]
+             * Fire a pitched note from this object's note voice
+             * (§3.3). playNote(note, vel?, dur?, pan?) or
+             * ("instrument", note, ...) or ({...}); velocity defaults
+             * to this.vel. No collision-path rate limiting.
+             * @param {...any} args
              */
-            playNote(sound, note, amplitude, duration, articulation) {
+            playNote(...args) {
                 if (self._audioSink === null) return;
+                const s = buildNoteSpec(args, vel);
                 self._audioSink(selfId, {
                     type: "note",
-                    sound, note, amplitude, duration, articulation,
+                    sound: s.sound,
+                    note: s.note,
+                    amplitude: s.velocity,
+                    duration: s.duration,
+                    pan: s.pan,
                 });
             },
             /**
-             * Fire a sample immediately through the active audio
-             * output. Positional args: bank name, sample name,
-             * amplitude 0..1. Silent under MIDI (use playNote
-             * with a percussion note number for MIDI drums). No
-             * collision-path rate limiting.
-             * @param {string} [bank]
-             * @param {string} [sample]
-             * @param {number} [amplitude]
+             * Fire a sample from this object's sound bank (§3.3).
+             * playSound(sample, vel?) or ("bank", sample, vel?) or
+             * ({...}). Superdough-only.
+             * @param {...any} args
              */
-            playSound(bank, sample, amplitude) {
+            playSound(...args) {
                 if (self._audioSink === null) return;
+                const s = buildSoundSpec(args, vel);
                 self._audioSink(selfId, {
                     type: "sound",
-                    bank, sample, amplitude,
-                });
-            },
-            /**
-             * Sound the struck marker's OWN pattern event, the
-             * strudel value the curve's cyclePattern assigns at
-             * that beat position, through this curve's voice — so
-             * it sounds exactly like the curve firing that beat.
-             * A drum value plays the drum, a pitched value plays
-             * the note; no branching, the value carries its own
-             * type. Both args optional: amplitude (0..1) overrides
-             * the value's gain (e.g. map ctx.hitSpeed to loudness),
-             * duration is the note window in seconds (pitched
-             * values only; defaults to the immediate-fire default).
-             * No-op off the curve-marker beenTriggered path (no marker
-             * value to play) or when the sink isn't wired.
-             * @param {number} [amplitude]
-             * @param {number} [duration]
-             */
-            playMarker(amplitude, duration) {
-                if (self._audioSink === null) return;
-                if (markerValue === null || typeof markerValue !== "object") return;
-                self._audioSink(selfId, {
-                    type: "value",
-                    value: markerValue,
-                    amplitude,
-                    duration,
+                    bank: s.bank,
+                    sample: s.sample,
+                    amplitude: s.velocity,
                 });
             },
         };
 
+        setCallbackContext(ctx);
         try {
-            fn(ctx);
+            fn.call(ctx);
         } catch (err) {
             this._collisionDisabled.add(disableKey);
             const detail = (err instanceof Error && typeof err.message === "string")
@@ -1335,6 +1338,8 @@ export class Simulation {
                     // simulation; the console line above stands.
                 }
             }
+        } finally {
+            clearCallbackContext();
         }
         return true;
     }
@@ -1856,6 +1861,7 @@ export class Simulation {
             this._lastElapsed = 0;
             this._simTime = 0;
             this._accumulator = 0;
+            this._onTickAccumulator = 0;
             // Fall through so any positive elapsed time after
             // a rewind-and-resume still advances normally.
         }
@@ -2111,6 +2117,7 @@ export class Simulation {
         this._lastElapsed = 0;
         this._simTime = 0;
         this._accumulator = 0;
+        this._onTickAccumulator = 0;
     }
 
     /**
@@ -3119,6 +3126,10 @@ export class Simulation {
         let netFx = 0;
         let netFy = 0;
 
+        // onTick has no beat accent, so the default velocity is full
+        // (1.0); the colour reads are the natural source the author
+        // maps to velocity instead (e.g. playNote(60, this.r)).
+        const vel = 1;
         const ctx = {
             id: sprite.id,
             kind: "sprite",
@@ -3129,21 +3140,31 @@ export class Simulation {
             speed: Math.hypot(state.vx, state.vy),
             flipX: state.flipX,
             flipY: state.flipY,
+            vel,
+            velocity: vel,
             beat,
             time: simTime,
             bpm: bpmNum,
             cyclePhase: state.cycleProgress,
             cycleCount: state.cycleCount,
-            pxLt: px.pxLt,
-            pxChr: px.pxChr,
-            pxR: px.pxR,
-            pxG: px.pxG,
-            pxY: px.pxY,
-            pxB: px.pxB,
-            pxOr: px.pxOr,
-            pxLi: px.pxLi,
-            pxCy: px.pxCy,
-            pxPu: px.pxPu,
+            // The ten image-colour signals beneath the sprite, grouped
+            // under `col` so the hue keys don't collide with the
+            // position reads (a bare `y` would clash with this.y). Read
+            // as this.col.r, this.col.y, this.col.lt, etc. (lt =
+            // lightness, chr = chroma; r/g/y/b/or/li/cy/pu the hues).
+            // Same values as the pattern signals (pxR etc.).
+            col: {
+                lt: px.pxLt,
+                chr: px.pxChr,
+                r: px.pxR,
+                g: px.pxG,
+                y: px.pxY,
+                b: px.pxB,
+                or: px.pxOr,
+                li: px.pxLi,
+                cy: px.pxCy,
+                pu: px.pxPu,
+            },
             /**
              * Apply a literal force this sub-step. The engine
              * divides by the sprite's mass and integrates over
@@ -3167,59 +3188,51 @@ export class Simulation {
                 }
             },
             /**
-             * Fire a pitched note immediately through the active
-             * audio output, the moment this callback runs (not
-             * beat-quantized). Positional args: instrument sound
-             * name (superdough only; ignored on MIDI), MIDI note
-             * number (or note name), amplitude in 0..1, total
-             * duration in seconds, and articulation in seconds
-             * (the hold before damping begins; defaults to the
-             * full duration). Per-sprite rate-limited to one fire
-             * per MIN_AUDIO_FIRE_INTERVAL of sim time, shared with
-             * playSound, so an ungated call can't flood the
-             * output. The actual audio mapping (gate, release,
-             * voice, output path) lives in the firing engine's
-             * fireImmediateNote; this just forwards a spec.
-             * @param {string} [sound]
-             * @param {number|string} [note]
-             * @param {number} [amplitude]
-             * @param {number} [duration]
-             * @param {number} [articulation]
+             * Fire a pitched note from the sprite's note voice
+             * (§3.3). playNote(note, vel?, dur?, pan?) or
+             * ("instrument", note, ...) or ({...}); velocity
+             * defaults to this.vel. Per-sprite rate-limited to one
+             * fire per MIN_AUDIO_FIRE_INTERVAL of sim time (shared
+             * with playSound) so an ungated onTick can't flood.
+             * @param {...any} args
              */
-            playNote(sound, note, amplitude, duration, articulation) {
+            playNote(...args) {
                 if (self._audioSink === null) return;
                 if (simTime - state._lastAudioFireTime < MIN_AUDIO_FIRE_INTERVAL) return;
                 state._lastAudioFireTime = simTime;
+                const s = buildNoteSpec(args, vel);
                 self._audioSink(sprite.id, {
                     type: "note",
-                    sound, note, amplitude, duration, articulation,
+                    sound: s.sound,
+                    note: s.note,
+                    amplitude: s.velocity,
+                    duration: s.duration,
+                    pan: s.pan,
                 });
             },
             /**
-             * Fire a sample immediately through the active audio
-             * output. Positional args: sample bank name (e.g.
-             * "RolandTR909"; omit for the default kit), sample
-             * name (e.g. "bd"), and amplitude in 0..1. Silent
-             * when MIDI is the active output — use playNote with a
-             * percussion note number for drums on MIDI. Shares
-             * playNote's per-sprite rate limit.
-             * @param {string} [bank]
-             * @param {string} [sample]
-             * @param {number} [amplitude]
+             * Fire a sample from the sprite's sound bank (§3.3).
+             * playSound(sample, vel?) or ("bank", sample, vel?) or
+             * ({...}). Superdough-only. Shares playNote's rate limit.
+             * @param {...any} args
              */
-            playSound(bank, sample, amplitude) {
+            playSound(...args) {
                 if (self._audioSink === null) return;
                 if (simTime - state._lastAudioFireTime < MIN_AUDIO_FIRE_INTERVAL) return;
                 state._lastAudioFireTime = simTime;
+                const s = buildSoundSpec(args, vel);
                 self._audioSink(sprite.id, {
                     type: "sound",
-                    bank, sample, amplitude,
+                    bank: s.bank,
+                    sample: s.sample,
+                    amplitude: s.velocity,
                 });
             },
         };
 
+        setCallbackContext(ctx);
         try {
-            fn(ctx);
+            fn.call(ctx);
         } catch (err) {
             this._onTickDisabled.add(sprite.id);
             const detail = (err instanceof Error && typeof err.message === "string")
@@ -3235,6 +3248,8 @@ export class Simulation {
                     // simulation; the console line above stands.
                 }
             }
+        } finally {
+            clearCallbackContext();
         }
         // Magnitude of the net force applied this tick. Zero when
         // no force was applied (or the callback threw before
@@ -3321,6 +3336,18 @@ export class Simulation {
         const drag = kinNum(kin.drag, DEFAULT_KINEMATICS.drag);
         const jitter = kinNum(kin.jitter, DEFAULT_KINEMATICS.jitter);
         const coast = kinNum(kin.coast, DEFAULT_KINEMATICS.coast);
+        // onTick control-rate gate: advance the 60 Hz accumulator by
+        // this fine step's dt and decide whether onTick runs this
+        // step. With SIM_DT = 1/240 and ONTICK_DT = 1/60, this is true
+        // on every 4th step; the other three integrate physics under
+        // the force the last onTick set. A while-subtract keeps it
+        // correct if dt ever exceeds ONTICK_DT.
+        this._onTickAccumulator += dt;
+        let runOnTick = false;
+        if (this._onTickAccumulator >= ONTICK_DT) {
+            this._onTickAccumulator -= ONTICK_DT;
+            runOnTick = true;
+        }
         for (const sprite of this._scene.sprites) {
             if (typeof sprite.id !== "string") continue;
             // Disabled is frozen: skip physics AND onTick. A
@@ -3329,16 +3356,21 @@ export class Simulation {
             if (sprite.state === "disabled") continue;
             const state = this._spriteState.get(sprite.id);
             if (state === undefined) continue;
-            // 0. onTick: run the sprite's per-tick callback (if
-            //    any) BEFORE physics, so a force it applies is
-            //    integrated this same step. Gated inside the
-            //    helper by canTick, not-disabled, a resolved
-            //    function name, and the session-disable set. applyForce
-            //    adds into the effective velocity (the impulse
-            //    layer); the step-1 damping below relaxes that
-            //    impulse toward the base launch velocity at the
-            //    sprite's drag rate.
-            const forceMag = this._runSpriteOnTick(sprite, state, dt, bpm);
+            // 0. onTick: run the sprite's per-tick callback at the
+            //    60 Hz control rate (runOnTick), BEFORE physics, so a
+            //    force it applies is integrated this same step. It is
+            //    passed ONTICK_DT (not the fine-step dt) so applyForce
+            //    delivers the control-period impulse; the result is
+            //    stored on the state and REUSED for the dead-zone
+            //    decision on the intervening fine steps, where the
+            //    force persists but onTick does not re-run. Gated
+            //    inside the helper by canTick, not-disabled, a
+            //    resolved function name, and the session-disable set.
+            if (runOnTick) {
+                state._lastOnTickForceMag =
+                    this._runSpriteOnTick(sprite, state, ONTICK_DT, bpm);
+            }
+            const forceMag = state._lastOnTickForceMag;
             // 1. Impulse damping (drag). Relax the force-driven
             //    impulse layer (vx - baseVx) toward zero at the
             //    score's drag rate, leaving the cycleSpeeds base

@@ -2298,13 +2298,11 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
     if (re.test(content)) {
         return { newContent: content, alreadyExists: true };
     }
-    // onActiveBeat uses the §3.2 model — the firing object is bound
-    // as `this` and the emitters (playNote / playSound) are bare — so
-    // its stub takes no parameter. The other slots still receive a
-    // `ctx` argument (their conversion to the same model follows).
-    const stub = slotKey === "onActiveBeat"
-        ? `function ${functionName}() {\n    \n}\n`
-        : `function ${functionName}(ctx) {\n    \n}\n`;
+    // All callbacks use the §3.2 model — the firing object is bound as
+    // `this` (reads are this.vel, this.r, …) and the emitters (playNote
+    // / playSound / applyForce) are callable bare — so the stub takes
+    // no parameter.
+    const stub = `function ${functionName}() {\n    \n}\n`;
     const trimmed = content.replace(/\s+$/, "");
     const separator = trimmed.length === 0 ? "" : "\n\n";
     return { newContent: `${trimmed}${separator}${stub}`, alreadyExists: false };
