@@ -214,6 +214,26 @@
     font-family: "SF Mono", "Menlo", "Courier New", monospace;
 }
 
+/* Live value tooltip (hover a this.* expression while playing). Shows
+   just the value, on a muted-yellow chip whose upper-left corner sits
+   just below the cursor (left-aligned, anchored at the pointer
+   position). The value text updates each frame from the simulation's
+   cached firing context. */
+.cm-editor .cm-tooltip:has(.gxw-value-tooltip) {
+    background-color: #e6dd92;
+    border: 1px solid #bbae54;
+    border-radius: 3px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+.gxw-value-tooltip {
+    padding: 2px 8px;
+    color: #000000;
+    font-size: 11.5pt;
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    text-align: left;
+    white-space: pre;
+}
+
 .cm-editor .cm-tooltip-autocomplete > ul {
     max-height: 320px;
     font-family: "SF Mono", "Menlo", "Courier New", monospace;

@@ -609,6 +609,8 @@ async function main() {
     // wirings; the simulation runs without them.
     simulation.setCanvas(canvas);
     simulation.setMessageLogger((text, level) => messages.write(text, level === "error" ? "error" : "info"));
+    // Let the Script-tab live value tooltip read cached firing contexts.
+    editor.setSimulation(simulation);
 
     // --- Pattern firing engine (Tier 2 Phase 1) ---
     //

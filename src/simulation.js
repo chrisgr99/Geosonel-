@@ -1128,6 +1128,19 @@ export class Simulation {
          */
         this._activeBeatDisabled = new Set();
         /**
+         * Last-firing callback context per callback FUNCTION NAME, for
+         * the Script-tab live value tooltip. Each time a callback runs,
+         * its `this` (the firing context — the reads, not the emitters)
+         * is stashed here keyed by the function's name, so an object
+         * with several callbacks keeps them separate. The tooltip reads
+         * the cached context and evaluates the hovered `this.*`
+         * expression against it; the value reflects the most recent
+         * call, not a continuous sample. Cleared on setScene and rewind
+         * so a stale value never shows after an edit or restart.
+         * @type {Map<string, any>}
+         */
+        this._lastCallbackContexts = new Map();
+        /**
          * Audio sink for procedural notes and sounds fired from a
          * sprite's onTick (and, later, collision) callbacks via
          * the context's playNote / playSound. Called with
@@ -1167,6 +1180,21 @@ export class Simulation {
      */
     setMessageLogger(logger) {
         this._messageLogger = typeof logger === "function" ? logger : null;
+    }
+
+    /**
+     * The firing context (`this`) captured the last time the named
+     * callback ran, or null if it hasn't run since the last setScene /
+     * rewind. The Script-tab live value tooltip evaluates a hovered
+     * `this.*` expression against this. Returns the live context object
+     * — reads (this.col, this.vel, …) plus the emitter methods — so
+     * the caller must guard against evaluating side-effecting calls.
+     * @param {string} name  The callback function's name.
+     * @returns {any}
+     */
+    lastContextForFunction(name) {
+        if (typeof name !== "string") return null;
+        return this._lastCallbackContexts.get(name) ?? null;
     }
 
     /**
@@ -1366,6 +1394,10 @@ export class Simulation {
                 });
             },
         };
+
+        // Stash this firing's context for the Script-tab value tooltip,
+        // keyed by the callback's function name.
+        this._lastCallbackContexts.set(name, ctx);
 
         setCallbackContext(ctx);
         try {
@@ -1619,6 +1651,12 @@ export class Simulation {
             },
         };
 
+        // Stash this firing's context for the Script-tab value tooltip,
+        // keyed by the callback's function name.
+        if (typeof curve.onActiveBeatFunction === "string" && curve.onActiveBeatFunction !== "") {
+            this._lastCallbackContexts.set(curve.onActiveBeatFunction, ctx);
+        }
+
         setCallbackContext(ctx);
         try {
             fn.call(ctx);
@@ -1746,6 +1784,7 @@ export class Simulation {
         this._onTickDisabled.clear();
         this._collisionDisabled.clear();
         this._activeBeatDisabled.clear();
+        this._lastCallbackContexts.clear();
         this._scene = scene;
         if (scene === null) {
             this._curveState.clear();
@@ -2320,6 +2359,9 @@ export class Simulation {
      * than across the whole scene at once.
      */
     _rewind() {
+        // Drop cached firing contexts so the live value tooltip shows
+        // nothing for a callback that hasn't fired since the rewind.
+        this._lastCallbackContexts.clear();
         for (const state of this._curveState.values()) {
             state.t = 0;
             state.cycleProgress = 0;
@@ -3331,6 +3373,12 @@ export class Simulation {
                 });
             },
         };
+
+        // Stash this firing's context for the Script-tab value tooltip,
+        // keyed by the callback's function name.
+        if (typeof name === "string" && name !== "") {
+            this._lastCallbackContexts.set(name, ctx);
+        }
 
         setCallbackContext(ctx);
         try {

@@ -35,6 +35,7 @@ import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectId
 import { activeBeatHighlightExtension, setActiveBeatsEffect, recomputeTokensEffect } from "./activeBeatHighlight.js";
 import { parenHighlightExtension } from "./parenHighlight.js";
 import { jsAutocomplete } from "./codeAutocomplete.js";
+import { valueTooltipExtension } from "./valueTooltip.js";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
 import { getPreference, setPreference, subscribePreference } from "./preferences.js";
@@ -521,6 +522,14 @@ export class TabbedEditor {
 
         /** @type {string | null} */
         this.activeName = null;
+
+        /**
+         * Simulation reference for the Script-tab live value tooltip.
+         * Set by main.js via setSimulation after both are constructed;
+         * read lazily by the value-tooltip extension at hover time.
+         * @type {any}
+         */
+        this._simulation = null;
 
         /** @type {EditorView | null} */
         this.view = null;
@@ -1123,6 +1132,15 @@ export class TabbedEditor {
     }
 
     /**
+     * Wire the simulation so the Script-tab live value tooltip can read
+     * cached firing contexts. One-time call from main.js.
+     * @param {any} simulation
+     */
+    setSimulation(simulation) {
+        this._simulation = simulation;
+    }
+
+    /**
      * Re-derive the cursor-target id set from the editor's
      * current selection range and the live scene, then
      * fire onCursorTargetIdsChange with the result. A bare
@@ -1569,6 +1587,14 @@ export class TabbedEditor {
                 ...codeSpeechExtension({
                     isCodeTab: () =>
                         this.activeName === "script.js",
+                }),
+                // Live value tooltip: hover a this.* expression (or a
+                // selected expression) in a callback to see its value
+                // as the piece plays. Gated to the Script tab; reads
+                // the simulation's cached firing contexts.
+                valueTooltipExtension({
+                    getSimulation: () => this._simulation,
+                    isCodeTab: () => this.activeName === "script.js",
                 }),
                 this._langCompartment.of(javascript()),
                 ...customDarkTheme(),
