@@ -922,11 +922,15 @@ export class PatternFiringEngine {
         if (this._runtime.status !== "loaded") return;
         const audioCtx = this._runtime.audioContext;
         if (audioCtx === null) return;
-        // A small forward lookahead, not exactly currentTime, so
-        // superdough has scheduling headroom and doesn't drop the
-        // occasional note. Applied to MIDI too for parity; the
-        // few milliseconds are inaudible there.
-        const fireTime = audioCtx.currentTime + IMMEDIATE_FIRE_LOOKAHEAD_SECONDS;
+        // Schedule at the note's exact stamped audio time when the
+        // look-ahead scheduler supplied one (§3.6) — the sim ran ahead
+        // of the playhead, so this is a precise upcoming time — clamped
+        // to currentTime so a sim that fell behind never schedules in
+        // the past. With no stamp, fall back to a small fixed forward
+        // lookahead so superdough has scheduling headroom.
+        const fireTime = (typeof spec.audioTime === "number" && Number.isFinite(spec.audioTime))
+            ? Math.max(spec.audioTime, audioCtx.currentTime)
+            : audioCtx.currentTime + IMMEDIATE_FIRE_LOOKAHEAD_SECONDS;
 
         // Pitch: a finite number is a MIDI note, a non-empty
         // string is a note name; both output paths understand
@@ -1062,7 +1066,11 @@ export class PatternFiringEngine {
         if (this._runtime.status !== "loaded") return;
         const audioCtx = this._runtime.audioContext;
         if (audioCtx === null) return;
-        const fireTime = audioCtx.currentTime + IMMEDIATE_FIRE_LOOKAHEAD_SECONDS;
+        // Look-ahead audio time when stamped (clamped to now), else the
+        // small fixed forward lookahead. See fireImmediateNote.
+        const fireTime = (typeof spec.audioTime === "number" && Number.isFinite(spec.audioTime))
+            ? Math.max(spec.audioTime, audioCtx.currentTime)
+            : audioCtx.currentTime + IMMEDIATE_FIRE_LOOKAHEAD_SECONDS;
 
         const sample = (typeof spec.sample === "string" && spec.sample.length > 0)
             ? spec.sample

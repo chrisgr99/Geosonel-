@@ -197,6 +197,28 @@ export class Transport {
     }
 
     /**
+     * Map an elapsed-seconds value (the simulation clock) to an
+     * absolute AudioContext time, the inverse of elapsedSeconds.
+     * The look-ahead scheduler (§3.6) steps the sim AHEAD of the
+     * playhead and uses this to stamp each fired note with the exact
+     * audio time its step corresponds to, so events schedule at their
+     * true future time rather than "now + a fixed offset".
+     *
+     * Returns null when there is no AudioContext yet. While paused
+     * the play-relative timer is frozen, so a future elapsed value
+     * still maps against the last play anchor; callers clamp to
+     * currentTime at dispatch so a stale/past result never schedules
+     * in the past.
+     * @param {number} elapsed  Elapsed seconds since the last rewind.
+     * @returns {number | null}
+     */
+    audioTimeForElapsed(elapsed) {
+        if (this._audioContext === null) return null;
+        // audioTime = playStart + (elapsed - accumulatedBeforeThisPlay).
+        return this._playStartContextTime + (elapsed - this._accumulatedSeconds);
+    }
+
+    /**
      * Elapsed beats since the last rewind. Returns null when the
      * piece is time-based (no BPM declared).
      * @returns {number | null}

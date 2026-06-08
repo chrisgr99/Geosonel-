@@ -274,6 +274,29 @@ const SIM_DT = 1 / 240;
 const ONTICK_DT = 1 / 60;
 
 /**
+ * Look-ahead scheduler window (§3.6). The simulation steps this far
+ * AHEAD of the audio playhead, so every callback that fires can stamp
+ * its note with the exact upcoming audio time of the step that
+ * produced it (via transport.audioTimeForElapsed) and schedule it
+ * there — instead of all of a frame's notes landing at "now + a fixed
+ * offset". 45 ms comfortably exceeds one render frame (~33 ms at 30
+ * fps), so a stalled frame never strands audio that is already
+ * scheduled. The cost is that asynchronous input lands up to a window
+ * late, which is immaterial for input that isn't clock-aligned.
+ */
+const LOOKAHEAD_WINDOW = 0.045;
+
+/**
+ * Cap on how far the sim will catch up in a single tick. After a long
+ * stall (a backgrounded tab where the render loop didn't fire), the
+ * elapsed jump could otherwise queue thousands of fixed steps and
+ * freeze the frame. Beyond this, the sim snaps forward past the gap —
+ * a post-stall discontinuity is preferable to a hang, and a stall is
+ * non-deterministic regardless.
+ */
+const MAX_CATCHUP_SECONDS = 0.5;
+
+/**
  * Shape the ten raw image-colour signals into the firing context's
  * `col` namespace (lt = lightness, chr = chroma; r/g/y/b/or/li/cy/pu
  * the hues). Grouped under `col` so the hue keys never collide with a
@@ -1322,6 +1345,7 @@ export class Simulation {
                     amplitude: s.velocity,
                     duration: s.duration,
                     pan: s.pan,
+                    audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
             },
             /**
@@ -1338,6 +1362,7 @@ export class Simulation {
                     bank: s.bank,
                     sample: s.sample,
                     amplitude: s.velocity,
+                    audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
             },
         };
@@ -1577,6 +1602,7 @@ export class Simulation {
                     amplitude: s.velocity,
                     duration: s.duration,
                     pan: s.pan,
+                    audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
             },
             /** @param {...any} args  playSound(sample, vel?) or ("bank", sample, vel?) or ({...}). */
@@ -1588,6 +1614,7 @@ export class Simulation {
                     bank: s.bank,
                     sample: s.sample,
                     amplitude: s.velocity,
+                    audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
             },
         };
@@ -1965,14 +1992,24 @@ export class Simulation {
                 return;
             }
         }
-        const delta = elapsed - this._lastElapsed;
         this._lastElapsed = elapsed;
-        if (delta <= 0) return;
-        this._accumulator += delta;
-        while (this._accumulator >= SIM_DT) {
+        // Only the look-ahead scheduler advances the clock; a paused
+        // transport freezes the sim where it is (already a window
+        // ahead of the playhead, ready to resume in step).
+        if (!this._transport.isPlaying) return;
+        // Step AHEAD of the playhead by LOOKAHEAD_WINDOW so each fired
+        // note's stamped audio time lies in the future. _simTime tracks
+        // (elapsed + window); the sub-window leftover carries naturally
+        // because _simTime persists across ticks. After a long stall,
+        // snap forward rather than queue a freeze-inducing run of steps.
+        const target = elapsed + LOOKAHEAD_WINDOW;
+        if (target - this._simTime > MAX_CATCHUP_SECONDS) {
+            this._simTime = target - MAX_CATCHUP_SECONDS;
+            this._accumulator = 0;
+        }
+        while (this._simTime + SIM_DT <= target) {
             this._step(SIM_DT);
             this._simTime += SIM_DT;
-            this._accumulator -= SIM_DT;
         }
     }
 
@@ -3271,6 +3308,7 @@ export class Simulation {
                     amplitude: s.velocity,
                     duration: s.duration,
                     pan: s.pan,
+                    audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
             },
             /**
@@ -3289,6 +3327,7 @@ export class Simulation {
                     bank: s.bank,
                     sample: s.sample,
                     amplitude: s.velocity,
+                    audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
             },
         };
