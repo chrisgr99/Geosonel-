@@ -1026,7 +1026,17 @@ async function main() {
             dispatchSelectedObjectIds(canvas.getSelection());
             dispatchKnownObjectIds();
             dispatchMutedObjectIds();
-            messages.write("Scene updated.");
+            // A script.js compile error is non-fatal: the objects above
+            // still loaded and display; only the callbacks are inert
+            // until it's fixed. Surface it without hiding the objects.
+            if (result.scriptError) {
+                messages.write(
+                    `Script error — objects loaded, callbacks inactive: ${result.scriptError}`,
+                    "error",
+                );
+            } else {
+                messages.write("Scene updated.");
+            }
         } else {
             messages.write(result.error ?? "Unknown load error.", "error");
         }

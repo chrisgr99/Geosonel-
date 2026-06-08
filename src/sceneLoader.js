@@ -143,30 +143,43 @@ export class SceneLoader {
             return errorResult("scene.json must be a JSON object at top level.");
         }
 
-        // --- 2. Parse script.js with Acorn for function ---
-        //        names and labelled pattern blocks.
+        // --- 2/3. Parse + execute script.js for the function map ---
+        //        and labelled blocks. A script.js error (syntax or
+        //        runtime) is NON-FATAL: the objects come from
+        //        scene.json, not the script, so we must still load and
+        //        DISPLAY them. On a script error we proceed with an
+        //        empty function map (callbacks inert until the script
+        //        is fixed) and carry the error message back so the
+        //        caller can surface it. Only scene.json problems are
+        //        fatal — they genuinely prevent building objects.
+        //
+        //        Labelled pattern blocks are replaced with whitespace
+        //        before execution so they don't run at load time. A
+        //        `score` object is passed in so script.js can set
+        //        score-wide kinematics; it's pre-filled with defaults
+        //        and read back after execution.
+        const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
+        /** @type {Object<string, Function>} */
+        let functionMap = {};
+        /** @type {any[]} */
+        let labelledBlocks = [];
+        /** @type {string | null} */
+        let scriptError = null;
+
         const parseResult = extractTopLevelFunctionNames(scriptFile.content);
         if (!parseResult.ok) {
-            return errorResult(parseResult.error);
+            scriptError = parseResult.error;
+        } else {
+            const split = splitLabelledStatements(parseResult.ast, scriptFile.content);
+            labelledBlocks = split.labelledBlocks;
+            const execResult = executeScript(
+                split.strippedSource, parseResult.names, scoreGlobal, this._print);
+            if (!execResult.ok) {
+                scriptError = execResult.error;
+            } else {
+                functionMap = execResult.functions;
+            }
         }
-        const functionNames = parseResult.names;
-        const { strippedSource, labelledBlocks } =
-            splitLabelledStatements(parseResult.ast, scriptFile.content);
-
-        // --- 3. Execute the stripped script.js to get a ---
-        //        function map. Labelled pattern blocks have
-        //        been replaced with whitespace, so they do
-        //        not run at load time. A `score` object is
-        //        passed in so script.js can set score-wide
-        //        kinematics (e.g. score.kinematics.jitter = 0.5);
-        //        it is pre-filled with the defaults and read
-        //        back after execution.
-        const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
-        const execResult = executeScript(strippedSource, functionNames, scoreGlobal, this._print);
-        if (!execResult.ok) {
-            return errorResult(execResult.error);
-        }
-        const functionMap = execResult.functions;
 
         // --- 4. Build the Scene ---
         const scene = new Scene();
@@ -207,7 +220,10 @@ export class SceneLoader {
             }
         }
 
-        return { success: true, scene, error: null };
+        // Success: objects built and displayable. scriptError is non-
+        // null when script.js failed to compile — the scene still
+        // loads (callbacks inert) and the caller reports the error.
+        return { success: true, scene, error: null, scriptError };
     }
 
     /**
