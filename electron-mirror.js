@@ -60,6 +60,7 @@ const SCENE_FILENAME = 'scene.json';
 const BEHAVIOURS_FILENAME = 'script.js';
 const RUNTIME_STATE_FILENAME = 'runtime-state.json';
 const FOCUS_FILENAME = 'focus.json';
+const EVENT_TRACE_FILENAME = 'event-trace.json';
 const AGENTS_FILENAME = 'AGENTS.md';
 const SCENE_SCHEMA_FILENAME = 'sceneSchema.md';
 const MIRROR_DOCS_DIR = 'mirror-docs';
@@ -300,6 +301,7 @@ function makeStubSnapshot(isLive) {
                 ACTIVE_SCORE_FILENAME,
                 RUNTIME_STATE_FILENAME,
                 FOCUS_FILENAME,
+                EVENT_TRACE_FILENAME,
                 LAST_APPLY_RESULT_FILENAME,
                 AGENTS_FILENAME,
                 SCENE_SCHEMA_FILENAME,
@@ -1036,6 +1038,7 @@ async function pushScore(payload) {
                 ACTIVE_SCORE_FILENAME,
                 RUNTIME_STATE_FILENAME,
                 FOCUS_FILENAME,
+                EVENT_TRACE_FILENAME,
                 LAST_APPLY_RESULT_FILENAME,
                 AGENTS_FILENAME,
                 SCENE_SCHEMA_FILENAME,
@@ -1186,6 +1189,45 @@ async function pushFocus(payload) {
 
     await writeAtomic(
         path.join(folder, FOCUS_FILENAME),
+        JSON.stringify(snapshot, null, 2),
+        null,
+    );
+}
+
+/**
+ * Write event-trace.json with a rolling buffer of recently-fired
+ * musical events. Each entry carries the emitted note/sound and a
+ * snapshot of the firing context's colour signals (this.col.*) and
+ * velocity, so an AI reading the mirror can see the actual signal
+ * values a score produces — e.g. the range the green channel takes
+ * across recent beats — and reason about how to scale them.
+ *
+ * Observation-only. The renderer polls the simulation's trace while
+ * the transport plays and pushes here when it changes; a null/empty
+ * payload writes an empty trace. No-op when the mirror is disabled.
+ *
+ * @param {object | null} payload
+ */
+async function pushEventTrace(payload) {
+    if (!enabled) return;
+
+    const folder = getMirrorFolderPath();
+    await fsp.mkdir(folder, { recursive: true });
+
+    const entries = (payload !== null && typeof payload === 'object'
+        && Array.isArray(payload.entries))
+        ? payload.entries
+        : [];
+
+    const snapshot = {
+        protocolVersion: PROTOCOL_VERSION,
+        capturedAt: new Date().toISOString(),
+        count: entries.length,
+        entries,
+    };
+
+    await writeAtomic(
+        path.join(folder, EVENT_TRACE_FILENAME),
         JSON.stringify(snapshot, null, 2),
         null,
     );
@@ -1430,4 +1472,4 @@ function shutdown() {
     writeActiveScoreStubSync(false);
 }
 
-module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, pushFocus, setMainWindow, writeApplyResult, cancelBatch };
+module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, pushFocus, pushEventTrace, setMainWindow, writeApplyResult, cancelBatch };

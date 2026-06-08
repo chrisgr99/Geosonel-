@@ -249,6 +249,7 @@ import { computeOffset } from "./seed/seedOffset.js";
 import { deriveCurveBeatPoints } from "./beatPoints.js";
 import { buildNoteSpec, buildSoundSpec } from "./emitters.js";
 import { setCallbackContext, clearCallbackContext } from "./callbackContext.js";
+import { EventTrace } from "./eventTrace.js";
 import { sampleCurve } from "./curveGeometry.js";
 
 /**
@@ -1141,6 +1142,17 @@ export class Simulation {
          */
         this._lastCallbackContexts = new Map();
         /**
+         * Rolling trace of recent discrete musical events (onActiveBeat,
+         * collision, beenTriggered) — each emitted note/sound plus the
+         * firing context's colour signals and velocity. Read through the
+         * composition mirror so an AI can see the actual signal values a
+         * score produces and reason about scaling. onTick is excluded
+         * (it fires continuously, not on the beat points). Cleared on
+         * setScene and rewind. See src/eventTrace.js.
+         * @type {EventTrace}
+         */
+        this._eventTrace = new EventTrace();
+        /**
          * Audio sink for procedural notes and sounds fired from a
          * sprite's onTick (and, later, collision) callbacks via
          * the context's playNote / playSound. Called with
@@ -1195,6 +1207,79 @@ export class Simulation {
     lastContextForFunction(name) {
         if (typeof name !== "string") return null;
         return this._lastCallbackContexts.get(name) ?? null;
+    }
+
+    /**
+     * A point-in-time snapshot of the recent-event trace: a change
+     * counter plus the buffered entries. The mirror push pipeline polls
+     * this while playing and writes event-trace.json when the counter
+     * advances. See src/eventTrace.js and the trace section in
+     * mirror-docs/AGENTS.md.
+     * @returns {{ seq: number, entries: object[] }}
+     */
+    eventTraceSnapshot() {
+        return this._eventTrace.snapshot();
+    }
+
+    /**
+     * Record a fired pitched-note event in the trace. Called from an
+     * event callback's playNote after the audio sink fires. Captures
+     * the driving colour signals and velocity alongside the emitted
+     * note so an AI reading the trace can reason about signal-to-note
+     * scaling. `s` is the buildNoteSpec result.
+     * @param {string} objectId
+     * @param {string} callback  The callback function's name.
+     * @param {any} col  The this.col.* signal snapshot at fire time.
+     * @param {number} vel  The this.vel value at fire time.
+     * @param {number} beat
+     * @param {number} time  Simulation time (seconds).
+     * @param {any} s
+     */
+    _recordNoteEvent(objectId, callback, col, vel, beat, time, s) {
+        this._eventTrace.record({
+            time,
+            beat,
+            object: objectId,
+            callback,
+            col,
+            vel,
+            emit: {
+                kind: "note",
+                sound: s.sound,
+                note: s.note,
+                velocity: s.velocity,
+                duration: s.duration,
+                pan: s.pan,
+            },
+        });
+    }
+
+    /**
+     * Record a fired sample event in the trace. Counterpart of
+     * _recordNoteEvent for playSound; `s` is the buildSoundSpec result.
+     * @param {string} objectId
+     * @param {string} callback
+     * @param {any} col
+     * @param {number} vel
+     * @param {number} beat
+     * @param {number} time
+     * @param {any} s
+     */
+    _recordSoundEvent(objectId, callback, col, vel, beat, time, s) {
+        this._eventTrace.record({
+            time,
+            beat,
+            object: objectId,
+            callback,
+            col,
+            vel,
+            emit: {
+                kind: "sound",
+                bank: s.bank,
+                sample: s.sample,
+                velocity: s.velocity,
+            },
+        });
     }
 
     /**
@@ -1342,6 +1427,7 @@ export class Simulation {
         // position for a trigger — so this.col reads the pixel where
         // the event happened.
         const px = this._sampleColorUnderObject(obj, selfKind);
+        const col = colFromSignals(px);
         const ctx = {
             id: selfId,
             kind: selfKind,
@@ -1352,7 +1438,7 @@ export class Simulation {
             hitSpeed,
             vel,
             velocity: vel,
-            col: colFromSignals(px),
+            col,
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -1375,6 +1461,7 @@ export class Simulation {
                     pan: s.pan,
                     audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
+                self._recordNoteEvent(selfId, name, col, vel, beat, simTime, s);
             },
             /**
              * Fire a sample from this object's sound bank (§3.3).
@@ -1392,6 +1479,7 @@ export class Simulation {
                     amplitude: s.velocity,
                     audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
+                self._recordSoundEvent(selfId, name, col, vel, beat, simTime, s);
             },
         };
 
@@ -1604,6 +1692,10 @@ export class Simulation {
             ? this._canvas.sampleImageOKLCh(sample.x + state.dx, sample.y + state.dy)
             : null;
         const px = imageSignalsFromOKLCh(oklch);
+        const col = colFromSignals(px);
+        const callbackName = (typeof curve.onActiveBeatFunction === "string"
+            && curve.onActiveBeatFunction !== "")
+            ? curve.onActiveBeatFunction : "onActiveBeat";
 
         // The firing context is bound as the callback's `this`
         // (§3.2): reads are `this.vel` / `this.velocity` / `this.col.*`,
@@ -1619,7 +1711,7 @@ export class Simulation {
             vel,
             velocity: vel,
             // The ten image-colour signals beneath the beat point.
-            col: colFromSignals(px),
+            col,
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -1636,6 +1728,7 @@ export class Simulation {
                     pan: s.pan,
                     audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
+                self._recordNoteEvent(selfId, callbackName, col, vel, beat, simTime, s);
             },
             /** @param {...any} args  playSound(sample, vel?) or ("bank", sample, vel?) or ({...}). */
             playSound(...args) {
@@ -1648,6 +1741,7 @@ export class Simulation {
                     amplitude: s.velocity,
                     audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
+                self._recordSoundEvent(selfId, callbackName, col, vel, beat, simTime, s);
             },
         };
 
@@ -1785,6 +1879,7 @@ export class Simulation {
         this._collisionDisabled.clear();
         this._activeBeatDisabled.clear();
         this._lastCallbackContexts.clear();
+        this._eventTrace.clear();
         this._scene = scene;
         if (scene === null) {
             this._curveState.clear();
@@ -2362,6 +2457,7 @@ export class Simulation {
         // Drop cached firing contexts so the live value tooltip shows
         // nothing for a callback that hasn't fired since the rewind.
         this._lastCallbackContexts.clear();
+        this._eventTrace.clear();
         for (const state of this._curveState.values()) {
             state.t = 0;
             state.cycleProgress = 0;

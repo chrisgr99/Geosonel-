@@ -186,6 +186,13 @@ contextBridge.exposeInMainWorld('gxwMirror', {
   // (debounced) on selection changes in the Script tab.
   pushFocus: (payload) =>
     ipcRenderer.invoke('gxw:mirror-push-focus', payload),
+  // Write event-trace.json with a rolling buffer of recently
+  // fired musical events (emitted note/sound + the firing
+  // context's colour signals and velocity). Polled from the
+  // renderer while the transport plays so an AI can see the
+  // actual signal values a score produces.
+  pushEventTrace: (payload) =>
+    ipcRenderer.invoke('gxw:mirror-push-event-trace', payload),
   // Write last-apply-result.json with the outcome of the
   // renderer's most recent applyBatch call (Phase 1B
   // commit 3). Called after every batch — success or

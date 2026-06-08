@@ -86,6 +86,12 @@ const BUNDLE_BEHAVIORS_FILENAME = "script.js";
 const MIRROR_BEHAVIOURS_FILENAME = "script.js";
 const MIRROR_SCENE_FILENAME = "scene.json";
 
+// How often, while playing, the event trace is polled and flushed to
+// event-trace.json. Coarse on purpose: the trace is a diagnostic an AI
+// reads between edits, not a real-time feed, so a few flushes per
+// second is plenty and keeps the IPC/write load negligible.
+const TRACE_FLUSH_MS = 300;
+
 export class MirrorPush {
     /**
      * Subscribe to state changes in the confirm-to-apply
@@ -247,6 +253,15 @@ export class MirrorPush {
         /** @type {boolean} */
         this._pushingRuntime = false;
 
+        // Event-trace flushing. While the transport plays, an interval
+        // polls the simulation's rolling event trace and writes
+        // event-trace.json whenever new events have fired (tracked by
+        // the snapshot's seq counter, so an idle score writes nothing).
+        /** @type {ReturnType<typeof setInterval> | null} */
+        this._traceFlushTimer = null;
+        /** @type {number} */
+        this._lastTraceSeq = -1;
+
         // --- Apply pipeline (Phase 1B commit 2) ---
         //
         // References used by applyBatch to push validated
@@ -386,6 +401,7 @@ export class MirrorPush {
         this._enabled = Boolean(enabled);
         if (!this._enabled) {
             this._cancelDebounce();
+            this._stopTraceFlush();
             return;
         }
         if (!wasEnabled && this._bundle !== null) {
@@ -581,18 +597,91 @@ export class MirrorPush {
             this._unsubscribeBpm = null;
         }
         this._transport = transport;
-        if (transport === null) return;
+        if (transport === null) {
+            this._stopTraceFlush();
+            return;
+        }
         this._unsubscribePlay = transport.on("play", () => {
             void this._pushRuntimeStateNow();
             this._scheduleDebouncedPush();
+            // The "play" event fires on both play() and pause().
+            // Drive the trace flusher from the resulting state: run the
+            // polling interval while playing, and on pause do one final
+            // flush (to capture events fired since the last poll) and
+            // stop polling.
+            if (transport.isPlaying) {
+                this._startTraceFlush();
+            } else {
+                this._flushEventTrace();
+                this._stopTraceFlush();
+            }
         });
         this._unsubscribeRewind = transport.on("rewind", () => {
             void this._pushRuntimeStateNow();
             this._scheduleDebouncedPush();
+            // Rewind cleared the simulation's trace; flush so
+            // event-trace.json reflects the now-empty run.
+            this._flushEventTrace();
         });
         this._unsubscribeBpm = transport.on("bpm", () => {
             this._scheduleDebouncedPush();
         });
+    }
+
+    /**
+     * Start the event-trace polling interval (idempotent). Every
+     * TRACE_FLUSH_MS it flushes the simulation's trace to
+     * event-trace.json if new events have fired. Runs only while the
+     * transport is playing; _flushEventTrace itself no-ops when the
+     * mirror is disabled or nothing changed, so the interval is cheap.
+     */
+    _startTraceFlush() {
+        if (this._traceFlushTimer !== null) return;
+        this._traceFlushTimer = setInterval(() => {
+            this._flushEventTrace();
+        }, TRACE_FLUSH_MS);
+    }
+
+    /** Stop the event-trace polling interval (idempotent). */
+    _stopTraceFlush() {
+        if (this._traceFlushTimer === null) return;
+        clearInterval(this._traceFlushTimer);
+        this._traceFlushTimer = null;
+    }
+
+    /**
+     * Flush the simulation's event trace to event-trace.json when it
+     * has changed since the last flush. No-op when the mirror is
+     * disabled, the simulation/bridge is missing, or the trace's seq
+     * counter is unchanged (an idle score writes nothing). Best-effort:
+     * a push failure is swallowed — the trace is a diagnostic, never
+     * worth destabilising playback over.
+     */
+    _flushEventTrace() {
+        if (!this._enabled) return;
+        const sim = this._simulation;
+        if (sim === null || typeof sim.eventTraceSnapshot !== "function") return;
+
+        const snap = sim.eventTraceSnapshot();
+        if (snap.seq === this._lastTraceSeq) return;
+
+        /** @type {any} */
+        const gxwMirror = (/** @type {any} */ (window)).gxwMirror;
+        if (gxwMirror === undefined || gxwMirror === null ||
+            typeof gxwMirror.pushEventTrace !== "function") {
+            return;
+        }
+
+        this._lastTraceSeq = snap.seq;
+        try {
+            const result = gxwMirror.pushEventTrace({ entries: snap.entries });
+            if (result !== null && typeof result === "object" &&
+                typeof result.catch === "function") {
+                result.catch(() => {});
+            }
+        } catch (_e) {
+            // best-effort; ignore mirror push failures
+        }
     }
 
     /**

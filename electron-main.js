@@ -1389,6 +1389,16 @@ function registerStorageHandlers() {
     await mirror.pushFocus(payload);
   });
 
+  // Receive a rolling buffer of recently-fired musical events
+  // (emitted note/sound plus the firing context's colour signals and
+  // velocity) and write it as event-trace.json. Polled from the
+  // renderer while the transport plays so an AI reading the mirror can
+  // see the actual signal values a score produces and reason about
+  // scaling.
+  ipcMain.handle('gxw:mirror-push-event-trace', async (_event, payload) => {
+    await mirror.pushEventTrace(payload);
+  });
+
   // Phase 1B commit 3: receive the outcome of the
   // renderer's most recent applyBatch call and write it
   // as last-apply-result.json. Called after every batch,

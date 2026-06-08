@@ -27,6 +27,7 @@ The folder contains two kinds of file: round-trip files that the AI may edit (th
 - `active-score.json` — protocol metadata: score identity, sync timestamp, current transport snapshot, files lists.
 - `runtime-state.json` — simulation-side state at the moment of the last at-rest capture. Schema below.
 - `focus.json` — the user's current text-cursor location in the Script editor: the deictic "this" pointer. Schema below.
+- `event-trace.json` — a rolling buffer of recently-fired musical events with the signal values that drove them. Schema below.
 - `last-apply-result.json` — outcome of the most recent AI-edit batch (success or rejection with details). Schema below.
 - `sceneSchema.md` — scene.json reference, generated from `src/sceneSchema.js` in the repo.
 - `AGENTS.md` — this file.
@@ -55,7 +56,7 @@ The first file to read on any new conversation. Top-level shape:
   },
   "files": {
     "roundTrip": ["scene.json", "script.js", "tofes.jpg"],
-    "observationOnly": ["active-score.json", "runtime-state.json", "focus.json", "last-apply-result.json", "sceneSchema.md", "AGENTS.md"]
+    "observationOnly": ["active-score.json", "runtime-state.json", "focus.json", "event-trace.json", "last-apply-result.json", "sceneSchema.md", "AGENTS.md"]
   }
 }
 ```
@@ -163,6 +164,52 @@ Shape:
 - `range` — document offsets `{from, to}` of `expression`, or `null`.
 
 `focus` is `null` (no active pointer) when the user is off the Script tab, or when the caret sits on blank space outside any function with nothing selected. Treat a `null` focus as "the user hasn't pointed at anything specific" — fall back to asking which object or which code they mean.
+
+## event-trace.json
+
+A rolling buffer of the most recent discrete musical events the score fired, **each paired with the signal values that drove it**. This is how you see what a score actually *does* as it plays — not just the code, but the live numbers. The headline use: when the user asks how to scale a callback (e.g. "map green to pitch"), read the trace to see the real range `this.col.g` takes across recent beats and choose a mapping from data instead of guessing.
+
+Captured on the **event callbacks** — `onActiveBeat`, `hasCollided`, `beenTriggered` (and `autoMessage` once wired). **`onTick` is intentionally excluded**: it fires continuously at the control rate rather than on the beat points where musical events happen, so tracing it would flood the buffer with non-event data.
+
+Updated while the transport plays (polled a few times a second; the file only changes when new events fire) and once more on pause, and emptied on rewind / scene change. The buffer holds the last ~64 events, newest last. Electron-only.
+
+Shape:
+
+```json
+{
+  "protocolVersion": 1,
+  "capturedAt": "2026-06-08T21:50:00.000Z",
+  "count": 2,
+  "entries": [
+    {
+      "time": 12.34,
+      "beat": 14.8,
+      "object": "CRV2",
+      "callback": "onActiveBeat_CRV2",
+      "col": { "r": 0.62, "g": 0.18, "b": 0.05, "y": 0.4, "or": 0.5, "li": 0.47, "cy": 0.1, "pu": 0.08, "lt": 0.47, "chr": 0.33 },
+      "vel": 0.78,
+      "emit": { "kind": "note", "sound": "piano", "note": 51, "velocity": 0.78, "duration": null, "pan": null }
+    },
+    {
+      "time": 12.9,
+      "beat": 15.5,
+      "object": "CRV3",
+      "callback": "onActiveBeat_CRV3",
+      "col": { "r": 0.2, "g": 0.7, "b": 0.1, "y": 0.5, "or": 0.3, "li": 0.55, "cy": 0.4, "pu": 0.12, "lt": 0.55, "chr": 0.6 },
+      "vel": 0.9,
+      "emit": { "kind": "sound", "bank": null, "sample": "bd", "velocity": 0.9 }
+    }
+  ]
+}
+```
+
+- `time` — simulation time in seconds; `beat` — elapsed musical beats at fire time.
+- `object` / `callback` — which object fired and the callback function that ran.
+- `col` — the ten image-colour signals beneath the firing point at that instant, the same `this.col.*` the callback reads. Each is roughly 0–1. **This is the field to mine for scaling decisions.**
+- `vel` — the `this.vel` value at fire time (beat strength rescaled 0–1; 1.0 for collisions).
+- `emit` — what was played. `kind:"note"` carries `sound` (instrument override or null for the object's default voice), `note` (MIDI, may be fractional), `velocity`, and optional `duration`/`pan`. `kind:"sound"` carries `bank`/`sample` and `velocity`.
+
+`entries` is empty when nothing has fired since the last rewind / scene change, or when the score isn't playing. A note appearing in `emit` means the callback *requested* it; it does not guarantee audio was produced (e.g. a sample instrument whose bank hasn't loaded fires here but may be silent).
 
 ## Coordinate system
 
