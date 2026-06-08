@@ -19,13 +19,14 @@ The folder contains two kinds of file: round-trip files that the AI may edit (th
 **Round-trip files:**
 
 - `scene.json` — composition data: object positions, geometries, patterns, score-level harmony. Schema documented in `sceneSchema.md`.
-- `behaviours.js` — per-object JavaScript callback code (`hasHit_<id>`, `beenHit_<id>`, `onTick_<id>` for each object that opts in).
+- `script.js` — per-object JavaScript callback code (`onActiveBeat_<id>`, `onTick_<id>`, `hasCollided_<id>`, `beenTriggered_<id>`, `autoMessage_<id>` for each object that opts in).
 - the score's image file (varies by name, e.g. `tofes.jpg`) — the background image. **See "Image replacement" below.**
 
 **Observation-only files:**
 
 - `active-score.json` — protocol metadata: score identity, sync timestamp, current transport snapshot, files lists.
 - `runtime-state.json` — simulation-side state at the moment of the last at-rest capture. Schema below.
+- `focus.json` — the user's current text-cursor location in the Script editor: the deictic "this" pointer. Schema below.
 - `last-apply-result.json` — outcome of the most recent AI-edit batch (success or rejection with details). Schema below.
 - `sceneSchema.md` — scene.json reference, generated from `src/sceneSchema.js` in the repo.
 - `AGENTS.md` — this file.
@@ -53,8 +54,8 @@ The first file to read on any new conversation. Top-level shape:
     "bpm": 120
   },
   "files": {
-    "roundTrip": ["scene.json", "behaviours.js", "tofes.jpg"],
-    "observationOnly": ["active-score.json", "runtime-state.json", "last-apply-result.json", "sceneSchema.md", "AGENTS.md"]
+    "roundTrip": ["scene.json", "script.js", "tofes.jpg"],
+    "observationOnly": ["active-score.json", "runtime-state.json", "focus.json", "last-apply-result.json", "sceneSchema.md", "AGENTS.md"]
   }
 }
 ```
@@ -71,7 +72,7 @@ Success shape:
 {
   "status": "success",
   "timestamp": "2026-05-26T22:15:33.412Z",
-  "applied": ["scene.json", "behaviours.js"]
+  "applied": ["scene.json", "script.js"]
 }
 ```
 
@@ -86,7 +87,7 @@ Rejection shape:
 }
 ```
 
-The `applied` list on success reflects what actually landed in the bundle, in mirror-surface naming. The `filename` and `error` on rejection identify the first file that failed validation — GeoSonel short-circuits on the first failure, so a rejection record describes one specific problem rather than every problem in the batch. When a batch is rejected, the bundle's last-known-good state is force-pushed back to the mirror folder, so the round-trip files (`scene.json`, `behaviours.js`, the image) revert to their pre-batch content within the same write window that produces this file.
+The `applied` list on success reflects what actually landed in the bundle, in mirror-surface naming. The `filename` and `error` on rejection identify the first file that failed validation — GeoSonel short-circuits on the first failure, so a rejection record describes one specific problem rather than every problem in the batch. When a batch is rejected, the bundle's last-known-good state is force-pushed back to the mirror folder, so the round-trip files (`scene.json`, `script.js`, the image) revert to their pre-batch content within the same write window that produces this file.
 
 ## runtime-state.json
 
@@ -131,6 +132,38 @@ A curve's `cursor` is `null` when the shape cannot be sampled — usually a dege
 
 `musicalPosition` is `null` for time-based pieces or when no time signature is set.
 
+## focus.json
+
+The user's current text-cursor location in the Script editor — the **deictic "this" pointer**. When the user is working with you in Claude Desktop they can't hover the canvas or point at code on their screen, so they place the text caret on the code they mean and refer to it ("what does this do?", "change this", "why is this firing twice?"). Read focus.json to resolve that "this".
+
+Updated (debounced) whenever the caret or selection moves in the Script tab. When the user is on any other tab, `focus` is `null` — there is no active code pointer. The file is written only in the Electron build; in environments without the editor it stays absent.
+
+Shape:
+
+```json
+{
+  "protocolVersion": 1,
+  "capturedAt": "2026-06-08T15:30:00.000Z",
+  "focus": {
+    "function": "onActiveBeat_CRV2",
+    "expression": "this.col.r",
+    "selection": null,
+    "caret": { "line": 4, "column": 17, "offset": 92 },
+    "lineText": "    playNote(60 + this.col.r * 12, this.vel)",
+    "range": { "from": 86, "to": 96 }
+  }
+}
+```
+
+- `function` — the name of the callback function enclosing the caret, or `null` if the caret is at top level / outside any function. This tells you *which object's behaviour* the user is pointing at (the `_<id>` suffix identifies the object).
+- `expression` — the identifier or member expression directly under the caret (e.g. hovering anywhere in `this.col.r` yields the whole chain), or `null` if the caret isn't on an expression. This is the most likely referent of "this".
+- `selection` — the selected text if the user has a non-empty selection, else `null`. A selection is a stronger, more explicit pointer than the caret expression; prefer it when present.
+- `caret` — `line` and `column` are 1-based; `offset` is the 0-based document character offset.
+- `lineText` — the full text of the caret's line, for context.
+- `range` — document offsets `{from, to}` of `expression`, or `null`.
+
+`focus` is `null` (no active pointer) when the user is off the Script tab, or when the caret sits on blank space outside any function with nothing selected. Treat a `null` focus as "the user hasn't pointed at anything specific" — fall back to asking which object or which code they mean.
+
 ## Coordinate system
 
 All positions in `scene.json` and the position fields in `runtime-state.json` are in **image space**: an abstract 1000x1000 coordinate grid. Image space is independent of the user's viewport size, zoom level, or window resolution. AI edits should always use image-space coordinates. Never assume pixel coordinates from the canvas's current render size.
@@ -141,37 +174,43 @@ A curve's authored shape uses image-space coordinates. At runtime the curve may 
 
 The score's image is often the compositional starting point. Replacing it (writing a new file under the same name, or writing a file under a new name and updating `imageName` in scene.json) is a destructive edit that can fundamentally change what the score is "about." Treat image edits as user-only territory unless the user has explicitly asked for an image replacement and confirmed it. When you are uncertain, ask before touching the image file.
 
-The image lives in `files.roundTrip` in active-score.json so the protocol permits AI replacement, but the permission is much narrower in practice than for scene.json or behaviours.js edits.
+The image lives in `files.roundTrip` in active-score.json so the protocol permits AI replacement, but the permission is much narrower in practice than for scene.json or script.js edits.
 
 ## Editing scene.json
 
 Use `sceneSchema.md` (in this folder) as the field-by-field reference. The bundle validates AI-edited scene.json against `src/sceneSchema.js` (the authoritative source the .md is derived from). A failing edit is rejected as a whole batch — the in-memory state is not changed, the mirror is rewritten with the last-known-good content, and `last-apply-result.json` carries the failure detail.
 
-Object IDs (`CRV1`, `TRG2`, etc.) are referenced by callback function names in `behaviours.js` (e.g. `hasHit_CRV1`). Renaming an ID without renaming the matching callback breaks the binding silently. When restructuring IDs, update both files in the same batch.
+Object IDs (`CRV1`, `TRG2`, etc.) are referenced by callback function names in `script.js` (e.g. `onActiveBeat_CRV1`). Renaming an ID without renaming the matching callback breaks the binding silently. When restructuring IDs, update both files in the same batch.
 
-## Editing behaviours.js
+## Editing script.js
 
-`behaviours.js` holds per-object JavaScript callback functions. Function names follow the convention `<slot>_<id>`: `hasHit_CRV1` is the hit-emitter for curve `CRV1`, `beenHit_TRG3` is the hit-receiver for trigger `TRG3`, `onTick_SPR2` is the per-tick callback for sprite `SPR2`. Whether a callback fires depends on the matching gate boolean on the object (`canHit`, `canBeHit`, `canTick`) plus the function name being resolvable.
+`script.js` holds per-object JavaScript callback functions. Function names follow the convention `<slot>_<id>`. The slots are:
 
-The callback execution context (the `ctx` parameter), pattern-emission API, and the modulatable-parameter machinery are described in `DESIGN.md` Section 9 (Behaviour Slots) and Section 10 (Pattern Language). Read those before authoring substantial behaviour code.
+- `onActiveBeat_<id>` — fires when a cursor crosses one of this object's active beat points (curves and sprites). Gated by `canActiveBeat`.
+- `onTick_<id>` — fires every simulation control tick (~60 Hz) while the object is live. Gated by `canTick`.
+- `hasCollided_<id>` — fires on this object when it collides with another. Gated by `canCollide`.
+- `beenTriggered_<id>` — fires when another object's cursor crosses this one. Gated by `canBeTriggered`.
+- `autoMessage_<id>` — fires at the object's Automessage Interval. Gated by `canAutoMessage`.
 
-`behaviours.js` is parsed with Acorn before being applied. Syntax errors reject the batch with the parser's message in `last-apply-result.json`.
+So `onActiveBeat_CRV2` is the active-beat callback for curve `CRV2`. Whether a callback fires depends on the matching gate boolean on the object plus the function name being resolvable in `script.js`.
 
-## Atomic write protocol and the .pending sentinel
+Callbacks take **no parameters**. Inside the body, `this` is bound to the firing object's context: `this.vel` / `this.velocity` (beat strength rescaled to 0–1), `this.col.*` (colour signals under the firing point — `r`, `g`, `b`, `y`, `or`, `li`, `cy`, `pu`, `lt`, `chr`), plus other per-slot fields. Sound is emitted with **bare** emitter calls (no `this.` prefix): `playNote(note, vel?, dur?, pan?)`, `playSound(sample, vel?)`, `applyForce(...)`. `playNote("xylophone", 60)` with a leading string overrides the instrument. The pattern-emission API is described in `DESIGN.md` Section 9 (Behaviour Slots) and Section 10 (Pattern Language). Read those before authoring substantial behaviour code.
 
-Files in this folder use temp-and-rename atomic writes. When the bundle pushes content, it writes `scene.json.tmp` then renames to `scene.json`; an AI watching `scene.json` directly never sees a torn write. AIs editing round-trip files should follow the same pattern: write `scene.json.tmp` first, then rename, so the bundle's watcher sees an atomic transition.
+`script.js` is parsed with Acorn before being applied. Syntax errors reject the batch with the parser's message in `last-apply-result.json`.
 
-The `.pending` sentinel is required. Before writing any round-trip file (scene.json, behaviours.js, image), create an empty `.pending` file in the mirror folder as your very first action, before reading or analysing anything. When you finish the batch, remove `.pending`. The sentinel is the protocol-level signal that says "an AI session is in flight"; GeoSonel uses it to accumulate writes as one logical batch and to show the user a thinking indicator from the moment you begin.
+## Atomic write protocol
 
-Writes that arrive while `.pending` is absent are dropped by GeoSonel. They have no effect on the bundle and the user sees an "ignored late write" log line in the message area. This includes any writes that happen after a cancellation (see below); the protocol does not tolerate write-without-sentinel as an oversight.
+Files in this folder use temp-and-rename atomic writes. When the bundle pushes content, it writes `script.js.tmp` then renames to `script.js`; an AI watching `script.js` directly never sees a torn write. AIs editing round-trip files **must** follow the same pattern: write `script.js.tmp` first, then rename, so the bundle's watcher sees a single atomic transition rather than a partial file.
 
-Write `.pending` even when you might end up making no changes. Do your reading and thinking, decide what to do, remove `.pending` whether or not you wrote anything. An empty batch is a no-op for the apply pipeline; the point is the early signal to the user that you are working on the request.
+That atomic write is all the protocol needs. A completed rename of a round-trip file (`scene.json`, `script.js`, image) is itself the signal to GeoSonel that an AI has proposed a change. GeoSonel debounces briefly (a fraction of a second) so that several files written back-to-back coalesce into one batch, then surfaces the change to the user in the confirm-to-apply dialog. There is no separate "start" handshake to perform — just write the file(s).
 
-The sentinel content can be empty or carry a brief identifier; only the file's existence matters to GeoSonel.
+**No `.pending` sentinel is required.** Earlier versions of this protocol required creating a `.pending` marker file before writing. That is no longer necessary: a bare atomic write to a round-trip file is processed on its own. (The `.pending` sentinel is still honoured if present — it lets an AI explicitly bracket a multi-file batch that spans more than the debounce window — but for the normal case of editing one file, do not bother with it. Just write the file.)
 
-If `.pending` vanishes while you are mid-batch and you did not remove it yourself, GeoSonel has cancelled your run, typically because the user clicked Cancel in the confirm-to-apply dialog. Subsequent writes will be dropped as orphans regardless of what you do next. Stop writing immediately, tell the user that the in-flight changes were cancelled, and wait for further instruction before starting any new batch.
+To make several related edits land as one batch, write all the affected files within roughly a third of a second of each other; the debounce groups them. For edits that take longer to produce, you may still create an empty `.pending` file first and remove it when done — while `.pending` exists, GeoSonel accumulates writes and only applies them when you remove it.
 
-If `.pending` is held for more than 90 seconds without new round-trip file activity, GeoSonel treats it as orphaned: the file is removed automatically and whatever round-trip files accumulated are processed as a normal batch (validation still applies). The 90-second window is for inactivity. Keep making writes and the timeout resets, so a long sequence of edits with intervening thinking is fine.
+After GeoSonel processes a batch it writes `last-apply-result.json` (see above) with the outcome. Read it to confirm your edit was accepted, or to get the validation error if it was rejected.
+
+If the user clicks Cancel in the confirm-to-apply dialog, your proposed change is discarded and the bundle's last-known-good state is force-pushed back to the mirror, so the round-trip files revert to their pre-edit content. Re-read the files before proposing anything further.
 
 ## When in doubt
 
@@ -191,7 +230,7 @@ The user's gesture is always authoritative. If the user switches scores while an
 - Scene structure, curves, triggers, sprites (Sections 3–6)
 - Transport and tempo (Section 7)
 - Collision model (Section 8)
-- Behaviour slots and `behaviours.js` (Section 9)
+- Behaviour slots and `script.js` (Section 9)
 - Pattern language (Section 10)
 - Score orchestration and harmony (Section 11)
 - Pattern engine (Section 12)

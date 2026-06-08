@@ -174,6 +174,56 @@ function expressionRangeAt(state, pos) {
 }
 
 /**
+ * Compute the user's current focus in the Script editor: the deictic
+ * "this" pointer for an AI working through the composition mirror. The
+ * user places the text cursor on the code they mean (they can't hover
+ * the canvas while typing in Claude Desktop) and refers to it. We
+ * report the enclosing callback function, the expression/identifier
+ * under the caret, the selected text if any, and the caret's line and
+ * column, so an AI can resolve "this" without a screenshot.
+ *
+ * Returns null when there's nothing meaningful to report (empty doc /
+ * caret on blank space outside any function). The caller writes the
+ * result to focus.json.
+ *
+ * @param {any} state CodeMirror EditorState
+ * @returns {{
+ *   function: string | null,
+ *   expression: string | null,
+ *   selection: string | null,
+ *   caret: { line: number, column: number, offset: number },
+ *   lineText: string,
+ *   range: { from: number, to: number } | null
+ * } | null}
+ */
+export function computeScriptFocus(state) {
+    const sel = state.selection.main;
+    const head = sel.head;
+    if (state.doc.length === 0) return null;
+    const line = state.doc.lineAt(head);
+    const fnName = enclosingFunctionName(state, head);
+    const range = expressionRangeAt(state, head);
+    const hasSelection = !sel.empty;
+
+    // Nothing worth reporting: caret is outside any callback and there's
+    // no expression under it and no selection.
+    if (fnName === null && range === null && !hasSelection) return null;
+
+    return {
+        function: fnName,
+        expression: range !== null ? range.text : null,
+        selection: hasSelection ? state.sliceDoc(sel.from, sel.to) : null,
+        caret: {
+            line: line.number,
+            column: head - line.from + 1,
+            offset: head,
+        },
+        lineText: line.text,
+        range: range !== null ? { from: range.from, to: range.to } : null,
+    };
+}
+
+/**
  * Build the live-value hover tooltip extension.
  * @param {{ getSimulation: () => any, isCodeTab: () => boolean }} opts
  */

@@ -1615,6 +1615,11 @@ async function main() {
     mirrorPush.setEditor(editor);
     mirrorPush.setCanvas(canvas);
     mirrorPush.setRunScene(() => runScene());
+    // Live-apply: let mirrorPush recompile a script-only AI edit and
+    // swap callbacks onto the running scene without a full re-run, so
+    // playback continues uninterrupted. Bound to the same loader the
+    // full load path uses, so the compile semantics match.
+    mirrorPush.setScriptCompiler((source) => sceneLoader.compileScriptFunctions(source));
     {
         const gxwMirror = /** @type {any} */ (window).gxwMirror;
         if (gxwMirror !== undefined && gxwMirror !== null) {

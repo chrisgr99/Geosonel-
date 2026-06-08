@@ -258,6 +258,50 @@ export class SceneLoader {
         const { strippedSource } = splitLabelledStatements(parseResult.ast, scriptSource);
         return executeSetupScript(strippedSource, api ?? {}, this._print);
     }
+
+    /**
+     * Compile just the callback function map from a script.js source,
+     * without building a Scene. Used by the composition mirror's
+     * live-apply path: when an AI edits only script.js while the score
+     * is playing, the bundle recompiles the callbacks and swaps them
+     * onto the running scene's functionMap in place — no setScene, no
+     * runScene, no transport interruption (callbacks resolve by name
+     * at fire time, so the swap takes effect on the next firing).
+     *
+     * Returns ok=false with an error string when the source fails to
+     * parse or execute. The live-apply caller treats that as a
+     * rejection and keeps the currently-running functionMap, so a
+     * syntax error in an edit never silences a playing score. This is
+     * a STRICTER contract than load(), which is deliberately resilient
+     * (a script error there leaves an empty functionMap but still
+     * displays the objects); mid-playback we must not swap in a broken
+     * or empty map.
+     *
+     * Labelled $-blocks are stripped before execution exactly as
+     * load() strips them, so they do not run here. Score-level
+     * kinematics set at the top level are not persisted by this path
+     * (they ride on the next full load); a fresh defaults object keeps
+     * such assignments from throwing.
+     *
+     * @param {string} scriptSource The current script.js text.
+     * @returns {{ ok: true, functionMap: Object<string, Function> }
+     *          | { ok: false, error: string }}
+     */
+    compileScriptFunctions(scriptSource) {
+        const parseResult = extractTopLevelFunctionNames(scriptSource);
+        if (!parseResult.ok) {
+            return { ok: false, error: parseResult.error };
+        }
+        const { strippedSource } = splitLabelledStatements(
+            parseResult.ast, scriptSource);
+        const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
+        const execResult = executeScript(
+            strippedSource, parseResult.names, scoreGlobal, this._print);
+        if (!execResult.ok) {
+            return { ok: false, error: execResult.error };
+        }
+        return { ok: true, functionMap: execResult.functions };
+    }
 }
 
 /**

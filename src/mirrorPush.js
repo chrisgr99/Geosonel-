@@ -269,6 +269,18 @@ export class MirrorPush {
         /** @type {(() => Promise<void>) | null} */
         this._runScene = null;
 
+        /**
+         * Compiler for the live-apply path: takes a script.js source
+         * and returns the recompiled callback function map (or an
+         * error). Lets confirmApply swap callbacks onto the running
+         * scene in place when an AI edits only script.js mid-playback,
+         * skipping the full pause/runScene/resume. Wired from main.js
+         * via setScriptCompiler. Null until wired (and in the browser
+         * build, which has no mirror).
+         * @type {((source: string) => ({ ok: true, functionMap: Object<string, Function> } | { ok: false, error: string })) | null}
+         */
+        this._compileScript = null;
+
         // --- Confirm-to-apply state machine (Phase 1B commit 4b) ---
         //
         // Under confirm-to-apply, applyBatch no longer
@@ -803,6 +815,22 @@ export class MirrorPush {
     }
 
     /**
+     * Hand the pipeline a compiler for the live-apply path: a function
+     * that takes a script.js source and returns the recompiled
+     * callback function map. Called once from main.js, bound to the
+     * SceneLoader's compileScriptFunctions. With this wired,
+     * confirmApply can apply a script-only edit live (swap the running
+     * scene's functionMap in place) instead of pausing and re-running
+     * the whole scene. Null leaves confirmApply on the full-re-run
+     * path for every batch.
+     *
+     * @param {((source: string) => ({ ok: true, functionMap: Object<string, Function> } | { ok: false, error: string })) | null} compileScript
+     */
+    setScriptCompiler(compileScript) {
+        this._compileScript = compileScript;
+    }
+
+    /**
      * Validate an incoming AI batch and either hold it
      * for user confirmation (success) or reject it with
      * an immediate rollback (validation failure). Phase
@@ -932,6 +960,23 @@ export class MirrorPush {
         const batch = this._heldBatch;
         this._heldBatch = null;
 
+        // Live-apply fast path: a script-only edit while the score is
+        // playing swaps the recompiled callbacks onto the running
+        // scene in place — no transport pause, no runScene rebuild, no
+        // audible glitch (callbacks resolve by name from
+        // scene.functionMap at fire time). Falls through to the full
+        // re-run below when the batch touches scene.json or the image,
+        // when nothing is playing, or when no compiler / live scene is
+        // available.
+        const scriptOnly = batch.length > 0 && batch.every(
+            (e) => e.kind === "text" && e.filename === MIRROR_BEHAVIOURS_FILENAME);
+        const playing = this._transport !== null && this._transport.isPlaying;
+        if (scriptOnly && playing && this._compileScript !== null
+                && this._scene !== null) {
+            await this._liveApplyScript(batch);
+            return;
+        }
+
         // Pause transport if playing so runScene's scene
         // rebuild doesn't fire mid-cycle. We resume after
         // the apply completes.
@@ -1010,6 +1055,68 @@ export class MirrorPush {
             status: "success",
             timestamp: new Date().toISOString(),
             applied,
+        });
+
+        this._batchState = "idle";
+        this._emitStateChange();
+    }
+
+    /**
+     * Apply a script-only batch live, without interrupting playback.
+     * Recompiles the callback function map from the new source and
+     * swaps it onto the running scene in place; the simulation picks
+     * up the new callbacks on the next firing because it resolves them
+     * by name from scene.functionMap at fire time.
+     *
+     * Compilation happens BEFORE any mutation. If the new source fails
+     * to parse or execute, the running functionMap is left untouched
+     * (the score keeps playing the previous callbacks) and the batch
+     * is rejected with a rollback, so a broken edit can never silence
+     * a playing score.
+     *
+     * Assumes the caller has verified: batch is all script.js text
+     * entries, the transport is playing, _compileScript is wired, and
+     * _scene is non-null. _bundle is non-null (confirmApply's guard).
+     *
+     * @param {Array<{ kind: string, filename: string, content: any }>} batch
+     * @returns {Promise<void>}
+     */
+    async _liveApplyScript(batch) {
+        // A script-only batch normally carries a single script.js
+        // entry; if somehow more than one, the last write wins.
+        const entry = batch[batch.length - 1];
+        const source = typeof entry.content === "string" ? entry.content : "";
+
+        const compiled = this._compileScript(source);
+        if (!compiled.ok) {
+            await this._reportRejectionAndRollback(
+                MIRROR_BEHAVIOURS_FILENAME, compiled.error);
+            return;
+        }
+
+        this._bundle.updateContent(BUNDLE_BEHAVIORS_FILENAME, source);
+
+        if (this._editor !== null) {
+            try {
+                this._editor.reloadFromBundle();
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`GXW: editor reload failed during live script apply: ${msg}`);
+            }
+        }
+
+        // The swap itself: the running scene now resolves callbacks
+        // from the freshly compiled map.
+        this._scene.functionMap = compiled.functionMap;
+
+        if (this._messages !== null) {
+            this._messages.write("Mirror: applied script.js live — score kept playing.");
+        }
+
+        await this._writeApplyResult({
+            status: "success",
+            timestamp: new Date().toISOString(),
+            applied: [MIRROR_BEHAVIOURS_FILENAME],
         });
 
         this._batchState = "idle";

@@ -53,8 +53,13 @@ const fsp = require('node:fs/promises');
 const ACTIVE_FOLDER_NAME = 'Active';
 const ACTIVE_SCORE_FILENAME = 'active-score.json';
 const SCENE_FILENAME = 'scene.json';
-const BEHAVIOURS_FILENAME = 'behaviours.js';
+// The mirrored code file. GeoSonixV2 renamed behaviors.js -> script.js;
+// the renderer (mirrorPush.js) already uses script.js on both sides, so
+// the main process must write/watch the same name or code round-trips
+// never match. (Was 'behaviours.js' — the rename was half-applied.)
+const BEHAVIOURS_FILENAME = 'script.js';
 const RUNTIME_STATE_FILENAME = 'runtime-state.json';
+const FOCUS_FILENAME = 'focus.json';
 const AGENTS_FILENAME = 'AGENTS.md';
 const SCENE_SCHEMA_FILENAME = 'sceneSchema.md';
 const MIRROR_DOCS_DIR = 'mirror-docs';
@@ -62,19 +67,6 @@ const LAST_APPLY_RESULT_FILENAME = 'last-apply-result.json';
 const PROTOCOL_VERSION = 1;
 const SETTING_KEY = 'mirrorEnabled';
 const TMP_SUFFIX = '.tmp';
-const MUTE_TTL_MS = 5000;
-// Empirically, fs.watch on macOS fires two events per
-// atomic temp-and-rename: typically a rename event
-// followed by a second rename or change event for the
-// same destination filename. Both must be suppressed for
-// a self-write to be invisible to the round-trip pipeline,
-// so each writeAtomic registers a mute with this initial
-// count. If a future macOS revision delivers a different
-// number of events per rename, the consequence is bounded:
-// fewer events leak as false positives (handled by the
-// apply pipeline's re-validation in Phase 1B commit 2),
-// more events leave count-residue that the TTL evicts.
-const EVENTS_PER_RENAME = 2;
 // Sentinel filename and orphan timeout for AI batch
 // coordination (Phase 1B commit 4). When an AI is about
 // to make a score-related change, it writes this file
@@ -110,15 +102,16 @@ const ORPHAN_TIMEOUT_MS = 90000;
 // next push and the mirror folder doesn't accumulate
 // orphaned images.
 // `watcher` holds the fs.watch instance when the mirror is
-// enabled, null otherwise. `selfWriteMutes` is the Map
-// used by the round-trip watcher to ignore events from
-// the bundle's own writes; see the watcher infrastructure
-// section below.
+// enabled, null otherwise. `lastSelfWrite` maps each
+// round-trip filename to a content signature of the bundle's
+// most recent write, so the watcher can recognise the echo
+// of its own push and ignore it (content-based echo
+// suppression — see the watcher infrastructure section).
 let enabled = false;
 let folderPathCache = null;
 let lastPushedImageName = null;
 let watcher = null;
-const selfWriteMutes = new Map();
+const lastSelfWrite = new Map();
 // Batch accumulator state (Phase 1B commit 2). pendingBatch
 // holds the set of filenames seen while .pending is active.
 // processBatch dispatches the assembled batch to the renderer
@@ -151,6 +144,18 @@ let mainWindow = null;
 let sentinelActive = false;
 let orphanTimer = null;
 let batchInProgress = false;
+
+// Quiescence batcher for the NO-SENTINEL path. The .pending sentinel is
+// now optional: a bare atomic write to a round-trip file (the common
+// case for single-file AI edits) is treated as a complete change on its
+// own. We open the confirm dialog on the first such write and flush the
+// batch after QUIESCENCE_MS of no further round-trip writes, so several
+// writes that land within the window coalesce into one batch. The
+// sentinel path (handleSentinelArrival/Removal) still works for an AI
+// that explicitly brackets a multi-file batch; a sentinel arriving
+// cancels any pending quiescence flush so the two don't both fire.
+let quiescenceTimer = null;
+const QUIESCENCE_MS = 350;
 
 // Settings.json IO. The settings file lives in
 // app.getPath('userData') and is shared with the other
@@ -294,6 +299,7 @@ function makeStubSnapshot(isLive) {
             observationOnly: [
                 ACTIVE_SCORE_FILENAME,
                 RUNTIME_STATE_FILENAME,
+                FOCUS_FILENAME,
                 LAST_APPLY_RESULT_FILENAME,
                 AGENTS_FILENAME,
                 SCENE_SCHEMA_FILENAME,
@@ -372,77 +378,94 @@ async function writeStaticDocs() {
     }
 }
 
-// Watcher infrastructure (Phase 1B). fs.watch on the
-// mirror folder detects external writes — typically AI-
-// edited scene.json or behaviours.js arriving via a
-// filesystem MCP server — so the bundle can apply them
-// back into its in-memory state. The watcher is started
-// when the mirror is enabled and torn down on disable or
-// app quit. Score-switch lifecycle is a later Phase 1B
-// commit.
+// Watcher infrastructure. fs.watch on the mirror folder detects
+// external writes — typically AI-edited scene.json or script.js
+// arriving via a filesystem MCP server — so the bundle can apply them
+// back into its in-memory state. The watcher is started when the
+// mirror is enabled and torn down on disable or app quit.
 //
-// Event filtering happens in two layers. *.tmp events are
-// dropped entirely since those are intermediate states
-// from the bundle's own atomic-write staging. Non-.tmp
-// events are checked against the self-write mute Map:
-// writeAtomic registers an expected event count on the
-// destination filename before its rename (see
-// EVENTS_PER_RENAME for why the count is not 1), the
-// handler consumes one count per matching event, and a
-// TTL evicts stale entries if an event count is
-// over-registered (e.g., a rename that failed, or a
-// macOS variant that delivers fewer events than expected).
-// Count-based muting rather than time-window muting means
-// a genuine AI write landing soon after a self-write does
-// not get accidentally suppressed.
-//
-// MUTE_TTL_MS is set generously (5 seconds) as defensive
-// headroom against FSEvents stalls under heavy system load.
-// In normal conditions events arrive within tens of
-// milliseconds and consume their mutes almost immediately.
-// The TTL only matters as a safety net for residual
-// uncounted slots; legitimate AI writes within the window
-// are not blocked because the mute is already consumed by
-// then.
-//
-// For this commit (Phase 1B commit 1) events that pass
-// the filters are just logged. Phase 1B commit 2 will
-// connect a quiescence-based batcher and the validation
-// pipeline; the console.log call inside handleWatcherEvent
-// is the hook point for that integration.
+// Detection is CONTENT-BASED rather than event-name-based. macOS
+// fs.watch is unreliable about the filename it reports for a rename
+// performed by another process: it frequently delivers a null/elided
+// filename for exactly the case we care about (an AI's atomic
+// temp-and-rename write). So instead of trusting the event to tell us
+// which file changed — or counting events to mute our own writes — we
+// treat every non-noise event as a trigger to RECONCILE: re-read the
+// round-trip files and compare each against the content signature the
+// bundle last wrote (recordSelfWrite / lastSelfWrite). Files whose
+// content differs are genuine external edits; files that match are the
+// echo of our own push and are skipped. This is null-tolerant and
+// makes echo suppression exact for the text files that matter.
 
-function muteNextEvent(filename) {
-    const existing = selfWriteMutes.get(filename);
-    if (existing !== undefined) {
-        existing.count += EVENTS_PER_RENAME;
-        clearTimeout(existing.timeoutId);
-        existing.timeoutId = setTimeout(() => {
-            selfWriteMutes.delete(filename);
-        }, MUTE_TTL_MS);
+// Content signature of a round-trip file, used for echo suppression.
+// Text files (scene.json, script.js) sign by their full content — the
+// files are small and an exact compare is the reliable way to tell an
+// AI edit from the echo of our own push. The image signs by byte
+// length only: re-reading a ~100 KB image on every watcher event would
+// be wasteful, and image edits through the mirror are rare and
+// discouraged, so a same-length replacement going undetected is an
+// acceptable trade. Returns null if the path can't be classified.
+async function fileSignature(filepath, name) {
+    const isText = name === SCENE_FILENAME || name === BEHAVIOURS_FILENAME;
+    if (isText) {
+        return await fsp.readFile(filepath, 'utf8');
+    }
+    const st = await fsp.stat(filepath);
+    return `bin:${st.size}`;
+}
+
+// Record what the bundle just wrote so the watcher's reconcile can
+// recognise the echo of our own push and ignore it. Called from
+// writeAtomic for every self-write.
+function recordSelfWrite(filename, textContent, binaryContent) {
+    if (binaryContent !== null && binaryContent !== undefined) {
+        const len = binaryContent.byteLength ?? binaryContent.length ?? 0;
+        lastSelfWrite.set(filename, `bin:${len}`);
     } else {
-        const timeoutId = setTimeout(() => {
-            selfWriteMutes.delete(filename);
-        }, MUTE_TTL_MS);
-        selfWriteMutes.set(filename, { count: EVENTS_PER_RENAME, timeoutId });
+        lastSelfWrite.set(filename, textContent ?? '');
     }
 }
 
-function consumeMute(filename) {
-    const entry = selfWriteMutes.get(filename);
-    if (entry === undefined) return false;
-    entry.count -= 1;
-    if (entry.count <= 0) {
-        clearTimeout(entry.timeoutId);
-        selfWriteMutes.delete(filename);
-    }
-    return true;
+function clearSelfWriteBaselines() {
+    lastSelfWrite.clear();
 }
 
-function clearAllMutes() {
-    for (const entry of selfWriteMutes.values()) {
-        clearTimeout(entry.timeoutId);
+// Compare the round-trip files on disk against the baselines the
+// bundle last wrote and return the names whose content actually
+// differs — i.e. genuine external (AI) edits. This is content-based
+// rather than event-name-based on purpose: macOS fs.watch frequently
+// delivers a null/elided filename for a rename performed by another
+// process (exactly what an AI's atomic write looks like), so we cannot
+// trust the event to tell us which file changed. Scanning by content
+// is null-tolerant and also doubles as echo suppression — our own
+// pushes match their baseline and are skipped.
+async function reconcileRoundTripFiles() {
+    const folder = getMirrorFolderPath();
+    const names = [SCENE_FILENAME, BEHAVIOURS_FILENAME];
+    if (lastPushedImageName !== null) names.push(lastPushedImageName);
+
+    const changed = [];
+    for (const name of names) {
+        let sig;
+        try {
+            sig = await fileSignature(path.join(folder, name), name);
+        } catch (_e) {
+            continue; // missing or unreadable — nothing to compare
+        }
+        if (sig === null) continue;
+
+        const baseline = lastSelfWrite.get(name);
+        if (baseline === undefined) {
+            // First sighting of this file (e.g. a reconcile racing
+            // ahead of writeAtomic's bookkeeping on enable). Adopt its
+            // current content as the baseline rather than flagging the
+            // bundle's own initial push as an external change.
+            lastSelfWrite.set(name, sig);
+            continue;
+        }
+        if (sig !== baseline) changed.push(name);
     }
-    selfWriteMutes.clear();
+    return changed;
 }
 
 // Whether a filename is one of the round-trip files the
@@ -493,55 +516,60 @@ function inferImageMimeType(filename) {
 }
 
 function handleWatcherEvent(eventType, filename) {
-    // fs.watch can deliver a null filename on some
-    // platforms (Linux inotify when the underlying event
-    // lacks a name). On macOS this should not happen, but
-    // the defensive check is cheap.
-    if (filename === null) return;
+    // When fs.watch gives us a filename we can short-circuit on noise
+    // before scheduling a scan: *.tmp staging files, the .pending
+    // sentinel (its own handler), and anything that isn't a round-trip
+    // file (observation files, the stale behaviours.js orphan, unknown
+    // AI-created files).
+    //
+    // When the filename is NULL we CANNOT classify the event and must
+    // NOT drop it. macOS fs.watch routinely elides the filename for a
+    // rename performed by another process — which is exactly what an
+    // AI's atomic write (write tmp, rename into place) looks like from
+    // outside. Dropping null-filename events was silently swallowing
+    // every bare AI edit. Instead we fall through to a content-based
+    // reconcile that re-reads the round-trip files and detects what
+    // actually changed.
+    if (filename !== null) {
+        if (filename.endsWith(TMP_SUFFIX)) return;
+        if (filename === PENDING_SENTINEL_FILENAME) {
+            handleSentinelEvent();
+            return;
+        }
+        if (!isRoundTripFile(filename)) return;
+    }
+    scheduleReconcile();
+}
 
-    // Intermediate atomic-write staging files. The .tmp
-    // file is short-lived and never the final write
-    // target, so there is nothing to apply.
-    if (filename.endsWith(TMP_SUFFIX)) return;
+// Schedule (or reschedule) a content reconcile after QUIESCENCE_MS of
+// quiet. Each new event pushes the scan out, so a burst of writes (or
+// a burst of redundant events for one write) coalesces into a single
+// reconcile and a single batch.
+function scheduleReconcile() {
+    if (quiescenceTimer !== null) clearTimeout(quiescenceTimer);
+    quiescenceTimer = setTimeout(() => {
+        quiescenceTimer = null;
+        void runReconcile();
+    }, QUIESCENCE_MS);
+}
 
-    // Sentinel events route to the dedicated handler that
-    // decides between arrival (file appeared) and removal
-    // (file disappeared). Sentinel files are protocol-
-    // level coordination, neither round-trip nor
-    // observation-only, so we don't run them through the
-    // self-write mute or round-trip filter — the mirror
-    // never writes the sentinel itself, only AI processes
-    // and the orphan-timer cleanup do.
-    if (filename === PENDING_SENTINEL_FILENAME) {
-        handleSentinelEvent();
+// Scan the round-trip files for genuine external changes and, if any
+// are found, route them into a batch. No-sentinel (default): open the
+// confirm dialog and process immediately — the writes have already
+// settled through the quiescence window. Sentinel path: an AI has an
+// explicit .pending batch open, so accumulate and let the sentinel
+// removal flush.
+async function runReconcile() {
+    const changed = await reconcileRoundTripFiles();
+    if (changed.length === 0) return;
+    for (const name of changed) pendingBatch.add(name);
+
+    if (sentinelActive) {
+        resetOrphanTimer();
         return;
     }
-
-    // Self-originating writes registered by writeAtomic.
-    // The mute consumes one expected event per
-    // registration.
-    if (consumeMute(filename)) return;
-
-    // Filter to round-trip files. Observation-only files
-    // and unrecognised AI-created files are ignored
-    // outright — the apply pipeline only acts on the
-    // round-trip surface (scene.json, behaviours.js,
-    // current image).
-    if (!isRoundTripFile(filename)) return;
-
-    // .pending is required for all AI writes (see
-    // AGENTS.md). A round-trip event without an active
-    // sentinel is an orphan, either a late write from a
-    // batch the user cancelled or an AI not following
-    // protocol. Drop it and notify the renderer's message
-    // area so the user has a forensic log line.
-    if (!sentinelActive) {
-        notifyOrphanWrite(filename);
-        return;
-    }
-
-    pendingBatch.add(filename);
-    resetOrphanTimer();
+    if (!batchInProgress) notifyBatchStarted();
+    await processBatch();
 }
 
 // Handle a watcher event for the sentinel file. Checks
@@ -580,6 +608,14 @@ function handleSentinelEvent() {
 // event — the AI is still alive and writing.
 function handleSentinelArrival() {
     sentinelActive = true;
+
+    // A sentinel takes over batching from the no-sentinel quiescence
+    // path; cancel any pending flush so we don't process the batch
+    // twice (once on quiescence, once on sentinel removal).
+    if (quiescenceTimer !== null) {
+        clearTimeout(quiescenceTimer);
+        quiescenceTimer = null;
+    }
 
     // Notify the renderer that a batch is starting so the
     // confirm-to-apply dialog appears in its Thinking
@@ -726,6 +762,14 @@ async function processBatch() {
             if (isText) {
                 const content = await fsp.readFile(filepath, 'utf8');
                 entries.push({ filename, kind: 'text', content });
+                // Adopt the shipped content as the new baseline so a
+                // subsequent watcher event doesn't re-detect this same
+                // edit. This matters most for the live-apply path,
+                // which applies a script.js edit WITHOUT a full
+                // re-push, so writeAtomic never refreshes the baseline.
+                // On reject/cancel the rollback push overwrites the
+                // baseline again with the bundle's content.
+                recordSelfWrite(filename, content, null);
             } else {
                 const buffer = await fsp.readFile(filepath);
                 const ab = buffer.buffer.slice(
@@ -738,6 +782,7 @@ async function processBatch() {
                     content: ab,
                     mimeType: inferImageMimeType(filename),
                 });
+                recordSelfWrite(filename, null, buffer);
             }
         } catch (err) {
             console.warn(
@@ -799,7 +844,7 @@ function stopWatcher() {
         console.warn(`GXW: error closing mirror watcher: ${err.message}`);
     }
     watcher = null;
-    clearAllMutes();
+    clearSelfWriteBaselines();
     clearPendingBatch();
     clearSentinelState();
 }
@@ -815,6 +860,10 @@ function clearSentinelState() {
     if (orphanTimer !== null) {
         clearTimeout(orphanTimer);
         orphanTimer = null;
+    }
+    if (quiescenceTimer !== null) {
+        clearTimeout(quiescenceTimer);
+        quiescenceTimer = null;
     }
 }
 
@@ -838,13 +887,14 @@ async function writeAtomic(targetPath, textContent, binaryContent) {
     } else {
         await fsp.writeFile(tmpPath, textContent ?? '', 'utf8');
     }
-    // Register the upcoming rename event as self-originating
-    // so the watcher's event handler ignores it. Skipped when
-    // no watcher is running (early startup before
-    // startWatcher, or mirror disabled).
-    if (watcher !== null) {
-        muteNextEvent(path.basename(targetPath));
-    }
+    // Record this write's content signature as the baseline so the
+    // watcher's reconcile recognises the echo of our own push and
+    // doesn't surface it as an external (AI) edit. Recorded
+    // unconditionally — observation-file baselines are harmless (the
+    // reconcile only consults round-trip names) and recording even
+    // when no watcher is running keeps the baseline correct for when
+    // the watcher later starts.
+    recordSelfWrite(path.basename(targetPath), textContent, binaryContent);
     await fsp.rename(tmpPath, targetPath);
 }
 
@@ -985,6 +1035,7 @@ async function pushScore(payload) {
             observationOnly: [
                 ACTIVE_SCORE_FILENAME,
                 RUNTIME_STATE_FILENAME,
+                FOCUS_FILENAME,
                 LAST_APPLY_RESULT_FILENAME,
                 AGENTS_FILENAME,
                 SCENE_SCHEMA_FILENAME,
@@ -1091,6 +1142,50 @@ async function pushRuntimeState(payload) {
 
     await writeAtomic(
         path.join(folder, RUNTIME_STATE_FILENAME),
+        JSON.stringify(snapshot, null, 2),
+        null,
+    );
+}
+
+/**
+ * Write focus.json with the user's current text-cursor location in
+ * the Script editor. This is the "this" pointer for an AI working
+ * through the mirror: the user can't hover the canvas while typing in
+ * Claude Desktop, so they place the caret on the code they mean and
+ * say "this". focus.json records the enclosing callback function, the
+ * expression/identifier under the caret, the selected text (if any),
+ * and the line/column range, so the AI can resolve a deictic
+ * reference without a screenshot.
+ *
+ * Observation-only: focus.json is not a round-trip file, so even
+ * though writing it fires the folder watcher, isRoundTripFile filters
+ * the event out and it never enters the apply pipeline.
+ *
+ * The renderer fires this (debounced) on selection changes in the
+ * Script tab. A null/non-object payload, or one with focus === null
+ * (caret left the editor / not on the Script tab), writes a cleared
+ * record so a stale focus doesn't linger.
+ *
+ * @param {object | null} payload
+ */
+async function pushFocus(payload) {
+    if (!enabled) return;
+
+    const folder = getMirrorFolderPath();
+    await fsp.mkdir(folder, { recursive: true });
+
+    const focus = (payload !== null && typeof payload === 'object')
+        ? (payload.focus ?? null)
+        : null;
+
+    const snapshot = {
+        protocolVersion: PROTOCOL_VERSION,
+        capturedAt: new Date().toISOString(),
+        focus,
+    };
+
+    await writeAtomic(
+        path.join(folder, FOCUS_FILENAME),
         JSON.stringify(snapshot, null, 2),
         null,
     );
@@ -1335,4 +1430,4 @@ function shutdown() {
     writeActiveScoreStubSync(false);
 }
 
-module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, setMainWindow, writeApplyResult, cancelBatch };
+module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, pushFocus, setMainWindow, writeApplyResult, cancelBatch };

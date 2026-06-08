@@ -1379,6 +1379,16 @@ function registerStorageHandlers() {
     await mirror.pushRuntimeState(payload);
   });
 
+  // Receive the user's current text-cursor location in the Script
+  // editor (enclosing callback, expression under the caret, selected
+  // text, line/column range) and write it as focus.json. This is the
+  // deictic "this" pointer for an AI working through the mirror — the
+  // user places the caret on the code they mean and refers to it. The
+  // renderer fires this debounced on selection changes.
+  ipcMain.handle('gxw:mirror-push-focus', async (_event, payload) => {
+    await mirror.pushFocus(payload);
+  });
+
   // Phase 1B commit 3: receive the outcome of the
   // renderer's most recent applyBatch call and write it
   // as last-apply-result.json. Called after every batch,

@@ -35,7 +35,7 @@ import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectId
 import { activeBeatHighlightExtension, setActiveBeatsEffect, recomputeTokensEffect } from "./activeBeatHighlight.js";
 import { parenHighlightExtension } from "./parenHighlight.js";
 import { jsAutocomplete } from "./codeAutocomplete.js";
-import { valueTooltipExtension } from "./valueTooltip.js";
+import { valueTooltipExtension, computeScriptFocus } from "./valueTooltip.js";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
 import { getPreference, setPreference, subscribePreference } from "./preferences.js";
@@ -530,6 +530,14 @@ export class TabbedEditor {
          * @type {any}
          */
         this._simulation = null;
+
+        /**
+         * Debounce timer for pushing the Script-tab text-cursor focus
+         * to the composition mirror's focus.json. Null when no push is
+         * pending. See _scheduleFocusPush.
+         * @type {ReturnType<typeof setTimeout> | null}
+         */
+        this._focusPushTimer = null;
 
         /** @type {EditorView | null} */
         this.view = null;
@@ -1177,6 +1185,49 @@ export class TabbedEditor {
     }
 
     /**
+     * Push the user's current text-cursor location in the Script
+     * editor to the composition mirror's focus.json (debounced). This
+     * is the deictic "this" pointer for an AI working through the
+     * mirror: while the user types in Claude Desktop they can't hover
+     * the canvas, so they place the caret on the code they mean and
+     * say "this". We report the enclosing callback, the expression
+     * under the caret, any selection, and the caret line/column.
+     *
+     * Electron-only: window.gxwMirror is undefined in the browser
+     * build, so this is a no-op there. Off the Script tab we push a
+     * cleared focus (null) so a stale pointer doesn't linger after the
+     * user moves to another tab. The push is best-effort; mirror
+     * write failures are swallowed (the renderer shouldn't break on a
+     * focus push, and the AI simply sees the previous focus).
+     *
+     * @param {any} state CodeMirror EditorState from the update.
+     */
+    _scheduleFocusPush(state) {
+        const mirror =
+            typeof window !== "undefined" ? window.gxwMirror : undefined;
+        if (mirror === undefined || typeof mirror.pushFocus !== "function") {
+            return;
+        }
+        const onScriptTab = this.activeName === "script.js";
+        const focus = onScriptTab ? computeScriptFocus(state) : null;
+
+        if (this._focusPushTimer !== null) {
+            clearTimeout(this._focusPushTimer);
+        }
+        this._focusPushTimer = setTimeout(() => {
+            this._focusPushTimer = null;
+            try {
+                const result = mirror.pushFocus({ focus });
+                if (result !== null && typeof result.catch === "function") {
+                    result.catch(() => {});
+                }
+            } catch (_e) {
+                // best-effort; ignore mirror push failures
+            }
+        }, 200);
+    }
+
+    /**
      * Try to handle an Undo gesture against the currently-
      * focused element. Called by the native macOS menu's
      * Cmd-Z dispatcher (src/menuActions.js) so the
@@ -1626,6 +1677,7 @@ export class TabbedEditor {
                     // profiling shows it's worth it.
                     if (update.docChanged || update.selectionSet) {
                         this._emitCursorTargetIds();
+                        this._scheduleFocusPush(update.state);
                     }
                 }),
                 EditorView.theme({

@@ -180,6 +180,12 @@ contextBridge.exposeInMainWorld('gxwMirror', {
     ipcRenderer.invoke('gxw:mirror-push-score', payload),
   pushRuntimeState: (payload) =>
     ipcRenderer.invoke('gxw:mirror-push-runtime-state', payload),
+  // Write focus.json with the user's current text-cursor
+  // location in the Script editor — the deictic "this"
+  // pointer for an AI working through the mirror. Fired
+  // (debounced) on selection changes in the Script tab.
+  pushFocus: (payload) =>
+    ipcRenderer.invoke('gxw:mirror-push-focus', payload),
   // Write last-apply-result.json with the outcome of the
   // renderer's most recent applyBatch call (Phase 1B
   // commit 3). Called after every batch — success or
