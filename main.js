@@ -656,6 +656,14 @@ async function main() {
     // called.
     simulation.setAudioSink((sourceId, spec) => {
         if (spec === null || typeof spec !== "object") return;
+        // Play Selected ("solo") gate: when the toolbar toggle is on,
+        // only selected objects sound. Non-selected objects keep
+        // simulating (their callbacks still run, they still move and
+        // flash) but their notes/samples are dropped here, so the user
+        // can work on one object's sound without hearing the rest. The
+        // firing engine owns the mode + id set (set by the toolbar
+        // toggle and every selection change).
+        if (!firingEngine.playSelectedAllows(sourceId)) return;
         if (spec.type === "note") {
             firingEngine.fireImmediateNote(sourceId, spec);
         } else if (spec.type === "sound") {

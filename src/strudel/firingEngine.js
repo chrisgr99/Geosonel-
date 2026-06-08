@@ -824,6 +824,22 @@ export class PatternFiringEngine {
     }
 
     /**
+     * Whether a source may sound under the current Play Selected
+     * ("solo") state. True for every source when the mode is off;
+     * when on, true only for sources in the selected set. Used to
+     * gate the procedural audio sink (callback playNote / playSound)
+     * so soloing silences non-selected objects while they keep
+     * simulating — the GeoSonixV2 firing path is callbacks, not the
+     * legacy pattern path this mode originally gated.
+     * @param {string} sourceId
+     * @returns {boolean}
+     */
+    playSelectedAllows(sourceId) {
+        if (!this._playSelectedMode) return true;
+        return this._playSelectedIds.has(sourceId);
+    }
+
+    /**
      * Attach the canvas so the firing engine can query
      * canvas-managed scene state at snapshot-capture time:
      * the image-OKLCh pixel-lookup buffer and the curve
