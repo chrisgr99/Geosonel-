@@ -2346,6 +2346,65 @@ async function main() {
         // engine still updates the set so flipping the
         // toggle on lands with the current selection.
         firingEngine.setPlaySelectedIds(ids);
+        // Mirror the canvas selection out so an AI working through the
+        // composition mirror knows which object(s) the user means by
+        // "this" — the canvas counterpart of focus.json's text cursor.
+        pushSelectionToMirror(selection);
+    };
+
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let _selectionPushTimer = null;
+    /**
+     * Write the current canvas selection to the composition mirror's
+     * selection.json (debounced): the IDs, kinds, names, and indices of
+     * the selected objects. This is the deictic "this object" pointer
+     * for an AI editing through the mirror — it pairs with scene.json
+     * (full per-object properties, looked up by ID) so the AI can read
+     * and reason about whatever the user has selected on the canvas.
+     *
+     * Electron-only (window.gxwMirror is absent in the browser build).
+     * Debounced so a marquee drag doesn't push on every intermediate
+     * selection. Best-effort: a mirror write failure is swallowed.
+     *
+     * @param {{sprites: number[], triggers: number[], curves: number[]}} selection
+     */
+    const pushSelectionToMirror = (selection) => {
+        const mirror = isElectron ? /** @type {any} */ (window).gxwMirror : undefined;
+        if (mirror === undefined || mirror === null
+            || typeof mirror.pushSelection !== "function") {
+            return;
+        }
+        /** @type {Array<{id: string, kind: string, name: string | null, index: number}>} */
+        const selected = [];
+        if (currentScene !== null) {
+            const collect = (indices, arr, kind) => {
+                for (const i of indices) {
+                    const obj = arr[i];
+                    if (obj === undefined || typeof obj.id !== "string") continue;
+                    selected.push({
+                        id: obj.id,
+                        kind,
+                        name: typeof obj.name === "string" && obj.name !== "" ? obj.name : null,
+                        index: i,
+                    });
+                }
+            };
+            collect(selection.curves, currentScene.curves, "curve");
+            collect(selection.triggers, currentScene.triggers, "trigger");
+            collect(selection.sprites, currentScene.sprites, "sprite");
+        }
+        if (_selectionPushTimer !== null) clearTimeout(_selectionPushTimer);
+        _selectionPushTimer = setTimeout(() => {
+            _selectionPushTimer = null;
+            try {
+                const r = mirror.pushSelection({ selected });
+                if (r !== null && typeof r === "object" && typeof r.catch === "function") {
+                    r.catch(() => {});
+                }
+            } catch (_e) {
+                // best-effort; ignore mirror push failures
+            }
+        }, 200);
     };
 
     /**

@@ -26,7 +26,8 @@ The folder contains two kinds of file: round-trip files that the AI may edit (th
 
 - `active-score.json` — protocol metadata: score identity, sync timestamp, current transport snapshot, files lists.
 - `runtime-state.json` — simulation-side state at the moment of the last at-rest capture. Schema below.
-- `focus.json` — the user's current text-cursor location in the Script editor: the deictic "this" pointer. Schema below.
+- `focus.json` — the user's current text-cursor location in the Script editor: the deictic "this" pointer for code. Schema below.
+- `selection.json` — the objects currently selected on the canvas: the deictic "this object" pointer. Schema below.
 - `event-trace.json` — a rolling buffer of recently-fired musical events with the signal values that drove them. Schema below.
 - `last-apply-result.json` — outcome of the most recent AI-edit batch (success or rejection with details). Schema below.
 - `sceneSchema.md` — scene.json reference, generated from `src/sceneSchema.js` in the repo.
@@ -56,7 +57,7 @@ The first file to read on any new conversation. Top-level shape:
   },
   "files": {
     "roundTrip": ["scene.json", "script.js", "tofes.jpg"],
-    "observationOnly": ["active-score.json", "runtime-state.json", "focus.json", "event-trace.json", "last-apply-result.json", "sceneSchema.md", "AGENTS.md"]
+    "observationOnly": ["active-score.json", "runtime-state.json", "focus.json", "selection.json", "event-trace.json", "last-apply-result.json", "sceneSchema.md", "AGENTS.md"]
   }
 }
 ```
@@ -164,6 +165,34 @@ Shape:
 - `range` — document offsets `{from, to}` of `expression`, or `null`.
 
 `focus` is `null` (no active pointer) when the user is off the Script tab, or when the caret sits on blank space outside any function with nothing selected. Treat a `null` focus as "the user hasn't pointed at anything specific" — fall back to asking which object or which code they mean.
+
+## selection.json
+
+The objects currently selected on the **canvas** — the deictic "this object" pointer, the spatial counterpart of `focus.json`. When the user selects an object and says "make this a marimba" or "move this left two units," read `selection.json` to learn which object(s) they mean.
+
+This file carries identity only — `id`, `kind`, `name`, `index`. For the selected object's full editable properties (position, voice, beat-point config, …) look it up by `id` in `scene.json` (the canonical record). Pairing the two is the intended flow: `selection.json` says *which* object, `scene.json` says *what it currently is*, and a property-changes batch (below) sets *what it becomes*.
+
+Updated (debounced) on every canvas selection change. Electron-only.
+
+Shape:
+
+```json
+{
+  "protocolVersion": 1,
+  "capturedAt": "2026-06-08T22:40:00.000Z",
+  "count": 1,
+  "selected": [
+    { "id": "CRV2", "kind": "curve", "name": "Lead", "index": 0 }
+  ]
+}
+```
+
+- `id` — the object ID, the key used everywhere else (callback names `onActiveBeat_<id>`, `scene.json` records, property-changes targets).
+- `kind` — `"curve"`, `"trigger"`, or `"sprite"`.
+- `name` — the object's display name, or `null` if unnamed.
+- `index` — its position in the scene's array for that kind.
+
+`selected` is empty (`count: 0`) when nothing is selected. A multi-object selection lists every selected object; "this" with several selected usually means apply to all of them — confirm if ambiguous.
 
 ## event-trace.json
 

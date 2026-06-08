@@ -61,6 +61,7 @@ const BEHAVIOURS_FILENAME = 'script.js';
 const RUNTIME_STATE_FILENAME = 'runtime-state.json';
 const FOCUS_FILENAME = 'focus.json';
 const EVENT_TRACE_FILENAME = 'event-trace.json';
+const SELECTION_FILENAME = 'selection.json';
 const AGENTS_FILENAME = 'AGENTS.md';
 const SCENE_SCHEMA_FILENAME = 'sceneSchema.md';
 const MIRROR_DOCS_DIR = 'mirror-docs';
@@ -301,6 +302,7 @@ function makeStubSnapshot(isLive) {
                 ACTIVE_SCORE_FILENAME,
                 RUNTIME_STATE_FILENAME,
                 FOCUS_FILENAME,
+                SELECTION_FILENAME,
                 EVENT_TRACE_FILENAME,
                 LAST_APPLY_RESULT_FILENAME,
                 AGENTS_FILENAME,
@@ -1069,6 +1071,7 @@ async function pushScore(payload) {
                 ACTIVE_SCORE_FILENAME,
                 RUNTIME_STATE_FILENAME,
                 FOCUS_FILENAME,
+                SELECTION_FILENAME,
                 EVENT_TRACE_FILENAME,
                 LAST_APPLY_RESULT_FILENAME,
                 AGENTS_FILENAME,
@@ -1259,6 +1262,46 @@ async function pushEventTrace(payload) {
 
     await writeAtomic(
         path.join(folder, EVENT_TRACE_FILENAME),
+        JSON.stringify(snapshot, null, 2),
+        null,
+    );
+}
+
+/**
+ * Write selection.json with the objects currently selected on the
+ * canvas: each entry's id, kind (curve/trigger/sprite), name, and
+ * array index. This is the deictic "this object" pointer for an AI
+ * editing through the mirror — the canvas counterpart of focus.json's
+ * text cursor. It pairs with scene.json: the AI reads the selected IDs
+ * here, then looks up full per-object properties in scene.json (and
+ * targets them by ID in a property-changes batch).
+ *
+ * Observation-only. The renderer pushes (debounced) on every canvas
+ * selection change; a null/empty payload writes an empty selection.
+ * No-op when the mirror is disabled.
+ *
+ * @param {object | null} payload
+ */
+async function pushSelection(payload) {
+    if (!enabled) return;
+
+    const folder = getMirrorFolderPath();
+    await fsp.mkdir(folder, { recursive: true });
+
+    const selected = (payload !== null && typeof payload === 'object'
+        && Array.isArray(payload.selected))
+        ? payload.selected
+        : [];
+
+    const snapshot = {
+        protocolVersion: PROTOCOL_VERSION,
+        capturedAt: new Date().toISOString(),
+        count: selected.length,
+        selected,
+    };
+
+    await writeAtomic(
+        path.join(folder, SELECTION_FILENAME),
         JSON.stringify(snapshot, null, 2),
         null,
     );
@@ -1503,4 +1546,4 @@ function shutdown() {
     writeActiveScoreStubSync(false);
 }
 
-module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, pushFocus, pushEventTrace, setMainWindow, writeApplyResult, cancelBatch };
+module.exports = { initMirror, setEnabled, getStatus, shutdown, pushScore, pushRuntimeState, pushFocus, pushEventTrace, pushSelection, setMainWindow, writeApplyResult, cancelBatch };

@@ -193,6 +193,12 @@ contextBridge.exposeInMainWorld('gxwMirror', {
   // actual signal values a score produces.
   pushEventTrace: (payload) =>
     ipcRenderer.invoke('gxw:mirror-push-event-trace', payload),
+  // Write selection.json with the IDs/kinds/names of the
+  // objects currently selected on the canvas — the deictic
+  // "this object" pointer for an AI editing through the mirror.
+  // Pushed (debounced) on every canvas selection change.
+  pushSelection: (payload) =>
+    ipcRenderer.invoke('gxw:mirror-push-selection', payload),
   // Write last-apply-result.json with the outcome of the
   // renderer's most recent applyBatch call (Phase 1B
   // commit 3). Called after every batch — success or

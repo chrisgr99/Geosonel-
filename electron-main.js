@@ -1447,6 +1447,15 @@ function registerStorageHandlers() {
     await mirror.pushEventTrace(payload);
   });
 
+  // Receive the set of objects currently selected on the canvas (IDs,
+  // kinds, names, indices) and write it as selection.json. This is the
+  // deictic "this object" pointer for an AI editing through the mirror,
+  // the canvas counterpart of focus.json's text cursor. Pushed
+  // debounced on every selection change.
+  ipcMain.handle('gxw:mirror-push-selection', async (_event, payload) => {
+    await mirror.pushSelection(payload);
+  });
+
   // Phase 1B commit 3: receive the outcome of the
   // renderer's most recent applyBatch call and write it
   // as last-apply-result.json. Called after every batch,
