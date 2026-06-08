@@ -1504,14 +1504,16 @@ export class TabbedEditor {
                 },
                 preventDefault: true,
             },
-            {
-                key: "Mod-s",
-                run: () => {
-                    this.save();
-                    return true;
-                },
-                preventDefault: true,
-            },
+            // NOTE: no "Mod-s" (Cmd-S) binding here. Save is owned by
+            // the native menu accelerator (electron-menu.js,
+            // CmdOrCtrl+S) in the Electron build and by the window-level
+            // keydown listener (main.js, gated to !isElectron) in the
+            // web build. A CM6 binding here would DOUBLE-FIRE with the
+            // native accelerator when the editor has focus — two
+            // concurrent bundle.save() calls racing on the same files,
+            // which crashed the app on Cmd-S (but not on a File > Save
+            // menu click, which fires only the menu path). See
+            // IN_FLIGHT save-crash entry.
             {
                 key: "Ctrl-/",
                 run: () => {

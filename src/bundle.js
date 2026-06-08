@@ -80,6 +80,14 @@ export class Bundle {
          */
         this.path = path;
 
+        /**
+         * In-flight save promise, or null when no save is running.
+         * save() uses it as a reentrancy guard so two concurrent saves
+         * can't race their writes on the same files. See save().
+         * @type {Promise<void> | null}
+         */
+        this._saveInFlight = null;
+
         /** @type {BundleFile[]} */
         this.files = [];
 
@@ -784,9 +792,26 @@ export class Bundle {
                 "Bundle.save called on an untitled bundle; use Save As to set a path first."
             );
         }
-        await saveScoreRecord(this.path, this.toRecord());
-        this._captureSavedSnapshot();
-        this.markClean();
+        // Reentrancy guard: never let two saves run concurrently. Two
+        // overlapping saves write the same .gxs files (and fire two
+        // disk-mirror pushes) at once, racing their temp-and-rename
+        // writes — which crashed the app when Cmd-S double-fired. If a
+        // save is already in flight, join it instead of starting a
+        // second; a fresh save() after it resolves still writes the
+        // latest content.
+        if (this._saveInFlight !== null) {
+            return this._saveInFlight;
+        }
+        this._saveInFlight = (async () => {
+            try {
+                await saveScoreRecord(this.path, this.toRecord());
+                this._captureSavedSnapshot();
+                this.markClean();
+            } finally {
+                this._saveInFlight = null;
+            }
+        })();
+        return this._saveInFlight;
     }
 }
 

@@ -34,6 +34,43 @@ const fsp = require('node:fs/promises');
 const { installMenu, updateMenuState } = require('./electron-menu.js');
 const mirror = require('./electron-mirror.js');
 
+// --- Crash safety net + diagnostics ---
+//
+// Node aborts the process on an unhandled promise rejection (and on an
+// uncaught exception), which in Electron means the whole app vanishes.
+// Several main-process subsystems run async work fire-and-forget (the
+// composition-mirror watcher/reconcile, periodic mirror writes), and a
+// transient I/O fault in any of them must NOT take the editor down and
+// lose the user's unsaved work. These handlers turn such a fault into a
+// logged, survivable event instead of a silent quit, and append the
+// stack to <userData>/crash.log so an intermittent fault is diagnosable
+// after the fact.
+//
+// This is deliberately permissive: an uncaught exception can leave some
+// state inconsistent, but for a single-user creative tool, staying up
+// with one failed operation beats terminating mid-session. Genuinely
+// fatal startup problems still surface through their own code paths.
+function logMainProcessFault(kind, err) {
+  const stack = (err && err.stack) ? err.stack
+    : (err && err.message) ? err.message : String(err);
+  const line = `[${new Date().toISOString()}] ${kind}: ${stack}\n`;
+  // Console first, always.
+  console.error(`GXW main-process ${kind} (non-fatal):`, err);
+  // Best-effort file log; never let the logger itself throw.
+  try {
+    const logPath = path.join(app.getPath('userData'), 'crash.log');
+    fs.appendFileSync(logPath, line);
+  } catch (_e) {
+    // userData may be unavailable very early; the console line stands.
+  }
+}
+process.on('unhandledRejection', (reason) => {
+  logMainProcessFault('unhandledRejection', reason);
+});
+process.on('uncaughtException', (err) => {
+  logMainProcessFault('uncaughtException', err);
+});
+
 // --- Native MIDI loader ---
 //
 // @julusian/midi is a maintained fork of node-midi that uses
@@ -172,6 +209,17 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+  });
+
+  // Log a renderer-process crash to crash.log so an intermittent
+  // "the app vanished" report can be pinned to the renderer (vs a
+  // main-process fault, which goes through the process.on handlers
+  // above). reason !== 'clean-exit' means an actual crash/kill/OOM.
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logMainProcessFault(
+      'render-process-gone',
+      new Error(`reason=${details.reason} exitCode=${details.exitCode}`),
+    );
   });
 
   // Intercept the close gesture when the renderer has reported unsaved

@@ -562,16 +562,29 @@ function scheduleReconcile() {
 // explicit .pending batch open, so accumulate and let the sentinel
 // removal flush.
 async function runReconcile() {
-    const changed = await reconcileRoundTripFiles();
-    if (changed.length === 0) return;
-    for (const name of changed) pendingBatch.add(name);
+    // This runs fire-and-forget from a setTimeout (scheduleReconcile),
+    // so an unhandled rejection here would terminate the whole app
+    // (Node aborts the process on unhandled rejection). The mirror is a
+    // best-effort convenience; a transient I/O or dispatch fault must
+    // never take the editor down. Swallow-and-log so the worst case is
+    // a missed reconcile, not a crash.
+    try {
+        const changed = await reconcileRoundTripFiles();
+        if (changed.length === 0) return;
+        for (const name of changed) pendingBatch.add(name);
 
-    if (sentinelActive) {
-        resetOrphanTimer();
-        return;
+        if (sentinelActive) {
+            resetOrphanTimer();
+            return;
+        }
+        if (!batchInProgress) notifyBatchStarted();
+        await processBatch();
+    } catch (err) {
+        console.error(
+            `GXW: mirror reconcile failed (non-fatal): ${err && err.message ? err.message : err}`,
+            err,
+        );
     }
-    if (!batchInProgress) notifyBatchStarted();
-    await processBatch();
 }
 
 // Handle a watcher event for the sentinel file. Checks
@@ -648,7 +661,16 @@ async function handleSentinelRemoval() {
         orphanTimer = null;
     }
 
-    await processBatch();
+    // Fire-and-forget from handleSentinelEvent (void), so guard against
+    // a rejection terminating the app — see runReconcile.
+    try {
+        await processBatch();
+    } catch (err) {
+        console.error(
+            `GXW: mirror sentinel-removal batch failed (non-fatal): ${err && err.message ? err.message : err}`,
+            err,
+        );
+    }
 }
 
 // Reset the orphan timer. Called on sentinel arrival
@@ -668,8 +690,17 @@ function resetOrphanTimer() {
     orphanTimer = setTimeout(async () => {
         orphanTimer = null;
         sentinelActive = false;
-        await removeSentinelFile();
-        await processBatch();
+        // Guard: this async timer callback is fire-and-forget, so a
+        // rejection would crash the app (see runReconcile).
+        try {
+            await removeSentinelFile();
+            await processBatch();
+        } catch (err) {
+            console.error(
+                `GXW: mirror orphan-timeout batch failed (non-fatal): ${err && err.message ? err.message : err}`,
+                err,
+            );
+        }
     }, ORPHAN_TIMEOUT_MS);
 }
 
