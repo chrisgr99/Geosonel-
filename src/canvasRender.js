@@ -988,17 +988,20 @@ export const renderMethods = {
     },
 
     /**
-     * Render the eight resize handles around the current
-     * selection's bounding box. Drawn after
+     * Render the four CORNER resize handles around the
+     * current selection's bounding box. Drawn after
      * _drawSelectionMarkers so the handles sit on top of
      * the yellow dotted selection rectangles. The handle
      * currently under the pointer (this._hoverHandle)
      * renders at HANDLE_HOVER_SIZE_PX instead of
      * HANDLE_SIZE_PX so the pointer's gesture-actionable
-     * target reads clearly. No-op when the selection is
-     * empty (no bbox) or a marquee gesture is in progress
-     * (we don't draw handles on top of the rubber-band
-     * rectangle).
+     * target reads clearly. The four edge-midpoint handles
+     * are deliberately NOT drawn — dragging anywhere along a
+     * side does the 1-D resize instead (see _hitTestHandle),
+     * which keeps a handle square from covering beat points.
+     * No-op when the selection is empty (no bbox) or a
+     * marquee gesture is in progress (we don't draw handles
+     * on top of the rubber-band rectangle).
      */
     _drawResizeHandles() {
         if (this._gesture !== null && this._gesture.kind === "marquee") return;
@@ -1011,6 +1014,8 @@ export const renderMethods = {
         ctx.strokeStyle = HANDLE_STROKE_COLOUR;
         ctx.lineWidth = 1;
         for (const id of Object.keys(anchors)) {
+            // Corners only; the side midpoints (t/b/l/r) are not drawn.
+            if (id !== "tl" && id !== "tr" && id !== "br" && id !== "bl") continue;
             const a = anchors[id];
             const size = id === this._hoverHandle
                 ? HANDLE_HOVER_SIZE_PX

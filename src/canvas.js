@@ -416,6 +416,19 @@ export class Canvas {
         };
 
         /**
+         * "Armed to clear" flag for the persistent-selection model.
+         * A plain click on empty canvas no longer clears the selection
+         * on its own — the FIRST such click only arms this flag (the
+         * selection survives an accidental background click); a SECOND
+         * consecutive background click then clears it. Any other
+         * gesture (selecting an object, shift-click, a drag) disarms
+         * it, so two clears require two clicks with nothing in between.
+         * Covers both a fast double-click and two slower clicks.
+         * @type {boolean}
+         */
+        this._bgClearArmed = false;
+
+        /**
          * Most recent canvas-space position (x, y) captured
          * from a mousedown anywhere on the canvas element,
          * or null when no click has been observed yet (or
@@ -808,6 +821,8 @@ export class Canvas {
             };
         }
         this._gesture = null;
+        // A scene reload breaks any background-click clear run.
+        this._bgClearArmed = false;
         // Clear hover state on scene reload. The next
         // mousemove will re-establish it against the new
         // scene; without this, a hover-debounce promotion

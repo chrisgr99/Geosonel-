@@ -104,7 +104,9 @@ export const hitTestMethods = {
         if (this._scene === null) return null;
         const ppu = this.pixelsPerUnit;
         if (ppu === 0) return null;
-        const HIT_THRESHOLD_PX = 8;
+        // ±6 px per side (a 12 px-wide grab band), matching the corner
+        // and side-edge grab zones of the selection box.
+        const HIT_THRESHOLD_PX = 6;
         const SAMPLES = 64;
         for (let i = this._scene.curves.length - 1; i >= 0; i--) {
             const curve = this._scene.curves[i];
@@ -148,15 +150,19 @@ export const hitTestMethods = {
     },
 
     /**
-     * Hit-test the pointer position against the resize
-     * handles drawn on the current selection's bounding
-     * box. Returns the handle id under the pointer, or
-     * null. Hit area is a square centred on each handle's
-     * anchor, sized to HANDLE_HOVER_SIZE_PX plus a small
-     * pad so the test stays forgiving even at the idle
-     * (smaller) handle size. Cheap: eight anchor lookups
-     * plus eight axis-aligned bounds checks per call,
-     * fine to run on every mousemove.
+     * Hit-test the pointer position against the selection
+     * box's resize zones. Returns the handle id under the
+     * pointer, or null.
+     *
+     * Only the four CORNER handles (tl/tr/br/bl) are drawn,
+     * each a square hit zone of HANDLE_HOVER_SIZE_PX plus a
+     * pad. The four SIDES (t/b/l/r) have no drawn handle —
+     * instead the whole edge line is a grab band of the same
+     * ±half-width, so dragging anywhere along a side does the
+     * 1-D resize the old edge-midpoint handle did. Removing
+     * the midpoint handles keeps them from covering beat
+     * points. Corners are tested first so they win in their
+     * square; the rest of each edge is the side band.
      * @param {number} px
      * @param {number} py
      * @returns {string | null}
@@ -164,14 +170,41 @@ export const hitTestMethods = {
     _hitTestHandle(px, py) {
         const bbox = this._getSelectionBbox();
         if (bbox === null) return null;
-        const anchors = this._handleAnchors(bbox);
+        const left = this.toPixelX(bbox.x1);
+        const right = this.toPixelX(bbox.x2);
+        // Canvas Y is up, pixel Y is down: bbox.y2 (top) maps to the
+        // smaller pixel Y.
+        const top = this.toPixelY(bbox.y2);
+        const bottom = this.toPixelY(bbox.y1);
         const halfHit = HANDLE_HOVER_SIZE_PX / 2 + HANDLE_HIT_PADDING_PX;
-        for (const id of Object.keys(anchors)) {
-            const a = anchors[id];
+
+        // Corners first — they take priority over the side bands.
+        const corners = {
+            tl: { px: left, py: top },
+            tr: { px: right, py: top },
+            br: { px: right, py: bottom },
+            bl: { px: left, py: bottom },
+        };
+        for (const id of Object.keys(corners)) {
+            const a = corners[id];
             if (Math.abs(px - a.px) <= halfHit && Math.abs(py - a.py) <= halfHit) {
                 return id;
             }
         }
+
+        // Side bands — a ±halfHit strip along each edge, between the
+        // corners. The parallel coordinate must lie within the box's
+        // span so the band doesn't extend past a corner.
+        const minX = Math.min(left, right);
+        const maxX = Math.max(left, right);
+        const minY = Math.min(top, bottom);
+        const maxY = Math.max(top, bottom);
+        const withinX = px >= minX && px <= maxX;
+        const withinY = py >= minY && py <= maxY;
+        if (withinX && Math.abs(py - top) <= halfHit) return "t";
+        if (withinX && Math.abs(py - bottom) <= halfHit) return "b";
+        if (withinY && Math.abs(px - left) <= halfHit) return "l";
+        if (withinY && Math.abs(px - right) <= halfHit) return "r";
         return null;
     },
 

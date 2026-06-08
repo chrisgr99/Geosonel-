@@ -555,14 +555,30 @@ export const inputMethods = {
                 } else {
                     this._selectOnly(g.hit);
                 }
+                // Selecting an object breaks any background-click
+                // run, so the next empty click starts fresh.
+                this._bgClearArmed = false;
             } else if (!g.shiftKey) {
-                // Plain click on empty space clears everything.
-                // Shift+click on empty space leaves selection alone.
-                this._selection = {
-                    sprites: new Set(),
-                    triggers: new Set(),
-                    curves: new Set(),
-                };
+                // Persistent selection: a plain click on empty space
+                // does NOT clear on its own. The first such click only
+                // ARMS the clear (so an accidental background click
+                // keeps the selection); the second consecutive
+                // background click clears it. This covers both a fast
+                // double-click and two slower clicks.
+                if (this._bgClearArmed) {
+                    this._selection = {
+                        sprites: new Set(),
+                        triggers: new Set(),
+                        curves: new Set(),
+                    };
+                    this._bgClearArmed = false;
+                } else {
+                    this._bgClearArmed = true;
+                }
+            } else {
+                // Shift+click on empty space leaves the selection
+                // alone; it isn't part of a clear run.
+                this._bgClearArmed = false;
             }
             this.scheduleDraw();
             this._emitSelectionChanged();
@@ -570,6 +586,9 @@ export const inputMethods = {
         }
 
         if (g.kind === "drag") {
+            // A drag (translate or marquee) is a deliberate gesture,
+            // not part of a background-click clear run.
+            this._bgClearArmed = false;
             if (this._editCallback !== null && this._scene !== null) {
                 // Cumulative delta from drag start to the
                 // mouseup position. Live-drag has already
@@ -618,6 +637,9 @@ export const inputMethods = {
         }
 
         if (g.kind === "marquee") {
+            // A marquee (drag-select) is a deliberate gesture, not part
+            // of a background-click clear run.
+            this._bgClearArmed = false;
             const x1 = Math.min(g.startX, g.currentX);
             const x2 = Math.max(g.startX, g.currentX);
             const y1 = Math.min(g.startY, g.currentY);
@@ -691,6 +713,7 @@ export const inputMethods = {
             return;
         }
         if (g.kind === "resize") {
+            this._bgClearArmed = false;
             if (this._editCallback !== null) {
                 // Commit the resize as a scaleSelection
                 // edit. ax/ay/sx/sy were tracked through the
@@ -714,6 +737,7 @@ export const inputMethods = {
             return;
         }
         if (g.kind === "createEllipse") {
+            this._bgClearArmed = false;
             // Recompute the ellipse bounding box from the
             // gesture's start and current points, applying
             // the Shift-constrain-to-square modifier if held
@@ -772,20 +796,21 @@ export const inputMethods = {
      * Double-click on a canvas object emits an
      * openObjectInCode edit so external host code can
      * switch to the Script tab and scroll to the object's
-     * source. Double-click on empty canvas background
-     * emits a toggleTransport edit so external host code
-     * can play/pause the transport. Single clicks that
+     * source. Double-click on empty canvas background does
+     * nothing here — clearing the selection on two
+     * background clicks is handled by the per-click "armed"
+     * logic in _onMouseUp, of which a double-click is just
+     * the fast case. (The former double-click-to-toggle-
+     * transport behaviour was removed.) Single clicks that
      * precede the dblclick event have already flowed
-     * through the normal mousedown / mouseup gesture
-     * state machine, so any object on the background gets
-     * selected (or deselected) on the singles; the
-     * dblclick's job is just to emit the navigation or
-     * transport intent.
+     * through the normal mousedown / mouseup gesture state
+     * machine, so the selection has already updated; the
+     * dblclick's job is just to emit the navigation intent.
      *
      * Ignored when a creation tool is armed (under a tool
      * the natural reading of two quick clicks is "place
-     * two objects", not "navigate to source or toggle
-     * transport"), or when no edit callback is wired.
+     * two objects", not "navigate to source"), or when no
+     * edit callback is wired.
      *
      * @param {MouseEvent} e
      */
@@ -809,10 +834,10 @@ export const inputMethods = {
                 return;
             }
         }
-        // Double-click landed on empty background — toggle
-        // the transport play state. Convenient for testing
-        // patterns: start playback with two quick clicks on
-        // an empty area of the canvas, stop the same way.
-        this._editCallback({ kind: "toggleTransport" });
+        // Double-click on empty background no longer toggles the
+        // transport. Two background clicks now clear the selection
+        // (handled by the per-click "armed" logic in _onMouseUp); a
+        // double-click is just the fast case of that, so there is
+        // nothing to do here.
     },
 };
