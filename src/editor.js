@@ -34,7 +34,7 @@ import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect, setMutedObjectIdsEffect } from "./patternHighlight.js";
 import { activeBeatHighlightExtension, setActiveBeatsEffect, recomputeTokensEffect } from "./activeBeatHighlight.js";
 import { parenHighlightExtension } from "./parenHighlight.js";
-import { isAutoCompletionEnabled } from "./strudel/codemirror/autocomplete.mjs";
+import { jsAutocomplete } from "./codeAutocomplete.js";
 import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
 import { getPreference, setPreference, subscribePreference } from "./preferences.js";
@@ -684,7 +684,11 @@ export class TabbedEditor {
             this.activeName === "script.js";
         if (!isCodeTab) return [];
         return [
-            isAutoCompletionEnabled(getPreference("enableStrudelAutocomplete")),
+            // JavaScript autocompletion (local symbols, keywords/
+            // snippets, any-word, and the curated callback API) —
+            // replaces the old Strudel-symbol completion. Gated by the
+            // same "Enable Autocompletion" preference.
+            getPreference("enableStrudelAutocomplete") ? jsAutocomplete : [],
             isTooltipEnabled(getPreference("enableStrudelTooltips")),
         ];
     }
