@@ -1025,6 +1025,18 @@ export class Simulation {
         /** @type {(() => void) | null} */
         this._auditionBoundaryHandler = null;
         /**
+         * Master-beat metronome. _metronomeBeatHandler, when set, is
+         * called once each time the transport's elapsed beats cross a
+         * new integer beat while playing; _metronomeBeat tracks the last
+         * beat fired (reset to 0 on every rewind). main.js wires the
+         * handler to a faint click during the audition; the louder
+         * loop-restart click is handled separately by the boundary
+         * handler, which fires the downbeat (beat N) before this would.
+         * @type {(() => void) | null}
+         */
+        this._metronomeBeatHandler = null;
+        this._metronomeBeat = 0;
+        /**
          * Last elapsedSeconds value passed to tick. Used to
          * compute the delta for the next tick and to detect
          * rewind (when the new value is less than this).
@@ -2141,6 +2153,22 @@ export class Simulation {
                 return;
             }
         }
+        // Metronome beat tick. Fire the handler once per master-beat
+        // crossing while playing. Reached only when the audition
+        // boundary above did NOT fire this tick (it returns), so the
+        // loop's downbeat (beat N) is left to the louder boundary click
+        // and this covers the in-between beats. _metronomeBeat resets to
+        // 0 on every rewind, so the first crossing each pass is beat 1.
+        if (this._metronomeBeatHandler !== null && this._transport.isPlaying) {
+            const mBeats = this._transport.elapsedBeats;
+            if (mBeats !== null) {
+                const cur = Math.floor(mBeats);
+                if (cur > this._metronomeBeat) {
+                    this._metronomeBeat = cur;
+                    this._metronomeBeatHandler();
+                }
+            }
+        }
         this._lastElapsed = elapsed;
         // Only the look-ahead scheduler advances the clock; a paused
         // transport freezes the sim where it is (already a window
@@ -2398,6 +2426,16 @@ export class Simulation {
     }
 
     /**
+     * Register the callback fired once on each master-beat crossing
+     * while the transport plays (the audition's per-beat metronome).
+     * Pass null to clear.
+     * @param {(() => void) | null} fn
+     */
+    setMetronomeBeatHandler(fn) {
+        this._metronomeBeatHandler = typeof fn === "function" ? fn : null;
+    }
+
+    /**
      * Arm a boundary at `beats` master-clock beats from the current
      * reset (elapsed 0). The audition bar's Mutate / Loop buttons
      * call this right after applySeedAndReset + rewind, so the
@@ -2473,6 +2511,9 @@ export class Simulation {
         // nothing for a callback that hasn't fired since the rewind.
         this._lastCallbackContexts.clear();
         this._eventTrace.clear();
+        // Restart the metronome beat counter so the first beat crossing
+        // after the rewind is beat 1 (the downbeat is the loop click).
+        this._metronomeBeat = 0;
         for (const state of this._curveState.values()) {
             state.t = 0;
             state.cycleProgress = 0;
@@ -2495,6 +2536,22 @@ export class Simulation {
             // newCycleCount=0, matching the rewind state,
             // but skipping the formula entirely is cleaner).
             state._lastCycleDuration = 0;
+            // Reset the per-cycle beat-firing cursor so the next step
+            // rebuilds the beat order fresh and fires from the downbeat.
+            // _detectActiveBeatCrossings only rebuilds when cycleCount
+            // moves relative to _lastBeatCycle; a rewind that does NOT
+            // cross a cycle boundary (the audition loop / Mutate, whose
+            // N-beat length is shorter than the curve's cycle, so
+            // cycleCount stays at the same value) would otherwise leave
+            // this index stale mid-list — the early beats never re-fire,
+            // so the curve goes silent after the first pass and a
+            // Mutate's new variation doesn't sound until the next
+            // natural wrap. Nulling _beatOrder forces the fresh-build
+            // branch (which arms at the downbeat when cycleProgress≈0).
+            state._beatOrder = null;
+            state._beatOrderSign = 0;
+            state._lastBeatCycle = -1;
+            state._beatNextIdx = 0;
             // cycleSpeeds direction-aware initial cursor.
             // A speedList starting with a negative entry
             // places the cursor at t=1 on play so the

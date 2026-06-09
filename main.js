@@ -1856,10 +1856,11 @@ async function main() {
     // the main toolbar's Audition toggle shows/hides it. Defaults
     // to visible.
     const auditionBar = new AuditionBar(canvasAreaEl);
+    // Initial sync: the bar starts hidden, so the toolbar's Audition
+    // toggle starts inactive. The toggle's click handler is wired
+    // further down, next to the audition session state, so hiding the
+    // bar can also end any running audition.
     toolbar.setAuditionActive(auditionBar.isVisible());
-    toolbar.onAuditionToggle(() => {
-        toolbar.setAuditionActive(auditionBar.toggle());
-    });
 
     // Wire the transport view and MIDI indicator now that
     // the toolbar has built its DOM. Both modules find
@@ -2330,8 +2331,14 @@ async function main() {
     //
     // The seed is tracked internally (simulation.getSeed) and not
     // shown — it is the key captured later when a pattern is curated.
-    let loopEnabled = false;
     let auditionRunning = false;
+    // Start (or restart) the audition playing the given seed's variation
+    // from the top, looping. Audition playback ALWAYS loops now (the bar
+    // is Play/Pause + Rewind, no Loop toggle): the N-beat boundary
+    // re-seeds the same variation and re-arms. applySeedAndReset applies
+    // the seed; transport.rewind() zeroes the clock (and flushes the
+    // firing engine on the backward jump); then play + arm the boundary
+    // and the seam guard (always, since a repeating seam always follows).
     const startAudition = (seed) => {
         auditionRunning = true;
         simulation.applySeedAndReset(seed);
@@ -2339,58 +2346,99 @@ async function main() {
         if (!transport.isPlaying) transport.play();
         const beats = auditionBar.getBeats();
         simulation.armAuditionBoundary(beats);
-        // Arm the seam tail-suppression guard only when this pass
-        // loops (a repeating seam follows); a one-shot rings out.
-        firingEngine.setSeamBoundary(loopEnabled ? beats : null);
+        firingEngine.setSeamBoundary(beats);
+        auditionBar.setPlaying(true);
     };
-    // Mutate always restarts immediately with the next variation:
-    // advance the seed and play from its start now. With Loop off
-    // that is one finite pass; with Loop on the boundary then loops
-    // the new variation, so it is retained until the next Mutate.
+    // Fully end the audition session and return the score to normal
+    // play. Used when the user hides the audition bar: audition must
+    // not keep running, looping, OR applying its variation once the
+    // bar is gone. Clears the loop/running state, disarms both
+    // boundaries, unchecks Loop, and — if a variation seed was applied
+    // — resets the seed to 0 (the authored, un-varied state) and
+    // rewinds to apply it (the seed offset only takes effect on a
+    // rewind; the rewind also flushes the firing engine). The
+    // seed-reset is guarded so closing the bar without having
+    // auditioned doesn't rewind a normally-playing score.
+    const endAuditionSession = () => {
+        auditionRunning = false;
+        simulation.disarmAuditionBoundary();
+        firingEngine.setSeamBoundary(null);
+        auditionBar.setPlaying(false);
+        if (simulation.getSeed() !== 0) {
+            simulation.setSeed(0);
+            transport.rewind();
+        }
+    };
+    // The toolbar's Audition toggle shows/hides the floating bar.
+    // Hiding it ends any audition in flight (above), so a hidden bar
+    // never leaves audition active.
+    toolbar.onAuditionToggle(() => {
+        const nowVisible = auditionBar.toggle();
+        toolbar.setAuditionActive(nowVisible);
+        if (!nowVisible) endAuditionSession();
+    });
+    // Mutate: advance to the next variation and play it from the top,
+    // looping.
     auditionBar.onMutate(() => {
         startAudition(simulation.getSeed() + 1);
     });
-    auditionBar.onLoopToggle((checked) => {
-        loopEnabled = checked;
-        if (checked && !auditionRunning) {
-            // Begin looping the current pattern continually.
-            startAudition(simulation.getSeed());
-        } else if (auditionRunning) {
-            // A pass is mid-flight: turning Loop on means a
-            // repeating seam now follows, so arm the seam guard;
-            // turning it off means the current cycle becomes
-            // terminal, so disarm and let its tail ring out. (The
-            // boundary handler reads loopEnabled live for the
-            // repeat-vs-stop decision.)
-            firingEngine.setSeamBoundary(checked ? auditionBar.getBeats() : null);
-        }
-    });
-
-    // The armed boundary fires here. While Loop is on, re-run the
-    // current candidate from its start (same seed) and re-arm, so it
-    // loops. While Loop is off, pause: the firing engine's pause
-    // listener flushes pending events + MIDI all-notes-off panics,
-    // so the pass ends in silence with nothing hanging over.
-    simulation.setAuditionBoundaryHandler(() => {
-        if (loopEnabled) {
+    // Rewind: reset the CURRENT variation to the top. While playing,
+    // that restarts it from the start, still looping. While PAUSED, it
+    // only rewinds — it does NOT start playback — so the cursor jumps
+    // to the start and waits for Play.
+    auditionBar.onRewind(() => {
+        if (transport.isPlaying) {
             startAudition(simulation.getSeed());
         } else {
+            // Rewind in place, stay paused.
+            simulation.applySeedAndReset(simulation.getSeed());
+            transport.rewind();
+            simulation.disarmAuditionBoundary();
+            firingEngine.setSeamBoundary(null);
             auditionRunning = false;
+            auditionBar.setPlaying(false);
+        }
+    });
+    // Play / Pause: toggle audition playback. Playing → pause
+    // immediately (the firing engine's pause listener flushes pending
+    // events + MIDI-panics, so it stops in silence). Stopped → play the
+    // current variation from the top, looping.
+    auditionBar.onPlayPause(() => {
+        if (auditionRunning && transport.isPlaying) {
             transport.pause();
+        } else {
+            startAudition(simulation.getSeed());
         }
     });
 
-    // Whenever the transport stops playing (the boundary's pause, or
-    // a manual pause), end the audition session: disarm the boundary
-    // and clear the running state so a subsequent ordinary Play runs
-    // continuously rather than being cut short by a stale boundary.
-    // Ordinary Play is left unchanged: it is the audition boundary,
-    // not Play, that makes a pass finite.
+    // The armed boundary fires here, once per N-beat pass. Audition
+    // playback always loops: re-run the current variation from its start
+    // (same seed) and re-arm, and FLASH the Play/Pause button so the user
+    // sees each loop restart while listening continuously.
+    simulation.setAuditionBoundaryHandler(() => {
+        startAudition(simulation.getSeed());
+        auditionBar.flashLoopRestart();
+        firingEngine.playClick(0.25); // loud click on the loop restart
+    });
+    // Metronome: a fainter click on every master beat while auditioning
+    // (the loud loop-restart click above marks the downbeat). Gated to
+    // the audition so ordinary Play stays click-free.
+    simulation.setMetronomeBeatHandler(() => {
+        if (auditionRunning) firingEngine.playClick(0.08);
+    });
+
+    // Whenever the transport stops playing (the audition pause, or a
+    // manual pause), end the audition's running state: disarm the
+    // boundary, clear the seam, and drop the Play/Pause button back to
+    // ▶, so a subsequent ordinary Play runs continuously rather than
+    // being cut short by a stale boundary. Ordinary Play is unchanged —
+    // it is the audition boundary, not Play, that makes a pass finite.
     transport.on("play", () => {
         if (!transport.isPlaying) {
             auditionRunning = false;
             simulation.disarmAuditionBoundary();
             firingEngine.setSeamBoundary(null);
+            auditionBar.setPlaying(false);
         }
     });
 

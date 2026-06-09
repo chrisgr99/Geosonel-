@@ -1196,6 +1196,36 @@ export class PatternFiringEngine {
      * @param {number} [durationSeconds]
      * @param {number} [amplitude]
      */
+    /**
+     * Play a short metronome click — a brief blip used as an audible
+     * cue during the audition: a fainter one on every beat, a louder
+     * one (the default volume) on each loop restart. Synthesised
+     * directly on the audio context (a ~1 kHz tone with a fast decay)
+     * so it needs no loaded sample and is independent of the score's
+     * voices and the output mode. No-op when the audio runtime isn't
+     * loaded. Scheduled a hair ahead (the immediate-fire lookahead) so
+     * the envelope start isn't clipped by the current audio time.
+     * @param {number} [volume]  Peak gain of the click (default 0.25).
+     */
+    playClick(volume = 0.25) {
+        if (this._runtime.status !== "loaded") return;
+        const ctx = this._runtime.audioContext;
+        if (ctx === null) return;
+        const peak = (typeof volume === "number" && volume > 0) ? volume : 0.25;
+        const t = ctx.currentTime + IMMEDIATE_FIRE_LOOKAHEAD_SECONDS;
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+        osc.type = "square";
+        osc.frequency.setValueAtTime(1000, t);
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.exponentialRampToValueAtTime(peak, t + 0.001);
+        env.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+        osc.connect(env);
+        env.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.05);
+    }
+
     fireImmediateValue(sourceId, value, durationSeconds, amplitude) {
         if (value === null || typeof value !== "object" || Array.isArray(value)) return;
         if (this._runtime.status !== "loaded") return;

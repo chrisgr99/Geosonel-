@@ -548,26 +548,28 @@
     border-color: #c8c8c8;
 }
 
-/* Loop checkbox + its label. */
-.audition-check {
+/* Rewind + Play/Pause are square glyph buttons (⏮ / ▶ / ⏸), narrower
+ * than the wide "Mutate" text button. */
+.audition-rewind,
+.audition-playpause {
+    width: 38px;
+    padding: 0;
     display: flex;
     align-items: center;
-    gap: 7px;
-    color: #d8d4cc;
-    font-size: 13pt;
-    cursor: pointer;
-    user-select: none;
+    justify-content: center;
+    line-height: 1;
 }
 
-.audition-loop {
-    width: 20px;
-    height: 20px;
-    accent-color: #5fc858;
-    cursor: pointer;
+/* Flash the Play/Pause button green on each loop restart, so the user
+ * sees every repeat while listening continuously. The class is removed
+ * and re-added per restart (auditionBar.flashLoopRestart) to re-trigger
+ * the animation. */
+@keyframes audition-loop-flash {
+    0%   { background-color: #5fc858; border-color: #8fe888; color: #10210f; }
+    100% { background-color: #3a3a3a; border-color: #8a8a8a; color: #f0ece4; }
 }
-
-.audition-check-label {
-    white-space: nowrap;
+.audition-playpause.audition-loop-flash {
+    animation: audition-loop-flash 220ms ease-out;
 }
 
 /* Reserved space for the future "move to curated list" capture

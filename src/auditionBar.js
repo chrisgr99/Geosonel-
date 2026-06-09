@@ -40,6 +40,12 @@
  */
 
 const DEFAULT_BEATS = 16;
+// Transport glyphs, matching the main transport bar: a right-pointing
+// triangle for Play, two vertical bars for Pause, skip-to-start for
+// Rewind.
+const PLAY_GLYPH = "▶";   // ▶
+const PAUSE_GLYPH = "⏸";  // ⏸
+const REWIND_GLYPH = "⏮"; // ⏮
 
 export class AuditionBar {
     /**
@@ -49,15 +55,22 @@ export class AuditionBar {
         this.container = container;
         /** @type {Array<() => void>} */
         this._mutateListeners = [];
-        /** @type {Array<(checked: boolean) => void>} */
-        this._loopToggleListeners = [];
+        /** @type {Array<() => void>} */
+        this._rewindListeners = [];
+        /** @type {Array<() => void>} */
+        this._playPauseListeners = [];
         /** @type {HTMLInputElement | null} */
         this._beatsInput = null;
-        /** @type {HTMLInputElement | null} */
-        this._loopCheckbox = null;
+        /** @type {HTMLButtonElement | null} */
+        this._playPauseBtn = null;
+        /** Whether the audition is currently playing (button shows ⏸). */
+        this._playing = false;
         /** @type {HTMLElement | null} */
         this._bar = null;
-        this._visible = true;
+        // Hidden by default: the floating bar appears only when the
+        // user turns it on via the toolbar's Audition toggle. A fresh
+        // score loads with no audition bar and no audition running.
+        this._visible = false;
         this._render();
     }
 
@@ -70,12 +83,22 @@ export class AuditionBar {
     }
 
     /**
-     * Subscribe to Loop checkbox changes. The callback receives the
-     * new checked state (true = looping on).
-     * @param {(checked: boolean) => void} cb
+     * Subscribe to Rewind clicks (restart the current variation from
+     * the beginning).
+     * @param {() => void} cb
      */
-    onLoopToggle(cb) {
-        this._loopToggleListeners.push(cb);
+    onRewind(cb) {
+        this._rewindListeners.push(cb);
+    }
+
+    /**
+     * Subscribe to Play/Pause clicks. The callback decides what to do
+     * based on the current play state (start the looping audition, or
+     * pause it); it should call setPlaying to reflect the new state.
+     * @param {() => void} cb
+     */
+    onPlayPause(cb) {
+        this._playPauseListeners.push(cb);
     }
 
     /**
@@ -91,9 +114,40 @@ export class AuditionBar {
         return n;
     }
 
-    /** @returns {boolean} */
-    isLoopChecked() {
-        return this._loopCheckbox !== null && this._loopCheckbox.checked;
+    /** @returns {boolean} Whether the audition is currently playing. */
+    isPlaying() {
+        return this._playing;
+    }
+
+    /**
+     * Reflect the audition play state on the Play/Pause button: ⏸ (a
+     * pause glyph) while playing, ▶ (a play triangle) while stopped.
+     * Purely visual — callers own the actual transport.
+     * @param {boolean} playing
+     */
+    setPlaying(playing) {
+        this._playing = playing;
+        if (this._playPauseBtn !== null) {
+            this._playPauseBtn.textContent = playing ? PAUSE_GLYPH : PLAY_GLYPH;
+            this._playPauseBtn.setAttribute(
+                "aria-label", playing ? "Pause" : "Play");
+        }
+    }
+
+    /**
+     * Briefly flash the Play/Pause button to signal that the loop just
+     * restarted, so the user can see each repeat while listening
+     * continuously. Re-triggerable: the animation class is removed and
+     * re-added (with a reflow between) so a flash can fire every loop.
+     */
+    flashLoopRestart() {
+        const btn = this._playPauseBtn;
+        if (btn === null) return;
+        btn.classList.remove("audition-loop-flash");
+        // Force a reflow so removing then re-adding restarts the CSS
+        // animation rather than being coalesced into a no-op.
+        void btn.offsetWidth;
+        btn.classList.add("audition-loop-flash");
     }
 
     /** @returns {boolean} */
@@ -124,10 +178,15 @@ export class AuditionBar {
         }
     }
 
-    /** @param {boolean} checked */
-    _emitLoopToggle(checked) {
-        for (const cb of this._loopToggleListeners) {
-            try { cb(checked); } catch (err) { console.error("GXW: audition loop-toggle listener threw.", err); }
+    _emitRewind() {
+        for (const cb of this._rewindListeners) {
+            try { cb(); } catch (err) { console.error("GXW: audition rewind listener threw.", err); }
+        }
+    }
+
+    _emitPlayPause() {
+        for (const cb of this._playPauseListeners) {
+            try { cb(); } catch (err) { console.error("GXW: audition play/pause listener threw.", err); }
         }
     }
 
@@ -166,24 +225,29 @@ export class AuditionBar {
         mutateBtn.addEventListener("click", () => this._emitMutate());
         bar.appendChild(mutateBtn);
 
-        // Loop — a checkbox. Checked = the current pattern loops
-        // continually (reset and repeat every N beats); unchecked =
-        // a Mutate plays one pass then stops.
-        const loopLabel = document.createElement("label");
-        loopLabel.className = "audition-check";
-        const loopBox = document.createElement("input");
-        loopBox.type = "checkbox";
-        loopBox.className = "audition-loop";
-        loopBox.setAttribute("aria-label", "Loop");
-        loopBox.addEventListener("change", () => this._emitLoopToggle(loopBox.checked));
-        const loopText = document.createElement("span");
-        loopText.className = "audition-check-label";
-        loopText.textContent = "Loop";
-        loopLabel.appendChild(loopBox);
-        loopLabel.appendChild(loopText);
-        loopLabel.title = "Loop. When checked, the current pattern repeats every set number of beats (a clean restart each time). Mutate while looping changes the upcoming cycle's variation and keeps looping that.";
-        this._loopCheckbox = loopBox;
-        bar.appendChild(loopLabel);
+        // Rewind — restart the current variation from the beginning.
+        // Sits just left of Play/Pause.
+        const rewindBtn = document.createElement("button");
+        rewindBtn.type = "button";
+        rewindBtn.className = "audition-btn audition-rewind";
+        rewindBtn.textContent = REWIND_GLYPH;
+        rewindBtn.setAttribute("aria-label", "Rewind");
+        rewindBtn.title = "Rewind. Reset the current variation to the beginning and play it again from the start.";
+        rewindBtn.addEventListener("click", () => this._emitRewind());
+        bar.appendChild(rewindBtn);
+
+        // Play / Pause — play the current variation looping (it repeats
+        // every N beats), or pause it immediately. The glyph toggles
+        // ▶ ⇄ ⏸ via setPlaying; it also flashes on each loop restart.
+        const playPauseBtn = document.createElement("button");
+        playPauseBtn.type = "button";
+        playPauseBtn.className = "audition-btn audition-playpause";
+        playPauseBtn.textContent = PLAY_GLYPH;
+        playPauseBtn.setAttribute("aria-label", "Play");
+        playPauseBtn.title = "Play / Pause. Play the current variation looping (it repeats every set number of beats, flashing on each restart); pause stops it immediately.";
+        playPauseBtn.addEventListener("click", () => this._emitPlayPause());
+        this._playPauseBtn = playPauseBtn;
+        bar.appendChild(playPauseBtn);
 
         // Reserved slot for a future "move to curated list" capture
         // button — leave room, do not build it now. (Capture will
