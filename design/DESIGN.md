@@ -908,7 +908,23 @@ mini-notation autocomplete, the Control-hover Strudel documentation tooltips, an
 Strudel-pattern syntax highlighting.
 
 RESOLVED (for the section-3 engine design): a pattern's playback rate is the tempo-locked cursor
-clock (§3.6: a musical cycle against the global BPM, no seconds-based cursor durations). The
+clock (§3.6: a musical cycle against the global BPM, no seconds-based cursor durations).
+
+UPDATE 2026-06-09 (Phase 6, the §10 build cleanup, in progress): the cursor-target highlight and
+labelled-block highlighting (cursorTargets.js / patternHighlight.js / activeBeatHighlight.js) are
+NOT removed — superseding the original plan below. The "later rebuild against the callback
+name-bindings" already happened: these modules now resolve callback function NAMES
+(onActiveBeatFunction etc.) as well as the legacy $-labels, so they remain LIVE, useful code-tab
+features and are KEPT — selection→callback active-tag highlight, orphan-callback flag,
+$mute badge, active-token highlight sweeping with the cursor, and the bidirectional code↔canvas
+link (cursor in a callback highlights its objects; selecting objects marks their callbacks),
+including the cursor-driven mute target used by playback. Removing them would regress working
+functionality. The legacy src/strudelRuntime.js (the old cyclist / stack-pattern runtime of the
+removed two-pass machinery) WAS removed — it had no importers (commit 3a6ffb1); src/strudel/runtime.js
+remains the kept superdough audio runtime. Still genuinely dead and pending removal: the firingEngine
+two-pass machinery, and the cyclePattern field (needs a readers check first).
+
+ORIGINAL PLAN (superseded for the highlight modules by the update above): The
 cursor-target highlight and the old labelled-block model (cursorTargets.js / patternHighlight.js)
 are REMOVED in the build cleanup, since their $-label resolution does not transfer to the
 procedural callback model; the wanted bidirectional code-canvas link (cursor in a callback
