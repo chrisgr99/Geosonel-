@@ -664,9 +664,12 @@ export const bandObjectMethods = {
             });
 
         // No leading "row" label — the band's MUTABILITY title divider
-        // already names the section, so Position is the first element.
+        // already names the section, so Position is the first element,
+        // with a small indent so it doesn't sit hard against the edge.
         const r = mkRow();
-        r.appendChild(mkLabel("Position", { disabled: !mutabilityActive }));
+        const posLabel = mkLabel("Position", { disabled: !mutabilityActive });
+        posLabel.style.marginLeft = "23px";
+        r.appendChild(posLabel);
         r.appendChild(mkMutabilityField(mutatePositionAgg, "setMutatePosition"));
         const velLabel = mkLabel("Velocity", { disabled: !mutabilityActive });
         velLabel.style.marginLeft = "10px";
