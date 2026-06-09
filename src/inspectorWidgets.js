@@ -333,6 +333,24 @@ export function mkRow() {
 }
 
 /**
+ * Band title divider — a short rule, the title, then a hairline that
+ * fills to the right edge (── TITLE ───────────). Prepended to the top
+ * of each titled band; the rule replaces the plain band borders and the
+ * standalone separators, so the title IS the divider. The lines are
+ * drawn by CSS (::before / ::after on .insp-band-header).
+ * @param {string} title
+ */
+export function mkBandHeader(title) {
+    const el = document.createElement("div");
+    el.className = "insp-band-header";
+    const text = document.createElement("span");
+    text.className = "insp-band-header-text";
+    text.textContent = title;
+    el.appendChild(text);
+    return el;
+}
+
+/**
  * @param {string} text
  * @param {{ width?: number, disabled?: boolean, multiline?: boolean }} [opts]
  */

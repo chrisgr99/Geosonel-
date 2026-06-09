@@ -55,8 +55,9 @@ export const W = {
     variabilityLabel: 72,
 
     // Band 2 Mutability row numeric fields (Position / Velocity /
-    // Size). Narrow — sized for a two-decimal amount like 0.11.
-    mutability: 48,
+    // Size). Sized for a two-decimal amount like 0.11 PLUS the number
+    // spinner, which was clipping the last digit at 48.
+    mutability: 58,
 
     // Band 2 curve "Width" inline label, between the two curve
     // size fields on the Dimension row (the first field's label
@@ -81,6 +82,13 @@ export const W = {
     // Shift, Repeats) and the small numeric fields beside them.
     // Kept tight so all four Euclidean row-1 groups fit one line.
     beatStackLabel: 44,
+    // Normal-mode Active Beats + Beat Strength rows: a slightly wider
+    // label column than beatStackLabel. "Strength" has wider letters
+    // than "Pattern" / "Interval" and was clipping at 44. Only these two
+    // single-field rows use it, so they stay aligned with each other and
+    // clear the field on their right; row 1 keeps beatStackLabel so its
+    // four groups still fit one line.
+    beatStrengthLabel: 54,
     // Narrower two-line labels for "Per / Cycle" and "Per / Bar" — the
     // short words fit a tighter column than beatStackLabel's 44 (which
     // must hold the longer "Pattern" / "Interval"), trimming the

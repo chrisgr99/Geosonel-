@@ -17,6 +17,7 @@ import {
     W,
 } from "./inspectorShared.js";
 import {
+    mkBandHeader,
     mkField,
     mkInlineLetter,
     mkLabel,
@@ -339,6 +340,7 @@ export const bandObjectMethods = {
     _buildBandGeometry(ctx) {
         const band = document.createElement("div");
         band.className = "insp-band";
+        band.appendChild(mkBandHeader("Geometry"));
 
         const curveDisabled = !ctx.hasCurves;
         const sizeActive = sizeRowActive(ctx);
@@ -621,14 +623,29 @@ export const bandObjectMethods = {
         }));
         band.appendChild(r3);
 
-        // Mutability row. The per-object seed-variation amounts the
-        // mutation/audition system applies, split by aspect: Position,
-        // Velocity, Size. VELOCITY reuses the existing `variability`
-        // field (the live seed-variation dial) so today's behaviour is
-        // preserved. Position and Size are PLACEHOLDERS — backed by
-        // mutatePosition / mutateSize so values persist, but the seed
-        // engine doesn't read them yet (the full per-aspect feature is
-        // TBD). Universal across kinds; narrow two-decimal fields.
+        return band;
+    },
+
+    /**
+     * Mutability band (its own band as of the layout move). The per-
+     * object seed-variation amounts the mutation / audition system
+     * applies, split by aspect: Position, Velocity, Rhythm. VELOCITY
+     * reuses the existing `variability` field (the live seed-variation
+     * dial) so today's behaviour is preserved; Position and Rhythm are
+     * PLACEHOLDERS — backed by mutatePosition / mutateSize (the Rhythm
+     * field is the relabelled former "Size" field; its decimal value
+     * persists, but the seed engine doesn't read it yet, and what it
+     * means to mutate the rhythm per rhythm-mode is still TBD).
+     * Universal across kinds; narrow two-decimal fields. No left "row"
+     * label — the band's own MUTABILITY title carries that. Sits just
+     * above the per-object voice band, with room to grow more aspects.
+     */
+    _buildBandMutability(ctx) {
+        const band = document.createElement("div");
+        band.className = "insp-band";
+        band.appendChild(mkBandHeader("Mutability"));
+
+        const objs = selectedObjects(this._scene, this._selection);
         const mutabilityActive = ctx.total > 0;
         const variabilityAgg = aggregateString(objs.all, "variability");
         const mutatePositionAgg = aggregateString(objs.all, "mutatePosition");
@@ -646,19 +663,23 @@ export const bandObjectMethods = {
                 editKind,
             });
 
-        const r6 = mkRow();
-        r6.appendChild(mkLabel("Mutability", { width: W.leftLabel, disabled: !mutabilityActive }));
-        r6.appendChild(mkLabel("Position", { disabled: !mutabilityActive }));
-        r6.appendChild(mkMutabilityField(mutatePositionAgg, "setMutatePosition"));
+        // No leading "row" label — the band's MUTABILITY title divider
+        // already names the section, so Position is the first element.
+        const r = mkRow();
+        r.appendChild(mkLabel("Position", { disabled: !mutabilityActive }));
+        r.appendChild(mkMutabilityField(mutatePositionAgg, "setMutatePosition"));
         const velLabel = mkLabel("Velocity", { disabled: !mutabilityActive });
         velLabel.style.marginLeft = "10px";
-        r6.appendChild(velLabel);
-        r6.appendChild(mkMutabilityField(variabilityAgg, "setVariability"));
-        const sizeLabel = mkLabel("Size", { disabled: !mutabilityActive });
-        sizeLabel.style.marginLeft = "10px";
-        r6.appendChild(sizeLabel);
-        r6.appendChild(mkMutabilityField(mutateSizeAgg, "setMutateSize"));
-        band.appendChild(r6);
+        r.appendChild(velLabel);
+        r.appendChild(mkMutabilityField(variabilityAgg, "setVariability"));
+        // "Rhythm" (the relabelled former "Size" field). Still backed by
+        // mutateSize / setMutateSize for now — only the label changed;
+        // the rhythm-mutation semantics come later.
+        const rhythmLabel = mkLabel("Rhythm", { disabled: !mutabilityActive });
+        rhythmLabel.style.marginLeft = "10px";
+        r.appendChild(rhythmLabel);
+        r.appendChild(mkMutabilityField(mutateSizeAgg, "setMutateSize"));
+        band.appendChild(r);
 
         return band;
     },

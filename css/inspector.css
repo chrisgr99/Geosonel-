@@ -76,11 +76,38 @@
 
 .insp-band {
     padding: 5px 8px;
-    border-bottom: 1px solid #777777;
 }
 
-.insp-band:last-child {
-    border-bottom: none;
+/* Band title divider: a short rule, the title, then a hairline filling
+ * to the right edge — ── TITLE ───────────. Each titled band carries
+ * one of these at its top; it replaces the old per-band bottom borders
+ * and the standalone separators, so the title doubles as the divider
+ * (the bare Identity band has no header, reading as one block under the
+ * object title bar). The ::before is the short left stub; the ::after
+ * flexes to fill the remaining width. */
+.insp-band-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 1px 0 5px 0;
+    color: #d8d4cc;
+    font-size: 9pt;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.insp-band-header::before {
+    content: "";
+    flex: 0 0 12px;
+    border-top: 1px solid #888888;
+}
+
+.insp-band-header::after {
+    content: "";
+    flex: 1 1 auto;
+    border-top: 1px solid #888888;
 }
 
 /* Band 3 (callback slots): its four rows have single-line,

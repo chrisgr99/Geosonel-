@@ -14,6 +14,7 @@ import {
     W,
 } from "./inspectorShared.js";
 import {
+    mkBandHeader,
     mkCheckbox,
     mkInlineLetter,
     mkLabel,
@@ -72,6 +73,7 @@ export const bandExtraMethods = {
         // rows in the other bands, so at the shared row margin
         // they read as cramped.
         band.className = "insp-band insp-band-callbacks";
+        band.appendChild(mkBandHeader("Behaviour Functions"));
 
         const objs = selectedObjects(this._scene, this._selection);
         const slotActive = ctx.total > 0;
@@ -198,6 +200,7 @@ export const bandExtraMethods = {
         // normal/euclidean row 1 (mode + Beat Interval + Beats/Cycle +
         // Beats/Bar) fits on one line no wider than other rows.
         band.className = "insp-band insp-band-beatpoints";
+        band.appendChild(mkBandHeader("Rhythm"));
 
         const objs = selectedObjects(this._scene, this._selection);
         const active = ctx.hasCurves || ctx.hasSprites;
@@ -385,7 +388,7 @@ export const bandExtraMethods = {
             })();
 
             const rA = mkRow();
-            rA.appendChild(mkLabel("Active\nBeats", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            rA.appendChild(mkLabel("Active\nBeats", { width: W.beatStrengthLabel, disabled: !active, multiline: true }));
             rA.appendChild(this._buildBeatStringField({
                 value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
                 width: W.beatString,
@@ -402,7 +405,7 @@ export const bandExtraMethods = {
             band.appendChild(rA);
 
             const rS = mkRow();
-            rS.appendChild(mkLabel("Beat\nStrength", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            rS.appendChild(mkLabel("Beat\nStrength", { width: W.beatStrengthLabel, disabled: !active, multiline: true }));
             rS.appendChild(this._buildBeatStringField({
                 value: strengthAgg === "varies" ? "" : strengthAgg,
                 width: W.beatString,
@@ -455,6 +458,7 @@ export const bandExtraMethods = {
     _buildBandCycle(ctx) {
         const band = document.createElement("div");
         band.className = "insp-band";
+        band.appendChild(mkBandHeader("Timing"));
 
         const objs = selectedObjects(this._scene, this._selection);
         const cycleObjs = [...objs.curves, ...objs.sprites];
@@ -596,7 +600,10 @@ export const bandExtraMethods = {
             (this._scene !== null && typeof this._scene.engine === "string")
                 ? this._scene.engine
                 : "midi";
+        // Only superdough has per-object voice rows; under MIDI the band
+        // stays empty — no header divider, no rows.
         if (engine !== "superdough") return band;
+        band.appendChild(mkBandHeader("Voice"));
 
         const objs = selectedObjects(this._scene, this._selection);
         const voiceActive = ctx.total > 0;
@@ -707,20 +714,11 @@ export const bandExtraMethods = {
         const band = document.createElement("div");
         band.className = "insp-band";
 
-        // Section header titling the band as "Global
-        // Settings". The header plus the heavier
-        // separator above the band together do the work
-        // of marking the global section as distinct from
-        // the per-object bands, without depending on a
-        // layout mechanism to push the band to the
-        // bottom of the pane. Future per-object voice
-        // fields in the middle band will naturally
-        // space the global section lower as content
-        // populates the middle area.
-        const header = document.createElement("div");
-        header.className = "insp-band-header";
-        header.textContent = "Global Settings";
-        band.appendChild(header);
+        // "Global" titled-divider header. Marks the score-wide section
+        // as distinct from the per-object bands by name; it carries the
+        // same titled-divider styling as the other bands (uniform, not
+        // heavier).
+        band.appendChild(mkBandHeader("Global"));
 
         const engineValue =
             (this._scene !== null && typeof this._scene.engine === "string")

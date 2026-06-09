@@ -22,13 +22,15 @@
  * Selection helpers live in inspectorSelection.js, shared widths in
  * inspectorShared.js, small widgets in inspectorWidgets.js.
  *
- * Render order (_render, top to bottom): title bar; Identity;
- * Transform & appearance; Msg Functions (the four callbacks, ONE
- * band); Beat Points; Cycle; a
- * separator; the reserved middle area (per-object voice); a heavy
- * separator; the global band (Sound Engine); a bottom spacer. The
- * bands and their fields are documented in DESIGN.md section 4 —
- * that section is kept in sync with this code, the source of truth.
+ * Render order (_render, top to bottom): title bar; Identity (no
+ * header); Geometry; Behaviour Functions (the four callbacks, ONE
+ * band); Rhythm (beat points); Timing (cycle); Mutability; Voice
+ * (per-object, superdough only); Global (Sound Engine); a bottom
+ * spacer. Every band except Identity carries a titled-divider header
+ * (── TITLE ──────, mkBandHeader) that doubles as the separator — the
+ * standalone separator divs and per-band borders are gone. The bands
+ * and their fields are documented in DESIGN.md section 4 — that
+ * section is kept in sync with this code, the source of truth.
  *
  * Bands in brief:
  *   - Identity: Object ID (read-only) + State (Active / No Cursor /
@@ -198,23 +200,14 @@ export class Inspector {
         panel.appendChild(this._buildBandBeatPoints(ctx));
         panel.appendChild(this._buildBandCycle(ctx));
 
-        // Structural break separating the per-object
-        // bands above from the engine-driven bands below.
-        // The middle area is currently empty and reserved
-        // for the per-object voice band the multi-engine
-        // design lands later (sound / bank dropdowns under
-        // superdough, port / channel / program under MIDI,
-        // synth-class fields under Tone.js); the global
-        // band carries the always-visible Sound Engine
-        // dropdown that controls which engine the rest of
-        // the audio surfaces reshape around.
-        const sep1 = document.createElement("div");
-        sep1.className = "insp-separator";
-        panel.appendChild(sep1);
+        // Lower bands. Each carries its own titled-divider header
+        // (── TITLE ───────) that now does the separating, so the
+        // standalone separator divs are gone. Mutability sits just above
+        // the per-object Voice band (moved out of Geometry into its own
+        // band); the Voice band is empty under MIDI; Global is the
+        // score-wide section.
+        panel.appendChild(this._buildBandMutability(ctx));
         panel.appendChild(this._buildBandMiddleArea(ctx));
-        const sep2 = document.createElement("div");
-        sep2.className = "insp-separator insp-separator-heavy";
-        panel.appendChild(sep2);
         panel.appendChild(this._buildBandGlobal(ctx));
 
         // Bottom spacer. Pushes the last band's fields up by
