@@ -960,7 +960,8 @@ export class Canvas {
         this.canvasEl.style.cursor = toolName === null ? "default" : "crosshair";
         if (toolName === null &&
             this._gesture !== null &&
-            this._gesture.kind === "createEllipse") {
+            (this._gesture.kind === "createEllipse" ||
+                this._gesture.kind === "drawPolyline")) {
             this._gesture = null;
             this.scheduleDraw();
         }

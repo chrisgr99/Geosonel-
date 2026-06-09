@@ -65,6 +65,29 @@ export const inputMethods = {
                 this.scheduleDraw();
                 return;
             }
+            if (this._activeTool === "lineSegment") {
+                // Multi-click polyline. The first click starts a
+                // drawPolyline gesture; each later click appends a
+                // vertex (the end of one straight segment and the start
+                // of the next). The tool stays armed throughout — the
+                // rubber-band preview to the cursor is tracked in the
+                // canvas hover-move handler, and a double-click commits
+                // the whole thing as one piste curve (_onDoubleClick).
+                // Each mousedown of the finishing double-click appends a
+                // point, so the trailing duplicate is dropped on commit.
+                if (this._gesture !== null && this._gesture.kind === "drawPolyline") {
+                    this._gesture.points.push([pos.x, pos.y]);
+                } else {
+                    this._gesture = {
+                        kind: "drawPolyline",
+                        points: [[pos.x, pos.y]],
+                        previewX: pos.x,
+                        previewY: pos.y,
+                    };
+                }
+                this.scheduleDraw();
+                return;
+            }
             // Unknown tool name — ignore the click but still
             // disarm via afterPlacement so the toolbar can
             // recover. Defensive only; the toolbar's TOOL_DEFS
@@ -816,6 +839,32 @@ export const inputMethods = {
      */
     _onDoubleClick(e) {
         if (e.button !== 0) return;
+        // Line-segment tool: a double-click finishes the polyline. The
+        // double-click's two mousedowns each appended the final vertex,
+        // so drop the trailing duplicate; commit the whole thing as ONE
+        // piste curve if at least two vertices remain, otherwise cancel
+        // (a single point is not a curve). Then revert to selection.
+        if (this._activeTool === "lineSegment" &&
+            this._gesture !== null &&
+            this._gesture.kind === "drawPolyline") {
+            e.preventDefault();
+            const points = this._gesture.points;
+            if (points.length > 1) points.pop();
+            if (points.length >= 2 && this._editCallback !== null) {
+                this._editCallback({
+                    kind: "addCurve",
+                    shape: {
+                        type: "piste",
+                        points: points.map((p) => [p[0], p[1]]),
+                        closed: false,
+                    },
+                });
+            }
+            this._gesture = null;
+            if (this._toolbar !== null) this._toolbar.afterPlacement();
+            this.scheduleDraw();
+            return;
+        }
         if (this._activeTool !== null) return;
         if (this._editCallback === null) return;
         const pos = this._eventToCanvas(e);

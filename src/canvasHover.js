@@ -104,6 +104,17 @@ export const hoverMethods = {
      * @param {MouseEvent} e
      */
     _onCanvasHoverMove(e) {
+        // Line-segment tool: while drawing a polyline, pointer motion
+        // between clicks drives the rubber-band preview from the last
+        // placed vertex to the cursor. Update the preview endpoint and
+        // redraw; no hover state applies mid-draw.
+        if (this._gesture !== null && this._gesture.kind === "drawPolyline") {
+            const pos = this._eventToCanvas(e);
+            this._gesture.previewX = pos.x;
+            this._gesture.previewY = pos.y;
+            this.scheduleDraw();
+            return;
+        }
         if (this._activeTool !== null || this._gesture !== null) {
             this._clearHover();
             return;

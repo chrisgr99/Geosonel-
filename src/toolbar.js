@@ -135,6 +135,21 @@ const TOOL_DEFS = [
             `<path d="M 16.5 20 L 21.5 20 M 19 17.5 L 19 22.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>` +
             `</svg>`,
     },
+    {
+        name: "lineSegment",
+        label: "Add Line-Segment Curve",
+        tooltip: "Add Line-Segment Curve. Click to place each point; each click ends one straight segment and starts the next. Double-click to finish. Esc to cancel.",
+        // Open zigzag polyline in CURVE_COLOUR (#7dd68a) — the
+        // segmented-line shape distinguishes it from the smooth
+        // ellipse/spline curve tools while staying in the green
+        // curve family. Same lower-right plus mark as the other
+        // create tools (clear of the upper-left zigzag).
+        svg:
+            `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
+            `<polyline points="3,15 8,6 13,13 18,5" stroke="#7dd68a" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round"/>` +
+            `<path d="M 16.5 20 L 21.5 20 M 19 17.5 L 19 22.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>` +
+            `</svg>`,
+    },
 ];
 
 // Image-import icon. A picture-frame outline with a small

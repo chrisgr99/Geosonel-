@@ -186,6 +186,7 @@ export const renderMethods = {
         this._drawResizeHandles();
         this._drawMarqueeRect();
         this._drawCreateEllipseGesture();
+        this._drawPolylineGesture();
 
         ctx.restore();
 
@@ -1105,6 +1106,59 @@ export const renderMethods = {
             ctx.beginPath();
             ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
             ctx.stroke();
+        }
+
+        ctx.restore();
+    },
+
+    /**
+     * Render the in-progress line-segment (polyline) draw. Paints the
+     * already-placed segments as a solid curve-green polyline with a
+     * small dot at each placed vertex, plus a dashed rubber-band segment
+     * from the last vertex to the current pointer so the next click's
+     * segment is previewed live. Nothing commits until the double-click;
+     * the eventual curve is a single piste through these vertices.
+     */
+    _drawPolylineGesture() {
+        if (this._gesture === null || this._gesture.kind !== "drawPolyline") return;
+        const g = this._gesture;
+        const pts = g.points;
+        if (!Array.isArray(pts) || pts.length === 0) return;
+
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.strokeStyle = CURVE_COLOUR;
+        ctx.fillStyle = CURVE_COLOUR;
+        ctx.lineWidth = 1.5;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+
+        // Committed segments through the placed vertices.
+        if (pts.length >= 2) {
+            ctx.beginPath();
+            ctx.moveTo(this.toPixelX(pts[0][0]), this.toPixelY(pts[0][1]));
+            for (let i = 1; i < pts.length; i++) {
+                ctx.lineTo(this.toPixelX(pts[i][0]), this.toPixelY(pts[i][1]));
+            }
+            ctx.stroke();
+        }
+
+        // Dashed rubber-band from the last vertex to the pointer.
+        if (typeof g.previewX === "number" && typeof g.previewY === "number") {
+            const last = pts[pts.length - 1];
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(this.toPixelX(last[0]), this.toPixelY(last[1]));
+            ctx.lineTo(this.toPixelX(g.previewX), this.toPixelY(g.previewY));
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Vertex dots.
+        for (const p of pts) {
+            ctx.beginPath();
+            ctx.arc(this.toPixelX(p[0]), this.toPixelY(p[1]), 2.5, 0, Math.PI * 2);
+            ctx.fill();
         }
 
         ctx.restore();
