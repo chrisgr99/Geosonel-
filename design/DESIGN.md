@@ -728,11 +728,17 @@ Available for curves OR sprites (greyed for triggers / empty). The band's lead l
 generated, or a Strudel mini-notation expression (the underlying field is still beatPointsMode).
 A mode dropdown — None / Normal / Euclidean / Strudel, extensible — drives what is shown:
 - None: just the mode dropdown.
-- Normal: Beats/Cycle + Beats/Bar; then the Active Beats pattern string and the Beat
-  Strength string.
-- Euclidean: Beats/Cycle + Beat Interval + Beats/Bar; an indented Active Beats COUNT (k,
+- Normal: Beat Interval + Beats/Cycle + Beats/Bar; then the Active Beats pattern string and the
+  Beat Strength string.
+- Euclidean: Beat Interval + Beats/Cycle + Beats/Bar; an indented Active Beats COUNT (k,
   aligned under Beats/Cycle) + Beat Shift + Repeats; then the generated Active Beats pattern
   (LOCKED, read-only) and the Beat Strength string.
+
+  The Beat Interval (the note-duration of each beat, which with Beats/Cycle sets the cycle
+  length) sits immediately RIGHT OF THE MODE DROPDOWN in both normal and euclidean — it is the
+  same field/control in both, so the two modes read consistently. (Earlier it was euclidean-only
+  and placed after Beats/Cycle; it was promoted to normal too because cycleDurationSeconds uses
+  it in every mode, so a normal-mode cycle length was otherwise pinned at the default interval.)
 - Strudel: the length spec changes — Beats/Cycle and Beats/Bar are BOTH replaced by a single
   Cycle Length control: a note-duration dropdown (the shared interval menu, with "Off" excluded
   since a cycle must have length) times an integer count, laid out `Cycle Length [dropdown] x

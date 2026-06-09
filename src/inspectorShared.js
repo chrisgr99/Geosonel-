@@ -81,6 +81,15 @@ export const W = {
     // Shift, Repeats) and the small numeric fields beside them.
     // Kept tight so all four Euclidean row-1 groups fit one line.
     beatStackLabel: 44,
+    // Narrower two-line labels for "Per / Cycle" and "Per / Bar" — the
+    // short words fit a tighter column than beatStackLabel's 44 (which
+    // must hold the longer "Pattern" / "Interval"), trimming the
+    // normal/euclidean row-1 width so it fits with Beat Interval added.
+    // Per Cycle a touch wider and Per Bar a touch tighter (±6 from 32)
+    // to even out the row's group spacing — also matches the word
+    // lengths ("Cycle" > "Bar").
+    beatPerCycleLabel: 38,
+    beatPerBarLabel: 26,
     beatNum: 40,
     // Band 6 (Cycle): Cycle Speeds string field. Widened to hold a
     // longer speed list while keeping Band 6's row 1 no wider than

@@ -195,7 +195,7 @@ export const bandExtraMethods = {
     _buildBandBeatPoints(ctx) {
         const band = document.createElement("div");
         // insp-band-beatpoints tightens the row gap so the dense
-        // Euclidean row 1 (mode + Beats/Cycle + Beat Interval +
+        // normal/euclidean row 1 (mode + Beat Interval + Beats/Cycle +
         // Beats/Bar) fits on one line no wider than other rows.
         band.className = "insp-band insp-band-beatpoints";
 
@@ -214,9 +214,9 @@ export const bandExtraMethods = {
             return Number.isFinite(n) && n >= 1 ? n : 16;
         })();
 
-        // Row 1: the mode dropdown, always present. Beats/Cycle
-        // follows once a non-none mode is chosen; euclidean adds
-        // Beat Interval and Beats/Bar on the same row.
+        // Row 1: the mode dropdown, always present. For normal /
+        // euclidean it is followed on the same row by Beat Interval
+        // (right of the mode dropdown), Beats/Cycle, and Beats/Bar.
         const r1 = mkRow();
         // Lead label: "Beat Pattern" across all modes — a reasonable
         // description whether the pattern is defined by x/dot, the
@@ -235,8 +235,25 @@ export const bandExtraMethods = {
             editKind: "setBeatPointsMode",
         }));
 
+        // Beat Interval — the note-duration of each beat, which with
+        // Beats/Cycle sets the cycle length (cycleDurationSeconds uses
+        // it in every mode). Shown for normal AND euclidean (both
+        // grid-based), placed right of the mode dropdown. Strudel has
+        // its own Cycle Length interval; None has no beats.
         if (mode === "normal" || mode === "euclidean") {
-            r1.appendChild(mkLabel("Beats/\nCycle", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
+            r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            r1.appendChild(this._buildDropdownField({
+                options: BEAT_INTERVAL_TOKENS.map((t) => ({ value: t.token, label: t.label })),
+                value: beatIntervalAgg === "varies" ? "" : beatIntervalAgg,
+                width: W.beatInterval,
+                editable: active,
+                editKind: "setBeatInterval",
+            }));
+        }
+
+        if (mode === "normal" || mode === "euclidean") {
+            r1.appendChild(mkLabel("Per\nCycle", { width: W.beatPerCycleLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
                 value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
                 numeric: true,
@@ -276,24 +293,13 @@ export const bandExtraMethods = {
                 selectOnFocus: false,
             }));
         }
-        // Beat Interval is Euclidean-only; Beats/Bar shows in
-        // both modes — it is the time signature's beat count (e.g.
-        // 3 for 3/4), and it groups the Active Beats / Beat
-        // Strength strings into bars with `|` separators.
-        if (mode === "euclidean") {
-            const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
-            r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatStackLabel, disabled: !active, multiline: true }));
-            r1.appendChild(this._buildDropdownField({
-                options: BEAT_INTERVAL_TOKENS.map((t) => ({ value: t.token, label: t.label })),
-                value: beatIntervalAgg === "varies" ? "" : beatIntervalAgg,
-                width: W.beatInterval,
-                editable: active,
-                editKind: "setBeatInterval",
-            }));
-        }
+        // Beats/Bar shows in both normal and euclidean — it is the
+        // time signature's beat count (e.g. 3 for 3/4), and it groups
+        // the Active Beats / Beat Strength strings into bars with `|`
+        // separators.
         if (mode === "normal" || mode === "euclidean") {
             const beatsPerBarAgg = aggregateString(bpObjs, "beatsPerBar");
-            r1.appendChild(mkLabel("Beats/\nBar", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            r1.appendChild(mkLabel("Per\nBar", { width: W.beatPerBarLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
                 value: beatsPerBarAgg === "varies" ? "" : beatsPerBarAgg,
                 numeric: true,
