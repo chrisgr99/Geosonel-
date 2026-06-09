@@ -96,6 +96,7 @@ import { createSceneOps } from "./src/sceneOps.js";
 import { createBuilder, builderGlobals, MATH_GLOBALS } from "./src/construction.js";
 import { DiskMirror } from "./src/diskMirror.js";
 import { MirrorPush } from "./src/mirrorPush.js";
+import { planPropertyChanges, applyPropertyChanges, summarizePlan } from "./src/propertyChanges.js";
 import { AiBatchDialog } from "./src/aiBatchDialog.js";
 import { openDialog, confirmDiscardDialog } from "./src/dialog.js";
 import { Toolbar } from "./src/toolbar.js";
@@ -1638,8 +1639,104 @@ async function main() {
                     mirrorPush.onOrphanWrite(payload);
                 });
             }
+            if (typeof gxwMirror.onPropertyChanges === "function") {
+                gxwMirror.onPropertyChanges((payload) => {
+                    handlePropertyChangesBatch(payload);
+                });
+            }
         }
     }
+
+    /**
+     * Handle an AI property-changes batch forwarded from the main
+     * process (Phase 2). Validates the changes against the current
+     * scene, surfaces a before→after summary in the message area, and
+     * drives the confirm-to-apply dialog: on accept the edits are
+     * applied through the same inspector setters + scene rebuild the
+     * Properties panel uses. The one-shot instruction file was already
+     * consumed main-side; rejection here just reports — there's nothing
+     * to roll back.
+     *
+     * @param {{ changes?: any[], error?: string }} payload
+     */
+    const handlePropertyChangesBatch = (payload) => {
+        const reject = (error) => {
+            void writeMirrorApplyResult({
+                status: "rejected",
+                timestamp: new Date().toISOString(),
+                filename: "property-changes.json",
+                error,
+            });
+            mirrorPush.presentRejection("property-changes.json", error);
+            messages.write(`AI property change rejected: ${error}`, "error");
+        };
+
+        if (payload === null || typeof payload !== "object") {
+            reject("Malformed property-changes payload.");
+            return;
+        }
+        if (typeof payload.error === "string") {
+            reject(payload.error);
+            return;
+        }
+        const sceneFile = session.bundle.getFile("scene.json");
+        if (sceneFile === null) {
+            reject("No scene.json in this score.");
+            return;
+        }
+        const parsed = parseScene(sceneFile.content);
+        if (!parsed.ok) {
+            reject(`scene.json has a parse error: ${parsed.error}`);
+            return;
+        }
+        const plan = planPropertyChanges(parsed.data, payload.changes);
+        if (!plan.ok) {
+            reject(plan.error);
+            return;
+        }
+
+        // Surface the resolved before→after diff so the user sees what
+        // Accept will apply (the dialog itself is just Accept/Cancel).
+        messages.write(`AI proposes property changes:\n${summarizePlan(plan.ops)}`);
+
+        mirrorPush.presentPropertyChanges(async () => {
+            const ok = await applySceneEdit((data) =>
+                applyPropertyChanges(data, plan.ops),
+            );
+            await writeMirrorApplyResult(ok ? {
+                status: "success",
+                timestamp: new Date().toISOString(),
+                applied: ["property-changes.json"],
+            } : {
+                status: "rejected",
+                timestamp: new Date().toISOString(),
+                filename: "property-changes.json",
+                error: "Apply failed — see the message area.",
+            });
+            if (ok) {
+                messages.write(`Applied ${plan.ops.length} property change(s).`);
+            }
+        });
+    };
+
+    /**
+     * Best-effort write of last-apply-result.json via the mirror IPC
+     * bridge. No-op in the web build / before the bridge attaches.
+     * @param {object} payload
+     */
+    const writeMirrorApplyResult = async (payload) => {
+        const gxwMirror = /** @type {any} */ (window).gxwMirror;
+        if (gxwMirror === undefined || gxwMirror === null
+            || typeof gxwMirror.writeApplyResult !== "function") {
+            return;
+        }
+        try {
+            await gxwMirror.writeApplyResult(payload);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`GXW: writeApplyResult failed: ${msg}`);
+        }
+    };
 
     // Confirm-to-apply dialog (Section 15 Phase 1B
     // commit 4b). Mounts into #canvas-area, subscribes

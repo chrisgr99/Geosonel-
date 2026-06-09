@@ -222,6 +222,16 @@ contextBridge.exposeInMainWorld('gxwMirror', {
     ipcRenderer.on('gxw:mirror-batch-ready', listener);
     return () => ipcRenderer.removeListener('gxw:mirror-batch-ready', listener);
   },
+  // Subscribe to property-changes batches (Phase 2): the AI wrote a
+  // property-changes.json instruction; the main process consumed it
+  // and forwards { changes: [...] } (valid JSON) or { error: "..." }
+  // (parse failure). The renderer validates against the scene, shows
+  // the confirm dialog, and applies on accept.
+  onPropertyChanges: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('gxw:mirror-property-changes', listener);
+    return () => ipcRenderer.removeListener('gxw:mirror-property-changes', listener);
+  },
   // Subscribe to batch-started signals from the main
   // process (Phase 1B commit 4b). Fired when the AI
   // writes .pending or when the first round-trip event

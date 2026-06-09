@@ -274,6 +274,38 @@ Callbacks take **no parameters**. Inside the body, `this` is bound to the firing
 
 `script.js` is parsed with Acorn before being applied. Syntax errors reject the batch with the parser's message in `last-apply-result.json`.
 
+## Changing object properties — property-changes.json
+
+To change an object's **properties** (the fields you'd otherwise set in the Properties panel — position, size, velocity, beat-point config, voice/instrument, callback gates, …), do NOT rewrite `scene.json` by hand. Instead write a small one-shot instruction file, `property-changes.json`, naming the objects by ID and the fields to set. The app validates it, shows the same confirm-to-apply dialog used for code edits (with a before→after summary in the message area), and on accept applies the edits through the same validated setters the Properties panel uses, then rebuilds. This avoids the risk and the race of editing the whole `scene.json` while the user is manipulating the canvas.
+
+Format:
+
+```json
+{
+  "changes": [
+    { "object": "CRV4", "set": { "activeBeatsCount": 12 } },
+    { "object": "TRG2", "set": { "x": -7 } },
+    { "object": "CRV2", "set": { "instrument": "marimba" } }
+  ]
+}
+```
+
+Each entry targets one object by `id` (from `selection.json`) and sets one or more fields to **absolute** values. There is no relative/delta op: to "move 2 units left," read the current `x` from `scene.json` (or `selection.json` + `scene.json`) and write the resolved absolute value. The confirm dialog shows the resolved before→after so the user can reject a stale target.
+
+Lifecycle: write `property-changes.json` with an atomic temp-and-rename (write `property-changes.json.tmp`, then rename) like any other mirror write. The app consumes and **deletes** the file (it is a one-shot request, not a persistent projection), shows the dialog, and writes the outcome to `last-apply-result.json` — `success` with `applied: ["property-changes.json"]`, or `rejected` with the reason. Property changes do NOT apply live: a normal scene rebuild follows accept (brief if the score is playing).
+
+Validation is all-or-nothing: an unknown object ID, an unknown field, or a field that doesn't apply to that object's kind rejects the whole batch with a message in `last-apply-result.json`, and nothing is changed. Settable field keys:
+
+- Identity: `name`, `group`
+- Position: `x`, `y` (all kinds). For a trigger/sprite this sets `x`/`y` directly; for a curve it moves the whole shape so its bounding-box centre lands at the absolute target. (Moving a single curve vertex is a canvas reshape, not settable here.)
+- Velocity (sprites, curves): `vx`, `vy`
+- Size: `triggerSize` (triggers), `displayDiameter` (sprites), `width`/`height` (curve bounding box)
+- Beat points (curves, sprites): `beatPointsMode`, `activeBeats`, `strength`, `beatPattern`, `cycleInterval`, `cycleCount`, `beatsPerBar`, `activeBeatsCount`, `beatShift`, `repeats`, `variability`
+- Callback gates + function names: `canActiveBeat`, `onActiveBeatFunction`, `canCollide`, `hasCollidedFunction`, `canBeTriggered`, `beenTriggeredFunction`, `canTick`, `onTickFunction`, `canAutoMessage`, `autoMessageFunction`, `autoMessageInterval`
+- Voice: `instrument` (the object's superdough pitched sound)
+
+**Not** settable here (edit on the canvas or in `script.js` instead): object `id`, a curve's raw shape internals (its `type` and individual vertex coordinates / `points` array — i.e. reshaping, as opposed to the whole-curve position and bounding-box size above), and the image. See `sceneSchema.md` for each field's meaning and valid values.
+
 ## Atomic write protocol
 
 Files in this folder use temp-and-rename atomic writes. When the bundle pushes content, it writes `script.js.tmp` then renames to `script.js`; an AI watching `script.js` directly never sees a torn write. AIs editing round-trip files **must** follow the same pattern: write `script.js.tmp` first, then rename, so the bundle's watcher sees a single atomic transition rather than a partial file.

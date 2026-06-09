@@ -316,6 +316,18 @@ export class MirrorPush {
         /** @type {Array<{filename: string, kind: "text" | "binary", content: string | ArrayBuffer, mimeType?: string}> | null} */
         this._heldBatch = null;
 
+        /**
+         * Held applier for a property-changes batch (Phase 2): an async
+         * thunk that, on accept, applies the validated property edits
+         * through the inspector setters + scene rebuild (wired by
+         * main.js). Distinct from _heldBatch (file content); a
+         * property-changes batch has no mirror file to roll back, so
+         * cancel just discards this. Null when no property batch is
+         * held.
+         * @type {(() => Promise<void>) | null}
+         */
+        this._heldPropertyApply = null;
+
         /** @type {{filename: string, error: string} | null} */
         this._rejectionInfo = null;
 
@@ -1023,6 +1035,40 @@ export class MirrorPush {
     }
 
     /**
+     * Present a validated property-changes batch (Phase 2) for
+     * confirm-to-apply. main.js has already validated the changes
+     * against the scene and surfaced a before→after summary in the
+     * message area; here we just hold the applier and go to 'ready' so
+     * the same Accept/Cancel dialog appears. On Accept, confirmApply
+     * runs the applier; on Cancel, cancelApply discards it.
+     * @param {() => Promise<void>} applyFn
+     */
+    presentPropertyChanges(applyFn) {
+        this._heldBatch = null;
+        this._heldPropertyApply = applyFn;
+        this._rejectionInfo = null;
+        this._batchState = "ready";
+        this._emitStateChange();
+    }
+
+    /**
+     * Show the rejected state for a property-changes batch that failed
+     * validation (unknown object/field, etc.). Unlike a file batch
+     * there's nothing to roll back — the one-shot instruction file was
+     * already consumed — so this just surfaces the error in the dialog.
+     * main.js writes the rejection to last-apply-result.json.
+     * @param {string} filename
+     * @param {string} error
+     */
+    presentRejection(filename, error) {
+        this._heldBatch = null;
+        this._heldPropertyApply = null;
+        this._rejectionInfo = { filename, error };
+        this._batchState = "rejected";
+        this._emitStateChange();
+    }
+
+    /**
      * Apply the held batch on user confirmation. Phase
      * 1B commit 4b: this is the second half of what was
      * applyBatch in commit 2 — the actual bundle
@@ -1043,6 +1089,25 @@ export class MirrorPush {
      */
     async confirmApply() {
         if (this._batchState !== "ready") return;
+
+        // Property-changes batch (Phase 2): run the injected applier
+        // (main.js routes it through the inspector setters + scene
+        // rebuild) and return to idle. No file batch / transport
+        // handling — the rebuild inside the applier covers playback.
+        if (this._heldPropertyApply !== null) {
+            const apply = this._heldPropertyApply;
+            this._heldPropertyApply = null;
+            try {
+                await apply();
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`GXW: property-changes apply failed: ${msg}`);
+            }
+            this._batchState = "idle";
+            this._emitStateChange();
+            return;
+        }
+
         if (this._heldBatch === null) return;
         if (this._bundle === null) return;
 
@@ -1243,11 +1308,13 @@ export class MirrorPush {
     async cancelApply() {
         const previousState = this._batchState;
         if (previousState === "idle") return;
+        const hadPropertyApply = this._heldPropertyApply !== null;
 
         // Snapshot and clear state first so a fast
         // double-click can't re-enter the cancel work.
         this._batchState = "idle";
         this._heldBatch = null;
+        this._heldPropertyApply = null;
         this._rejectionInfo = null;
         this._emitStateChange();
 
@@ -1255,6 +1322,17 @@ export class MirrorPush {
         // _reportRejectionAndRollback already; nothing
         // more to do.
         if (previousState === "rejected") return;
+
+        // Property-changes cancel: the one-shot instruction file was
+        // already consumed and nothing was applied, so there's no
+        // mirror file to roll back. Just record the cancellation.
+        if (hadPropertyApply) {
+            await this._writeApplyResult({
+                status: "cancelled",
+                timestamp: new Date().toISOString(),
+            });
+            return;
+        }
 
         // 'thinking' state: tell main to clear the
         // sentinel and pending events. Best-effort — if

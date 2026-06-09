@@ -62,6 +62,10 @@ const RUNTIME_STATE_FILENAME = 'runtime-state.json';
 const FOCUS_FILENAME = 'focus.json';
 const EVENT_TRACE_FILENAME = 'event-trace.json';
 const SELECTION_FILENAME = 'selection.json';
+// One-shot AI instruction file (Phase 2): the AI writes property-changes
+// here; the app validates, shows the confirm dialog, applies on accept,
+// and deletes the file (it is consumed, not a persistent projection).
+const PROPERTY_CHANGES_FILENAME = 'property-changes.json';
 const AGENTS_FILENAME = 'AGENTS.md';
 const SCENE_SCHEMA_FILENAME = 'sceneSchema.md';
 const MIRROR_DOCS_DIR = 'mirror-docs';
@@ -540,7 +544,11 @@ function handleWatcherEvent(eventType, filename) {
             handleSentinelEvent();
             return;
         }
-        if (!isRoundTripFile(filename)) return;
+        // property-changes.json is an AI instruction file, not a
+        // round-trip file, but it must still reach the reconcile (which
+        // consumes it). Let it through alongside round-trip files; drop
+        // everything else (observation files, orphans).
+        if (filename !== PROPERTY_CHANGES_FILENAME && !isRoundTripFile(filename)) return;
     }
     scheduleReconcile();
 }
@@ -571,6 +579,12 @@ async function runReconcile() {
     // never take the editor down. Swallow-and-log so the worst case is
     // a missed reconcile, not a crash.
     try {
+        // Property-changes instruction (Phase 2) is consumed first: if
+        // present it's read, deleted (one-shot), and dispatched to the
+        // renderer for the confirm-to-apply flow. When it fired this
+        // reconcile we don't also run the round-trip scan.
+        if (await tryHandlePropertyChanges()) return;
+
         const changed = await reconcileRoundTripFiles();
         if (changed.length === 0) return;
         for (const name of changed) pendingBatch.add(name);
@@ -586,6 +600,63 @@ async function runReconcile() {
             `GXW: mirror reconcile failed (non-fatal): ${err && err.message ? err.message : err}`,
             err,
         );
+    }
+}
+
+// Consume a property-changes.json instruction if present. Returns true
+// when one was found and handled (so the caller skips the round-trip
+// scan this pass), false when absent. The file is deleted immediately
+// (one-shot semantics) and its parsed shape dispatched to the renderer,
+// which validates against the scene and drives the confirm-to-apply
+// dialog. JSON parse failure is forwarded as an error for the renderer
+// to surface; per-object/field validation happens renderer-side where
+// the scene and setters live.
+async function tryHandlePropertyChanges() {
+    const folder = getMirrorFolderPath();
+    const filepath = path.join(folder, PROPERTY_CHANGES_FILENAME);
+
+    let text;
+    try {
+        text = await fsp.readFile(filepath, 'utf8');
+    } catch (_e) {
+        return false; // absent (or our own delete already ran)
+    }
+    // One-shot: remove before dispatch so it can't re-trigger.
+    try {
+        await fsp.unlink(filepath);
+    } catch (_e) {
+        // already gone; nothing to do
+    }
+
+    if (!batchInProgress) notifyBatchStarted();
+
+    let parsed = null;
+    try {
+        parsed = JSON.parse(text);
+    } catch (err) {
+        dispatchPropertyChanges({ error: `Invalid JSON: ${err.message}` });
+        return true;
+    }
+    const changes = (parsed !== null && typeof parsed === 'object'
+        && Array.isArray(parsed.changes)) ? parsed.changes : null;
+    if (changes === null) {
+        dispatchPropertyChanges({ error: 'property-changes.json must have a "changes" array.' });
+        return true;
+    }
+    dispatchPropertyChanges({ changes });
+    return true;
+}
+
+// Send a property-changes payload to the renderer. Shape is either
+// { changes: [...] } (valid JSON) or { error: "..." } (parse failure).
+// The renderer validates against the scene, shows the confirm dialog,
+// and writes last-apply-result.json with the outcome.
+function dispatchPropertyChanges(payload) {
+    if (mainWindow === null) return;
+    try {
+        mainWindow.webContents.send('gxw:mirror-property-changes', payload);
+    } catch (err) {
+        console.warn(`GXW: failed to dispatch property-changes: ${err.message}`);
     }
 }
 
