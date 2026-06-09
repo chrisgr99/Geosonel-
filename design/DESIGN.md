@@ -921,8 +921,31 @@ link (cursor in a callback highlights its objects; selecting objects marks their
 including the cursor-driven mute target used by playback. Removing them would regress working
 functionality. The legacy src/strudelRuntime.js (the old cyclist / stack-pattern runtime of the
 removed two-pass machinery) WAS removed — it had no importers (commit 3a6ffb1); src/strudel/runtime.js
-remains the kept superdough audio runtime. Still genuinely dead and pending removal: the firingEngine
-two-pass machinery, and the cyclePattern field (needs a readers check first).
+remains the kept superdough audio runtime.
+
+UPDATE 2026-06-09 (Phase 6 CLOSED): the firingEngine two-pass pattern machinery was removed
+(commit ae4efc8) — it was inert (LEGACY_PATTERN_FIRING=false, _sources always empty), so the
+removal was behavior-preserving; firingEngine.js dropped 2841→1653 lines. setSeamBoundary was kept
+as a stub (its only reader was the removed loop), with a TODO that the audition seam tail-clip is
+currently a no-op and needs re-implementing on the procedural fire path. The cyclePattern field is
+DELIBERATELY KEPT, not removed — closing Phase 6 cautiously. Reasons: (a) it is the OLD per-object
+Strudel *firing* pattern, now vestigial (no longer played, since the two-pass engine that consumed
+it is gone), but (b) removing it would regress two visible behaviors — the Code-tab active-token
+boxing (activeBeatHighlight reads curve.cyclePattern) and the Voice band's Note Voice / Sound Bank
+relevance greying (patternUsesNote/Sound) — plus unwind the Code-tab promote-pattern Cmd-Enter
+gesture and default-scene seeds across ~13 files. The migration's actual goal (procedural firing
+replacing the Strudel engine) is met, so cyclePattern removal buys only tidiness and is declined.
+
+CRITICAL DISTINCTION (do not re-litigate): cyclePattern ≠ beatPattern. `cyclePattern` is the dead
+firing field above. `beatPattern` is the LIVE Strudel BEAT-POINTS mode field (beatPointsMode ===
+"strudel"): a mini-notation run STATICALLY through src/strudel/patternParse.js
+(parsePatternToPositions / deriveFromStrudel) to place active/inactive beat-point positions on a
+curve or sprite — an alternative to Normal and Euclidean — which the normal cursor then plays like
+any other beat points. It is NOT played by the Strudel engine. The canvas "active beat point"
+highlight (diamonds flashing as they fire) is driven by beat-point positions + the procedural
+firing event, independent of cyclePattern. Removing cyclePattern would NOT affect the Strudel
+Beat-Points feature or the canvas beat-point flash; it would only touch the Code-tab token boxing
+and the Voice-band greying noted above.
 
 ORIGINAL PLAN (superseded for the highlight modules by the update above): The
 cursor-target highlight and the old labelled-block model (cursorTargets.js / patternHighlight.js)
