@@ -104,26 +104,40 @@ export const hitTestMethods = {
         if (this._scene === null) return null;
         const ppu = this.pixelsPerUnit;
         if (ppu === 0) return null;
-        // ±6 px per side (a 12 px-wide grab band), matching the corner
-        // and side-edge grab zones of the selection box.
-        const HIT_THRESHOLD_PX = 6;
+        // ±8 px per side (a 16 px-wide grab band). Distance is measured
+        // to the LINE SEGMENTS between consecutive samples, not to the
+        // nearest sample POINT — so the catch band is a uniform 8 px
+        // along the whole curve regardless of its on-screen size.
+        // (Point-sampling made large curves hard and inconsistent to
+        // grab: between two widely-spaced samples a click could sit
+        // exactly on the line yet be >threshold from the nearest
+        // sample.) Shared by click-to-select, drag, and hover, which all
+        // route through _hitTestObject.
+        const HIT_THRESHOLD_PX = 8;
         const SAMPLES = 64;
+        const px = canvasX * ppu;
+        const py = canvasY * ppu;
         for (let i = this._scene.curves.length - 1; i >= 0; i--) {
             const curve = this._scene.curves[i];
-            // Sample the authored shape and shift each
-            // sample by the curve's runtime (dx, dy) offset
-            // so the click hits the curve where the user
-            // sees it. Curves with no offset (no velocity,
-            // or simulation not yet wired) get (0, 0) from
-            // _curveOffset and behave exactly as before.
+            // Shift each sample by the curve's runtime (dx, dy) offset so
+            // the click hits the curve where the user sees it. Curves
+            // with no offset get (0, 0) from _curveOffset.
             const offset = this._curveOffset(curve.id);
+            let prev = null;
             for (let s = 0; s <= SAMPLES; s++) {
                 const t = s / SAMPLES;
                 const sample = sampleCurve(curve.shape, t);
-                if (sample === null) continue;
-                const dxPx = (canvasX - (sample.x + offset.dx)) * ppu;
-                const dyPx = (canvasY - (sample.y + offset.dy)) * ppu;
-                if (Math.hypot(dxPx, dyPx) <= HIT_THRESHOLD_PX) return i;
+                if (sample === null) { prev = null; continue; }
+                const cx = (sample.x + offset.dx) * ppu;
+                const cy = (sample.y + offset.dy) * ppu;
+                if (prev === null) {
+                    // First valid sample (or after a gap): catch a click
+                    // right on the point, covering the single-sample case.
+                    if (Math.hypot(px - cx, py - cy) <= HIT_THRESHOLD_PX) return i;
+                } else if (distanceToSegment(px, py, prev.x, prev.y, cx, cy) <= HIT_THRESHOLD_PX) {
+                    return i;
+                }
+                prev = { x: cx, y: cy };
             }
         }
         return null;
