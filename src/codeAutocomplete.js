@@ -34,7 +34,7 @@ import {
  * superset across callback kinds.
  */
 const THIS_MEMBERS = [
-    "vel", "velocity", "col", "x", "y", "vx", "vy", "speed",
+    "vel", "velocity", "beatStrength", "col", "x", "y", "vx", "vy", "speed",
     "flipX", "flipY", "cyclePhase", "cycleCount", "beat", "time", "bpm",
     "id", "kind", "beatIndex", "beatCount", "otherId", "otherKind",
     "hitSpeed", "playNote", "playSound",

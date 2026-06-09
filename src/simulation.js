@@ -1681,9 +1681,10 @@ export class Simulation {
         const bpm = this._transport.bpm;
         const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
         const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
-        // The beat accent, normalized 0..1, is the default velocity:
-        // playNote(note) plays at the beat's strength. Exposed on the
-        // context as both `vel` and `velocity`.
+        // The beat accent (Beat Strength digit 0-9) normalized to
+        // 0..1. It is the default velocity (playNote(note) plays at the
+        // beat's strength) AND is exposed by name as beatStrength.
+        // Surfaced on the context as `beatStrength`, `vel`, `velocity`.
         const vel = strength / 9;
 
         // Colour beneath the BEAT POINT — the pixel under the cursor as
@@ -1717,6 +1718,11 @@ export class Simulation {
             kind: "curve",
             beatIndex,
             beatCount,
+            // The crossed beat's accent (the Beat Strength digit 0-9)
+            // rescaled to 0..1, exposed under its own name. Same value
+            // as vel/velocity (which double as the default note
+            // velocity); beatStrength reads as what it is.
+            beatStrength: vel,
             vel,
             velocity: vel,
             // The ten image-colour signals beneath the beat point.

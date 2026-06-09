@@ -23,12 +23,17 @@
  *
  * Modes:
  *   - none: no beat points.
- *   - normal / euclidean: the activeBeats x/dot string. Each
- *     character is one equal subdivision of the cycle; an "x"
- *     slot is a beat, a "." slot a rest. Bars ("|") and
- *     whitespace are layout only and stripped first. Position =
- *     slotIndex / slotCount. Strength = the aligned digit in the
- *     strength string (0-9), defaulting when absent.
+ *   - normal: the activeBeats x/dot string, LOOPED. The cycle is
+ *     divided into Per Cycle (beatsPerCycle) equal slots; the
+ *     activeBeats and strength strings each loop (sampled modulo
+ *     their own length) to fill them, so a short string drives a
+ *     long cycle. An "x" slot is a beat, a "." slot a rest.
+ *   - euclidean: the activeBeats x/dot string as-is (the generator
+ *     makes it beatsPerCycle long, so it already spans the cycle —
+ *     no looping). Strength is read slot-for-slot, default when
+ *     absent.
+ *     Both: bars ("|") and whitespace are layout only and stripped
+ *     first. Position = slotIndex / slotCount.
  *   - strudel: the beatPattern mini-notation. Parsed once for
  *     one cycle's event begins (the positions) and per-event
  *     token strengths; needs the Strudel runtime, so it yields
@@ -86,12 +91,14 @@ function isDigit(ch) {
 }
 
 /**
- * Derive positions + strengths from an x/dot active-beats string
- * (normal and euclidean modes share this — euclidean just
- * GENERATES the string the composer then sees). The strength
- * string is read slot-for-slot against the active-beats string;
- * a missing or non-digit strength slot falls back to
- * DEFAULT_STRENGTH.
+ * Derive positions + strengths from a full-length x/dot active-beats
+ * string — the EUCLIDEAN path. Each character is one equal subdivision
+ * of the cycle (the count is the string's own length, which the
+ * Euclidean generator makes beatsPerCycle long); an "x" slot is a beat,
+ * a "." slot a rest. The strength string is read slot-for-slot against
+ * the active-beats string; a missing or non-digit strength slot falls
+ * back to DEFAULT_STRENGTH. No looping — Euclidean already spans the
+ * whole cycle.
  * @param {unknown} activeBeats
  * @param {unknown} strength
  * @returns {BeatPoints}
@@ -115,6 +122,55 @@ function deriveFromActiveBeats(activeBeats, strength) {
         } else {
             // "." (or any non-x slot) is an inactive beat: drawn
             // small, never fired.
+            inactivePositions.push(i / n);
+        }
+    }
+    return { positions, strengths: out, inactivePositions };
+}
+
+/**
+ * Derive positions + strengths for the NORMAL path, where the
+ * active-beats and strength strings LOOP to fill the cycle.
+ *
+ * The number of beats is `beatsPerCycle` (Per Cycle), NOT the string
+ * length: the cycle is divided into that many equal slots, and the two
+ * strings are each sampled MODULO their own length to fill them. So a
+ * short string drives a long cycle (e.g. "xx.x" across 16 beats repeats
+ * four times) and the two strings loop independently of each other and
+ * of the beat count. An "x"/"X" slot is a beat at the aligned (looped)
+ * strength digit; any other slot ("." etc.) is an inactive rest.
+ *
+ * Empty strings fall back to the field defaults — an all-active "x"
+ * grid at DEFAULT_STRENGTH — so the cycle is still filled. When no
+ * valid beatsPerCycle is supplied (degenerate data or a legacy caller)
+ * the count falls back to the active-beats string's own length.
+ *
+ * (Looping is NORMAL-only by design: Euclidean generates a full-length
+ * string — see deriveFromActiveBeats — and Strudel carries its own
+ * length, so neither loops.)
+ * @param {unknown} activeBeats
+ * @param {unknown} strength
+ * @param {unknown} beatsPerCycle
+ * @returns {BeatPoints}
+ */
+function deriveNormalLooped(activeBeats, strength, beatsPerCycle) {
+    const slots = bareString(activeBeats) || "x";
+    const strengths = bareString(strength) || String(DEFAULT_STRENGTH);
+    const bpc = Number(beatsPerCycle);
+    const n = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : slots.length;
+    /** @type {number[]} */
+    const positions = [];
+    /** @type {number[]} */
+    const out = [];
+    /** @type {number[]} */
+    const inactivePositions = [];
+    for (let i = 0; i < n; i++) {
+        const ch = slots[i % slots.length];
+        if (ch === "x" || ch === "X") {
+            positions.push(i / n);
+            const d = strengths[i % strengths.length];
+            out.push(d !== undefined && isDigit(d) ? Number(d) : DEFAULT_STRENGTH);
+        } else {
             inactivePositions.push(i / n);
         }
     }
@@ -252,7 +308,10 @@ export function deriveCurveBeatPoints(curve) {
     const mode = curve !== null && typeof curve.beatPointsMode === "string"
         ? curve.beatPointsMode
         : "none";
-    if (mode === "normal" || mode === "euclidean") {
+    if (mode === "normal") {
+        return deriveNormalLooped(curve.activeBeats, curve.strength, curve.beatsPerCycle);
+    }
+    if (mode === "euclidean") {
         return deriveFromActiveBeats(curve.activeBeats, curve.strength);
     }
     if (mode === "strudel") {

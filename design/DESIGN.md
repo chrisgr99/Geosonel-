@@ -529,7 +529,9 @@ costs nothing, since it materialises only when a callback names it. The per-firi
 for a collision, a full handle to the OTHER party — the diamond that was struck, or on the
 struck side the cursor that hit it — so its colour, position, and group read like any handle;
 for onActiveBeat, the beat just crossed, namely its index, the total beat count, and its
-STRENGTH from the Beat Strength string (the accent, the natural thing to map to velocity); for
+STRENGTH from the Beat Strength string — the accent, the natural thing to map to velocity,
+exposed as `this.beatStrength` (the 0-9 digit rescaled to 0..1, the same value vel/velocity
+default to); for
 a collision, the impact SPEED at contact (hitSpeed) and the contact point; the first-fire and
 loop flags firstMessage (the first firing ever) and repeatMessage (the first after each cursor
 loop), which GeoSonix carried and which live here; and the scheduled audio time of this firing
@@ -763,7 +765,17 @@ Active Beats and Beat Strength use a custom LIVE-INPUT field (`_buildBeatStringF
 one character per keystroke: in Active Beats, "." or SPACE enters a dot and any other key
 enters a lowercase "x"; in Beat Strength, only 0–9 or a dot/space are accepted. Bar "|"
 separators are managed live per Beats/Bar — no bars are drawn when Beats/Bar is 1 (the
-field is just the bare string). Both strings loop.
+field is just the bare string).
+
+In NORMAL mode both strings LOOP: Per Cycle (beatsPerCycle) is the authority on how many
+beats the cycle has, and the Active Beats and Beat Strength strings are each sampled modulo
+their own length to fill that many — independently of each other and of the beat count. So a
+short string drives a long cycle (e.g. Active Beats "xx.x" over a 16-beat cycle repeats four
+times; Beat Strength "90" alternates 9/0 across every beat), and a single "x" / "9" fills the
+whole cycle. An empty string falls back to the field default ("x" / "9"). Looping is NORMAL-
+only: Euclidean GENERATES a full-length (beatsPerCycle-long) Active Beats string so there is
+nothing to loop, and its Beat Strength reads slot-for-slot (default when short); Strudel
+carries position and strength inline in its one mini-notation pattern.
 
 Euclidean is a STARTER: changing a Euclidean parameter (Active Beats count, Beat Shift,
 Repeats, Beats/Cycle — or switching INTO Euclidean) REGENERATES the pattern via

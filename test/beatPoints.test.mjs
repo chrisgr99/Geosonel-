@@ -58,9 +58,10 @@ test("bars and whitespace are layout only and ignored", () => {
     assert.deepEqual(a.strengths, [9, 9, 9, 9]);
 });
 
-test("missing or non-digit strength slot falls back to default 9", () => {
-    // strength string shorter than active-beats string.
-    const r = deriveCurveBeatPoints(curve({ activeBeats: "xxxx", strength: "12" }));
+test("euclidean: missing/non-digit strength slot falls back to default 9 (no loop)", () => {
+    // euclidean reads strength slot-for-slot and defaults the rest —
+    // it does NOT loop (normal does; see the normal-loop tests below).
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "euclidean", activeBeats: "xxxx", strength: "12" }));
     assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
     assert.deepEqual(r.strengths, [1, 2, 9, 9]);
 });
@@ -85,10 +86,53 @@ test("all-rest pattern yields no beat points", () => {
     assert.deepEqual(r.strengths, []);
 });
 
-test("empty activeBeats yields no beat points", () => {
-    const r = deriveCurveBeatPoints(curve({ activeBeats: "", strength: "" }));
+test("euclidean: empty activeBeats yields no beat points", () => {
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "euclidean", activeBeats: "", strength: "" }));
     assert.deepEqual(r.positions, []);
     assert.deepEqual(r.strengths, []);
+});
+
+// --- Normal mode: the activeBeats and strength strings LOOP (each
+// sampled modulo its own length) to fill Per Cycle (beatsPerCycle)
+// beats, so a short string drives a long cycle. Normal-only — euclidean
+// and strudel do not loop. ---
+
+test("normal loop: short pattern repeats across Per Cycle beats", () => {
+    // "xx.x" over 16 beats -> the 4-beat pattern repeats four times;
+    // a rest falls on every i where i % 4 === 2.
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "xx.x", beatsPerCycle: 16 }));
+    const expectedActive = [];
+    for (let i = 0; i < 16; i++) if (i % 4 !== 2) expectedActive.push(i / 16);
+    assert.deepEqual(r.positions, expectedActive);
+    assert.deepEqual(r.inactivePositions, [2 / 16, 6 / 16, 10 / 16, 14 / 16]);
+});
+
+test("normal loop: strength string loops independently by beat", () => {
+    // all 16 beats active (single 'x'); strength "90" -> 9,0,9,0,...
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x", strength: "90", beatsPerCycle: 16 }));
+    assert.equal(r.positions.length, 16);
+    const expected = [];
+    for (let i = 0; i < 16; i++) expected.push(i % 2 === 0 ? 9 : 0);
+    assert.deepEqual(r.strengths, expected);
+});
+
+test("normal loop: single 'x' fills the whole cycle (all active)", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x", strength: "9", beatsPerCycle: 4 }));
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
+    assert.deepEqual(r.strengths, [9, 9, 9, 9]);
+    assert.deepEqual(r.inactivePositions, []);
+});
+
+test("normal loop: Per Cycle (not string length) sets the beat count", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x.", beatsPerCycle: 8 }));
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
+    assert.deepEqual(r.inactivePositions, [1 / 8, 3 / 8, 5 / 8, 7 / 8]);
+});
+
+test("normal loop: empty strings fall back to an all-active default grid", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "", strength: "", beatsPerCycle: 3 }));
+    assert.deepEqual(r.positions, [0, 1 / 3, 2 / 3]);
+    assert.deepEqual(r.strengths, [9, 9, 9]);
 });
 
 test("uppercase X is also treated as a beat", () => {
