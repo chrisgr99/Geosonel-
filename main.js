@@ -550,19 +550,11 @@ async function main() {
     // appear after the next runScene call (Cmd-Enter or
     // similar). Once loaded, subsequent setScene calls
     // refresh markers naturally through their own code path.
-    //
-    // The firing engine gets the same treatment: its compiled
-    // pattern cache will hold null entries for every source
-    // whose cyclePattern was non-empty at scene load (parse
-    // returned the engine-not-loaded error and we stored
-    // null). recompileMissingPatterns walks the cache and
-    // compiles those entries against the now-available
-    // strudel globals.
     strudelRuntime.onStatusChange((status) => {
         if (status === "loaded") {
             // Install dynamic image-colour signals (Phase 4)
-            // as window globals before refreshing markers
-            // or recompiling patterns, so any pattern that
+            // as window globals before refreshing markers,
+            // so any pattern that
             // references pxLt or its OKLCh siblings parses
             // cleanly against the freshly-installed globals
             // rather than failing with a ReferenceError.
@@ -581,7 +573,6 @@ async function main() {
             // a forced recompute is the only trigger that picks
             // up the now-parseable patterns without a user edit.
             editor.recomputeActiveBeatTokens();
-            firingEngine.recompileMissingPatterns();
         }
     });
 
