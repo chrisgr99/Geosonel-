@@ -258,6 +258,21 @@ const DEFAULT_PLAYNOTE_DURATION_SECONDS = 0.25;
 const IMMEDIATE_FIRE_LOOKAHEAD_SECONDS = 0.03;
 
 /**
+ * Same-pitch coincidence-suppression window (seconds). When two notes
+ * of the SAME pitch are scheduled within this window of each other,
+ * only the first sounds; the second is dropped. Two identical pitches
+ * firing together sum constructively (pure amplitude doubling, +6 dB) —
+ * the worst case for clipping — and on MIDI a second note-on for a note
+ * number already sounding on the channel cuts the first. This happens
+ * when two objects share a callback and land on the same quantized
+ * note, and when a single beat-point crossing fires twice at a cycle
+ * boundary. The window is well under any real note spacing (a 32nd at
+ * 240 BPM is ~31 ms), so it never suppresses a genuine fast repeat —
+ * only near-simultaneous duplicates.
+ */
+const SAME_PITCH_SUPPRESS_WINDOW_SECONDS = 0.01;
+
+/**
  * Legacy cyclePattern auto-firing switch (§3.6). The GeoSonixV2
  * procedural model fires curves and sprites through callbacks
  * (onActiveBeat / onTick), NOT by auto-playing each object's
@@ -507,6 +522,18 @@ export class PatternFiringEngine {
          * @type {"midi" | "superdough"}
          */
         this._outputMode = "midi";
+
+        /**
+         * Last scheduled audio-context fire time per pitch, for
+         * same-pitch coincidence suppression (see
+         * SAME_PITCH_SUPPRESS_WINDOW_SECONDS and fireImmediateNote).
+         * Key is the pitch as a string (MIDI number or note name);
+         * value is the most recent scheduled fireTime. Cleared on scene
+         * swap and output-mode change so stale future times from a
+         * previous run can't wrongly suppress after a rewind/reload.
+         * @type {Map<string, number>}
+         */
+        this._recentPitchFireTimes = new Map();
 
         /** @type {Map<string, SourceFiringState>} */
         this._sources = new Map();
@@ -758,9 +785,34 @@ export class PatternFiringEngine {
             state.patternDirty = false;
             state.timingDirty = false;
         }
+        this._recentPitchFireTimes.clear();
         if (wasMidi) {
             this._midiSender.panic();
         }
+    }
+
+    /**
+     * Decide whether to suppress THIS note as a same-pitch coincidence.
+     * Returns true when a note of the same pitch was already scheduled
+     * within SAME_PITCH_SUPPRESS_WINDOW_SECONDS of this one's fire time;
+     * in that case the caller drops the audio. Otherwise records this
+     * pitch's fire time as the new anchor and returns false. A burst of
+     * same-pitch notes inside one window collapses to the first (the
+     * anchor isn't advanced by a suppressed note), while a genuine
+     * later repeat (outside the window) is allowed and re-anchors.
+     * @param {number | string} note  The pitch (MIDI number or name).
+     * @param {number} fireTime  The scheduled audio-context time.
+     * @returns {boolean}
+     */
+    _suppressDuplicatePitch(note, fireTime) {
+        const key = String(note);
+        const last = this._recentPitchFireTimes.get(key);
+        if (last !== undefined
+            && Math.abs(fireTime - last) < SAME_PITCH_SUPPRESS_WINDOW_SECONDS) {
+            return true;
+        }
+        this._recentPitchFireTimes.set(key, fireTime);
+        return false;
     }
 
     /**
@@ -973,7 +1025,15 @@ export class PatternFiringEngine {
             value.pan = spec.pan;
         }
 
-        if (this._outputMode === "superdough") {
+        // Same-pitch coincidence suppression. If a note of this pitch
+        // is already scheduled within the window, drop THIS one's audio
+        // — two identical pitches together sum constructively and clip
+        // (and on MIDI the second note-on steals the first). The visual
+        // beat-point flash below still fires, so the beat is still shown
+        // even though its duplicate audio was suppressed.
+        const suppressed = this._suppressDuplicatePitch(noteField, fireTime);
+
+        if (!suppressed && this._outputMode === "superdough") {
             // An early gate (articulation shorter than the
             // duration) sets the release tail explicitly so it
             // spans the remainder; a full-duration gate leaves
@@ -1003,7 +1063,7 @@ export class PatternFiringEngine {
             }
             const voiced = applyVoiceEnvelope(injected);
             this._runtime.play(voiced, fireTime, gate);
-        } else {
+        } else if (!suppressed) {
             // MIDI: send() sets the note-off at audioTime +
             // duration * (value.clip ?? 1). This procedural value
             // carries no clip field, so passing the gate as the
@@ -1260,6 +1320,9 @@ export class PatternFiringEngine {
      */
     setScene(scene) {
         this._scene = scene;
+        // Drop same-pitch suppression anchors: a scene swap resets the
+        // run, so stale future fire times must not carry over.
+        this._recentPitchFireTimes.clear();
         if (scene === null) {
             this._sources.clear();
             return;
@@ -1532,6 +1595,7 @@ export class PatternFiringEngine {
                 state.patternDirty = false;
                 state.timingDirty = false;
             }
+            this._recentPitchFireTimes.clear();
             this._midiSender.panic();
             return;
         }

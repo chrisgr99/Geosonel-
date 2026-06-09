@@ -1608,10 +1608,19 @@ export class Simulation {
                 state._beatNextIdx = 0;
             } else {
                 // Mid-cycle arm: skip beats already passed so they
-                // don't all replay at once.
+                // don't all replay at once. Inclusive (g <= progress):
+                // a beat sitting exactly at the cursor has already
+                // fired this cycle — the firing loop below fires on
+                // `g <= prog` — so it must be skipped, not re-fired.
+                // (A strict `<` here re-fired that beat whenever the
+                // order was rebuilt mid-cycle, e.g. a setScene from a
+                // property/script edit applied during playback, with
+                // the cursor landing on a beat — the cause of the
+                // observed cycle-boundary double-fire. Matches the
+                // direction-flip re-arm below, which already uses <=.)
                 let idx = 0;
                 while (idx < state._beatOrder.length
-                    && state._beatOrder[idx].g < state.cycleProgress) idx++;
+                    && state._beatOrder[idx].g <= state.cycleProgress) idx++;
                 state._beatNextIdx = idx;
             }
         } else if (state.cycleCount === state._lastBeatCycle + 1) {
