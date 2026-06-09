@@ -2212,39 +2212,6 @@ export function setCanTickOnSelection(data, selection, value) {
 }
 
 /**
- * Set the canAutoMessage field across the selection.
- * @param {any} data
- * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
- * @param {boolean} value
- */
-export function setCanAutoMessageOnSelection(data, selection, value) {
-    setBooleanFieldOnSelection(data, selection, "canAutoMessage", !!value, true);
-}
-
-/**
- * Set the autoMessageFunction field across the selection. See
- * setHasCollidedFunctionOnSelection for the validation note.
- * @param {any} data
- * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
- * @param {string} value
- */
-export function setAutoMessageFunctionOnSelection(data, selection, value) {
-    setStringFieldOnSelection(data, selection, "autoMessageFunction", String(value));
-}
-
-/**
- * Set the Automessage Interval (Band 4) on every selected
- * object — a token from the shared interval menu that sets the
- * autoMessage callback's fire rate. Mutates `data` in place.
- * @param {any} data
- * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
- * @param {string} value
- */
-export function setAutoMessageIntervalOnSelection(data, selection, value) {
-    setStringFieldOnSelection(data, selection, "autoMessageInterval", String(value));
-}
-
-/**
  * Set the onTickFunction field across the selection. See
  * setHasCollidedFunctionOnSelection for the validation note.
  * @param {any} data

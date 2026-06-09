@@ -692,13 +692,6 @@ export class Curve {
         this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
 
         /** @type {boolean} */
-        this.canAutoMessage = opts.canAutoMessage ?? false;
-        /** @type {string} */
-        this.autoMessageFunction = opts.autoMessageFunction ?? "";
-        /** @type {string} Automessage Interval (Band 4): autoMessage fire rate. */
-        this.autoMessageInterval = opts.autoMessageInterval ?? "Off";
-
-        /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
         /** @type {string} */
         this.onTickFunction = opts.onTickFunction ?? "";
@@ -856,13 +849,6 @@ export class Trigger {
         this.beenTriggeredFunction = opts.beenTriggeredFunction ?? "";
         this.canActiveBeat = opts.canActiveBeat ?? false;
         this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
-
-        /** @type {boolean} */
-        this.canAutoMessage = opts.canAutoMessage ?? false;
-        /** @type {string} */
-        this.autoMessageFunction = opts.autoMessageFunction ?? "";
-        /** @type {string} Automessage Interval (Band 4): autoMessage fire rate. */
-        this.autoMessageInterval = opts.autoMessageInterval ?? "Off";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
@@ -1070,13 +1056,6 @@ export class Sprite {
         this.beenTriggeredFunction = opts.beenTriggeredFunction ?? "";
         this.canActiveBeat = opts.canActiveBeat ?? false;
         this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
-
-        /** @type {boolean} */
-        this.canAutoMessage = opts.canAutoMessage ?? false;
-        /** @type {string} */
-        this.autoMessageFunction = opts.autoMessageFunction ?? "";
-        /** @type {string} Automessage Interval (Band 4): autoMessage fire rate. */
-        this.autoMessageInterval = opts.autoMessageInterval ?? "Off";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;

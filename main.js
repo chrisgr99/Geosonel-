@@ -172,9 +172,6 @@ import {
     setOnActiveBeatFunctionOnSelection,
     setCanTickOnSelection,
     setOnTickFunctionOnSelection,
-    setCanAutoMessageOnSelection,
-    setAutoMessageFunctionOnSelection,
-    setAutoMessageIntervalOnSelection,
     scaffoldCallbackSlotFunction,
     scaffoldPatternBlock,
     addLabelToBlock,
@@ -3959,18 +3956,6 @@ async function main() {
                 await applySceneEdit((data) =>
                     setOnTickFunctionOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setCanAutoMessage") {
-                await applySceneEdit((data) =>
-                    setCanAutoMessageOnSelection(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setAutoMessageFunction") {
-                await applySceneEdit((data) =>
-                    setAutoMessageFunctionOnSelection(data, edit.selection, edit.value),
-                );
-            } else if (edit.kind === "setAutoMessageInterval") {
-                await applySceneEdit((data) =>
-                    setAutoMessageIntervalOnSelection(data, edit.selection, edit.value),
-                );
             } else if (edit.kind === "setSceneEngine") {
                 // Inspector global band's Sound Engine
                 // dropdown. Selection is ignored — engine
@@ -4064,7 +4049,6 @@ async function main() {
                     "hasCollided": setHasCollidedFunctionOnSelection,
                     "beenTriggered": setBeenTriggeredFunctionOnSelection,
                     "onActiveBeat": setOnActiveBeatFunctionOnSelection,
-                    "autoMessage": setAutoMessageFunctionOnSelection,
                     "onTick": setOnTickFunctionOnSelection,
                 };
                 const setter = setterByKind[edit.slotKey];

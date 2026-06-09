@@ -93,9 +93,8 @@ const HARMONY_OVERRIDE_FIELDS = [
  * Callback-slot fields shared by Curve, Trigger, and Sprite.
  * Every source kind carries the cyclePattern field and the
  * Code-tab callback slots (onActiveBeat, hasCollided, beenTriggered,
- * autoMessage, onTick), each guarded by a Can-X gate boolean (canCollide,
- * canBeTriggered, canAutoMessage, canTick). autoMessage fires at the
- * object's Automessage Interval (Band 4). The cyclePattern lives in the Band 4 CodeMirror
+ * onTick), each guarded by a Can-X gate boolean (canCollide,
+ * canBeTriggered, canActiveBeat, canTick). The cyclePattern lives in the Band 4 CodeMirror
  * editor; cursor-as-collider derives self-firing from cursor
  * extents and the object's state, so there is no canCycle gate. The
  * beatsPerCycle field gives the cycle length in master beats
@@ -157,12 +156,6 @@ const CALLBACK_SLOT_FIELDS = [
     // scaffolding for now.
     { key: "canActiveBeat", label: "Can Active Beat", type: "boolean", default: false },
     { key: "onActiveBeatFunction", label: "On Active Beat Function", type: "functionRef", default: "" },
-    { key: "canAutoMessage", label: "Can Auto Message", type: "boolean", default: false },
-    { key: "autoMessageFunction", label: "Auto Message Function", type: "functionRef", default: "" },
-    // Automessage Interval (Band 4): the rate at which the
-    // autoMessage callback fires, a token from the shared
-    // interval menu. Default "Off" = never.
-    { key: "autoMessageInterval", label: "Automessage Interval", type: "enum", default: DEFAULT_INTERVAL, enumValues: INTERVAL_TOKENS },
     { key: "canTick", label: "Can Tick", type: "boolean", default: false },
     { key: "onTickFunction", label: "On Tick Function", type: "functionRef", default: "" },
 ];

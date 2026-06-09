@@ -5,7 +5,7 @@
  *
  * The single source of truth for the inspector's reusable interval
  * (note-duration) popup, used wherever a duration is chosen — Time
- * Lag In Object (Band 1), the Automessage Interval (Band 4), and
+ * Lag In Object (Band 1), the Beat Interval / Cycle Length, and
  * more to come. Defined once here and consumed through
  * Inspector._buildDropdownField.
  *

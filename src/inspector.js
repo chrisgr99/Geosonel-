@@ -23,8 +23,8 @@
  * inspectorShared.js, small widgets in inspectorWidgets.js.
  *
  * Render order (_render, top to bottom): title bar; Identity;
- * Transform & appearance; Msg Functions (the four callbacks plus
- * the Automessage Interval, all ONE band); Beat Points; Cycle; a
+ * Transform & appearance; Msg Functions (the four callbacks, ONE
+ * band); Beat Points; Cycle; a
  * separator; the reserved middle area (per-object voice); a heavy
  * separator; the global band (Sound Engine); a bottom spacer. The
  * bands and their fields are documented in DESIGN.md section 4 —
@@ -38,12 +38,10 @@
  *     one Dimension row (curve Length/Width + Line Width, or a single
  *     sprite/trigger Size); Cursor Length/Width; Color + Variability.
  *     No Z anywhere.
- *   - Msg Functions: callbacks hasCollided, beenTriggered, onTick, autoMessage —
+ *   - Msg Functions: callbacks onActiveBeat, hasCollided, beenTriggered, onTick —
  *     each a Can-X checkbox + function-name field + one contextual
  *     Create / Go-to button (Create scaffolds slotName_objectId in
- *     script.js, e.g. autoMessage_CRV1; Go-to navigates). The
- *     Automessage Interval dropdown sits in this band ABOVE the
- *     autoMessage row (its rate must be defined first).
+ *     script.js, e.g. onActiveBeat_CRV1; Go-to navigates).
  *   - Beat Points (curves/sprites): mode None / Normal / Euclidean.
  *     Active Beats and Beat Strength are a live-input field
  *     (_buildBeatStringField) — one char per keystroke, "." or SPACE

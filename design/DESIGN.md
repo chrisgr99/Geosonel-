@@ -36,8 +36,8 @@ engine. The procedural engine produces events directly, so the two-pass query go
 and the engine should become substantially simpler.
 
 EMERGING MODEL (from the Msg Functions band of the inspector): patterns are expressed as
-named procedural CALLBACKS on each object — hasCollided and beenTriggered (collision), autoMessage
-(fires at the object's Automessage Interval), and onTick (per tick) — which generate
+named procedural CALLBACKS on each object — hasCollided and beenTriggered (collision)
+and onTick (per tick) — which generate
 notes and events imperatively, via ctx.playNote / ctx.playSound. This is GXW's existing
 procedural spine (script.js onTick, the collision callbacks, playNote/playSound),
 promoted to the primary authoring model.
@@ -185,10 +185,10 @@ Length, Width, and Line Width; for a sprite its Size (displayDiameter); for a tr
 Size. Cursor: cursorL, cursorR, cursorThickness. Appearance: color and its Variability. Beat
 points: beatPointsMode, beatsPerCycle, activeBeats, strength, beatsPerBar, and the Euclidean
 parameters activeBeatsCount, beatShift, repeats. Cycle: cycleSpeeds, startAtCycle,
-stopAtCycle, and a trigger's triggerSyncToBeat. Timing: timeLagMultiplier, timeLagInterval,
-and autoMessageInterval. Callback bindings: the Can-X gates canCollide, canBeTriggered, canTick,
-canAutoMessage and the function-name fields hasCollidedFunction, beenTriggeredFunction, onTickFunction,
-autoMessageFunction.
+stopAtCycle, and a trigger's triggerSyncToBeat. Timing: timeLagMultiplier, timeLagInterval.
+Callback bindings: the Can-X gates canActiveBeat, canCollide, canBeTriggered, canTick
+and the function-name fields onActiveBeatFunction, hasCollidedFunction, beenTriggeredFunction,
+onTickFunction.
 
 Beyond the stored fields, the handle exposes DERIVED reads that a callback needs and that the
 current ctx already computes. The live motion and clock reads: speed, the cycle phase
@@ -379,8 +379,9 @@ legitimately do nothing. The section NAME is still open — run is a placeholder
 update, and tick are candidates.
 
 The per-object CALLBACKS are the four named functions the Msg Functions band already binds:
-hasCollided and beenTriggered (collision, gated by canCollide and canBeTriggered), onTick (per tick, gated by
-canTick), and autoMessage (at the object's Automessage Interval, gated by canAutoMessage).
+onActiveBeat (a cursor crossing an active beat, gated by canActiveBeat), hasCollided and
+beenTriggered (collision, gated by canCollide and canBeTriggered), and onTick (per tick, gated by
+canTick).
 They live in script.js as plain named functions, bound to objects by name through the
 functionMap the loader builds, and they receive the object handle as their context. This is
 GXW's existing callback spine (the simulation's dispatchCollision and per-sprite onTick,
@@ -396,8 +397,8 @@ re-initializes their own script-level state (the prev stores, an RNG seed), not 
 themselves. onMessage (external MIDI
 and OSC input) is a later concern noted here but not designed. The token-to-duration tick table from
 JavaScriptLibrary.js (whole note 384, the nineteen values that match GXW's interval menu in
-intervalMenu.js) is the mapping the engine will use for Time Lag, the Automessage Interval,
-and Trigger Sync; it is referenced as the engine's concern and not built here.
+intervalMenu.js) is the mapping the engine will use for Time Lag and Trigger Sync; it is
+referenced as the engine's concern and not built here.
 
 THE FIRING FLOW is designed in subsection 6 below. This subsection establishes only the
 substrate it runs on; subsection 6 covers how a simulation step reaches a callback, how a
@@ -465,15 +466,21 @@ stereo pan per voice; over plain MIDI there is no per-note pan (channel pan, CC1
 the whole channel), so pan is a NO-OP for MIDI output. Per-note MIDI expression including pan
 waits on MPE, a future possibility, not designed now.
 
-THE FIVE CALLBACKS. Each object binds up to five named procedural callbacks, and the firing
+THE FOUR CALLBACKS. Each object binds up to four named procedural callbacks, and the firing
 taxonomy is which event fires which. onActiveBeat fires when a cursor crosses an active beat of
 its OWN curve or sprite; this is the melodic and rhythmic firing, GeoSonix's curveMessage, the
 PRIMARY musical callback, so it LEADS the band. hasCollided fires on a curve or sprite whose
 cursor strikes a diamond — the active side of a collision. beenTriggered fires on the diamond
 that was struck — the passive side. onActiveBeat is a DISTINCT path from the collision callbacks,
 so a melody on one's own grid and a reaction to striking something elsewhere run different code.
-onTick fires at a fixed control rate (below). autoMessage fires at the object's Automessage
-Interval. The names carry the active/passive direction in English voice — hasCollided (this
+onTick fires at a fixed control rate (below). (REMOVED 2026-06-09: a fifth callback, autoMessage,
+fired at a per-object "Automessage Interval". It was cut because onTick plus the per-object
+`prev` scratch store does the same self-scheduling — `if (this.time >= prev.nextDue) { …;
+prev.nextDue = this.time + computeFromColour() }` — including the self-modulating image-driven
+interval that was its whole point, without a separate slot, interval field, or field write-back
+machinery. Its inspector controls and schema fields, `canAutoMessage` / `autoMessageFunction` /
+`autoMessageInterval`, were never wired to fire and are removed.) The names carry the
+active/passive direction in English voice — hasCollided (this
 object did the colliding) versus beenTriggered (this object was beenTriggered) — descending from
 GXW's old hasCollided / beenTriggered pair; onActiveBeat and onTick carry the on- prefix as "on this event"
 callbacks. (An earlier hasCollided / beenTriggered pair, and before that hitTrigger / triggerHit, were
@@ -488,7 +495,7 @@ the common case (a trigger being hit) and stretches to cover the rare others rat
 sacrificing the hasCollided / beenTriggered symmetry.
 
 The Msg Functions band (§4) is built with these names, in the order onActiveBeat, hasCollided,
-beenTriggered, onTick, the Automessage Interval, then autoMessage. onActiveBeat shows only for
+beenTriggered, onTick. onActiveBeat shows only for
 curves and sprites that can carry beat points (never triggers); the others apply to all kinds.
 
 THE PER-STEP PIPELINE. Within one fine simulation step the order is: first onTick runs, so any
@@ -496,8 +503,7 @@ steering force a script applies is in place before motion is computed; then moti
 cursors advance along their curves by their tempo-locked phase and sprites integrate their
 physics; then the step detects what happened — a cursor crossing one of its own beat points,
 and any collision between a cursor and a diamond; then the matching callbacks fire — onActiveBeat
-for a crossing, hasCollided on the mover and beenTriggered on the struck diamond for a collision; and
-last the step checks each object's Automessage Interval and fires autoMessage if it came due.
+for a crossing, hasCollided on the mover and beenTriggered on the struck diamond for a collision.
 Every note these callbacks emit is stamped with that step's audio time, so it sounds exactly
 when the step occurred.
 
@@ -625,8 +631,7 @@ as-built inspector diverged from the earlier GeoSonix sketch, the as-built versi
 what is recorded here.
 
 RENDER ORDER (top to bottom, from `_render`): Title bar, Identity, Transform &
-appearance, Msg Functions (callbacks + the Automessage Interval, merged into this one
-band — there is NO separate Automessage band), Beat Points, Cycle, then a separator, the
+appearance, Msg Functions (callback slots), Beat Points, Cycle, then a separator, the
 reserved middle area, a heavy separator, and the global band.
 
 The form always renders, even with nothing selected: every band shows with its fields
@@ -645,7 +650,7 @@ GXW's existing inspector title bar, kept as-is — NOT GeoSonix's tabbed Object 
 `Inspector._buildDropdownField`. Nineteen tokens ordered by length: Off, 384th, 128th,
 64th, 32nd, 8th Tr, 16th, Qtr Tr, Dot 16th, 8th, Half Tr, Dot 8th, Qtr, Dot Qtr, Half,
 Dot Half, Whole, 2 × Wh, 4 × Wh ("Tr" = triplet, "Dot" = dotted, "Off" = none). Used by
-Time Lag (Identity), the Automessage Interval (Msg Functions), and Trigger Sync To Beat
+Time Lag (Identity) and Trigger Sync To Beat
 (Cycle). The token→duration mapping is the engine's concern, defined later.
 
 ### Identity band
@@ -687,29 +692,30 @@ Rows:
 There is NO Z coordinate anywhere. Label renames from GeoSonix/GXW: Length / Width (not
 "Curve Size (W, H)"), Line Width (curve thickness), Cursor Length / Cursor Width.
 
-### Msg Functions band (callbacks + Automessage Interval)
-Five named procedural callbacks — onActiveBeat, hasCollided, beenTriggered, onTick,
-autoMessage — replace GeoSonix's message functions. Each callback is a row with a Can-X
+### Msg Functions band (callback slots)
+Four named procedural callbacks — onActiveBeat, hasCollided, beenTriggered, onTick —
+replace GeoSonix's message functions. Each callback is a row with a Can-X
 checkbox, a function-name field, and ONE contextual button: CREATE when the named function
 doesn't exist yet (scaffolds e.g. `onActiveBeat_<id>` in script.js) or GO TO when it does
-(navigates to it). Gates: canActiveBeat / canCollide / canBeTriggered / canTick /
-canAutoMessage. Function fields: onActiveBeatFunction / hasCollidedFunction /
-beenTriggeredFunction / onTickFunction / autoMessageFunction.
+(navigates to it). Gates: canActiveBeat / canCollide / canBeTriggered / canTick.
+Function fields: onActiveBeatFunction / hasCollidedFunction /
+beenTriggeredFunction / onTickFunction.
 
 The names carry their meaning in English voice so the active/passive distinction reads at a
 glance: hasCollided (the active mover that struck something) versus beenTriggered (the
 passive object that was struck), descending from GXW's old hasCollided / beenTriggered pair. onActiveBeat
 fires when a cursor crosses an active beat of the object's OWN rhythm (the GeoSonix curve
 message) — it is the primary musical callback, so it sits FIRST. It is shown only for curves
-and sprites that can carry beat points (greyed for triggers). The collision pair and onTick /
-autoMessage apply to all kinds.
+and sprites that can carry beat points (greyed for triggers). The collision pair and onTick
+apply to all kinds. So the band reads, top to bottom: onActiveBeat, hasCollided,
+beenTriggered, onTick.
 
-The Automessage Interval dropdown lives in THIS band (the formerly separate Automessage
-band is merged in, with no dividing line), rendered ABOVE the autoMessage callback —
-because the interval (the fire rate) must be defined for the autoMessage callback to have
-meaning. It is the shared interval dropdown (field `autoMessageInterval`, default "Off"),
-its control aligned with the callback rows' function-field column. So the band reads, top
-to bottom: onActiveBeat, hasCollided, beenTriggered, onTick, Automessage Interval, autoMessage.
+(REMOVED 2026-06-09: a fifth callback, autoMessage, and its Automessage Interval dropdown —
+a per-object self-timed message stream — lived in this band. It was cut in favour of onTick +
+the `prev` scratch store doing the same self-scheduling, including the self-modulating
+image-driven interval that was its main use; see §3.6's callbacks note. The
+`canAutoMessage` / `autoMessageFunction` / `autoMessageInterval` schema fields and the
+inspector rows are removed; removing the row also frees vertical space in the band.)
 
 These callbacks ARE the procedural pattern model (section 3): plain functions in script.js.
 The collision callbacks and onTick fire today; onActiveBeat's firing (a cursor crossing a beat
@@ -803,7 +809,7 @@ inspector rules there is dead.
 ### Model fields added across kinds (for the inspector)
 Defined in `sceneSchema.js`, constructed in `scene.js`, written by `sceneEditor.js`
 setters, and dispatched in `main.js`: group, timeLagMultiplier, timeLagInterval,
-autoMessageInterval, canAutoMessage, autoMessageFunction, beatPointsMode, activeBeats,
+beatPointsMode, activeBeats,
 strength, beatsPerBar, activeBeatsCount, beatShift, repeats, startAtCycle, stopAtCycle,
 triggerSyncToBeat. (Reused existing fields include name, state, cycleSpeeds, stopAtCycle on
 curves, the callback Can-X gates and function refs, and beatsPerCycle / beatInterval.)

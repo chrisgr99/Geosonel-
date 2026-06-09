@@ -49,9 +49,6 @@ import {
     setBeenTriggeredFunctionOnSelection,
     setCanTickOnSelection,
     setOnTickFunctionOnSelection,
-    setCanAutoMessageOnSelection,
-    setAutoMessageFunctionOnSelection,
-    setAutoMessageIntervalOnSelection,
     setTriggerSizeOnSelection,
     setSpriteDisplayDiameterOnSelection,
     setPositionAxisOnSelection,
@@ -168,9 +165,6 @@ const FIELDS = {
     beenTriggeredFunction: { apply: (d, s, v) => setBeenTriggeredFunctionOnSelection(d, s, v), read: (r) => r.beenTriggeredFunction ?? "", kinds: ["curve", "trigger", "sprite"] },
     canTick: { apply: (d, s, v) => setCanTickOnSelection(d, s, v), read: (r) => r.canTick ?? false, kinds: ["curve", "trigger", "sprite"] },
     onTickFunction: { apply: (d, s, v) => setOnTickFunctionOnSelection(d, s, v), read: (r) => r.onTickFunction ?? "", kinds: ["curve", "trigger", "sprite"] },
-    canAutoMessage: { apply: (d, s, v) => setCanAutoMessageOnSelection(d, s, v), read: (r) => r.canAutoMessage ?? false, kinds: ["curve", "trigger", "sprite"] },
-    autoMessageFunction: { apply: (d, s, v) => setAutoMessageFunctionOnSelection(d, s, v), read: (r) => r.autoMessageFunction ?? "", kinds: ["curve", "trigger", "sprite"] },
-    autoMessageInterval: { apply: (d, s, v) => setAutoMessageIntervalOnSelection(d, s, v), read: (r) => r.autoMessageInterval, kinds: ["curve", "trigger", "sprite"] },
 
     // --- Voice / instrument (superdough). Alias `instrument` → nested voice.superdough.sound. ---
     instrument: {

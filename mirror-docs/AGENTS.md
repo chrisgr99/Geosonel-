@@ -19,7 +19,7 @@ The folder contains two kinds of file: round-trip files that the AI may edit (th
 **Round-trip files:**
 
 - `scene.json` — composition data: object positions, geometries, patterns, score-level harmony. Schema documented in `sceneSchema.md`.
-- `script.js` — per-object JavaScript callback code (`onActiveBeat_<id>`, `onTick_<id>`, `hasCollided_<id>`, `beenTriggered_<id>`, `autoMessage_<id>` for each object that opts in).
+- `script.js` — per-object JavaScript callback code (`onActiveBeat_<id>`, `onTick_<id>`, `hasCollided_<id>`, `beenTriggered_<id>` for each object that opts in).
 - the score's image file (varies by name, e.g. `tofes.jpg`) — the background image. **See "Image replacement" below.**
 
 **Observation-only files:**
@@ -198,7 +198,7 @@ Shape:
 
 A rolling buffer of the most recent discrete musical events the score fired, **each paired with the signal values that drove it**. This is how you see what a score actually *does* as it plays — not just the code, but the live numbers. The headline use: when the user asks how to scale a callback (e.g. "map green to pitch"), read the trace to see the real range `this.col.g` takes across recent beats and choose a mapping from data instead of guessing.
 
-Captured on the **event callbacks** — `onActiveBeat`, `hasCollided`, `beenTriggered` (and `autoMessage` once wired). **`onTick` is intentionally excluded**: it fires continuously at the control rate rather than on the beat points where musical events happen, so tracing it would flood the buffer with non-event data.
+Captured on the **event callbacks** — `onActiveBeat`, `hasCollided`, `beenTriggered`. **`onTick` is intentionally excluded**: it fires continuously at the control rate rather than on the beat points where musical events happen, so tracing it would flood the buffer with non-event data.
 
 Updated while the transport plays (polled a few times a second; the file only changes when new events fire) and once more on pause, and emptied on rewind / scene change. The buffer holds the last ~64 events, newest last. Electron-only.
 
@@ -266,7 +266,6 @@ Object IDs (`CRV1`, `TRG2`, etc.) are referenced by callback function names in `
 - `onTick_<id>` — fires every simulation control tick (~60 Hz) while the object is live. Gated by `canTick`.
 - `hasCollided_<id>` — fires on this object when it collides with another. Gated by `canCollide`.
 - `beenTriggered_<id>` — fires when another object's cursor crosses this one. Gated by `canBeTriggered`.
-- `autoMessage_<id>` — fires at the object's Automessage Interval. Gated by `canAutoMessage`.
 
 So `onActiveBeat_CRV2` is the active-beat callback for curve `CRV2`. Whether a callback fires depends on the matching gate boolean on the object plus the function name being resolvable in `script.js`.
 
@@ -301,7 +300,7 @@ Validation is all-or-nothing: an unknown object ID, an unknown field, or a field
 - Velocity (sprites, curves): `vx`, `vy`
 - Size: `triggerSize` (triggers), `displayDiameter` (sprites), `width`/`height` (curve bounding box)
 - Beat points (curves, sprites): `beatPointsMode`, `activeBeats`, `strength`, `beatPattern`, `cycleInterval`, `cycleCount`, `beatsPerBar`, `activeBeatsCount`, `beatShift`, `repeats`, `variability`
-- Callback gates + function names: `canActiveBeat`, `onActiveBeatFunction`, `canCollide`, `hasCollidedFunction`, `canBeTriggered`, `beenTriggeredFunction`, `canTick`, `onTickFunction`, `canAutoMessage`, `autoMessageFunction`, `autoMessageInterval`
+- Callback gates + function names: `canActiveBeat`, `onActiveBeatFunction`, `canCollide`, `hasCollidedFunction`, `canBeTriggered`, `beenTriggeredFunction`, `canTick`, `onTickFunction`
 - Voice: `instrument` (the object's superdough pitched sound)
 
 **Not** settable here (edit on the canvas or in `script.js` instead): object `id`, a curve's raw shape internals (its `type` and individual vertex coordinates / `points` array — i.e. reshaping, as opposed to the whole-curve position and bounding-box size above), and the image. See `sceneSchema.md` for each field's meaning and valid values.
