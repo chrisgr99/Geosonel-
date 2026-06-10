@@ -4039,7 +4039,7 @@ function shapeBbox(shape) {
             y2: cy + h / 2,
         };
     }
-    if (shape.type === "piste") {
+    if (shape.type === "piste" || shape.type === "spline") {
         const pts = shape.points;
         if (!Array.isArray(pts) || pts.length === 0) return null;
         let minX = Infinity, maxX = -Infinity;
@@ -4093,7 +4093,7 @@ function translateShapeCoords(shape, dx, dy) {
     } else if (shape.type === "ellipse") {
         if (typeof shape.cx === "number") shape.cx += dx;
         if (typeof shape.cy === "number") shape.cy += dy;
-    } else if (shape.type === "piste") {
+    } else if (shape.type === "piste" || shape.type === "spline") {
         if (!Array.isArray(shape.points)) return;
         for (const p of shape.points) {
             if (Array.isArray(p) && p.length >= 2) {

@@ -3,6 +3,7 @@
 import { sampleCurve } from "./curveGeometry.js";
 import {
   DRAG_THRESHOLD_PX,
+  POLYLINE_CLOSE_SNAP_PX,
   applyShapeCoordsScale,
   applyShapeCoordsTranslation,
   snapshotShapeCoords,
@@ -65,21 +66,40 @@ export const inputMethods = {
                 this.scheduleDraw();
                 return;
             }
-            if (this._activeTool === "lineSegment") {
-                // Multi-click polyline. The first click starts a
-                // drawPolyline gesture; each later click appends a
-                // vertex (the end of one straight segment and the start
-                // of the next). The tool stays armed throughout — the
-                // rubber-band preview to the cursor is tracked in the
-                // canvas hover-move handler, and a double-click commits
-                // the whole thing as one piste curve (_onDoubleClick).
-                // Each mousedown of the finishing double-click appends a
-                // point, so the trailing duplicate is dropped on commit.
+            if (this._activeTool === "lineSegment" || this._activeTool === "spline") {
+                // Multi-click path tool, shared by the line-segment
+                // (piste, straight) and spline (smooth Catmull-Rom)
+                // tools — same interaction, different committed shape
+                // type. The first click starts a drawPolyline gesture;
+                // each later click appends a vertex. The tool stays
+                // armed throughout — the rubber-band preview to the
+                // cursor is tracked in the canvas hover-move handler,
+                // and a double-click commits the whole thing as one
+                // curve (_onDoubleClick). Each mousedown of the
+                // finishing double-click appends a point, so the
+                // trailing duplicate is dropped on commit.
+                const shapeType = this._activeTool === "spline" ? "spline" : "piste";
                 if (this._gesture !== null && this._gesture.kind === "drawPolyline") {
-                    this._gesture.points.push([pos.x, pos.y]);
+                    // Click within the snap radius of the START point
+                    // (with enough vertices to enclose) CLOSES the curve
+                    // — drops the seam exactly on the start point — rather
+                    // than adding a vertex. The wrap is a smooth seam for
+                    // splines, a straight segment for line segments.
+                    const g = this._gesture;
+                    if (g.points.length >= 3) {
+                        const p0 = g.points[0];
+                        const dpx = (pos.x - p0[0]) * this.pixelsPerUnit;
+                        const dpy = (pos.y - p0[1]) * this.pixelsPerUnit;
+                        if (Math.hypot(dpx, dpy) < POLYLINE_CLOSE_SNAP_PX) {
+                            this._commitPolyline(true);
+                            return;
+                        }
+                    }
+                    g.points.push([pos.x, pos.y]);
                 } else {
                     this._gesture = {
                         kind: "drawPolyline",
+                        shapeType,
                         points: [[pos.x, pos.y]],
                         previewX: pos.x,
                         previewY: pos.y,
@@ -816,6 +836,35 @@ export const inputMethods = {
     },
 
     /**
+     * Commit the in-progress drawPolyline gesture as one curve, then
+     * revert to selection. closed=true makes a CLOSED curve — a smooth
+     * periodic seam for splines, a straight wrap segment for line
+     * segments — joining the last vertex back to the start. Open commits
+     * need at least two vertices; closed needs three to enclose. The
+     * gesture is always cleared, even when the minimum isn't met.
+     * @param {boolean} closed
+     */
+    _commitPolyline(closed) {
+        if (this._gesture === null || this._gesture.kind !== "drawPolyline") return;
+        const points = this._gesture.points;
+        const shapeType = this._gesture.shapeType === "spline" ? "spline" : "piste";
+        const minPts = closed ? 3 : 2;
+        if (points.length >= minPts && this._editCallback !== null) {
+            this._editCallback({
+                kind: "addCurve",
+                shape: {
+                    type: shapeType,
+                    points: points.map((p) => [p[0], p[1]]),
+                    closed,
+                },
+            });
+        }
+        this._gesture = null;
+        if (this._toolbar !== null) this._toolbar.afterPlacement();
+        this.scheduleDraw();
+    },
+
+    /**
      * Double-click on a canvas object emits an
      * openObjectInCode edit so external host code can
      * switch to the Script tab and scroll to the object's
@@ -844,25 +893,14 @@ export const inputMethods = {
         // so drop the trailing duplicate; commit the whole thing as ONE
         // piste curve if at least two vertices remain, otherwise cancel
         // (a single point is not a curve). Then revert to selection.
-        if (this._activeTool === "lineSegment" &&
+        if ((this._activeTool === "lineSegment" || this._activeTool === "spline") &&
             this._gesture !== null &&
             this._gesture.kind === "drawPolyline") {
             e.preventDefault();
-            const points = this._gesture.points;
-            if (points.length > 1) points.pop();
-            if (points.length >= 2 && this._editCallback !== null) {
-                this._editCallback({
-                    kind: "addCurve",
-                    shape: {
-                        type: "piste",
-                        points: points.map((p) => [p[0], p[1]]),
-                        closed: false,
-                    },
-                });
-            }
-            this._gesture = null;
-            if (this._toolbar !== null) this._toolbar.afterPlacement();
-            this.scheduleDraw();
+            // Drop the duplicate vertex the double-click's two mousedowns
+            // appended, then commit as an OPEN curve.
+            if (this._gesture.points.length > 1) this._gesture.points.pop();
+            this._commitPolyline(false);
             return;
         }
         if (this._activeTool !== null) return;

@@ -664,7 +664,10 @@ export function addCurveAt(data, shape) {
         roundedShape.y1 = roundCoord(shape.y1 ?? 0);
         roundedShape.x2 = roundCoord(shape.x2 ?? 0);
         roundedShape.y2 = roundCoord(shape.y2 ?? 0);
-    } else if (shape.type === "piste") {
+    } else if (shape.type === "piste" || shape.type === "spline") {
+        // Piste (straight segments) and spline (smooth Catmull-Rom)
+        // share the same control-point storage; roundedShape.type
+        // (set above from shape.type) keeps them distinct.
         const pts = Array.isArray(shape.points) ? shape.points : [];
         roundedShape.points = pts.map((p) => [
             roundCoord(Array.isArray(p) && typeof p[0] === "number" ? p[0] : 0),
@@ -2782,7 +2785,7 @@ function shapeBbox(shape) {
             y2: cy + h / 2,
         };
     }
-    if (shape.type === "piste") {
+    if (shape.type === "piste" || shape.type === "spline") {
         const pts = shape.points;
         if (!Array.isArray(pts) || pts.length === 0) return null;
         let minX = Infinity, maxX = -Infinity;
@@ -2846,7 +2849,7 @@ function translateShape(shape, dx, dy) {
     } else if (shape.type === "ellipse") {
         shape.cx = roundCoord((typeof shape.cx === "number" ? shape.cx : 0) + dx);
         shape.cy = roundCoord((typeof shape.cy === "number" ? shape.cy : 0) + dy);
-    } else if (shape.type === "piste") {
+    } else if (shape.type === "piste" || shape.type === "spline") {
         if (!Array.isArray(shape.points)) return;
         for (let i = 0; i < shape.points.length; i++) {
             const p = shape.points[i];
@@ -2900,7 +2903,7 @@ function scaleShape(shape, axis, factor) {
             const h = typeof shape.h === "number" ? shape.h : 0;
             shape.h = roundCoord(h * factor);
         }
-    } else if (shape.type === "piste") {
+    } else if (shape.type === "piste" || shape.type === "spline") {
         if (!Array.isArray(shape.points) || shape.points.length === 0) return;
         const ai = axis === "x" ? 0 : 1;
         let min = Infinity;
@@ -2971,7 +2974,7 @@ function scaleShapeAroundAnchor(shape, ax, ay, sx, sy) {
         shape.cy = roundCoord(ay + (cy - ay) * sy);
         shape.w = roundCoord(w * Math.abs(sx));
         shape.h = roundCoord(h * Math.abs(sy));
-    } else if (shape.type === "piste") {
+    } else if (shape.type === "piste" || shape.type === "spline") {
         if (!Array.isArray(shape.points)) return;
         for (let i = 0; i < shape.points.length; i++) {
             const p = shape.points[i];

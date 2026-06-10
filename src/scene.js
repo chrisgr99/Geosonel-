@@ -424,7 +424,19 @@ export class Scene {
  * @property {boolean} [closed]
  */
 
-/** @typedef {ShapeLine | ShapeEllipse | ShapePiste} CurveShape */
+/**
+ * A smooth spline through control points (centripetal Catmull-Rom). Same
+ * shape as a piste — an array of control points — but sampled as a
+ * smooth interpolating curve rather than straight segments. The clicked
+ * points are the control points (the curve passes through them), kept so
+ * tangent-handle editing can be layered on later.
+ * @typedef {Object} ShapeSpline
+ * @property {"spline"} type
+ * @property {Array<[number, number]>} points
+ * @property {boolean} [closed]
+ */
+
+/** @typedef {ShapeLine | ShapeEllipse | ShapePiste | ShapeSpline} CurveShape */
 
 export class Curve {
     /**

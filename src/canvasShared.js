@@ -188,6 +188,13 @@ export const MARQUEE_DRAG_STROKE = "rgba(220, 220, 220, 0.5)";
 // this, mousedown+mouseup is treated as a click.
 export const DRAG_THRESHOLD_PX = 4;
 
+// Snap radius (pixels) for closing a polyline/spline draw: while drawing
+// a multi-point curve, a click within this distance of the start point
+// closes the curve instead of adding a vertex. Shared by the close
+// detection (canvasInput) and the closing preview (canvasRender) so the
+// "ring the start point" affordance appears exactly when a click closes.
+export const POLYLINE_CLOSE_SNAP_PX = 12;
+
 // Hover-brighten parameters. When the mouse pointer rests on
 // a canvas object (sprite, trigger, or curve) for longer than
 // HOVER_DEBOUNCE_MS, the object's outline brightens (its
@@ -449,7 +456,7 @@ export function curveBoundingBox(shape) {
             y2: shape.cy + shape.h / 2,
         };
     }
-    if (shape.type === "piste") {
+    if (shape.type === "piste" || shape.type === "spline") {
         const pts = shape.points;
         if (pts.length === 0) return null;
         let minX = pts[0][0], maxX = pts[0][0];
@@ -522,10 +529,10 @@ export function snapshotShapeCoords(shape) {
             cy: typeof shape.cy === "number" ? shape.cy : 0,
         };
     }
-    if (shape.type === "piste") {
+    if (shape.type === "piste" || shape.type === "spline") {
         if (!Array.isArray(shape.points)) return null;
         return {
-            type: "piste",
+            type: shape.type,
             points: shape.points.map((p) =>
                 Array.isArray(p) && p.length >= 2
                     ? [
@@ -574,7 +581,7 @@ export function applyShapeCoordsTranslation(shape, initialCoords, dx, dy) {
     } else if (shape.type === "ellipse") {
         shape.cx = initialCoords.cx + dx;
         shape.cy = initialCoords.cy + dy;
-    } else if (shape.type === "piste") {
+    } else if (shape.type === "piste" || shape.type === "spline") {
         if (!Array.isArray(shape.points)) return;
         const pts = initialCoords.points;
         const n = Math.min(shape.points.length, pts.length);
@@ -625,10 +632,10 @@ export function snapshotShapeForResize(shape) {
             h: typeof shape.h === "number" ? shape.h : 0,
         };
     }
-    if (shape.type === "piste") {
+    if (shape.type === "piste" || shape.type === "spline") {
         if (!Array.isArray(shape.points)) return null;
         return {
-            type: "piste",
+            type: shape.type,
             points: shape.points.map((p) =>
                 Array.isArray(p) && p.length >= 2
                     ? [
@@ -677,7 +684,7 @@ export function applyShapeCoordsScale(shape, initialCoords, ax, ay, sx, sy) {
         shape.cy = ay + (initialCoords.cy - ay) * sy;
         shape.w = initialCoords.w * Math.abs(sx);
         shape.h = initialCoords.h * Math.abs(sy);
-    } else if (shape.type === "piste") {
+    } else if (shape.type === "piste" || shape.type === "spline") {
         if (!Array.isArray(shape.points)) return;
         const pts = initialCoords.points;
         const n = Math.min(shape.points.length, pts.length);

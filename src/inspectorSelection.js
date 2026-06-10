@@ -442,7 +442,7 @@ export function computeShapeBbox(shape) {
             y2: cy + h / 2,
         };
     }
-    if (shape.type === "piste") {
+    if (shape.type === "piste" || shape.type === "spline") {
         const pts = shape.points;
         if (!Array.isArray(pts) || pts.length === 0) return null;
         let minX = Infinity, maxX = -Infinity;

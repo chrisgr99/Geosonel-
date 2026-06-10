@@ -1,12 +1,12 @@
 // @ts-check
 import {
-  AXIS_COLOUR, BG_COLOUR, CANVAS_BORDER_COLOUR, CANVAS_BORDER_WIDTH_PX, CANVAS_OUTSIDE_COLOUR, CURSOR_COLOUR, CURSOR_TARGET_COLOUR, CURVE_COLOUR, FIRING_FLASH_COLOUR, FIRING_FLASH_DURATION_MS, FIRING_FLASH_MATCH_EPS, HANDLE_FILL_COLOUR, HANDLE_HOVER_SIZE_PX, HANDLE_SIZE_PX, HANDLE_STROKE_COLOUR, HOVER_LIGHTEN_RATIO, HOVER_LINE_WIDTH_BONUS, MAJOR_GRID_COLOUR, MARQUEE_DRAG_FILL, MARQUEE_DRAG_STROKE, MINOR_GRID_COLOUR, OBJECT_BOUNDARY_COLOUR, SELECTION_MARKER_COLOUR, SPRITE_DEFAULT_HEADING, SPRITE_FILL_ALPHA, SPRITE_HEADING_DEFAULT_TURN, SPRITE_HEADING_TELEPORT_LIMIT, SPRITE_HEADING_VEC_EPS, buildSpriteTeardropPath, curveBoundingBox, imageFromBlob, lightenColor, pixelPerpendicularUnit, pixelTangentAndPerp,
+  AXIS_COLOUR, BG_COLOUR, CANVAS_BORDER_COLOUR, CANVAS_BORDER_WIDTH_PX, CANVAS_OUTSIDE_COLOUR, CURSOR_COLOUR, CURSOR_TARGET_COLOUR, CURVE_COLOUR, FIRING_FLASH_COLOUR, FIRING_FLASH_DURATION_MS, FIRING_FLASH_MATCH_EPS, HANDLE_FILL_COLOUR, HANDLE_HOVER_SIZE_PX, HANDLE_SIZE_PX, HANDLE_STROKE_COLOUR, HOVER_LIGHTEN_RATIO, HOVER_LINE_WIDTH_BONUS, MAJOR_GRID_COLOUR, MARQUEE_DRAG_FILL, MARQUEE_DRAG_STROKE, MINOR_GRID_COLOUR, OBJECT_BOUNDARY_COLOUR, POLYLINE_CLOSE_SNAP_PX, SELECTION_MARKER_COLOUR, SPRITE_DEFAULT_HEADING, SPRITE_FILL_ALPHA, SPRITE_HEADING_DEFAULT_TURN, SPRITE_HEADING_TELEPORT_LIMIT, SPRITE_HEADING_VEC_EPS, buildSpriteTeardropPath, curveBoundingBox, imageFromBlob, lightenColor, pixelPerpendicularUnit, pixelTangentAndPerp,
 } from "./canvasShared.js";
 import { applyBrightnessReduction } from "./imageTransform.js";
 import { getPreference } from "./preferences.js";
 import { deriveCurveBeatPoints } from "./beatPoints.js";
 import { buildOKLChBuffer } from "./strudel/oklch.js";
-import { sampleCurve } from "./curveGeometry.js";
+import { sampleCurve, splineToPolyline } from "./curveGeometry.js";
 
 /**
  * Beat-point diamond sizing (§3.1a). An ACTIVE beat draws at the
@@ -300,6 +300,19 @@ export const renderMethods = {
             ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
         } else if (s.type === "piste") {
             const pts = s.points;
+            if (pts.length >= 2) {
+                for (let i = 0; i < pts.length; i++) {
+                    const px = this.toPixelX(pts[i][0]);
+                    const py = this.toPixelY(pts[i][1]);
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                if (s.closed) ctx.closePath();
+            }
+        } else if (s.type === "spline") {
+            // Smooth curve: flatten the control points to a dense
+            // Catmull-Rom polyline and stroke that (periodic when closed).
+            const pts = splineToPolyline(s.points, !!s.closed);
             if (pts.length >= 2) {
                 for (let i = 0; i < pts.length; i++) {
                     const px = this.toPixelX(pts[i][0]);
@@ -1124,6 +1137,7 @@ export const renderMethods = {
         const g = this._gesture;
         const pts = g.points;
         if (!Array.isArray(pts) || pts.length === 0) return;
+        const hasPreview = typeof g.previewX === "number" && typeof g.previewY === "number";
 
         const ctx = this.ctx;
         ctx.save();
@@ -1133,32 +1147,74 @@ export const renderMethods = {
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
 
-        // Committed segments through the placed vertices.
-        if (pts.length >= 2) {
-            ctx.beginPath();
-            ctx.moveTo(this.toPixelX(pts[0][0]), this.toPixelY(pts[0][1]));
-            for (let i = 1; i < pts.length; i++) {
-                ctx.lineTo(this.toPixelX(pts[i][0]), this.toPixelY(pts[i][1]));
+        // Closing affordance: with at least three vertices, a pointer
+        // within the snap radius of the START point means a click would
+        // CLOSE the curve. Preview the closed shape and ring the start.
+        const sx = this.toPixelX(pts[0][0]);
+        const sy = this.toPixelY(pts[0][1]);
+        let closing = false;
+        if (hasPreview && pts.length >= 3) {
+            const ppx = this.toPixelX(g.previewX);
+            const ppy = this.toPixelY(g.previewY);
+            closing = Math.hypot(ppx - sx, ppy - sy) < POLYLINE_CLOSE_SNAP_PX;
+        }
+
+        if (g.shapeType === "spline") {
+            // Smooth live curve. Closing → the periodic closed loop
+            // through the placed points; otherwise the open curve through
+            // the points plus the cursor (so it bends toward the click).
+            const dense = closing
+                ? splineToPolyline(pts, true)
+                : splineToPolyline(hasPreview ? [...pts, [g.previewX, g.previewY]] : pts);
+            if (dense.length >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(this.toPixelX(dense[0][0]), this.toPixelY(dense[0][1]));
+                for (let i = 1; i < dense.length; i++) {
+                    ctx.lineTo(this.toPixelX(dense[i][0]), this.toPixelY(dense[i][1]));
+                }
+                ctx.stroke();
             }
-            ctx.stroke();
+        } else {
+            // Straight committed segments.
+            if (pts.length >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(this.toPixelX(pts[0][0]), this.toPixelY(pts[0][1]));
+                for (let i = 1; i < pts.length; i++) {
+                    ctx.lineTo(this.toPixelX(pts[i][0]), this.toPixelY(pts[i][1]));
+                }
+                ctx.stroke();
+            }
+            // Closing → solid segment back to the start; otherwise the
+            // dashed rubber-band to the cursor.
+            if (closing) {
+                const last = pts[pts.length - 1];
+                ctx.beginPath();
+                ctx.moveTo(this.toPixelX(last[0]), this.toPixelY(last[1]));
+                ctx.lineTo(sx, sy);
+                ctx.stroke();
+            } else if (hasPreview) {
+                const last = pts[pts.length - 1];
+                ctx.setLineDash([4, 3]);
+                ctx.beginPath();
+                ctx.moveTo(this.toPixelX(last[0]), this.toPixelY(last[1]));
+                ctx.lineTo(this.toPixelX(g.previewX), this.toPixelY(g.previewY));
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
         }
 
-        // Dashed rubber-band from the last vertex to the pointer.
-        if (typeof g.previewX === "number" && typeof g.previewY === "number") {
-            const last = pts[pts.length - 1];
-            ctx.setLineDash([4, 3]);
-            ctx.beginPath();
-            ctx.moveTo(this.toPixelX(last[0]), this.toPixelY(last[1]));
-            ctx.lineTo(this.toPixelX(g.previewX), this.toPixelY(g.previewY));
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
-
-        // Vertex dots.
+        // Dots at the placed control points (both modes).
         for (const p of pts) {
             ctx.beginPath();
             ctx.arc(this.toPixelX(p[0]), this.toPixelY(p[1]), 2.5, 0, Math.PI * 2);
             ctx.fill();
+        }
+        // Ring the start point when a click there would close the curve.
+        if (closing) {
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 6, 0, Math.PI * 2);
+            ctx.stroke();
         }
 
         ctx.restore();

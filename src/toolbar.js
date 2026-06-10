@@ -150,6 +150,19 @@ const TOOL_DEFS = [
             `<path d="M 16.5 20 L 21.5 20 M 19 17.5 L 19 22.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>` +
             `</svg>`,
     },
+    {
+        name: "spline",
+        label: "Add Spline Curve",
+        tooltip: "Add Spline Curve. Click to place each point; the curve passes smoothly through them. Double-click to finish. Esc to cancel.",
+        // Smooth wave in CURVE_COLOUR (#7dd68a) — distinguishes the
+        // smooth spline from the angular line-segment tool while
+        // staying in the green curve family. Same lower-right plus mark.
+        svg:
+            `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
+            `<path d="M 3 16 C 6 6 10 6 12 12 C 14 18 18 8 21 7" stroke="#7dd68a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
+            `<path d="M 16.5 20 L 21.5 20 M 19 17.5 L 19 22.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>` +
+            `</svg>`,
+    },
 ];
 
 // Image-import icon. A picture-frame outline with a small
