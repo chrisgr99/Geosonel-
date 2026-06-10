@@ -70,7 +70,7 @@
 
 // @ts-check
 
-import { Scene, DEFAULT_KINEMATICS } from "./scene.js";
+import { Scene, DEFAULT_KINEMATICS, sceneDataHasBackgroundImage } from "./scene.js";
 import {
     playNote as bareplayNote,
     playSound as bareplaySound,
@@ -159,6 +159,18 @@ export class SceneLoader {
         //        score-wide kinematics; it's pre-filled with defaults
         //        and read back after execution.
         const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
+        // hasBackgroundImage tells a script whether the scene has a
+        // background image loaded — true exactly when scene.json names
+        // a non-empty imageName. A getter (not a snapshot) so a script
+        // reading it during a callback stays correct if the image
+        // changes; it reads the parsed scene data, which is the source
+        // of truth applyPieceLevelFields copies onto the Scene below.
+        Object.defineProperty(scoreGlobal, "hasBackgroundImage", {
+            enumerable: true,
+            get() {
+                return sceneDataHasBackgroundImage(sceneData);
+            },
+        });
         /** @type {Object<string, Function>} */
         let functionMap = {};
         /** @type {any[]} */

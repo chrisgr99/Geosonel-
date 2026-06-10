@@ -90,6 +90,53 @@ export function sampleCurve(shape, t) {
 }
 
 /**
+ * The shape's own reference centre in canvas space, BEFORE the
+ * simulation's runtime offset (dx, dy) is applied. Per shape type:
+ *
+ *   - ellipse: its centre (cx, cy).
+ *   - line: the midpoint of (x1, y1)-(x2, y2).
+ *   - piste / spline: the centroid (component-wise average) of the
+ *     authored `points`. Not arc-length weighted — a plain mean of
+ *     the control points, which is the cheap "middle of the object"
+ *     a composer reasons about, not the centre of mass of the path.
+ *
+ * Returns {x: 0, y: 0} for a degenerate or unrecognised shape (no
+ * points, unknown type) so callers always get a usable position.
+ *
+ * Unlike sampleCurve this is a property of the whole shape, not of a
+ * cursor parameter t, so callers wanting the live centre add the same
+ * (dx, dy) runtime offset they would add to a sample.
+ *
+ * @param {import("./scene.js").CurveShape} shape
+ * @returns {{x: number, y: number}}
+ */
+export function shapeCenter(shape) {
+    switch (shape.type) {
+        case "ellipse":
+            return { x: shape.cx, y: shape.cy };
+        case "line":
+            return {
+                x: (shape.x1 + shape.x2) / 2,
+                y: (shape.y1 + shape.y2) / 2,
+            };
+        case "piste":
+        case "spline": {
+            const pts = shape.points;
+            if (!Array.isArray(pts) || pts.length === 0) return { x: 0, y: 0 };
+            let sx = 0;
+            let sy = 0;
+            for (const p of pts) {
+                sx += p[0];
+                sy += p[1];
+            }
+            return { x: sx / pts.length, y: sy / pts.length };
+        }
+        default:
+            return { x: 0, y: 0 };
+    }
+}
+
+/**
  * Sample a piste (polyline) by arc length. Walks segments
  * until target distance is reached, then returns the position
  * and tangent of the containing segment.

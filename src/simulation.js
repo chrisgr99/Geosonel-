@@ -250,7 +250,8 @@ import { deriveCurveBeatPoints } from "./beatPoints.js";
 import { buildNoteSpec, buildSoundSpec } from "./emitters.js";
 import { setCallbackContext, clearCallbackContext } from "./callbackContext.js";
 import { EventTrace } from "./eventTrace.js";
-import { sampleCurve } from "./curveGeometry.js";
+import { sampleCurve, shapeCenter } from "./curveGeometry.js";
+import { srgbByteToOKLab } from "./oklab.js";
 
 /**
  * Simulation step in seconds. Determinism requires this to
@@ -310,6 +311,54 @@ function colFromSignals(px) {
         r: px.pxR, g: px.pxG, y: px.pxY, b: px.pxB,
         or: px.pxOr, li: px.pxLi, cy: px.pxCy, pu: px.pxPu,
     };
+}
+
+/**
+ * Parse a CSS hex colour ("#rgb", "#rrggbb", with or without the
+ * leading "#") into an {r, g, b} byte triple, or null when the string
+ * is missing, malformed, or an unsupported length. Alpha (#rgba /
+ * #rrggbbaa) is accepted but ignored — only the colour channels feed
+ * the perceptual signals. Tolerant by design: an object's authored
+ * colour is composer data and a bad value must degrade to "no colour"
+ * (zero signals), never throw.
+ * @param {unknown} hex
+ * @returns {{r: number, g: number, b: number} | null}
+ */
+function rgbFromHex(hex) {
+    if (typeof hex !== "string") return null;
+    let s = hex.trim();
+    if (s.startsWith("#")) s = s.slice(1);
+    // Expand shorthand #rgb / #rgba to the full per-channel form.
+    if (s.length === 3 || s.length === 4) {
+        s = s.split("").map((c) => c + c).join("");
+    }
+    if (s.length !== 6 && s.length !== 8) return null;
+    if (!/^[0-9a-fA-F]+$/.test(s)) return null;
+    return {
+        r: parseInt(s.slice(0, 2), 16),
+        g: parseInt(s.slice(2, 4), 16),
+        b: parseInt(s.slice(4, 6), 16),
+    };
+}
+
+/**
+ * Build the firing context's `col`-shaped signal object from an
+ * object's OWN authored colour (a hex string like "#7dd68a"), so a
+ * composer can read this.color.r / this.color.lt exactly as they read
+ * the image colour under the object (this.col.*). The pipeline mirrors
+ * the image path: hex -> sRGB bytes -> OKLab (srgbByteToOKLab) ->
+ * {L, C: hypot(a, b), a, b} -> imageSignalsFromOKLCh -> colFromSignals.
+ * A null / invalid / missing hex yields the zero signals, the same
+ * default imageSignalsFromOKLCh returns for "no data".
+ * @param {unknown} hex
+ * @returns {{lt:number,chr:number,r:number,g:number,y:number,b:number,or:number,li:number,cy:number,pu:number}}
+ */
+export function colorSignalsFromHex(hex) {
+    const rgb = rgbFromHex(hex);
+    if (rgb === null) return colFromSignals(imageSignalsFromOKLCh(null));
+    const lab = srgbByteToOKLab(rgb.r, rgb.g, rgb.b);
+    const oklch = { L: lab.L, C: Math.hypot(lab.a, lab.b), a: lab.a, b: lab.b };
+    return colFromSignals(imageSignalsFromOKLCh(oklch));
 }
 
 /**
@@ -1440,6 +1489,16 @@ export class Simulation {
         // the event happened.
         const px = this._sampleColorUnderObject(obj, selfKind);
         const col = colFromSignals(px);
+        // Firing point (this.x/this.y) and object centre
+        // (this.centerX/centerY) for the collider, derived per kind by
+        // the same helpers the colour sampler uses, so the reported
+        // position matches the pixel `col` was read from.
+        const firePos = this._objectFiringPosition(obj, selfKind);
+        const center = this._objectCenter(obj, selfKind);
+        // The collider's OWN authored colour in our signal space, read
+        // as this.color.r / this.color.lt — distinct from `col`, which
+        // is the image colour beneath it.
+        const color = colorSignalsFromHex(obj.color);
         const ctx = {
             id: selfId,
             kind: selfKind,
@@ -1451,6 +1510,11 @@ export class Simulation {
             vel,
             velocity: vel,
             col,
+            x: firePos.x,
+            y: firePos.y,
+            centerX: center.x,
+            centerY: center.y,
+            color,
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -1715,6 +1779,19 @@ export class Simulation {
             : null;
         const px = imageSignalsFromOKLCh(oklch);
         const col = colFromSignals(px);
+        // Firing point (this.x/this.y): the beat point's canvas
+        // position — the sampled point on the curve plus the runtime
+        // offset, the same coordinates `col` was read from. Zero when
+        // the shape is degenerate (no sample).
+        const fireX = sample !== null ? sample.x + state.dx : 0;
+        const fireY = sample !== null ? sample.y + state.dy : 0;
+        // Object centre (this.centerX/centerY): the curve's own centre
+        // plus the runtime offset — NOT the beat point, which moves
+        // along the curve.
+        const center = this._objectCenter(curve, "curve");
+        // The curve's OWN authored colour as signals (this.color.*),
+        // distinct from `col` (the image colour beneath the beat point).
+        const color = colorSignalsFromHex(curve.color);
         const callbackName = (typeof curve.onActiveBeatFunction === "string"
             && curve.onActiveBeatFunction !== "")
             ? curve.onActiveBeatFunction : "onActiveBeat";
@@ -1739,6 +1816,14 @@ export class Simulation {
             velocity: vel,
             // The ten image-colour signals beneath the beat point.
             col,
+            // The beat point's firing position and the curve's own
+            // centre (both runtime-offset), plus the curve's authored
+            // colour as signals.
+            x: fireX,
+            y: fireY,
+            centerX: center.x,
+            centerY: center.y,
+            color,
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -1849,30 +1934,72 @@ export class Simulation {
      * @param {string} kind
      */
     _sampleColorUnderObject(obj, kind) {
-        let x = 0;
-        let y = 0;
-        let ok = false;
+        const pos = this._objectFiringPosition(obj, kind);
+        const oklch = (pos.ok && this._canvas !== null
+            && typeof this._canvas.sampleImageOKLCh === "function")
+            ? this._canvas.sampleImageOKLCh(pos.x, pos.y)
+            : null;
+        return imageSignalsFromOKLCh(oklch);
+    }
+
+    /**
+     * The canvas position where an event on `obj` fired — the point
+     * whose colour _sampleColorUnderObject reads, and the value the
+     * firing context exposes as this.x / this.y. Per kind: a curve's
+     * live cursor (its sampled t plus the runtime dx/dy offset), a
+     * sprite's current position, a trigger's authored x/y. `ok` is
+     * false (and x/y zero) only for a curve whose shape is degenerate
+     * and can't be sampled, matching the no-colour path.
+     * @param {any} obj
+     * @param {"curve" | "sprite" | "trigger"} kind
+     * @returns {{x: number, y: number, ok: boolean}}
+     */
+    _objectFiringPosition(obj, kind) {
         if (kind === "curve") {
             const st = this._curveState.get(obj.id);
             const sample = sampleCurve(obj.shape, st !== undefined ? st.t : 0);
-            if (sample !== null) {
-                x = sample.x + (st !== undefined ? st.dx : 0);
-                y = sample.y + (st !== undefined ? st.dy : 0);
-                ok = true;
-            }
-        } else if (kind === "sprite") {
-            const st = this._spriteState.get(obj.id);
-            if (st !== undefined) { x = st.x; y = st.y; ok = true; }
-        } else if (kind === "trigger") {
-            x = numberOrZero(obj.x);
-            y = numberOrZero(obj.y);
-            ok = true;
+            if (sample === null) return { x: 0, y: 0, ok: false };
+            return {
+                x: sample.x + (st !== undefined ? st.dx : 0),
+                y: sample.y + (st !== undefined ? st.dy : 0),
+                ok: true,
+            };
         }
-        const oklch = (ok && this._canvas !== null
-            && typeof this._canvas.sampleImageOKLCh === "function")
-            ? this._canvas.sampleImageOKLCh(x, y)
-            : null;
-        return imageSignalsFromOKLCh(oklch);
+        if (kind === "sprite") {
+            const st = this._spriteState.get(obj.id);
+            if (st !== undefined) return { x: st.x, y: st.y, ok: true };
+            return { x: 0, y: 0, ok: false };
+        }
+        // trigger
+        return { x: numberOrZero(obj.x), y: numberOrZero(obj.y), ok: true };
+    }
+
+    /**
+     * The object's OWN reference centre in canvas space — the value
+     * the firing context exposes as this.centerX / this.centerY. For a
+     * curve it's shapeCenter(shape) plus the runtime offset (dx, dy);
+     * for a sprite or trigger it's the object's position (which, for a
+     * sprite, equals its firing position — the duplication is fine).
+     * @param {any} obj
+     * @param {"curve" | "sprite" | "trigger"} kind
+     * @returns {{x: number, y: number}}
+     */
+    _objectCenter(obj, kind) {
+        if (kind === "curve") {
+            const st = this._curveState.get(obj.id);
+            const c = shapeCenter(obj.shape);
+            return {
+                x: c.x + (st !== undefined ? st.dx : 0),
+                y: c.y + (st !== undefined ? st.dy : 0),
+            };
+        }
+        if (kind === "sprite") {
+            const st = this._spriteState.get(obj.id);
+            if (st !== undefined) return { x: st.x, y: st.y };
+            return { x: numberOrZero(obj.x), y: numberOrZero(obj.y) };
+        }
+        // trigger
+        return { x: numberOrZero(obj.x), y: numberOrZero(obj.y) };
     }
 
     /**
@@ -3460,6 +3587,12 @@ export class Simulation {
             kind: "sprite",
             x: state.x,
             y: state.y,
+            // The sprite's own centre — for a sprite this equals its
+            // firing position (this.x/this.y), exposed under the same
+            // names the curve/collision contexts use so a callback can
+            // read this.centerX/centerY uniformly across kinds.
+            centerX: state.x,
+            centerY: state.y,
             vx: state.vx,
             vy: state.vy,
             speed: Math.hypot(state.vx, state.vy),
@@ -3475,6 +3608,9 @@ export class Simulation {
             // The ten image-colour signals beneath the sprite. Read as
             // this.col.r, this.col.y, this.col.lt, etc.
             col: colFromSignals(px),
+            // The sprite's OWN authored colour as signals (this.color.*),
+            // distinct from `col` (the image colour beneath it).
+            color: colorSignalsFromHex(sprite.color),
             /**
              * Apply a literal force this sub-step. The engine
              * divides by the sprite's mass and integrates over

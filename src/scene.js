@@ -95,6 +95,20 @@ import { DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
 export const DEFAULT_KINEMATICS = { drag: 2, jitter: 1.0, coast: 0.2, turnDamping: 0.9 };
 
 /**
+ * Whether parsed scene.json data names a background image — true
+ * exactly when its `imageName` is a non-empty string. Backs the
+ * `score.hasBackgroundImage` flag a script.js reads (see
+ * sceneLoader.load): a tiny pure predicate so the loader's getter and
+ * its unit test share one definition of "has an image".
+ * @param {any} data Parsed scene.json object (or any value).
+ * @returns {boolean}
+ */
+export function sceneDataHasBackgroundImage(data) {
+    return data !== null && typeof data === "object"
+        && typeof data.imageName === "string" && data.imageName !== "";
+}
+
+/**
  * One $objectId: expression labelled statement extracted from
  * script.js at scene-load time. The loader walks the
  * top-level statements via Acorn, pulls out the ones whose
