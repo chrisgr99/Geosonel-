@@ -85,13 +85,23 @@
 }
 
 /* Identity band (the bare first band — no title divider, just the
- * Object ID / Object Name rows). Bands have zero top padding (their
- * divider sits flush at the top), but Identity has no divider, so it
- * needs a top gutter for its first control: 2px padding + 2px row margin
- * = a 4px top gutter, matching its 4px bottom gutter (the global 2px
- * bottom padding) and the inter-row gap. */
-.insp-title-bar + .insp-band {
+ * Object ID / Object Name rows; first child of the .insp-perobject
+ * wrapper). Bands have zero top padding (their divider sits flush at the
+ * top), but Identity has no divider, so it needs a top gutter for its
+ * first control: 2px padding + 2px row margin = a 4px top gutter,
+ * matching its 4px bottom gutter (the global 2px bottom padding) and the
+ * inter-row gap. */
+.insp-perobject > .insp-band:first-child {
     padding-top: 2px;
+}
+
+/* Per-object section wrapper. Groups the hover/selection-driven bands so
+ * the whole section can fade out as a unit when the pointer leaves an
+ * object with nothing selected. Renders at opacity 1 (instant
+ * appearance); the JS hover-hide sets opacity 0 to animate the 1s fade —
+ * keep this duration in sync with PER_OBJECT_FADE_MS in inspector.js. */
+.insp-perobject {
+    transition: opacity 1s ease;
 }
 
 /* Band title divider: a short rule, the title, then a hairline filling

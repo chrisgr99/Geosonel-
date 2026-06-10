@@ -11,6 +11,57 @@ export const hoverMethods = {
     // --- Hover tracking ---
 
     /**
+     * Register the callback that receives hover-target changes for the
+     * property inspector's hover-preview. Called once by main.js.
+     * @param {((selection: {sprites: number[], triggers: number[], curves: number[]} | null) => void) | null} fn
+     */
+    setHoverObjectHandler(fn) {
+        this._hoverObjectCallback = fn;
+    },
+
+    /**
+     * Register the callback fired on every pointer move over empty canvas,
+     * used by the inspector to postpone its hover-preview fade-out while
+     * the cursor is still moving. Called once by main.js.
+     * @param {(() => void) | null} fn
+     */
+    setHoverMotionHandler(fn) {
+        this._hoverMotionCallback = fn;
+    },
+
+    /**
+     * Push the current committed hover target (_hover) to the inspector
+     * hover-preview callback, as an index-based selection ({sprites,
+     * triggers, curves}) or null when nothing is hovered. Deduped by a
+     * "kind:id" key so repeated same-target moves and repeated empty
+     * moves don't re-fire (and don't rebuild the inspector). Called only
+     * from the points where the COMMITTED hover actually changes — never
+     * the brief inter-object null while a new target debounces, so the
+     * inspector doesn't flash the real selection between adjacent objects.
+     */
+    _emitHoverObject() {
+        const h = this._hover;
+        const key = h === null ? null : `${h.kind}:${h.id}`;
+        if (key === this._lastHoverEmitKey) return;
+        this._lastHoverEmitKey = key;
+        if (this._hoverObjectCallback === null) return;
+        let sel = null;
+        if (h !== null && this._scene !== null) {
+            const arr = h.kind === "sprite" ? this._scene.sprites
+                : h.kind === "trigger" ? this._scene.triggers
+                    : this._scene.curves;
+            const idx = arr.findIndex((o) => o.id === h.id);
+            if (idx >= 0) {
+                sel = { sprites: [], triggers: [], curves: [] };
+                if (h.kind === "sprite") sel.sprites = [idx];
+                else if (h.kind === "trigger") sel.triggers = [idx];
+                else sel.curves = [idx];
+            }
+        }
+        this._hoverObjectCallback(sel);
+    },
+
+    /**
      * Test whether a scene object is currently the
      * brightened hover target. Called from the per-kind
      * draw methods to decide whether to bump the stroke
@@ -72,6 +123,7 @@ export const hoverMethods = {
         // than the object hover-brighten path) isn't
         // stomped by this method.
         this._hideTooltipAndCancel();
+        this._emitHoverObject();
     },
 
     /**
@@ -149,6 +201,7 @@ export const hoverMethods = {
                     this._hoverDebounceTimer = null;
                 }
             }
+            this._emitHoverObject();
             // Identification tooltip hides under a hovered
             // handle: the handle's role is gesture-grab,
             // and a tooltip identifying the object beneath
@@ -202,6 +255,11 @@ export const hoverMethods = {
                 this._hoverDebounceTimer = null;
             }
             if (hadHover) this.scheduleDraw();
+            this._emitHoverObject();
+            // Pointer is moving over empty canvas — tell the inspector so
+            // it postpones any pending hover-preview fade-out until the
+            // cursor goes idle.
+            if (this._hoverMotionCallback !== null) this._hoverMotionCallback();
             return;
         }
 
@@ -260,6 +318,7 @@ export const hoverMethods = {
             this._hover = this._hoverPending;
             this._hoverPending = null;
             this.scheduleDraw();
+            this._emitHoverObject();
         }, HOVER_DEBOUNCE_MS);
         if (hadHover) this.scheduleDraw();
     },

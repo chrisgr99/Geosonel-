@@ -75,7 +75,7 @@ export const bandExtraMethods = {
         band.className = "insp-band insp-band-callbacks";
         band.appendChild(mkBandHeader("Behaviour Functions"));
 
-        const objs = selectedObjects(this._scene, this._selection);
+        const objs = selectedObjects(this._scene, this._activeSelection);
         const slotActive = ctx.total > 0;
 
         // Single-object context. The placeholder name, the
@@ -202,7 +202,7 @@ export const bandExtraMethods = {
         band.className = "insp-band insp-band-beatpoints";
         band.appendChild(mkBandHeader("Rhythm"));
 
-        const objs = selectedObjects(this._scene, this._selection);
+        const objs = selectedObjects(this._scene, this._activeSelection);
         const active = ctx.hasCurves || ctx.hasSprites;
         const bpObjs = [...objs.curves, ...objs.sprites];
 
@@ -460,7 +460,7 @@ export const bandExtraMethods = {
         band.className = "insp-band";
         band.appendChild(mkBandHeader("Timing"));
 
-        const objs = selectedObjects(this._scene, this._selection);
+        const objs = selectedObjects(this._scene, this._activeSelection);
         const cycleObjs = [...objs.curves, ...objs.sprites];
         const cycleActive = ctx.hasCurves || ctx.hasSprites;
         const triggerActive = ctx.hasTriggers;
@@ -607,7 +607,7 @@ export const bandExtraMethods = {
         if (engine !== "superdough") return band;
         band.appendChild(mkBandHeader("Voice"));
 
-        const objs = selectedObjects(this._scene, this._selection);
+        const objs = selectedObjects(this._scene, this._activeSelection);
         const voiceActive = ctx.total > 0;
         const soundAgg = aggregateVoiceField(objs.all, "superdough", "sound");
         const bankAgg = aggregateVoiceField(objs.all, "superdough", "bank");

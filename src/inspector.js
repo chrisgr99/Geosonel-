@@ -88,6 +88,15 @@ import { fieldMethods } from "./inspectorFields.js";
 import { bandObjectMethods } from "./inspectorBandsObject.js";
 import { bandExtraMethods } from "./inspectorBandsExtra.js";
 
+// Hover-preview hide timing. When the pointer leaves an object with
+// NOTHING selected, the peeked fields linger for HOVER_HIDE_DELAY_MS, then
+// fade out over PER_OBJECT_FADE_MS before clearing to blank. Moving onto
+// another object cancels this and shows the new object at once; reverting
+// to an actual selection is prompt (no delay, no fade). PER_OBJECT_FADE_MS
+// must match the .insp-perobject opacity transition in css/inspector.css.
+const HOVER_HIDE_DELAY_MS = 1000;
+const PER_OBJECT_FADE_MS = 1000;
+
 export class Inspector {
     /**
      * @param {HTMLElement} container
@@ -97,6 +106,37 @@ export class Inspector {
         this.container.classList.add("inspector-pane");
         /** @type {{sprites: number[], triggers: number[], curves: number[]}} */
         this._selection = { sprites: [], triggers: [], curves: [] };
+        /**
+         * Hover preview. When the canvas reports a hovered object,
+         * setHoverPreview stores its index-based selection here and the
+         * form peeks at THAT object's fields, while this._selection — the
+         * REAL selection that _emitEdit targets — is left untouched. Null
+         * when nothing is hovered, so the form shows the real selection.
+         * @type {{sprites: number[], triggers: number[], curves: number[]} | null}
+         */
+        this._hoverPreview = null;
+        /**
+         * The selection the form is CURRENTLY rendering: the hover preview
+         * if one is active, else the real selection. Set at the top of
+         * each _render and read by the bands. Edits still target
+         * this._selection (see _emitEdit), never this — so a hover preview
+         * can never redirect an edit to the wrong object.
+         * @type {{sprites: number[], triggers: number[], curves: number[]}}
+         */
+        this._activeSelection = this._selection;
+        /**
+         * Hover-preview fade-out timers and the current per-object section
+         * element. _hideTimer is the HOVER_HIDE_DELAY_MS grace before the
+         * fade; _fadeTimer spans the fade itself. _perObjectEl is the
+         * wrapper whose opacity the fade animates (null when the section
+         * isn't rendered). All null when no hide is pending.
+         * @type {ReturnType<typeof setTimeout> | null}
+         */
+        this._hideTimer = null;
+        /** @type {ReturnType<typeof setTimeout> | null} */
+        this._fadeTimer = null;
+        /** @type {HTMLElement | null} */
+        this._perObjectEl = null;
         /**
          * The runtime Scene built by sceneLoader. Field reads
          * for Band 1 (id, name, mute, hide) come from this.
@@ -155,6 +195,11 @@ export class Inspector {
      */
     setScene(scene) {
         this._scene = scene;
+        // A scene reload mid-fade abandons the hover hide and renders fresh.
+        if (this._hideTimer !== null || this._fadeTimer !== null) {
+            this._cancelHideSequence();
+            this._hoverPreview = null;
+        }
         this._render();
     }
 
@@ -171,7 +216,106 @@ export class Inspector {
             triggers: selection.triggers ?? [],
             curves: selection.curves ?? [],
         };
+        // A real selection change while a hover fade-out is pending takes
+        // over: cancel the fade and drop the lingering preview so the new
+        // selection shows at once.
+        if (this._hideTimer !== null || this._fadeTimer !== null) {
+            this._cancelHideSequence();
+            this._hoverPreview = null;
+        }
         this._render();
+    }
+
+    /**
+     * Set or clear the hover preview as the pointer hovers canvas objects.
+     *
+     * - A non-null (index-based) selection makes the form peek at that
+     *   object's fields AT ONCE, cancelling any pending fade-out. Hover
+     *   always wins over the real selection. View-only — the pointer
+     *   leaving the object clears the hover (canvas mouseleave) before any
+     *   field can be reached, so edits always target the SELECTED object.
+     * - Null (pointer off all objects): if an object is actually selected,
+     *   revert to it promptly. If nothing is selected, keep peeking at the
+     *   last object for HOVER_HIDE_DELAY_MS, then fade the per-object
+     *   section out over PER_OBJECT_FADE_MS, then clear to blank.
+     *
+     * @param {{sprites?: number[], triggers?: number[], curves?: number[]} | null} selection
+     */
+    setHoverPreview(selection) {
+        if (selection !== null) {
+            this._cancelHideSequence();
+            this._hoverPreview = {
+                sprites: selection.sprites ?? [],
+                triggers: selection.triggers ?? [],
+                curves: selection.curves ?? [],
+            };
+            this._render();
+            return;
+        }
+        // Pointer left the object onto nothing.
+        if (this._hoverPreview === null) return; // already on the selection / blank
+        if (this._selectionHasObjects()) {
+            // Prompt revert to the real selection — no grace, no fade.
+            this._cancelHideSequence();
+            this._hoverPreview = null;
+            this._render();
+            return;
+        }
+        // Nothing selected: linger, then fade, then blank. The grace
+        // restarts on pointer motion (notifyHoverMotion), so the fade only
+        // begins once the cursor goes idle over empty canvas.
+        this._startHideGrace();
+    }
+
+    /**
+     * Pointer is moving over empty canvas. While a hover-preview fade-out
+     * is pending (grace not yet elapsed), restart the grace so the fade
+     * holds off until the cursor stops moving. No-op when showing a
+     * selection / blank, or once the fade itself has begun.
+     */
+    notifyHoverMotion() {
+        if (this._hideTimer === null) return;
+        this._startHideGrace();
+    }
+
+    /**
+     * (Re)start the hover-preview grace timer: after HOVER_HIDE_DELAY_MS
+     * of no motion, fade the section over PER_OBJECT_FADE_MS, then clear
+     * to blank. Does nothing once the fade has already begun.
+     */
+    _startHideGrace() {
+        if (this._fadeTimer !== null) return;
+        if (this._hideTimer !== null) clearTimeout(this._hideTimer);
+        this._hideTimer = setTimeout(() => {
+            this._hideTimer = null;
+            // Trigger the CSS opacity transition on the live section.
+            if (this._perObjectEl !== null) this._perObjectEl.style.opacity = "0";
+            this._fadeTimer = setTimeout(() => {
+                this._fadeTimer = null;
+                this._hoverPreview = null;
+                this._render();
+            }, PER_OBJECT_FADE_MS);
+        }, HOVER_HIDE_DELAY_MS);
+    }
+
+    /** Whether the real selection currently holds any object. */
+    _selectionHasObjects() {
+        return this._selection.sprites.length > 0
+            || this._selection.triggers.length > 0
+            || this._selection.curves.length > 0;
+    }
+
+    /** Cancel a pending or running hover fade-out (clears the timers; the
+     * following render rebuilds the section at full opacity). */
+    _cancelHideSequence() {
+        if (this._hideTimer !== null) {
+            clearTimeout(this._hideTimer);
+            this._hideTimer = null;
+        }
+        if (this._fadeTimer !== null) {
+            clearTimeout(this._fadeTimer);
+            this._fadeTimer = null;
+        }
     }
 
     _render() {
@@ -188,7 +332,11 @@ export class Inspector {
         // kind when total === 0, so every band renders with
         // its dis flag true, which is exactly the visual
         // outcome we want.
-        const ctx = buildSelectionContext(this._selection);
+        // Render from the hover preview when one is active (peek at the
+        // hovered object), else from the real selection. The bands read
+        // this._activeSelection; edits still use this._selection.
+        this._activeSelection = this._hoverPreview ?? this._selection;
+        const ctx = buildSelectionContext(this._activeSelection);
 
         const panel = document.createElement("div");
         panel.className = "inspector-panel";
@@ -203,13 +351,20 @@ export class Inspector {
         // (── TITLE ───────); Mutability sits above the per-object Voice
         // band, which is empty under MIDI.
         if (ctx.total > 0) {
-            panel.appendChild(this._buildBandIdentity(ctx));
-            panel.appendChild(this._buildBandGeometry(ctx));
-            panel.appendChild(this._buildBandCallbackSlots(ctx));
-            panel.appendChild(this._buildBandBeatPoints(ctx));
-            panel.appendChild(this._buildBandCycle(ctx));
-            panel.appendChild(this._buildBandMutability(ctx));
-            panel.appendChild(this._buildBandMiddleArea(ctx));
+            // Per-object bands live in one wrapper so the whole section
+            // can fade out as a unit on hover-preview hide. It renders at
+            // full opacity (instant appearance); only the JS-driven
+            // fade-to-0 (setHoverPreview) animates, via the .insp-perobject
+            // opacity transition.
+            const perObj = document.createElement("div");
+            perObj.className = "insp-perobject";
+            perObj.appendChild(this._buildBandIdentity(ctx));
+            perObj.appendChild(this._buildBandGeometry(ctx));
+            perObj.appendChild(this._buildBandCallbackSlots(ctx));
+            perObj.appendChild(this._buildBandBeatPoints(ctx));
+            perObj.appendChild(this._buildBandCycle(ctx));
+            perObj.appendChild(this._buildBandMutability(ctx));
+            perObj.appendChild(this._buildBandMiddleArea(ctx));
 
             // Title-less divider capping the bottom of the per-object
             // section, separating it from the empty space above the
@@ -217,7 +372,12 @@ export class Inspector {
             // selected.
             const sectionDivider = document.createElement("div");
             sectionDivider.className = "insp-section-divider";
-            panel.appendChild(sectionDivider);
+            perObj.appendChild(sectionDivider);
+
+            panel.appendChild(perObj);
+            this._perObjectEl = perObj;
+        } else {
+            this._perObjectEl = null;
         }
 
         // Growing spacer pins the Global band to the panel's bottom: it

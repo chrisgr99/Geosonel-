@@ -633,6 +633,24 @@ async function main() {
     // wiring; the canvas drives it only while playing.
     canvas.setActiveBeatSink((map) => editor.applyActiveBeats(map));
 
+    // Inspector hover-preview sink. As the pointer hovers an object on
+    // the canvas, the inspector peeks at that object's fields (even if a
+    // different object — or nothing — is selected); moving off reverts to
+    // the actual selection. View-only: moving toward the inspector leaves
+    // the canvas, which clears the hover before any field is reached, so
+    // edits always target the selected object. The canvas passes an
+    // index-based selection (or null on clear) which maps straight onto
+    // setHoverPreview.
+    canvas.setHoverObjectHandler((selection) => {
+        if (editor.inspector) editor.inspector.setHoverPreview(selection);
+    });
+    // Pointer-still-moving-over-empty-canvas tick: postpones the inspector's
+    // hover-preview fade-out so the peeked fields only fade once the cursor
+    // goes idle.
+    canvas.setHoverMotionHandler(() => {
+        if (editor.inspector) editor.inspector.notifyHoverMotion();
+    });
+
     // Procedural audio sink. A sprite's onTick callback can
     // fire an immediate note or sample through ctx.playNote /
     // ctx.playSound (Section 30); the simulation forwards each

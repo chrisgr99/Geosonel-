@@ -657,6 +657,27 @@ export class Canvas {
         this._hoverHandle = null;
 
         /**
+         * Hover-preview wiring for the property inspector. When the
+         * committed hover target (_hover) changes, _emitHoverObject pushes
+         * the hovered object (as an index-based selection) — or null when
+         * nothing is hovered — to this callback so the inspector can peek
+         * at that object's fields. _lastHoverEmitKey dedupes so repeated
+         * same-target moves don't re-fire. Wired by main.js.
+         * @type {((selection: {sprites: number[], triggers: number[], curves: number[]} | null) => void) | null}
+         */
+        this._hoverObjectCallback = null;
+        /** @type {string | null} */
+        this._lastHoverEmitKey = null;
+        /**
+         * Fired on every pointer move over EMPTY canvas (no object under
+         * the cursor). The inspector uses it to keep postponing its
+         * hover-preview fade-out while the pointer is still in motion, so
+         * the peeked fields only fade once the cursor goes idle.
+         * @type {(() => void) | null}
+         */
+        this._hoverMotionCallback = null;
+
+        /**
          * Identification tooltip's DOM element, created
          * lazily on first show. Lives as a child of
          * document.body with fixed positioning so it
