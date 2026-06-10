@@ -646,3 +646,35 @@
     text-decoration-skip-ink: none;
     text-decoration-thickness: 2px;
 }
+
+/* Custom toolbar tooltip. Replaces the native `title` tooltip, which is
+ * unreliable in Electron/Chromium (dismissed by DOM mutations and the
+ * background mirror timers, so it mostly never appears). Positioned in
+ * JS via fixed viewport coords; shown by toggling .visible. visibility
+ * (not display) keeps it in layout so its width is measurable while
+ * hidden; pointer-events:none so it never intercepts the hover. */
+.toolbar-tooltip {
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    max-width: 260px;
+    padding: 5px 8px;
+    background-color: #1e1e1e;
+    color: #f0ece4;
+    border: 1px solid #5a5a5a;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.3;
+    white-space: normal;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 90ms ease;
+}
+
+.toolbar-tooltip.visible {
+    visibility: visible;
+    opacity: 1;
+}

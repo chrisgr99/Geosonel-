@@ -1870,15 +1870,6 @@ async function main() {
     toolbar.onChange((tool, locked) => {
         canvas.setActiveTool(tool, locked);
     });
-    // The toolbar's image-import button surfaces the same
-    // file-picker flow as the File menu's Import Image
-    // command. Routed through this callback rather than
-    // having the toolbar import the imageImporter module
-    // directly, so the toolbar stays decoupled from the
-    // import pipeline's other dependencies.
-    toolbar.onImageImportClick(() => {
-        imageImporter.importViaFilePicker();
-    });
     // The Canvas inspector tab's W and H fields emit
     // edits with the same shape inspector and canvas edits
     // use ({kind, value}). Dispatched through applySceneEdit

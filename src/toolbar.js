@@ -5,9 +5,9 @@
  * of the canvas pane. Following the top-row elimination, the
  * toolbar is the only chrome strip in the app (above the
  * canvas / editor split) and hosts every persistent control:
- * the Focus Canvas toggle at the far left, the three object-
- * creation tool buttons (sprite, trigger, curve), the image
- * import button, the Play Selected toggle, the transport
+ * the Focus Canvas toggle at the far left, the object-
+ * creation tool buttons (sprite, trigger, curve, line-
+ * segment, spline), the Play Selected toggle, the transport
  * cluster (rewind, play, musical position readout, BPM
  * input), and the MIDI indicator at the far right. Item
  * ordering is fixed by the IN_FLIGHT spec; see that file
@@ -41,11 +41,7 @@
  * find them in their new toolbar locations without code
  * changes to that module.
  *
- * The Image Import button surfaces the same file-picker flow
- * as the File menu's Import Image command but right next to
- * where the user is composing — the shortest path from "I
- * want to add a background image" to a native picker. The
- * Canvas W and H fields that used to live in this strip have
+ * The Canvas W and H fields that used to live in this strip have
  * migrated to the Canvas inspector tab per DESIGN.md Section
  * 13.5; the freed-up space is absorbed by the existing
  * toolbar-spacer. The MIDI indicator at the far right is
@@ -61,8 +57,6 @@
  *     behaviour; afterPlacement() is called by the canvas
  *     after a single-shot placement so the toolbar reverts
  *     to idle.
- *   - onImageImportClick: fires when the user clicks the
- *     Image Import button.
  *   - onPlaySelectedToggle: fires when the Play Selected
  *     button is toggled; receives the new active flag.
  *   - onFocusCanvasClick: fires when the Focus Canvas
@@ -88,16 +82,17 @@ const TOOL_DEFS = [
         name: "sprite",
         label: "Add Sprite",
         tooltip: "Add Sprite. Click to place one. Double-click to add multiple. Esc to exit.",
-        // Hollow blue circle (the sprite's on-canvas boundary
-        // colour) with a filled centre dot in currentColor so
-        // the dot shifts tone with button state (idle / hover
-        // / armed / locked). A small plus mark in currentColor
-        // sits at the lower right corner as the create-mode
-        // signal shared with the trigger and curve tools.
+        // The sprite's actual on-canvas teardrop shape (in the
+        // sprite boundary blue): a circle with two tangent lines —
+        // contacts 45 degrees off the heading on each side — meeting
+        // at a 90-degree nose ahead, nose pointing up and to the
+        // right here (the top and right tangents meet at the apex).
+        // Stroke a touch thicker than the other tools so it reads
+        // like the sprite on the canvas; no centre dot. The plus mark
+        // in the lower-right is the shared create-mode signal.
         svg:
             `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
-            `<circle cx="12" cy="12" r="9" stroke="#7db8d6" stroke-width="2" fill="none"/>` +
-            `<circle cx="12" cy="12" r="2.5" fill="currentColor"/>` +
+            `<path d="M 11 6 L 17 6 L 17 12 A 6 6 0 1 1 11 6 Z" stroke="#7db8d6" stroke-width="2.5" fill="none"/>` +
             `<path d="M 16.5 20 L 21.5 20 M 19 17.5 L 19 22.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>` +
             `</svg>`,
     },
@@ -165,20 +160,6 @@ const TOOL_DEFS = [
     },
 ];
 
-// Image-import icon. A picture-frame outline with a small
-// sun (top-left) and a mountain-range silhouette (bottom)
-// — the universal "image" convention. Stroked in the same
-// blue as the sprite boundary so the cluster reads as part
-// of the same toolbar visual system. The frame shape is
-// what makes this distinct from a generic-action icon: the
-// user sees a frame and immediately reads "image".
-const IMAGE_IMPORT_ICON_SVG =
-    `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
-    `<rect x="3" y="4" width="18" height="16" rx="1.5" stroke="#7db8d6" stroke-width="2" fill="none"/>` +
-    `<circle cx="8" cy="9" r="1.5" fill="#7db8d6"/>` +
-    `<path d="M4 18 L9 12 L13 15 L17 10 L20 14 L20 19 L4 19 Z" stroke="#7db8d6" stroke-width="1.5" fill="none" stroke-linejoin="round"/>` +
-    `</svg>`;
-
 // Play Selected icon. A small filled coral disc on the left
 // (the "sound source") with three concentric arcs to its
 // right in warm olive (the "radiating waves"), evoking the
@@ -226,9 +207,6 @@ export class Toolbar {
         /** @type {Map<string, HTMLButtonElement>} */
         this._buttons = new Map();
 
-        /** @type {Array<() => void>} */
-        this._imageImportListeners = [];
-
         // Play Selected toggle state. Independent of the
         // tool-button armed/locked state machine: this is a
         // boolean on/off that gates pattern firing in the
@@ -271,7 +249,65 @@ export class Toolbar {
         /** @type {HTMLButtonElement | null} */
         this._auditionToggleButton = null;
 
+        // Custom tooltip. Native `title` tooltips are unreliable in
+        // Electron/Chromium — they're dismissed by DOM mutations and
+        // renderer activity, and the background mirror timers keep the
+        // page busy enough that the native "rest ~1s" condition rarely
+        // completes, so they mostly never appear. This JS-driven tooltip
+        // uses our own hover timer and is immune to all that. The
+        // element lives on <body> so it isn't clipped by the toolbar.
+        this._tooltipEl = document.createElement("div");
+        this._tooltipEl.className = "toolbar-tooltip";
+        document.body.appendChild(this._tooltipEl);
+        /** @type {ReturnType<typeof setTimeout> | null} */
+        this._tooltipTimer = null;
+
         this._render();
+    }
+
+    /**
+     * Wire a custom hover tooltip onto a button: after a short hover
+     * the tooltip shows below the button; it hides on leave or press.
+     * Replaces the native `title` (which is left unset so there's no
+     * competing — and flaky — native tooltip). The text is read live
+     * from dataset at show time, so a caller can update it by setting
+     * btn.dataset.tooltip.
+     * @param {HTMLElement} btn
+     * @param {string} text
+     */
+    _attachTooltip(btn, text) {
+        btn.dataset.tooltip = text;
+        btn.addEventListener("mouseenter", () => {
+            if (this._tooltipTimer !== null) clearTimeout(this._tooltipTimer);
+            this._tooltipTimer = setTimeout(() => this._showTooltip(btn), 450);
+        });
+        btn.addEventListener("mouseleave", () => this._hideTooltip());
+        btn.addEventListener("mousedown", () => this._hideTooltip());
+    }
+
+    /** @param {HTMLElement} btn */
+    _showTooltip(btn) {
+        this._tooltipTimer = null;
+        const text = btn.dataset.tooltip;
+        if (!text) return;
+        const el = this._tooltipEl;
+        el.textContent = text;
+        // offsetWidth is measurable while hidden (visibility, not display).
+        const r = btn.getBoundingClientRect();
+        const tw = el.offsetWidth;
+        let left = r.left + r.width / 2 - tw / 2;
+        left = Math.max(4, Math.min(left, window.innerWidth - tw - 4));
+        el.style.left = `${Math.round(left)}px`;
+        el.style.top = `${Math.round(r.bottom + 6)}px`;
+        el.classList.add("visible");
+    }
+
+    _hideTooltip() {
+        if (this._tooltipTimer !== null) {
+            clearTimeout(this._tooltipTimer);
+            this._tooltipTimer = null;
+        }
+        this._tooltipEl.classList.remove("visible");
     }
 
     /**
@@ -283,17 +319,6 @@ export class Toolbar {
      */
     onChange(cb) {
         this._listeners.push(cb);
-    }
-
-    /**
-     * Subscribe to image-import button clicks. main.js wires
-     * this to imageImporter.importViaFilePicker() so the
-     * button surfaces the native file picker without the
-     * toolbar having to depend on the importer module.
-     * @param {() => void} cb
-     */
-    onImageImportClick(cb) {
-        this._imageImportListeners.push(cb);
     }
 
     /**
@@ -439,7 +464,7 @@ export class Toolbar {
         );
         const label = active ? "Exit Focus Canvas" : "Focus Canvas";
         this._focusCanvasButton.setAttribute("aria-label", label);
-        this._focusCanvasButton.setAttribute("title", `${label} (\u21e7\u2318F)`);
+        this._focusCanvasButton.dataset.tooltip = `${label} (\u21e7\u2318F)`;
     }
 
     /**
@@ -477,15 +502,10 @@ export class Toolbar {
             this.container.appendChild(this._buildToolButton(def));
         }
 
-        // Position 5: Image Import. Sits with the creation
-        // tools because adding a background image is the
-        // closest sibling activity to placing sprites,
-        // triggers, and curves — you're "adding content to
-        // the canvas" in all four cases.
-        this.container.appendChild(this._buildImageImportButton());
-
-        // Group separator between the creation-and-import
-        // cluster and the playback controls.
+        // Group separator between the creation-tool cluster and the
+        // playback controls. (Background-image import lives in the
+        // canvas tab and the File menu now — the old toolbar import
+        // button was removed.)
         this.container.appendChild(this._buildGroupSeparator());
 
         // Position 6: Play Selected toggle. Sits with the
@@ -550,7 +570,7 @@ export class Toolbar {
         btn.className = "toolbar-text-button";
         btn.setAttribute("aria-label", "Audition");
         btn.setAttribute("aria-pressed", "false");
-        btn.title = "Audition. Show or hide the floating audition bar over the canvas, where you advance the seed (Vary), replay the current seed (Again), and set the audition length in beats.";
+        this._attachTooltip(btn, "Audition. Show or hide the floating audition bar over the canvas, where you advance the seed (Vary), replay the current seed (Again), and set the audition length in beats.");
         btn.textContent = "Audition";
         btn.addEventListener("click", () => {
             for (const cb of this._auditionToggleListeners) {
@@ -587,7 +607,7 @@ export class Toolbar {
         btn.type = "button";
         btn.className = "toolbar-tool";
         btn.setAttribute("aria-label", def.label);
-        btn.title = def.tooltip;
+        this._attachTooltip(btn, def.tooltip);
         btn.innerHTML = def.svg;
 
         // Single click: arm (or disarm if already armed).
@@ -651,7 +671,7 @@ export class Toolbar {
         btn.id = "sidebar-toggle-btn";
         btn.className = "sidebar-toggle-btn";
         btn.setAttribute("aria-label", "Focus Canvas");
-        btn.setAttribute("title", "Focus Canvas (\u21e7\u2318F)");
+        this._attachTooltip(btn, "Focus Canvas (\u21e7\u2318F)");
         btn.innerHTML = FOCUS_CANVAS_ICON_SVG;
         btn.addEventListener("click", () => {
             for (const cb of this._focusCanvasClickListeners) {
@@ -661,32 +681,6 @@ export class Toolbar {
             }
         });
         this._focusCanvasButton = btn;
-        return btn;
-    }
-
-    /**
-     * Build the Image Import button. Placed in the creation
-     * cluster between the curve tool and the Play Selected
-     * toggle. Distinct visually from the tool buttons (no
-     * armed/locked states) but shares the same square
-     * footprint so the toolbar reads as a row of consistent
-     * controls.
-     * @returns {HTMLButtonElement}
-     */
-    _buildImageImportButton() {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "toolbar-action-button";
-        btn.setAttribute("aria-label", "Import Image");
-        btn.title = "Import Image. Opens a file picker for PNG, JPEG, or WEBP.";
-        btn.innerHTML = IMAGE_IMPORT_ICON_SVG;
-        btn.addEventListener("click", () => {
-            for (const cb of this._imageImportListeners) {
-                try { cb(); } catch (err) {
-                    console.error("GXW: image-import listener threw.", err);
-                }
-            }
-        });
         return btn;
     }
 
@@ -708,7 +702,7 @@ export class Toolbar {
         btn.className = "toolbar-toggle-button";
         btn.setAttribute("aria-label", "Play Selected");
         btn.setAttribute("aria-pressed", "false");
-        btn.title = "Play Selected. When on, only currently-selected objects fire patterns. Click to toggle.";
+        this._attachTooltip(btn, "Play Selected. When on, only currently-selected objects fire patterns. Click to toggle.");
         btn.innerHTML = PLAY_SELECTED_ICON_SVG;
         btn.addEventListener("click", () => {
             this.setPlaySelectedActive(!this._playSelectedActive);
