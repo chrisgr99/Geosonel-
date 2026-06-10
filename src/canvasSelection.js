@@ -27,6 +27,13 @@ export const selectionMethods = {
         this._emitSelectionChanged();
     },
 
+    /** @param {"sprite"|"trigger"|"curve"} kind @returns {boolean} */
+    isKindSelectable(kind) { return this._selectableKinds[kind] !== false; },
+    /** @param {"sprite"|"trigger"|"curve"} kind @param {boolean} enabled */
+    setKindSelectable(kind, enabled) { if (kind in this._selectableKinds) this._selectableKinds[kind] = !!enabled; },
+    /** Reset all kinds to selectable (called on score switch). */
+    resetSelectableKinds() { this._selectableKinds = { sprite: true, trigger: true, curve: true }; },
+
     /**
      * Snapshot of the current selection as plain arrays. Used
      * by external host code (e.g. the Delete key handler) to

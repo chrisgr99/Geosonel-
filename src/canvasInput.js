@@ -698,17 +698,21 @@ export const inputMethods = {
                 // Sprites use their visible position so a
                 // marquee drawn around a moving sprite catches
                 // it where the user sees it.
-                for (let i = 0; i < this._scene.sprites.length; i++) {
-                    const s = this._scene.sprites[i];
-                    const pos = this._spritePosition(s);
-                    if (pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
-                        enclosedSprites.add(i);
+                if (this._selectableKinds.sprite !== false) {
+                    for (let i = 0; i < this._scene.sprites.length; i++) {
+                        const s = this._scene.sprites[i];
+                        const pos = this._spritePosition(s);
+                        if (pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
+                            enclosedSprites.add(i);
+                        }
                     }
                 }
-                for (let i = 0; i < this._scene.triggers.length; i++) {
-                    const t = this._scene.triggers[i];
-                    if (t.x >= x1 && t.x <= x2 && t.y >= y1 && t.y <= y2) {
-                        enclosedTriggers.add(i);
+                if (this._selectableKinds.trigger !== false) {
+                    for (let i = 0; i < this._scene.triggers.length; i++) {
+                        const t = this._scene.triggers[i];
+                        if (t.x >= x1 && t.x <= x2 && t.y >= y1 && t.y <= y2) {
+                            enclosedTriggers.add(i);
+                        }
                     }
                 }
                 // Curves: any sample point inside rect, so a
@@ -721,22 +725,24 @@ export const inputMethods = {
                 // marquee drawn around a drifted curve
                 // catches it at the visible position.
                 const SAMPLES = 32;
-                for (let i = 0; i < this._scene.curves.length; i++) {
-                    const curve = this._scene.curves[i];
-                    const offset = this._curveOffset(curve.id);
-                    let touched = false;
-                    for (let s = 0; s <= SAMPLES; s++) {
-                        const t = s / SAMPLES;
-                        const sample = sampleCurve(curve.shape, t);
-                        if (sample === null) continue;
-                        const sx = sample.x + offset.dx;
-                        const sy = sample.y + offset.dy;
-                        if (sx >= x1 && sx <= x2 && sy >= y1 && sy <= y2) {
-                            touched = true;
-                            break;
+                if (this._selectableKinds.curve !== false) {
+                    for (let i = 0; i < this._scene.curves.length; i++) {
+                        const curve = this._scene.curves[i];
+                        const offset = this._curveOffset(curve.id);
+                        let touched = false;
+                        for (let s = 0; s <= SAMPLES; s++) {
+                            const t = s / SAMPLES;
+                            const sample = sampleCurve(curve.shape, t);
+                            if (sample === null) continue;
+                            const sx = sample.x + offset.dx;
+                            const sy = sample.y + offset.dy;
+                            if (sx >= x1 && sx <= x2 && sy >= y1 && sy <= y2) {
+                                touched = true;
+                                break;
+                            }
                         }
+                        if (touched) enclosedCurves.add(i);
                     }
-                    if (touched) enclosedCurves.add(i);
                 }
             }
             if (g.shiftKey) {

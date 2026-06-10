@@ -81,7 +81,7 @@ const TOOL_DEFS = [
     {
         name: "sprite",
         label: "Add Sprite",
-        tooltip: "Add Sprite. Click to place one. Double-click to add multiple. Esc to exit.",
+        tooltip: "Add Sprite",
         // The sprite's actual on-canvas teardrop shape (in the
         // sprite boundary blue): a circle with two tangent lines —
         // contacts 45 degrees off the heading on each side — meeting
@@ -99,7 +99,7 @@ const TOOL_DEFS = [
     {
         name: "trigger",
         label: "Add Trigger",
-        tooltip: "Add Trigger. Click to place one. Double-click to add multiple. Esc to exit.",
+        tooltip: "Add Trigger",
         // Hollow blue diamond matching the trigger's on-canvas
         // shape and boundary colour, with the same lower-right
         // plus mark as the sprite tool. Diamond vertices at
@@ -116,7 +116,7 @@ const TOOL_DEFS = [
     {
         name: "curve",
         label: "Add Curve",
-        tooltip: "Add Curve. Drag to define an ellipse; hold Shift for a circle. Double-click the tool to add multiple. Esc to exit.",
+        tooltip: "Add Ellipse",
         // Hollow green ellipse picking up CURVE_COLOUR
         // (#7dd68a) from canvas.js so the icon visually
         // identifies the curve tool against the blue sprite
@@ -133,7 +133,7 @@ const TOOL_DEFS = [
     {
         name: "lineSegment",
         label: "Add Line-Segment Curve",
-        tooltip: "Add Line-Segment Curve. Click to place each point; each click ends one straight segment and starts the next. Double-click to finish. Esc to cancel.",
+        tooltip: "Click per straight segment / double-click to stop",
         // Open zigzag polyline in CURVE_COLOUR (#7dd68a) — the
         // segmented-line shape distinguishes it from the smooth
         // ellipse/spline curve tools while staying in the green
@@ -148,7 +148,7 @@ const TOOL_DEFS = [
     {
         name: "spline",
         label: "Add Spline Curve",
-        tooltip: "Add Spline Curve. Click to place each point; the curve passes smoothly through them. Double-click to finish. Esc to cancel.",
+        tooltip: "Click per spline segment / double-click to stop",
         // Smooth wave in CURVE_COLOUR (#7dd68a) — distinguishes the
         // smooth spline from the angular line-segment tool while
         // staying in the green curve family. Same lower-right plus mark.
@@ -176,6 +176,32 @@ const PLAY_SELECTED_ICON_SVG =
     `<path d="M 10 8.5 A 3.5 3.5 0 0 1 10 15.5" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
     `<path d="M 13 6 A 6 6 0 0 1 13 18" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
     `<path d="M 16 3.5 A 8.5 8.5 0 0 1 16 20.5" stroke="#c4a85a" stroke-width="2" fill="none" stroke-linecap="round"/>` +
+    `</svg>`;
+
+// Allow-select filter icons. Each shows two overlapping
+// glyphs of the relevant kind inside a yellow dotted
+// selection-marquee rectangle, so the button reads as
+// "selecting this kind of thing". Sprites/triggers use the
+// sprite-blue stroke; curves use the curve-green stroke.
+const SELECT_FILTER_SPRITE_ICON_SVG =
+    `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
+    `<rect x="1.5" y="3.5" width="21" height="17" rx="1" fill="none" stroke="#ffd24a" stroke-width="1.2" stroke-dasharray="2 1.6"/>` +
+    `<path d="M 7 13 L 10 13 L 10 16 A 3 3 0 1 1 7 13 Z" fill="none" stroke="#7db8d6" stroke-width="1.3"/>` +
+    `<path d="M 13 9 L 16 9 L 16 12 A 3 3 0 1 1 13 9 Z" fill="none" stroke="#7db8d6" stroke-width="1.3"/>` +
+    `</svg>`;
+
+const SELECT_FILTER_TRIGGER_ICON_SVG =
+    `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
+    `<rect x="1.5" y="3.5" width="21" height="17" rx="1" fill="none" stroke="#ffd24a" stroke-width="1.2" stroke-dasharray="2 1.6"/>` +
+    `<path d="M 8.5 8.5 L 12 12 L 8.5 15.5 L 5 12 Z" fill="none" stroke="#7db8d6" stroke-width="1.3" stroke-linejoin="round"/>` +
+    `<path d="M 15 8.5 L 18.5 12 L 15 15.5 L 11.5 12 Z" fill="none" stroke="#7db8d6" stroke-width="1.3" stroke-linejoin="round"/>` +
+    `</svg>`;
+
+const SELECT_FILTER_CURVE_ICON_SVG =
+    `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">` +
+    `<rect x="1.5" y="3.5" width="21" height="17" rx="1" fill="none" stroke="#ffd24a" stroke-width="1.2" stroke-dasharray="2 1.6"/>` +
+    `<path d="M 3.5 14 L 6.5 9 L 9.5 14 L 12.5 9" fill="none" stroke="#7dd68a" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>` +
+    `<path d="M 10 16 L 13 11 L 16 16 L 19 11" fill="none" stroke="#7dd68a" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>` +
     `</svg>`;
 
 // Focus Canvas icon. A small rectangle with a filled left
@@ -248,6 +274,18 @@ export class Toolbar {
         this._auditionToggleListeners = [];
         /** @type {HTMLButtonElement | null} */
         this._auditionToggleButton = null;
+
+        // Selection filter toggles (the allow-select per-kind
+        // buttons). Each is pressed/enabled by default, meaning
+        // that kind is selectable; releasing one makes selection
+        // ignore that kind in click, marquee, and Select All.
+        // Session-only; main.js calls resetSelectionFilters on
+        // score switch. Emits (kind, enabled) to listeners.
+        this._selectFilter = { sprite: true, trigger: true, curve: true };
+        /** @type {Map<string, HTMLButtonElement>} */
+        this._selectFilterButtons = new Map();
+        /** @type {Array<(kind: string, enabled: boolean) => void>} */
+        this._selectFilterListeners = [];
 
         // Custom tooltip. Native `title` tooltips are unreliable in
         // Electron/Chromium — they're dismissed by DOM mutations and
@@ -348,6 +386,52 @@ export class Toolbar {
      */
     onFocusCanvasClick(cb) {
         this._focusCanvasClickListeners.push(cb);
+    }
+
+    /**
+     * Subscribe to selection-filter toggle changes. The
+     * callback receives (kind, enabled): the object kind
+     * ("sprite"|"trigger"|"curve") whose allow-select button
+     * was just flipped, and the new enabled flag (true when
+     * the kind is now selectable, false when it is now being
+     * ignored by selection). main.js wires this to
+     * canvas.setKindSelectable so the canvas filter follows
+     * the toolbar.
+     * @param {(kind: string, enabled: boolean) => void} cb
+     */
+    onSelectionFilterToggle(cb) {
+        this._selectFilterListeners.push(cb);
+    }
+
+    /**
+     * Emit a selection-filter toggle to all subscribers.
+     * @param {string} kind
+     * @param {boolean} enabled
+     */
+    _emitSelectionFilter(kind, enabled) {
+        for (const cb of this._selectFilterListeners) {
+            try { cb(kind, enabled); } catch (err) {
+                console.error("GXW: selection-filter listener threw.", err);
+            }
+        }
+    }
+
+    /**
+     * Reset all three selection-filter toggles to enabled
+     * (pressed) and refresh their visuals. Does NOT emit —
+     * main.js resets the canvas filter separately in
+     * switchToBundle. Called on score switch so a new score
+     * always starts with every kind selectable.
+     */
+    resetSelectionFilters() {
+        for (const kind of ["sprite", "trigger", "curve"]) {
+            this._selectFilter[kind] = true;
+            const btn = this._selectFilterButtons.get(kind);
+            if (btn) {
+                btn.classList.add("select-filter-enabled");
+                btn.setAttribute("aria-pressed", "true");
+            }
+        }
     }
 
     /**
@@ -484,6 +568,7 @@ export class Toolbar {
     _render() {
         this.container.innerHTML = "";
         this._buttons.clear();
+        this._selectFilterButtons.clear();
         this._playSelectedButton = null;
         this._focusCanvasButton = null;
 
@@ -501,6 +586,30 @@ export class Toolbar {
         for (const def of TOOL_DEFS) {
             this.container.appendChild(this._buildToolButton(def));
         }
+
+        // Allow-select filter toggles, immediately after the
+        // creation tools and before Play Selected. Each is
+        // pressed (enabled) by default = its kind is
+        // selectable; release one to make selection ignore
+        // that kind.
+        this.container.appendChild(this._buildSelectFilterButton(
+            "sprite",
+            "Allow Selecting Sprites",
+            "Allow Selecting Sprites",
+            SELECT_FILTER_SPRITE_ICON_SVG,
+        ));
+        this.container.appendChild(this._buildSelectFilterButton(
+            "trigger",
+            "Allow Selecting Triggers",
+            "Allow Selecting Triggers",
+            SELECT_FILTER_TRIGGER_ICON_SVG,
+        ));
+        this.container.appendChild(this._buildSelectFilterButton(
+            "curve",
+            "Allow Selecting Curves",
+            "Allow Selecting Curves",
+            SELECT_FILTER_CURVE_ICON_SVG,
+        ));
 
         // Group separator between the creation-tool cluster and the
         // playback controls. (Background-image import lives in the
@@ -702,7 +811,7 @@ export class Toolbar {
         btn.className = "toolbar-toggle-button";
         btn.setAttribute("aria-label", "Play Selected");
         btn.setAttribute("aria-pressed", "false");
-        this._attachTooltip(btn, "Play Selected. When on, only currently-selected objects fire patterns. Click to toggle.");
+        this._attachTooltip(btn, "Play only selected objects");
         btn.innerHTML = PLAY_SELECTED_ICON_SVG;
         btn.addEventListener("click", () => {
             this.setPlaySelectedActive(!this._playSelectedActive);
@@ -712,6 +821,43 @@ export class Toolbar {
             btn.classList.add("toolbar-toggle-button-active");
             btn.setAttribute("aria-pressed", "true");
         }
+        return btn;
+    }
+
+    /**
+     * Build one allow-select filter button for a given object
+     * kind. Pressed (enabled, the default) means that kind is
+     * selectable; releasing it makes selection ignore the
+     * kind in click hit-test, marquee drag-select, and Select
+     * All. The button owns its own boolean state in
+     * this._selectFilter; clicking flips it, updates the
+     * pressed visual (the .select-filter-enabled class +
+     * aria-pressed), and emits (kind, enabled) so main.js can
+     * push the value into the canvas filter.
+     * @param {"sprite"|"trigger"|"curve"} kind
+     * @param {string} label
+     * @param {string} tooltip
+     * @param {string} iconSvg
+     * @returns {HTMLButtonElement}
+     */
+    _buildSelectFilterButton(kind, label, tooltip, iconSvg) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "toolbar-tool toolbar-select-filter";
+        btn.setAttribute("aria-label", label);
+        const enabled = this._selectFilter[kind] !== false;
+        btn.setAttribute("aria-pressed", enabled ? "true" : "false");
+        if (enabled) btn.classList.add("select-filter-enabled");
+        btn.innerHTML = iconSvg;
+        this._attachTooltip(btn, tooltip);
+        btn.addEventListener("click", () => {
+            const next = !this._selectFilter[kind];
+            this._selectFilter[kind] = next;
+            btn.classList.toggle("select-filter-enabled", next);
+            btn.setAttribute("aria-pressed", next ? "true" : "false");
+            this._emitSelectionFilter(kind, next);
+        });
+        this._selectFilterButtons.set(kind, btn);
         return btn;
     }
 

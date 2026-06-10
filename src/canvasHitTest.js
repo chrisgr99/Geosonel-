@@ -154,12 +154,18 @@ export const hitTestMethods = {
      * @returns {{kind: "sprite"|"trigger"|"curve", index: number} | null}
      */
     _hitTestObject(canvasX, canvasY) {
-        const sIdx = this._hitTestSprite(canvasX, canvasY);
-        if (sIdx !== null) return { kind: "sprite", index: sIdx };
-        const tIdx = this._hitTestTrigger(canvasX, canvasY);
-        if (tIdx !== null) return { kind: "trigger", index: tIdx };
-        const cIdx = this._hitTestCurve(canvasX, canvasY);
-        if (cIdx !== null) return { kind: "curve", index: cIdx };
+        if (this._selectableKinds.sprite !== false) {
+            const sIdx = this._hitTestSprite(canvasX, canvasY);
+            if (sIdx !== null) return { kind: "sprite", index: sIdx };
+        }
+        if (this._selectableKinds.trigger !== false) {
+            const tIdx = this._hitTestTrigger(canvasX, canvasY);
+            if (tIdx !== null) return { kind: "trigger", index: tIdx };
+        }
+        if (this._selectableKinds.curve !== false) {
+            const cIdx = this._hitTestCurve(canvasX, canvasY);
+            if (cIdx !== null) return { kind: "curve", index: cIdx };
+        }
         return null;
     },
 

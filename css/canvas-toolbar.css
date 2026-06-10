@@ -21,6 +21,10 @@
 #canvas-toolbar {
     flex: 0 0 auto;
     height: 40px;
+    /* Flat icon buttons (GeoSonix-style): no box at rest; the OUTLINE
+     * (frame) is the sole pressed/active indicator — the same frame
+     * hover shows, persisting while a tool is armed/locked or a toggle
+     * is on. No fill. Dark strip, like the rest of the app. */
     background-color: #141414;
     border-bottom: 3px solid #777777;
     display: flex;
@@ -48,7 +52,7 @@
     background-color: transparent;
     border: 1px solid transparent;
     border-radius: 3px;
-    color: #c8c8c8;
+    color: #c0c0c0;
     cursor: pointer;
     padding: 0;
     display: inline-flex;
@@ -58,14 +62,13 @@
 }
 
 .sidebar-toggle-btn:hover {
-    background-color: #555555;
-    color: #ffffff;
+    border-color: #909090;
+    color: #f0f0f0;
 }
 
 .sidebar-toggle-btn:focus {
     outline: none;
-    border-color: #c8c8c8;
-    color: #ffffff;
+    color: #f0f0f0;
 }
 
 .sidebar-toggle-icon {
@@ -215,21 +218,20 @@
 
 /* --- Object-creation tool buttons ---
  *
- * Tool button: square, icon-only, three states (idle, armed,
- * locked). Idle uses a clearly visible mid-tone outline so
- * the button reads as interactive even before the user
- * hovers. Hover bumps the outline brighter still and adds a
- * subtle background shift. Armed and locked share the green
- * accent the wordmark uses; locked is heavier than armed so
- * it reads as a more committed state. The icon colour
- * follows currentColor so SVGs change tone with state
- * without needing per-state assets.
+ * Flat icon button: no box at rest (transparent border/fill) — just
+ * the icon. The OUTLINE (frame) is the single indicator for hover AND
+ * for the pressed/active state: hovering shows it transiently; arming a
+ * tool (one click) keeps it until a placement; locking (double-click)
+ * or toggling a filter on keeps it until cleared. Armed and locked look
+ * identical (no distinction), no fill. Same outline colour as hover so
+ * there's no specificity conflict when an active button is hovered. The
+ * icon colour follows currentColor so SVGs change tone with state.
  */
 .toolbar-tool {
     width: 32px;
     height: 32px;
-    background-color: #2a2a2a;
-    border: 1px solid #888888;
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: 3px;
     color: #c0c0c0;
     cursor: pointer;
@@ -240,47 +242,44 @@
     user-select: none;
 }
 
+/* Hover = a frame around the button (the one outlined state). No fill
+ * change on hover; the press/active fill is separate. */
 .toolbar-tool:hover {
-    background-color: #3a3a3a;
-    border-color: #c8c8c8;
+    border-color: #909090;
     color: #f0f0f0;
 }
 
 .toolbar-tool:focus {
     outline: none;
-    border-color: #c8c8c8;
 }
 
-/* While the mouse button is held down on a toolbar button,
- * preview the armed-state green so the user sees the click
- * landing. After mouseup, the toolbar's own state machine
- * decides whether to actually arm or lock the tool, and the
- * .toolbar-tool-armed / .toolbar-tool-locked classes take
- * over from there — :active just bridges the gap so the
- * click never feels unacknowledged. Higher specificity than
- * the armed/locked classes means a click on an already-armed
- * or locked tool also flashes; that's fine, the visual still
- * reads as a meaningful click. */
+/* Mouse-down press feedback: the outline appears immediately on press
+ * (same outline the armed/locked state keeps). */
 .toolbar-tool:active {
-    background-color: #1f3a25;
-    border-color: #00ff33;
-    color: #d8f5d8;
-    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+    border-color: #909090;
+    color: #f0f0f0;
 }
 
-.toolbar-tool-armed {
-    background-color: #1f3a25;
-    border-color: #00ff33;
-    color: #d8f5d8;
-    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
-}
-
+/* Armed and locked look identical (no distinction) — the OUTLINE is the
+ * sole "pressed/active" indicator (no fill). It's the same frame hover
+ * shows, but it PERSISTS while the tool is armed (until a placement) or
+ * locked (until cleared). Shared by every active toolbar button. */
+.toolbar-tool-armed,
 .toolbar-tool-locked {
-    background-color: #1f3a25;
-    border-color: #00ff33;
-    border-width: 2px;
-    color: #ffffff;
-    box-shadow: 0 0 8px rgba(0, 255, 51, 0.6) inset, 0 0 6px rgba(0, 255, 51, 0.4);
+    border-color: #909090;
+    color: #f0f0f0;
+}
+
+/* Allow-select filter toggles use the same outline-only treatment:
+ * PRESSED (enabled — kind is selectable, the default) shows the OUTLINE;
+ * RELEASED (disabled — kind ignored) is a flat icon with no outline. */
+.toolbar-select-filter.select-filter-enabled {
+    border-color: #909090;
+}
+
+.toolbar-select-filter:not(.select-filter-enabled) {
+    background-color: transparent;
+    border-color: transparent;
 }
 
 /* Spacer between the left tool cluster and the right action
@@ -335,8 +334,8 @@
 .toolbar-action-button {
     width: 32px;
     height: 32px;
-    background-color: #2a2a2a;
-    border: 1px solid #888888;
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: 3px;
     color: #c0c0c0;
     cursor: pointer;
@@ -348,21 +347,17 @@
 }
 
 .toolbar-action-button:hover {
-    background-color: #3a3a3a;
-    border-color: #c8c8c8;
+    border-color: #909090;
     color: #f0f0f0;
 }
 
 .toolbar-action-button:focus {
     outline: none;
-    border-color: #c8c8c8;
 }
 
 .toolbar-action-button:active {
-    background-color: #1f3a25;
-    border-color: #00ff33;
-    color: #d8f5d8;
-    box-shadow: 0 0 6px rgba(0, 255, 51, 0.35);
+    border-color: #909090;
+    color: #f0f0f0;
 }
 
 /* Toggle button: square footprint matching the tool and
@@ -382,8 +377,8 @@
 .toolbar-toggle-button {
     width: 32px;
     height: 32px;
-    background-color: #2a2a2a;
-    border: 1px solid #888888;
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: 3px;
     color: #c0c0c0;
     cursor: pointer;
@@ -395,28 +390,22 @@
 }
 
 .toolbar-toggle-button:hover {
-    background-color: #3a3a3a;
-    border-color: #c8c8c8;
+    border-color: #909090;
     color: #f0f0f0;
 }
 
 .toolbar-toggle-button:focus {
     outline: none;
-    border-color: #c8c8c8;
 }
 
 .toolbar-toggle-button-active {
-    background-color: #3a2e1a;
-    border-color: #d4a05a;
-    border-width: 2px;
-    color: #f0e0c0;
-    box-shadow: 0 0 6px rgba(212, 160, 90, 0.45);
+    border-color: #909090;
+    color: #f0f0f0;
 }
 
 .toolbar-toggle-button-active:hover {
-    background-color: #463722;
-    border-color: #e8b870;
-    box-shadow: 0 0 8px rgba(232, 184, 112, 0.6);
+    border-color: #909090;
+    color: #f0f0f0;
 }
 
 /* Seed-variation control. A text button plus a seed readout,
@@ -426,10 +415,10 @@
 .toolbar-text-button {
     height: 32px;
     padding: 0 14px;
-    background-color: #2a2a2a;
-    border: 1px solid #888888;
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: 3px;
-    color: #e8e4dc;
+    color: #c0c0c0;
     font-size: 13pt;
     cursor: pointer;
     display: inline-flex;
@@ -440,14 +429,12 @@
 }
 
 .toolbar-text-button:hover {
-    background-color: #3a3a3a;
-    border-color: #c8c8c8;
-    color: #ffffff;
+    border-color: #909090;
+    color: #f0f0f0;
 }
 
 .toolbar-text-button:focus {
     outline: none;
-    border-color: #c8c8c8;
 }
 
 .toolbar-seed-readout {
@@ -463,16 +450,13 @@
  * showing. Amber, matching the other toolbar toggle's
  * "this changes what you're doing" colour language. */
 .toolbar-text-button-active {
-    background-color: #3a2e1a;
-    border-color: #d4a05a;
-    color: #f0e0c0;
-    box-shadow: 0 0 6px rgba(212, 160, 90, 0.45);
+    border-color: #909090;
+    color: #f0f0f0;
 }
 
 .toolbar-text-button-active:hover {
-    background-color: #463722;
-    border-color: #e8b870;
-    color: #ffffff;
+    border-color: #909090;
+    color: #f0f0f0;
 }
 
 /* Floating audition toolbar — overlays the (position: relative)

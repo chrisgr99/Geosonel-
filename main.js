@@ -1481,6 +1481,8 @@ async function main() {
             // and letting them persist would let Cmd-Z apply
             // foreign text to the active bundle.
             canvas.setSelection({ sprites: [], triggers: [], curves: [] });
+            canvas.resetSelectableKinds();
+            toolbar.resetSelectionFilters();
             undoPast.length = 0;
             undoFuture.length = 0;
 
@@ -2291,6 +2293,10 @@ async function main() {
     // when the mode flips off.
     toolbar.onPlaySelectedToggle((active) => {
         firingEngine.setPlaySelectedMode(active);
+    });
+
+    toolbar.onSelectionFilterToggle((kind, enabled) => {
+        canvas.setKindSelectable(kind, enabled);
     });
 
     // Audition workflow (seed-variation). A Mutate button plus a
@@ -3395,13 +3401,19 @@ async function main() {
         if (spriteCount + triggerCount + curveCount === 0) return;
         /** @type {number[]} */
         const sprites = [];
-        for (let i = 0; i < spriteCount; i++) sprites.push(i);
+        if (canvas.isKindSelectable("sprite")) {
+            for (let i = 0; i < spriteCount; i++) sprites.push(i);
+        }
         /** @type {number[]} */
         const triggers = [];
-        for (let i = 0; i < triggerCount; i++) triggers.push(i);
+        if (canvas.isKindSelectable("trigger")) {
+            for (let i = 0; i < triggerCount; i++) triggers.push(i);
+        }
         /** @type {number[]} */
         const curves = [];
-        for (let i = 0; i < curveCount; i++) curves.push(i);
+        if (canvas.isKindSelectable("curve")) {
+            for (let i = 0; i < curveCount; i++) curves.push(i);
+        }
         canvas.setSelection({ sprites, triggers, curves });
     };
 

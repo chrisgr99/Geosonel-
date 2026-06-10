@@ -415,6 +415,13 @@ export class Canvas {
             curves: new Set(),
         };
 
+        // Per-kind selection filter (the toolbar's allow-select toggles).
+        // When a kind is false it is skipped by click hit-test, marquee
+        // drag-select, and Select All; the type is ignored by selection
+        // until re-enabled. Existing selection is untouched. Session-only,
+        // reset to all-true on score switch.
+        this._selectableKinds = { sprite: true, trigger: true, curve: true };
+
         /**
          * "Armed to clear" flag for the persistent-selection model.
          * A plain click on empty canvas no longer clears the selection
