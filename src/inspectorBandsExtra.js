@@ -388,7 +388,7 @@ export const bandExtraMethods = {
             })();
 
             const rA = mkRow();
-            rA.appendChild(mkLabel("Active\nBeats", { width: W.beatStrengthLabel, disabled: !active, multiline: true }));
+            rA.appendChild(mkLabel("Active Beats", { width: W.beatStrengthLabel, disabled: !active }));
             rA.appendChild(this._buildBeatStringField({
                 value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
                 width: W.beatString,
@@ -405,7 +405,7 @@ export const bandExtraMethods = {
             band.appendChild(rA);
 
             const rS = mkRow();
-            rS.appendChild(mkLabel("Beat\nStrength", { width: W.beatStrengthLabel, disabled: !active, multiline: true }));
+            rS.appendChild(mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active }));
             rS.appendChild(this._buildBeatStringField({
                 value: strengthAgg === "varies" ? "" : strengthAgg,
                 width: W.beatString,
@@ -470,6 +470,7 @@ export const bandExtraMethods = {
         const stopAgg = aggregateString(cycleObjs, "stopAtCycle");
 
         const r1 = mkRow();
+        r1.classList.add("insp-cyclespeeds-row");
         r1.appendChild(mkLabel("Cycle\nSpeeds", { width: W.beatStackLabel, disabled: !cycleActive, multiline: true }));
         r1.appendChild(this._buildEditableField({
             value: speedsAgg === "varies" ? "" : speedsAgg,
@@ -516,7 +517,8 @@ export const bandExtraMethods = {
                 : timeLagIntervalAgg;
 
         const r2 = mkRow();
-        r2.appendChild(mkLabel("Trigger Sync\nTo Beat", { width: W.leftLabel, disabled: !triggerActive, multiline: true }));
+        r2.classList.add("insp-triggersync-row");
+        r2.appendChild(mkLabel("Trigger Sync", { width: W.leftLabel, disabled: !triggerActive }));
         r2.appendChild(this._buildDropdownField({
             options: INTERVAL_OPTIONS,
             value: syncAgg === "varies" ? "" : syncAgg,
@@ -647,35 +649,35 @@ export const bandExtraMethods = {
             }
         }
 
+        // Note Voice and Sound Bank share ONE row: label + field +
+        // label + field. Single-line labels; both dropdowns narrowed so
+        // the four items fit within a 440px-wide row (see widths in
+        // inspectorShared). Each half keeps its own relevance-greying
+        // (Note Voice → soundRelevant, Sound Bank → bankRelevant).
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Note\nVoice", {
-            width: W.leftLabel,
+        r1.appendChild(mkLabel("Note Voice", {
+            width: W.voiceNoteLabel,
             disabled: !voiceActive || !soundRelevant,
-            multiline: true,
         }));
         r1.appendChild(this._buildDropdownField({
             options: PER_OBJECT_SOUND_OPTIONS,
             value: soundAgg === "varies" ? "" : soundAgg,
-            width: W.voiceField,
+            width: W.voiceFieldCombined,
             editable: voiceActive && soundRelevant,
             editKind: "setVoiceSuperdoughSound",
         }));
-        band.appendChild(r1);
-
-        const r2 = mkRow();
-        r2.appendChild(mkLabel("Sound\nBank", {
-            width: W.leftLabel,
+        r1.appendChild(mkLabel("Sound Bank", {
+            width: W.voiceBankLabel,
             disabled: !voiceActive || !bankRelevant,
-            multiline: true,
         }));
-        r2.appendChild(this._buildDropdownField({
+        r1.appendChild(this._buildDropdownField({
             options: PER_OBJECT_BANK_OPTIONS,
             value: bankAgg === "varies" ? "" : bankAgg,
-            width: W.voiceField,
+            width: W.voiceFieldCombined,
             editable: voiceActive && bankRelevant,
             editKind: "setVoiceSuperdoughBank",
         }));
-        band.appendChild(r2);
+        band.appendChild(r1);
 
         return band;
     },
@@ -712,7 +714,7 @@ export const bandExtraMethods = {
      */
     _buildBandGlobal(_ctx) {
         const band = document.createElement("div");
-        band.className = "insp-band";
+        band.className = "insp-band insp-band-global";
 
         // "Global" titled-divider header. Marks the score-wide section
         // as distinct from the per-object bands by name; it carries the
@@ -770,33 +772,28 @@ export const bandExtraMethods = {
             const globalBankVal =
                 (vs !== null && typeof vs.bank === "string") ? vs.bank : "";
 
+            // Note Voice and Sound Bank share ONE row, identical layout
+            // and widths to the per-object Voice band: label + field +
+            // label + field within a 440px row. Score-wide defaults,
+            // never pattern-greyed (editable unconditionally).
             const vr1 = mkRow();
-            vr1.appendChild(mkLabel("Note\nVoice", {
-                width: W.leftLabel,
-                multiline: true,
-            }));
+            vr1.appendChild(mkLabel("Note Voice", { width: W.voiceNoteLabel }));
             vr1.appendChild(this._buildDropdownField({
                 options: GLOBAL_SOUND_OPTIONS,
                 value: globalSoundVal,
-                width: W.voiceField,
+                width: W.voiceFieldCombined,
                 editable: true,
                 editKind: "setSceneVoiceSuperdoughSound",
             }));
-            band.appendChild(vr1);
-
-            const vr2 = mkRow();
-            vr2.appendChild(mkLabel("Sound\nBank", {
-                width: W.leftLabel,
-                multiline: true,
-            }));
-            vr2.appendChild(this._buildDropdownField({
+            vr1.appendChild(mkLabel("Sound Bank", { width: W.voiceBankLabel }));
+            vr1.appendChild(this._buildDropdownField({
                 options: GLOBAL_BANK_OPTIONS,
                 value: globalBankVal,
-                width: W.voiceField,
+                width: W.voiceFieldCombined,
                 editable: true,
                 editKind: "setSceneVoiceSuperdoughBank",
             }));
-            band.appendChild(vr2);
+            band.appendChild(vr1);
         }
 
         return band;

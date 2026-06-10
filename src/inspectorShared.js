@@ -69,7 +69,9 @@ export const W = {
     // Mode dropdown trimmed so the dense Euclidean row 1 stays no
     // wider than other inspector rows.
     beatPointsMode: 84,
-    beatString: 280,
+    // Active Beats / Beat Strength x-dot string field. Narrowed 22px
+    // (280 -> 258) to claw back the width the now single-line labels take.
+    beatString: 258,
     // Strudel-mode "Cycle Length" label — single line (unwrapped),
     // wide enough to hold the full text at 10pt before the
     // note-duration dropdown.
@@ -82,13 +84,11 @@ export const W = {
     // Shift, Repeats) and the small numeric fields beside them.
     // Kept tight so all four Euclidean row-1 groups fit one line.
     beatStackLabel: 44,
-    // Normal-mode Active Beats + Beat Strength rows: a slightly wider
-    // label column than beatStackLabel. "Strength" has wider letters
-    // than "Pattern" / "Interval" and was clipping at 44. Only these two
-    // single-field rows use it, so they stay aligned with each other and
-    // clear the field on their right; row 1 keeps beatStackLabel so its
-    // four groups still fit one line.
-    beatStrengthLabel: 54,
+    // Normal-mode Active Beats + Beat Strength rows. SINGLE-LINE labels
+    // ("Active Beats" / "Beat Strength"), so the column is wide enough to
+    // fit "Beat Strength" on one line, pushing their fields to the right.
+    // Both rows share it so they stay aligned.
+    beatStrengthLabel: 82,
     // Narrower two-line labels for "Per / Cycle" and "Per / Bar" — the
     // short words fit a tighter column than beatStackLabel's 44 (which
     // must hold the longer "Pattern" / "Interval"), trimming the
@@ -174,6 +174,13 @@ export const W = {
     // the custom green chevron chrome on the right edge,
     // with comfortable margin.
     voiceField: 200,
+    // Voice band laid out as ONE row: Note Voice label + field + Sound
+    // Bank label + field. Single-line labels; both dropdowns narrowed so
+    // label(66) + field(142) + label(70) + field(142) + three 6px row
+    // gaps = 438px, fitting within a 440px-wide row.
+    voiceNoteLabel: 66,
+    voiceBankLabel: 70,
+    voiceFieldCombined: 142,
 };
 
 // --- Selection-context helpers ---

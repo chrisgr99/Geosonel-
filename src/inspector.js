@@ -194,28 +194,47 @@ export class Inspector {
         panel.className = "inspector-panel";
 
         panel.appendChild(this._buildTitleBar(ctx));
-        panel.appendChild(this._buildBandIdentity(ctx));
-        panel.appendChild(this._buildBandGeometry(ctx));
-        panel.appendChild(this._buildBandCallbackSlots(ctx));
-        panel.appendChild(this._buildBandBeatPoints(ctx));
-        panel.appendChild(this._buildBandCycle(ctx));
 
-        // Lower bands. Each carries its own titled-divider header
-        // (── TITLE ───────) that now does the separating, so the
-        // standalone separator divs are gone. Mutability sits just above
-        // the per-object Voice band (moved out of Geometry into its own
-        // band); the Voice band is empty under MIDI; Global is the
-        // score-wide section.
-        panel.appendChild(this._buildBandMutability(ctx));
-        panel.appendChild(this._buildBandMiddleArea(ctx));
+        // Per-object bands render ONLY when something is selected. With
+        // an empty selection the whole per-object area is hidden so the
+        // inspector reads as blank up top (no greyed clutter) — just the
+        // title bar, then empty space, then the Global band pinned at the
+        // bottom. Each lower band carries its own titled-divider header
+        // (── TITLE ───────); Mutability sits above the per-object Voice
+        // band, which is empty under MIDI.
+        if (ctx.total > 0) {
+            panel.appendChild(this._buildBandIdentity(ctx));
+            panel.appendChild(this._buildBandGeometry(ctx));
+            panel.appendChild(this._buildBandCallbackSlots(ctx));
+            panel.appendChild(this._buildBandBeatPoints(ctx));
+            panel.appendChild(this._buildBandCycle(ctx));
+            panel.appendChild(this._buildBandMutability(ctx));
+            panel.appendChild(this._buildBandMiddleArea(ctx));
+
+            // Title-less divider capping the bottom of the per-object
+            // section, separating it from the empty space above the
+            // pinned Global band. Hidden with the bands when nothing is
+            // selected.
+            const sectionDivider = document.createElement("div");
+            sectionDivider.className = "insp-section-divider";
+            panel.appendChild(sectionDivider);
+        }
+
+        // Growing spacer pins the Global band to the panel's bottom: it
+        // absorbs the slack between the per-object section (or the blank
+        // area when nothing is selected) and the Global band. The fields
+        // are now vertically compact enough that the content fits without
+        // scrolling.
+        const flexSpacer = document.createElement("div");
+        flexSpacer.className = "insp-flex-spacer";
+        panel.appendChild(flexSpacer);
+
+        // Global band — score-wide section, always visible, pinned to the
+        // bottom by the spacer above.
         panel.appendChild(this._buildBandGlobal(ctx));
 
-        // Bottom spacer. Pushes the last band's fields up by
-        // about two row heights so the macOS dock doesn't
-        // pop over them when the user mouses near the screen
-        // edge while editing fields in the lower bands. Lives
-        // inside the panel so it scrolls with the rest of the
-        // form rather than docking to the pane bottom.
+        // Bottom spacer — a small 7px gap below the Global band at the
+        // panel's bottom edge.
         const spacer = document.createElement("div");
         spacer.className = "insp-bottom-spacer";
         panel.appendChild(spacer);

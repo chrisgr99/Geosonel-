@@ -130,6 +130,14 @@
     border-top: 1px solid #888888;
 }
 
+/* Global band's "GLOBAL" divider is drawn 3px thick (vs the 1px on every
+ * other band header) so the score-wide section reads as clearly set
+ * apart from the per-object bands above it. */
+.insp-band-global .insp-band-header::before,
+.insp-band-global .insp-band-header::after {
+    border-top-width: 3px;
+}
+
 /* Band 3 (callback slots): its four rows have single-line,
  * one-word labels, so at the shared row margin they sit
  * closer together than the two-line-label rows in the other
@@ -158,6 +166,21 @@
     margin-bottom: 0;
 }
 
+/* Timing band — pull the Trigger Sync field up to a tight 2px below the
+ * Cycle Speeds field. The Cycle Speeds row's two-line labels make it
+ * ~28px tall vs its 20px field, so by default the field floats centred
+ * with ~4px of slack beneath it. Bottom-align that row so the field
+ * sits at the row's bottom edge (its label still reads from the top),
+ * and zero the Trigger Sync row's top margin — leaving only the Cycle
+ * Speeds row's 2px bottom margin between the two fields. */
+.insp-cyclespeeds-row {
+    align-items: flex-end;
+}
+
+.insp-triggersync-row {
+    margin-top: 0;
+}
+
 /* Band 5 (Beat Points): the Euclidean mode's first row packs
  * four label+control groups (mode, Beats/Cycle, Beat Interval,
  * Beats/Bar). A tighter inter-control gap keeps that row no
@@ -176,6 +199,9 @@
     appearance: none;
     -webkit-appearance: none;
     outline: none;
+    /* Nudge the Active Beats / Beat Strength fields right off their
+     * (now single-line) labels so the value doesn't crowd the text. */
+    margin-left: 5px;
 }
 
 .insp-beat-field:focus {
@@ -929,6 +955,25 @@
  * the spacer's empty space and the pane never feels as if
  * it ends abruptly at a field edge. */
 .insp-bottom-spacer {
-    height: 48px;
+    height: 7px;
     flex-shrink: 0;
+}
+
+/* Growing spacer that pins the Global band to the panel bottom. It
+ * absorbs all the vertical slack between the per-object section (or the
+ * blank area when nothing is selected) and the Global band, so Global
+ * always sits at the bottom of the viewport rather than floating up to
+ * follow short content. */
+.insp-flex-spacer {
+    flex: 1 1 auto;
+}
+
+/* Title-less divider line capping the bottom of the per-object section,
+ * separating it from the empty space above the pinned Global band. Same
+ * 1px line and colour as the band-header dividers; the 8px side margins
+ * align it with the band content. Only present when an object is
+ * selected (rendered alongside the per-object bands). */
+.insp-section-divider {
+    margin: 0 8px;
+    border-top: 1px solid #888888;
 }

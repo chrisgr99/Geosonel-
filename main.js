@@ -756,6 +756,17 @@ async function main() {
         inspectorFloor = editorPaneEl.offsetWidth;
         if (wasActive) document.body.classList.add("focus-canvas");
     }
+    // Hard floor for the inspector pane. Its widest content row (the
+    // Voice band, and the Global voice-defaults row) is ~454px including
+    // padding; dragging narrower clips those fields. The measured
+    // offsetWidth alone is no longer a reliable floor: the per-object
+    // bands are hidden when nothing is selected, so at startup with an
+    // empty selection the inspector shows only the narrow Global band and
+    // would measure a too-small width. Clamp the measured value up to 450
+    // so the divider can never narrow the inspector past its real
+    // content, whatever happens to be rendered at measure time.
+    const INSPECTOR_MIN_WIDTH_PX = 450;
+    inspectorFloor = Math.max(inspectorFloor ?? 0, INSPECTOR_MIN_WIDTH_PX);
     installDivider({
         dividerId: "body-divider",
         firstPaneId: "editor-pane",
