@@ -75,7 +75,23 @@
 }
 
 .insp-band {
-    padding: 5px 8px;
+    /* No top padding: a band's title-divider header sits flush at the
+     * band's top edge, so the only space ABOVE a divider is the previous
+     * band's bottom gutter. The 2px bottom padding + the 2px row margin
+     * give every band a compact 4px bottom gutter (matching the inter-
+     * row gap). The bare Identity band overrides the top padding below
+     * (it has no divider — its controls need the gutter). */
+    padding: 0 8px 2px 8px;
+}
+
+/* Identity band (the bare first band — no title divider, just the
+ * Object ID / Object Name rows). Bands have zero top padding (their
+ * divider sits flush at the top), but Identity has no divider, so it
+ * needs a top gutter for its first control: 2px padding + 2px row margin
+ * = a 4px top gutter, matching its 4px bottom gutter (the global 2px
+ * bottom padding) and the inter-row gap. */
+.insp-title-bar + .insp-band {
+    padding-top: 2px;
 }
 
 /* Band title divider: a short rule, the title, then a hairline filling
@@ -89,7 +105,11 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    margin: 1px 0 5px 0;
+    /* No top margin — the divider sits flush at the band's (now
+     * zero-top-padding) top edge. The 2px bottom + the 2px first-row
+     * margin give a compact 4px top gutter (space below the divider to
+     * the band's first control), matching the inter-row gap. */
+    margin: 0 0 2px 0;
     color: #d8d4cc;
     font-size: 9pt;
     font-weight: 600;
@@ -117,6 +137,25 @@
  * just these rows evens the rhythm out. */
 .insp-band-callbacks .insp-row {
     margin: 3px 0;
+}
+
+/* A band's edge gaps — the space below a divider down to its first
+ * field, and from its last field down to the next divider — must come
+ * ONLY from the 2px band padding (top: Identity, bottom: all) and the
+ * 2px header bottom-margin. So zero the FIRST row's top margin and the
+ * LAST row's bottom margin: that stops the per-band row margin (2px, or
+ * the callbacks band's 3px) from doubling those edge gaps to 4-5px.
+ * Interior row margins (the inter-row gaps) are untouched. Listed after
+ * the callbacks row rule so it wins the equal-specificity tie. The
+ * "header + row" selector catches the first row of a titled band (whose
+ * :first-child is the header, not a row). */
+.insp-row:first-child,
+.insp-band-header + .insp-row {
+    margin-top: 0;
+}
+
+.insp-row:last-child {
+    margin-bottom: 0;
 }
 
 /* Band 5 (Beat Points): the Euclidean mode's first row packs
