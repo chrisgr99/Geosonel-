@@ -3837,6 +3837,18 @@ async function main() {
     // without either knowing about the other. Persistence is
     // explicit; the user decides when to save via Cmd-S.
     if (editor.inspector) {
+        // Object ID picker: jump to an object from the inspector. Picking
+        // an id single-selects that object (canvas.setSelection re-emits
+        // selectionChanged, so the inspector, canvas, and Script tab all
+        // resync). Hovering an id row brightens that object on the canvas.
+        editor.inspector.setObjectPickerHandlers(
+            (kind, index) => {
+                const sel = { sprites: [], triggers: [], curves: [] };
+                sel[`${kind}s`] = [index];
+                canvas.setSelection(sel);
+            },
+            (target) => canvas.setPreviewHighlight(target),
+        );
         editor.inspector.setEditCallback(async (edit) => {
             if (edit.kind === "setState") {
                 await applySceneEdit((data) =>

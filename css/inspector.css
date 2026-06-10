@@ -85,13 +85,13 @@
 }
 
 /* Identity band (the bare first band — no title divider, just the
- * Object ID / Object Name rows; first child of the .insp-perobject
- * wrapper). Bands have zero top padding (their divider sits flush at the
+ * Object ID / Object Name rows; always rendered directly after the title
+ * bar). Bands have zero top padding (their divider sits flush at the
  * top), but Identity has no divider, so it needs a top gutter for its
  * first control: 2px padding + 2px row margin = a 4px top gutter,
  * matching its 4px bottom gutter (the global 2px bottom padding) and the
  * inter-row gap. */
-.insp-perobject > .insp-band:first-child {
+.insp-title-bar + .insp-band {
     padding-top: 2px;
 }
 
@@ -503,6 +503,100 @@
 .insp-dropdown option {
     background-color: #2a2a2a;
     color: #f0f0f0;
+}
+
+/* --- Object ID picker (custom dropdown) ---
+ *
+ * Identity band's "jump to object" control. Looks like .insp-dropdown but
+ * is a real element (label + chevron) so its popup can be ours, with
+ * per-row hover that brightens the matching object on the canvas. */
+.insp-objid-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    padding: 0 6px 0 8px;
+    color: #ffffff;
+    height: 20px;
+    font-size: 11pt;
+    line-height: 1;
+    box-sizing: border-box;
+    cursor: pointer;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.insp-objid-picker:focus {
+    outline: none;
+    border-color: #ffffff;
+}
+
+.insp-objid-picker.open {
+    border-color: #ffffff;
+}
+
+.insp-objid-picker-label {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.insp-objid-picker-label.placeholder {
+    color: #b8b8b8;
+}
+
+.insp-objid-picker-chevron {
+    flex: 0 0 auto;
+    color: #789678;
+    font-size: 9pt;
+}
+
+.insp-objid-picker.disabled {
+    border-color: transparent;
+    color: #a8a8a8;
+    cursor: default;
+}
+
+.insp-objid-picker.disabled .insp-objid-picker-chevron {
+    color: #707070;
+}
+
+/* Floating list, appended to <body> and positioned under the trigger
+ * (position:fixed set inline). Scrolls if the object list is long. */
+.insp-objid-popup {
+    position: fixed;
+    z-index: 1000;
+    max-height: 300px;
+    overflow-y: auto;
+    background-color: #2a2a2a;
+    border: 1px solid #789678;
+    border-radius: 3px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+    padding: 2px 0;
+    font-size: 11pt;
+    color: #f0f0f0;
+}
+
+.insp-objid-row {
+    padding: 3px 12px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+/* Focused = pointer-over OR keyboard-focused; this is also the row whose
+ * object is preview-highlighted on the canvas. */
+.insp-objid-row.focused {
+    background-color: #4a4a4a;
+}
+
+/* The id that is currently selected/shown, marked so it stands out in the
+ * list even before the pointer reaches it. */
+.insp-objid-row.current {
+    color: #9fd0a0;
+    font-weight: 600;
 }
 
 /* --- Popover dropdown --- */

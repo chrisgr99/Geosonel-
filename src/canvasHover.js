@@ -30,6 +30,23 @@ export const hoverMethods = {
     },
 
     /**
+     * Brighten an object as a preview WITHOUT selecting it, driven by the
+     * inspector's Object ID picker (hovering an id row). Pass {kind, id} to
+     * highlight, or null to clear. Independent of the pointer hover, so the
+     * outline shows even though the cursor is off the canvas (in the menu).
+     * @param {{kind: "sprite"|"trigger"|"curve", id: string} | null} target
+     */
+    setPreviewHighlight(target) {
+        const cur = this._previewHighlight;
+        const same = (target === null && cur === null)
+            || (target !== null && cur !== null
+                && target.kind === cur.kind && target.id === cur.id);
+        if (same) return;
+        this._previewHighlight = target;
+        this.scheduleDraw();
+    },
+
+    /**
      * Push the current committed hover target (_hover) to the inspector
      * hover-preview callback, as an index-based selection ({sprites,
      * triggers, curves}) or null when nothing is hovered. Deduped by a
@@ -75,9 +92,16 @@ export const hoverMethods = {
      * @returns {boolean}
      */
     _isHovered(kind, obj) {
+        if (obj === null || typeof obj !== "object") return false;
+        // Inspector Object ID picker preview-highlight, independent of the
+        // pointer hover (the cursor is in the menu, off the canvas).
+        if (this._previewHighlight !== null
+            && this._previewHighlight.kind === kind
+            && obj.id === this._previewHighlight.id) {
+            return true;
+        }
         if (this._hover === null) return false;
         if (this._hover.kind !== kind) return false;
-        if (obj === null || typeof obj !== "object") return false;
         return obj.id === this._hover.id;
     },
 

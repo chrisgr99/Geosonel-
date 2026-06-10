@@ -156,6 +156,16 @@ export class Inspector {
          * @type {((edit: any) => void) | null}
          */
         this._editCallback = null;
+        /**
+         * Object ID picker callbacks (wired by main.js). _selectObject
+         * requests a single-object selection by (kind, index);
+         * _previewHighlight brightens an object on the canvas without
+         * selecting it (as the pointer moves over an id row).
+         * @type {((kind: "sprite"|"trigger"|"curve", index: number) => void) | null}
+         */
+        this._selectObjectCallback = null;
+        /** @type {((target: { kind: "sprite"|"trigger"|"curve", id: string } | null) => void) | null} */
+        this._previewHighlightCallback = null;
         this._render();
     }
 
@@ -169,6 +179,46 @@ export class Inspector {
      */
     setEditCallback(callback) {
         this._editCallback = callback;
+    }
+
+    /**
+     * Wire the Object ID picker. selectObject(kind, index) requests a
+     * single-object selection; previewHighlight(target) brightens an
+     * object on the canvas without selecting it. main.js installs both.
+     * @param {(kind: "sprite"|"trigger"|"curve", index: number) => void} selectObject
+     * @param {(target: { kind: "sprite"|"trigger"|"curve", id: string } | null) => void} previewHighlight
+     */
+    setObjectPickerHandlers(selectObject, previewHighlight) {
+        this._selectObjectCallback = selectObject;
+        this._previewHighlightCallback = previewHighlight;
+    }
+
+    /**
+     * Every object in the scene as {id, kind, index}, in scene order —
+     * the Object ID picker's list. Curves come FIRST: they're by far the
+     * most likely object to be picked this way, so they head the list;
+     * sprites then triggers follow.
+     * @returns {Array<{ id: string, kind: "sprite"|"trigger"|"curve", index: number }>}
+     */
+    _allSceneObjects() {
+        /** @type {Array<{ id: string, kind: "sprite"|"trigger"|"curve", index: number }>} */
+        const out = [];
+        const scene = this._scene;
+        if (scene === null) return out;
+        /** @type {Array<["sprite"|"trigger"|"curve", any[]]>} */
+        const groups = [
+            ["curve", scene.curves],
+            ["sprite", scene.sprites],
+            ["trigger", scene.triggers],
+        ];
+        for (const [kind, arr] of groups) {
+            if (!Array.isArray(arr)) continue;
+            for (let i = 0; i < arr.length; i++) {
+                const id = arr[i] && typeof arr[i].id === "string" ? arr[i].id : null;
+                if (id !== null) out.push({ id, kind, index: i });
+            }
+        }
+        return out;
     }
 
     /**
@@ -321,6 +371,13 @@ export class Inspector {
     _render() {
         this.container.innerHTML = "";
 
+        // A rebuild destroys the Object ID picker's trigger (and orphans
+        // any open popup), so clear any in-flight preview highlight it set
+        // — otherwise a brightened object could linger on the canvas.
+        if (this._previewHighlightCallback !== null) {
+            this._previewHighlightCallback(null);
+        }
+
         // The form is always rendered, even when nothing is
         // selected. Empty-selection state shows every band
         // with all fields greyed and a "No selection" handle
@@ -350,15 +407,21 @@ export class Inspector {
         // bottom. Each lower band carries its own titled-divider header
         // (── TITLE ───────); Mutability sits above the per-object Voice
         // band, which is empty under MIDI.
+        // Identity band is ALWAYS shown — even with nothing selected — so
+        // its Object ID picker stays available as a "jump to object"
+        // control. Its other fields grey when nothing is selected. It sits
+        // OUTSIDE the fading wrapper, so it persists while the rest of the
+        // per-object section fades.
+        panel.appendChild(this._buildBandIdentity(ctx));
+
         if (ctx.total > 0) {
-            // Per-object bands live in one wrapper so the whole section
-            // can fade out as a unit on hover-preview hide. It renders at
-            // full opacity (instant appearance); only the JS-driven
-            // fade-to-0 (setHoverPreview) animates, via the .insp-perobject
-            // opacity transition.
+            // The remaining per-object bands live in one wrapper so the
+            // whole section can fade out as a unit on hover-preview hide.
+            // It renders at full opacity (instant appearance); only the
+            // JS-driven fade-to-0 (setHoverPreview) animates, via the
+            // .insp-perobject opacity transition.
             const perObj = document.createElement("div");
             perObj.className = "insp-perobject";
-            perObj.appendChild(this._buildBandIdentity(ctx));
             perObj.appendChild(this._buildBandGeometry(ctx));
             perObj.appendChild(this._buildBandCallbackSlots(ctx));
             perObj.appendChild(this._buildBandBeatPoints(ctx));

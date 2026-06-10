@@ -23,6 +23,7 @@ import {
     mkLabel,
     mkRow,
 } from "./inspectorWidgets.js";
+import { buildObjectIdPicker } from "./inspectorObjectPicker.js";
 export const bandObjectMethods = {
 
     /**
@@ -105,9 +106,16 @@ export const bandObjectMethods = {
         const band = document.createElement("div");
         band.className = "insp-band";
 
-        const objs = selectedObjects(this._scene, this._selection);
-        const idEditable = ctx.isSingle;
+        const objs = selectedObjects(this._scene, this._activeSelection);
         const togglesEnabled = ctx.total > 0;
+
+        // Object ID picker: a "jump to object" dropdown listing every
+        // object's id, active whenever the scene holds any object — even
+        // with nothing selected (it's how you pick a first object from the
+        // inspector). Picking an id single-selects that object; hovering an
+        // id row brightens that object on the canvas as a preview.
+        const allObjects = this._allSceneObjects();
+        const pickerEnabled = allObjects.length > 0;
 
         // ID comes from the single selected object on
         // single-select. On multi-select the field is greyed
@@ -146,12 +154,23 @@ export const bandObjectMethods = {
             ];
 
         const r1 = mkRow();
-        r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !idEditable }));
-        r1.appendChild(mkField({
-            value: idValue,
-            style: idEditable ? "locked" : "",
-            disabled: !idEditable,
+        r1.appendChild(mkLabel("Object ID", { width: W.leftLabel, disabled: !pickerEnabled }));
+        r1.appendChild(buildObjectIdPicker({
+            objects: allObjects,
+            currentId: idValue,
+            placeholder: "(none)",
+            enabled: pickerEnabled,
             width: W.idField,
+            onSelect: (kind, index) => {
+                if (this._selectObjectCallback !== null) {
+                    this._selectObjectCallback(kind, index);
+                }
+            },
+            onHighlight: (target) => {
+                if (this._previewHighlightCallback !== null) {
+                    this._previewHighlightCallback(target);
+                }
+            },
         }));
         // State control: a horizontal radio group on the SAME
         // row as Object ID, to the right of the id field with a
@@ -356,7 +375,7 @@ export const bandObjectMethods = {
         // Color row's mixed-selection shape.
         const velocityActive = ctx.hasSprites || ctx.hasCurves;
 
-        const objs = selectedObjects(this._scene, this._selection);
+        const objs = selectedObjects(this._scene, this._activeSelection);
 
         // Starting State row. X and Y read from sprite/trigger
         // x,y and from curve bbox centroid; vX and vY read
@@ -645,7 +664,7 @@ export const bandObjectMethods = {
         band.className = "insp-band";
         band.appendChild(mkBandHeader("Mutability"));
 
-        const objs = selectedObjects(this._scene, this._selection);
+        const objs = selectedObjects(this._scene, this._activeSelection);
         const mutabilityActive = ctx.total > 0;
         const variabilityAgg = aggregateString(objs.all, "variability");
         const mutatePositionAgg = aggregateString(objs.all, "mutatePosition");

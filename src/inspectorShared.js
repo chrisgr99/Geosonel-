@@ -6,7 +6,10 @@ export const W = {
     leftLabel: 78,
 
     // ID field — short generated identifier (e.g. "sp_a3f7").
-    idField: 66,
+    // Object ID picker (custom dropdown). A touch wider than the bare id
+    // text needed since the picker carries a chevron and an empty-state
+    // placeholder.
+    idField: 84,
 
     // Inline labels next to the row's leftmost field group,
     // sized to the shortest text that fits at 10pt.

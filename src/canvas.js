@@ -676,6 +676,15 @@ export class Canvas {
          * @type {(() => void) | null}
          */
         this._hoverMotionCallback = null;
+        /**
+         * Preview-highlight target driven by the inspector's Object ID
+         * picker: {kind, id} of an object to brighten WITHOUT selecting it
+         * (so the user sees which object an id row refers to while the menu
+         * is open), or null. Brightened via _isHovered alongside the
+         * pointer hover. Set through setPreviewHighlight.
+         * @type {{kind: "sprite"|"trigger"|"curve", id: string} | null}
+         */
+        this._previewHighlight = null;
 
         /**
          * Identification tooltip's DOM element, created
