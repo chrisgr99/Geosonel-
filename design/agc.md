@@ -1,63 +1,74 @@
-# AGC — automatic gain control for image colour signals
+# Image signal stretching (baked gain)
 
-## Purpose
+Supersedes the runtime `agc()` design. The idea: instead of computing a gain at
+call time, **bake a per-pixel stretched colour array when an image loads**, so
+the ten `this.col.*` behaviour signals are already stretched to fill their range.
+A script just reads `this.col.r` (≈0..1) — no per-call gain needed.
 
-A script reads image colour at the firing point via `this.col.<chan>` (the ten
-perceptual signals `lt, chr, r, g, y, b, or, li, cy, pu`). For a given image,
-most channels occupy only a sliver of `[0,1]` (e.g. `col.r` in `[0, 0.15]`), so
-a naive `map(this.col.r, 0, 1, lo, hi)` barely moves. AGC removes the need to
-know the bounds: it auto-fits the input range so any channel can be stretched to
-a chosen output range.
+## What is stretched, and why in a/b space (not angular hue)
 
-## API
+The precomputed image buffer (`buildOKLChBuffer`, src/strudel/oklch.js) stores
+**L, C, a, b** per pixel, and the comment there is explicit: the angular hue `h`
+is *intentionally not used* — the system works in the **Cartesian a/b opponent
+axes** to avoid the hue-wraparound discontinuity. The ten signals
+(src/strudel/signals.js) are: `pxLt = L`; `pxChr = hypot(a,b)/N`; the primaries
+`pxR/G/Y/B = max(0,±a or ±b)/N`; the diagonals `pxOr/Li/Cy/Pu` = 45° projections
+of (a,b)/N — all over `PRIMARY_NORMALIZER N ≈ 0.3`.
 
-```js
-note = agc("col.r", 48, 90);   // current col.r, mapped from its image range to [48,90]
-x    = agc("col.r");           // lo/hi default to 0..1
-```
+So "stretch hue" is realised by **stretching the a and b axes**, not by rotating
+an angle. This is simpler (linear, no circular range-finding), aligns with the
+architecture, and — critically — handles the low-chroma-noise problem naturally:
+a near-grey pixel has tiny (a,b); a *bounded* linear stretch keeps it tiny, so it
+never injects hue noise. Angular stretching would have amplified the meaningless
+hue of grey pixels; a/b stretching does not.
 
-- First arg: the colour channel name (`"col.r"`, `"col.lt"`, …; bare `"r"` also
-  accepted).
-- `lo`, `hi`: output range; default `0`/`1`.
-- Returns the **current callback's** `col[chan]` value (the firing or collision
-  point) mapped from the channel's whole-image range to `[lo, hi]`, clamped.
-- Bare form (no `this.`): the **range is object-independent** (whole image), so
-  there is no "which object/path" to resolve — only the value comes from the
-  ambient callback context, exactly like bare `playNote`. Works in any callback
-  that has a `col` (onActiveBeat, onTick, hasCollided, beenTriggered).
+## The stretch (computed once per image, deterministic)
 
-## Range source
+From a fixed-stride subsample (≤10k px) of the raw OKLCh buffer:
 
-The whole background image, per channel, with **extremes trimmed**: sort the
-channel's pixel values, take the 5th–95th percentile as `[min, max]` so a few
-outlier pixels (specular highlights, black specks) cannot blow the gain out and
-crush the majority into a sliver. Values outside the band clamp to `lo`/`hi`.
+- **L (lightness)** — linear percentile. Take the 5th–95th percentile
+  `[Llo, Lhi]`; `L' = clamp((L − Llo)/(Lhi − Llo), 0, 1)`. Always gives lightness
+  range (works even on a grey image).
+- **a, b (chromatic axes)** — independent, symmetric, **gain-capped** per axis:
+  - `gainA = min(GAIN_CAP, N / p95(|a|))`, `a' = a · gainA` (then the signal layer
+    clamps to ±N as today). Same for `b'` with `p95(|b|)`.
+  - Scaling about 0 (not min→max) keeps the axis balanced — no hue-shifting the
+    whole image. Independent gains for a and b deform the (a,b) cloud, which
+    **spreads hue** as well as boosting chroma.
+  - **`GAIN_CAP` is the chroma weighting.** A colourful image has `p95(|a|) ≈ N`,
+    so gain ≈ 1 (no over-stretch). A near-grey image has tiny `p95(|a|)`, which
+    would call for a huge gain — the cap holds it down, so grey stays grey
+    (quiet chroma signals) instead of amplifying noise. You can't manufacture
+    colour range from an image that has none; lightness still carries range.
 
-Flat-channel guard: if trimmed `max ≈ min`, return the midpoint of `[lo, hi]`
-(no divide-by-zero).
+`pxChr` falls out of the stretched `hypot(a',b')` automatically; no separate C
+stretch. Constants (`AGC_LOW_PCT`, `AGC_HIGH_PCT`, `GAIN_CAP`, subsample stride)
+are fixed module constants — no clock, no random ⇒ identical on every rerun, and
+the colour→note mapping is frozen before the first note.
 
-## Determinism (hard requirement)
+## Outputs
 
-- Computed **once** from the static image (a pure function of pixels + the fixed
-  percentile cut), cached, recomputed only when the image itself changes.
-- **No running/adaptive component.** The gain is fixed before any note plays and
-  for the whole run, so: identical on every rerun, and a fixed mapping (the same
-  colour always yields the same note, start to finish — no mid-phrase drift,
-  no learning period).
+- **`this.col.*`** — derived from the stretched (L', a', b') via the SAME
+  `imageSignalsFromOKLCh → colFromSignals` path, so the ten signals come out
+  pre-stretched and mutually consistent.
+- **Object colour under the cursor** — stretched (L', a', b') → sRGB,
+  gamut-clamped: a vivid, hue-spread "intense" version. Object tint only.
+- **Background** — drawn from the RAW image bitmap, never stretched (the canvas
+  already renders the bitmap, not the sample buffer). The raw OKLCh buffer is
+  retained as well, for any future true-colour need.
 
-## Deferred: curve-path AGC (`this.fitPath`)
+## `agc()` becomes thin sugar
 
-If the global image range is too loose for a curve sitting in a calm region of a
-busy image, add a per-curve variant later:
+With pre-stretched signals, `agc("col.r", lo, hi)` is just
+`lo + this.col.r·(hi−lo)`. Keep `agc` as a convenience (channel parse + map a
+pre-stretched 0..1 value, same midpoint guards) so existing scripts keep working,
+but remove its runtime range computation — the percentile/stretch logic now lives
+in the image bake.
 
-- Sample **all** the curve's beat points (active AND inactive — so future
-  active-beat mutation cannot shift the gain) against the image.
-- **Re-sample at the start of every cycle**, because a curve can have velocity /
-  bounce off canvas edges — its position each cycle is deterministic, so the
-  per-cycle range is deterministic. Fixed within a cycle, updated only at clean
-  cycle boundaries → still not a running AGC.
-- Object-bound, so written `this.fitPath("col.r", lo, hi)` — `this` names the
-  curve whose path is meant. (For onTick, a dense whole-path snapshot instead of
-  just beat points.)
+## Storage / determinism / deferred
 
-Build order: `agc` (whole-image) first; `fitPath` only if precision demands it.
+- Two sample buffers per image: raw (display/true-colour) + stretched (signals +
+  object tint). Standard size bounds memory.
+- Recompute only when the image changes (cache key = the raw buffer reference).
+- **Deferred, unchanged:** per-curve / per-cycle stretch for moving curves
+  (`this.fitPath`). The bake is whole-image only.

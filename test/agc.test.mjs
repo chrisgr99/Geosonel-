@@ -1,17 +1,19 @@
 // Unit tests for the agc (automatic gain control) pure helpers —
-// design/agc.md. agc maps a firing context's col[channel] from that
-// channel's whole-image trimmed range to a chosen output range. The
-// channel-name parse, the 5th–95th percentile range, and the
-// map+clamp+midpoint guard are CDN/canvas-free pure functions, so they
-// run under `node --test`. The repo root is CommonJS by default, so this
-// file is .mjs to load as ESM.
+// design/agc.md. agc is now thin sugar: the per-pixel signal stretch
+// is baked at image load (see test/imageStretch.test.mjs), and agc maps
+// the already-0..1 col[channel] to a chosen output range. The
+// channel-name parse and the map+clamp+midpoint guard are the
+// CDN/canvas-free pure functions that remain in simulation.js, so they
+// run under `node --test`. The old runtime range-computation tests
+// (agcPercentileRange over the live buffer) moved to the bake's tests.
+// The repo root is CommonJS by default, so this file is .mjs to load as
+// ESM.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
     parseAgcChannel,
-    agcPercentileRange,
     agcMapClamp,
 } from "../src/simulation.js";
 
@@ -42,38 +44,6 @@ test("parseAgcChannel: unknown channel / non-string → null", () => {
     assert.equal(parseAgcChannel(42), null);
     assert.equal(parseAgcChannel(null), null);
     assert.equal(parseAgcChannel(undefined), null);
-});
-
-test("agcPercentileRange: trims extremes (5th–95th percentile by index)", () => {
-    // 0..100 inclusive, 101 values. loIdx = floor(0.05*100)=5,
-    // hiIdx = ceil(0.95*100)=95 → values 5 and 95.
-    const values = [];
-    for (let i = 0; i <= 100; i++) values.push(i);
-    const r = agcPercentileRange(values);
-    assert.deepEqual(r, { min: 5, max: 95 });
-});
-
-test("agcPercentileRange: a lone outlier high pixel does not blow the max", () => {
-    // 99 values clustered in [0, 0.1], one specular 1.0 outlier. The 95th
-    // percentile must stay in the cluster, not jump to the outlier.
-    const values = [];
-    for (let i = 0; i < 99; i++) values.push((i / 98) * 0.1);
-    values.push(1.0);
-    const r = agcPercentileRange(values);
-    assert.ok(r !== null);
-    assert.ok(r.max < 0.2, `trimmed max ${r.max} should ignore the 1.0 outlier`);
-});
-
-test("agcPercentileRange: sorts unsorted input deterministically", () => {
-    const a = agcPercentileRange([100, 0, 50, 25, 75, 10, 90, 40, 60, 5, 95]);
-    const b = agcPercentileRange([5, 95, 0, 100, 50, 25, 75, 10, 90, 40, 60]);
-    assert.deepEqual(a, b);
-});
-
-test("agcPercentileRange: empty / non-array → null", () => {
-    assert.equal(agcPercentileRange([]), null);
-    assert.equal(agcPercentileRange(null), null);
-    assert.equal(agcPercentileRange(undefined), null);
 });
 
 test("agcMapClamp: maps the range to [lo, hi] linearly", () => {
@@ -120,4 +90,48 @@ test("agcMapClamp: tolerates lo > hi (clamps to the actual extremes)", () => {
     // bound's side correctly (clamp uses min/max of lo,hi).
     const out = agcMapClamp(-1, range, 90, 48);
     assert.ok(out >= 48 && out <= 90);
+});
+
+// _agc is now thin sugar: with the col signal pre-stretched to 0..1,
+// agc(channel, lo, hi) is agcMapClamp(value, {min:0, max:1}, lo, hi)
+// after a parseAgcChannel guard. These tests exercise that composition
+// directly (the private _agc method itself wires the firing context,
+// which needs the canvas; the pure pieces are what we cover here).
+
+/** Mirror of _agc's body over the two exported pure helpers. */
+function agcSugar(col, channel, lo, hi) {
+    const loNum = Number.isFinite(lo) ? lo : 0;
+    const hiNum = Number.isFinite(hi) ? hi : 1;
+    const key = parseAgcChannel(channel);
+    if (key === null) return (loNum + hiNum) / 2;
+    const value = (col !== null && typeof col === "object") ? col[key] : undefined;
+    return agcMapClamp(value, { min: 0, max: 1 }, loNum, hiNum);
+}
+
+test("_agc sugar: pre-stretched 0..1 value maps linearly onto [lo, hi]", () => {
+    // value at 0 → lo, at 1 → hi, halfway → midpoint. The image bake
+    // already stretched the channel to fill 0..1, so the input range is
+    // the fixed {0, 1}.
+    assert.equal(agcSugar({ r: 0 }, "col.r", 48, 90), 48);
+    assert.equal(agcSugar({ r: 1 }, "col.r", 48, 90), 90);
+    assert.equal(agcSugar({ r: 0.5 }, "col.r", 48, 90), 69);
+    // Bare channel name works the same as the "col." form.
+    assert.equal(agcSugar({ lt: 0.25 }, "lt", 0, 1), 0.25);
+});
+
+test("_agc sugar: a value already outside 0..1 clamps to lo / hi", () => {
+    assert.equal(agcSugar({ r: 1.5 }, "col.r", 0, 10), 10);
+    assert.equal(agcSugar({ r: -0.2 }, "col.r", 0, 10), 0);
+});
+
+test("_agc sugar: unknown channel → output midpoint", () => {
+    assert.equal(agcSugar({ r: 0.9 }, "col.zzz", 48, 90), 69);
+    assert.equal(agcSugar({ r: 0.9 }, "nope", 0, 1), 0.5);
+});
+
+test("_agc sugar: missing col value (undefined) → midpoint (non-finite guard)", () => {
+    // A valid channel but no value present (e.g. no image / no firing
+    // context col) is non-finite → agcMapClamp returns the midpoint.
+    assert.equal(agcSugar({}, "col.r", 48, 90), 69);
+    assert.equal(agcSugar(null, "col.r", 0, 1), 0.5);
 });

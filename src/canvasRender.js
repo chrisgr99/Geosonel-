@@ -6,6 +6,7 @@ import { applyBrightnessReduction } from "./imageTransform.js";
 import { getPreference } from "./preferences.js";
 import { deriveCurveBeatPoints } from "./beatPoints.js";
 import { buildOKLChBuffer } from "./strudel/oklch.js";
+import { computeStretchParams, applyStretch } from "./strudel/imageStretch.js";
 import { sampleCurve, splineToPolyline } from "./curveGeometry.js";
 
 /**
@@ -47,6 +48,7 @@ export const renderMethods = {
             this._imageBitmap = null;
             this._imagePixels = null;
             this._imageOKLCh = null;
+            this._imageOKLChStretched = null;
             this.scheduleDraw();
             return;
         }
@@ -80,6 +82,19 @@ export const renderMethods = {
             this._imageOKLCh = this._imagePixels === null
                 ? null
                 : buildOKLChBuffer(this._imagePixels);
+            // Bake the per-pixel signal stretch (design/agc.md). The
+            // stretch params (L percentile + a/b gain-capped scale)
+            // are computed once from the raw buffer, then applied to
+            // produce the stretched buffer the signal sampler reads.
+            // Keeping BOTH buffers: raw for any true-colour need,
+            // stretched for the pre-stretched this.col.* signals. Null
+            // whenever the raw buffer is null.
+            this._imageOKLChStretched = this._imageOKLCh === null
+                ? null
+                : applyStretch(
+                    this._imageOKLCh,
+                    computeStretchParams(this._imageOKLCh),
+                );
             // Compute the displayed bitmap. _recomputeDisplayBitmap
             // looks at the bypass preference and either uses
             // the original directly or runs the transform with
@@ -92,6 +107,7 @@ export const renderMethods = {
             this._imageBitmap = null;
             this._imagePixels = null;
             this._imageOKLCh = null;
+            this._imageOKLChStretched = null;
             this.scheduleDraw();
         }
     },

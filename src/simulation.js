@@ -320,26 +320,27 @@ function colFromSignals(px) {
 
 // ── agc (automatic gain control) — see design/agc.md ──────────────────
 //
-// The pure pieces are kept CDN/canvas-free so they unit-test under
-// `node --test` (test/agc.test.mjs). The simulation method _agc wires
-// them to the live canvas image and the firing context's col snapshot.
+// agc() is now thin sugar over the PRE-STRETCHED col signals: the
+// image bake (src/strudel/imageStretch.js, wired in canvasRender.js)
+// stretches each signal to fill 0..1 once at image load, so agc just
+// maps that already-0..1 value to [lo, hi]. The runtime range
+// computation that used to live here (computeAgcRanges /
+// _agcChannelRange / the _agcRanges cache) moved into the image bake.
+// The remaining pure pieces (parseAgcChannel, agcMapClamp) stay
+// CDN/canvas-free so they unit-test under `node --test`
+// (test/agc.test.mjs).
 
 /** The ten col-signal keys agc accepts (after stripping a "col." prefix). */
 const AGC_COL_KEYS = new Set([
     "lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu",
 ]);
 
-/** Upper bound on the number of pixels sampled when computing a range. */
-const AGC_MAX_SAMPLES = 10000;
-
-/** Percentile cut (5th–95th) that trims extremes from a channel's range. */
-const AGC_LOW_PCT = 0.05;
-const AGC_HIGH_PCT = 0.95;
-
 /**
- * Flatness epsilon: a trimmed range narrower than this is treated as a
- * flat channel (max ≈ min) and agc returns the output midpoint rather
- * than dividing by a near-zero span.
+ * Flatness epsilon: a range narrower than this is treated as flat
+ * (max ≈ min) and agc returns the output midpoint rather than dividing
+ * by a near-zero span. With the pre-stretched signal the input range
+ * is the fixed {min:0, max:1}, so this guard only fires for a
+ * degenerate caller-supplied range.
  */
 const AGC_FLAT_EPSILON = 1e-6;
 
@@ -358,24 +359,6 @@ export function parseAgcChannel(channel) {
     if (/^col\./i.test(key)) key = key.slice(4);
     key = key.trim();
     return AGC_COL_KEYS.has(key) ? key : null;
-}
-
-/**
- * Compute a channel's trimmed [min, max] from an array of sampled
- * values: sort ascending and take the 5th and 95th percentile by index
- * so a few outlier pixels cannot blow the gain out. Deterministic (a
- * pure function of the values, no clock/randomness). An empty input
- * yields null.
- * @param {number[]} values
- * @returns {{min: number, max: number} | null}
- */
-export function agcPercentileRange(values) {
-    if (!Array.isArray(values) || values.length === 0) return null;
-    const sorted = values.slice().sort((a, b) => a - b);
-    const n = sorted.length;
-    const loIdx = Math.min(n - 1, Math.max(0, Math.floor(AGC_LOW_PCT * (n - 1))));
-    const hiIdx = Math.min(n - 1, Math.max(0, Math.ceil(AGC_HIGH_PCT * (n - 1))));
-    return { min: sorted[loIdx], max: sorted[hiIdx] };
 }
 
 /**
@@ -405,57 +388,6 @@ export function agcMapClamp(value, range, lo, hi) {
     return out;
 }
 
-/**
- * Compute every col channel's whole-image trimmed [min, max] from an
- * OKLCh image view { data, width, height } where `data` is flat
- * (idx = (py*w + px)*4 → L, C, a, b). Deterministic: a fixed stride
- * (derived from the pixel count) subsamples at most AGC_MAX_SAMPLES
- * pixels, each run through the SAME imageSignalsFromOKLCh →
- * colFromSignals pipeline the firing reads use, then each channel's
- * collected values are reduced to the 5th–95th percentile. No clock, no
- * randomness — the same image yields the same Map every run. Returns a
- * Map keyed by col-signal name. Channels with no usable samples are
- * absent (the caller treats absence as "no range" → midpoint).
- * @param {{data: ArrayLike<number>, width: number, height: number}} img
- * @returns {Map<string, {min: number, max: number}>}
- */
-function computeAgcRanges(img) {
-    const { data, width, height } = img;
-    const ranges = new Map();
-    const pixelCount = (typeof width === "number" && typeof height === "number")
-        ? width * height
-        : Math.floor((data.length || 0) / 4);
-    if (!(pixelCount > 0)) return ranges;
-    // Deterministic fixed stride: every `stride`-th pixel, so at most
-    // ~AGC_MAX_SAMPLES samples regardless of image size.
-    const stride = Math.max(1, Math.ceil(pixelCount / AGC_MAX_SAMPLES));
-    /** @type {Record<string, number[]>} */
-    const buckets = {
-        lt: [], chr: [], r: [], g: [], y: [], b: [],
-        or: [], li: [], cy: [], pu: [],
-    };
-    for (let p = 0; p < pixelCount; p += stride) {
-        const idx = p * 4;
-        const oklch = {
-            L: data[idx],
-            C: data[idx + 1],
-            a: data[idx + 2],
-            b: data[idx + 3],
-        };
-        if (!Number.isFinite(oklch.L)) continue;
-        const c = colFromSignals(imageSignalsFromOKLCh(oklch));
-        buckets.lt.push(c.lt); buckets.chr.push(c.chr);
-        buckets.r.push(c.r); buckets.g.push(c.g);
-        buckets.y.push(c.y); buckets.b.push(c.b);
-        buckets.or.push(c.or); buckets.li.push(c.li);
-        buckets.cy.push(c.cy); buckets.pu.push(c.pu);
-    }
-    for (const k of Object.keys(buckets)) {
-        const range = agcPercentileRange(buckets[k]);
-        if (range !== null) ranges.set(k, range);
-    }
-    return ranges;
-}
 
 /**
  * Parse a CSS hex colour ("#rgb", "#rrggbb", with or without the
@@ -1347,17 +1279,6 @@ export class Simulation {
          */
         this._lastCallbackContexts = new Map();
         /**
-         * agc (automatic gain control) cache. _agcRanges holds the
-         * per-channel whole-image trimmed [min, max] ranges; _agcRangeKey
-         * is the OKLCh data reference they were computed from. Both reset
-         * to null so the first agc call (or a new image) recomputes. See
-         * _agcChannelRange and design/agc.md.
-         * @type {Map<string, {min: number, max: number}> | null}
-         */
-        this._agcRanges = null;
-        /** @type {ArrayLike<number> | null} */
-        this._agcRangeKey = null;
-        /**
          * Rolling trace of recent discrete musical events (onActiveBeat,
          * collision, beenTriggered) — each emitted note/sound plus the
          * firing context's colour signals and velocity. Read through the
@@ -2118,13 +2039,15 @@ export class Simulation {
     }
 
     /**
-     * Script-side automatic gain control (design/agc.md). Maps the
-     * CURRENT firing context's col[channel] from that channel's
-     * whole-image trimmed range to [lo, hi], clamped. Shared by every
+     * Script-side automatic gain control (design/agc.md). Now thin
+     * sugar over the PRE-STRETCHED col signals: the image bake
+     * (src/strudel/imageStretch.js) already stretched each col channel
+     * to fill 0..1 at image load, so agc just maps that already-0..1
+     * value from {min:0, max:1} to [lo, hi], clamped. Shared by every
      * callback context that carries a `col` (the per-context `agc`
-     * method forwards here). Guards — flat channel, unknown channel, or
-     * no image loaded — return the midpoint (lo + hi) / 2, never a
-     * divide-by-zero.
+     * method forwards here). Guards — unknown channel or a non-finite
+     * value — return the midpoint (lo + hi) / 2, the same no-op-style
+     * fallback the runtime-range version used.
      * @param {any} col   The firing context's col snapshot (this.col).
      * @param {unknown} channel  "col.r" or bare "r" (a col-signal name).
      * @param {number} [lo=0]
@@ -2139,41 +2062,9 @@ export class Simulation {
         const value = (col !== null && typeof col === "object")
             ? col[key]
             : undefined;
-        const range = this._agcChannelRange(key);
-        return agcMapClamp(value, range, loNum, hiNum);
-    }
-
-    /**
-     * The whole-image trimmed [min, max] for one col channel, computed
-     * once per image and cached. Iterates the canvas OKLCh buffer
-     * (deterministic fixed-stride subsample, ≤ AGC_MAX_SAMPLES samples),
-     * runs each pixel through imageSignalsFromOKLCh → colFromSignals so
-     * the gain uses the exact same colour math as the firing reads, and
-     * takes the 5th–95th percentile. The cache is keyed on the OKLCh
-     * data reference, so a new image (different reference) recomputes
-     * and the same image always yields the same ranges (no clock, no
-     * randomness — the app requires deterministic reruns). Returns null
-     * when there is no image, which agcMapClamp maps to the midpoint.
-     * @param {string} key  A validated bare col-signal key.
-     * @returns {{min: number, max: number} | null}
-     */
-    _agcChannelRange(key) {
-        const img = (this._canvas !== null
-            && typeof this._canvas.imageOKLChData === "function")
-            ? this._canvas.imageOKLChData()
-            : null;
-        if (img === null || img.data === null || img.data === undefined) {
-            this._agcRanges = null;
-            this._agcRangeKey = null;
-            return null;
-        }
-        // Recompute only when the image (its OKLCh buffer) changed.
-        if (this._agcRanges === null || this._agcRangeKey !== img.data) {
-            this._agcRanges = computeAgcRanges(img);
-            this._agcRangeKey = img.data;
-        }
-        const range = this._agcRanges.get(key);
-        return range === undefined ? null : range;
+        // The signal is pre-stretched to 0..1, so the input range is
+        // fixed; agcMapClamp handles the non-finite-value midpoint guard.
+        return agcMapClamp(value, { min: 0, max: 1 }, loNum, hiNum);
     }
 
     /**

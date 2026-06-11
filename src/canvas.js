@@ -218,6 +218,19 @@ export class Canvas {
         this._imageOKLCh = null;
 
         /**
+         * The STRETCHED OKLCh buffer (same L, C, a, b Float32 layout
+         * as _imageOKLCh), computed once per image by applyStretch
+         * from the raw _imageOKLCh and the per-image stretch params
+         * (design/agc.md, src/strudel/imageStretch.js). The signal
+         * sampler sampleImageOKLCh reads from THIS buffer so the ten
+         * this.col.* signals are pre-stretched; the raw _imageOKLCh is
+         * retained alongside for any future true-colour need. Null
+         * whenever _imageOKLCh is null (no image, or the build failed).
+         * @type {Float32Array | null}
+         */
+        this._imageOKLChStretched = null;
+
+        /**
          * Per-score display brightness, 0–100. Applied as
          * a multiplicative globalAlpha at draw time inside
          * _drawImage so the rendered image fades toward the

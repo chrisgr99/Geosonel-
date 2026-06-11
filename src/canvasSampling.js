@@ -62,12 +62,22 @@ export const samplingMethods = {
         return `rgb(${data[idx]}, ${data[idx + 1]}, ${data[idx + 2]})`;
     },
     /**
-     * Sample the precomputed OKLCh values at canvas position
-     * (x, y). Returns a {L, C, a, b} object, or null when the
-     * position is outside the canvas region or no image is
-     * loaded. Used by the firing engine's snapshot capture
-     * for dynamic image-colour signals (Phase 4) such as
-     * pxLt.
+     * Sample the precomputed STRETCHED OKLCh values at canvas
+     * position (x, y). Returns a {L, C, a, b} object, or null
+     * when the position is outside the canvas region or no
+     * image is loaded. Used by the firing engine's snapshot
+     * capture for dynamic image-colour signals such as pxLt
+     * and by the simulation's onTick context for this.col.*.
+     *
+     * Reads from the STRETCHED buffer (_imageOKLChStretched,
+     * design/agc.md) so the ten this.col.* signals are
+     * pre-stretched — the L percentile and a/b gain-capped
+     * scale are baked at image-load time, so agc() is now just
+     * thin sugar mapping the already-0..1 signal to [lo, hi].
+     * The raw buffer (_imageOKLCh) is retained on the canvas
+     * for any future true-colour need; sample it through
+     * sampleImageOKLChRaw if a consumer genuinely wants the
+     * unstretched value.
      *
      * Mirrors _sampleImageAt's coordinate mapping (canvas
      * coords to image-buffer coords via the scene's
@@ -87,7 +97,38 @@ export const samplingMethods = {
      * @returns {{L: number, C: number, a: number, b: number} | null}
      */
     sampleImageOKLCh(canvasX, canvasY) {
-        if (this._imageOKLCh === null) return null;
+        return this._sampleOKLChBuffer(this._imageOKLChStretched, canvasX, canvasY);
+    },
+    /**
+     * Sample the RAW (unstretched) OKLCh buffer at canvas
+     * position (x, y). Same coordinate mapping and return shape
+     * as sampleImageOKLCh, but reads the raw buffer so a
+     * consumer that needs true-colour OKLCh (e.g. a future
+     * object display-tint that converts back to sRGB) gets the
+     * unstretched value rather than the signal-stretched one.
+     * No current consumer; provided alongside the stretched
+     * sampler so the raw path is reachable without reaching
+     * into the canvas privates.
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {{L: number, C: number, a: number, b: number} | null}
+     */
+    sampleImageOKLChRaw(canvasX, canvasY) {
+        return this._sampleOKLChBuffer(this._imageOKLCh, canvasX, canvasY);
+    },
+    /**
+     * Shared coordinate-mapping read for the OKLCh samplers
+     * above. Maps canvas (x, y) into the given flat L,C,a,b
+     * Float buffer and returns the four channels, or null when
+     * the buffer is absent, no image is loaded, or the point is
+     * outside the canvas region.
+     * @param {ArrayLike<number> | null} buffer
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {{L: number, C: number, a: number, b: number} | null}
+     */
+    _sampleOKLChBuffer(buffer, canvasX, canvasY) {
+        if (buffer === null) return null;
         if (this._imagePixels === null) return null;
 
         const halfW = this._getCanvasW() / 2;
@@ -102,17 +143,20 @@ export const samplingMethods = {
         const py = Math.min(h - 1, Math.floor(v * h));
         const idx = (py * w + px) * 4;
         return {
-            L: this._imageOKLCh[idx],
-            C: this._imageOKLCh[idx + 1],
-            a: this._imageOKLCh[idx + 2],
-            b: this._imageOKLCh[idx + 3],
+            L: buffer[idx],
+            C: buffer[idx + 1],
+            a: buffer[idx + 2],
+            b: buffer[idx + 3],
         };
     },
     /**
-     * Expose the whole-image OKLCh buffer (and its dimensions) for
-     * code that needs to scan every pixel rather than sample one
-     * point — currently the script-side `agc` automatic gain control,
-     * which derives each colour channel's whole-image range. Returns a
+     * Expose the whole-image RAW (unstretched) OKLCh buffer (and its
+     * dimensions) for code that needs to scan every pixel rather than
+     * sample one point. The signal stretch is now baked at image load
+     * (the per-pixel bake reads the raw buffer directly in
+     * canvasRender.js, not through this accessor), so this is currently
+     * unused by agc — it is retained as the public surface for any
+     * future whole-image raw-OKLCh scan. Returns a
      * read-only-by-convention view: { data, width, height } where
      * `data` is the flat Float buffer (idx = (py*w + px)*4 → L, C, a, b),
      * or null when no image is loaded. Keeps the buffer's privates
