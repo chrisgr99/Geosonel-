@@ -1,0 +1,36 @@
+/* Right-click / popup context menu (src/contextMenu.js).
+ *
+ * showContextMenu() sets only left/top/visibility inline and
+ * relies on this file for `position: fixed` (without which the
+ * inline left/top are ignored and the menu lands in normal
+ * document flow, invisible) plus all visual styling. */
+
+.context-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 140px;
+    padding: 4px 0;
+    background-color: #1e1e1e;
+    border: 1px solid #777777;
+    border-radius: 4px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    font-family: -apple-system, "Helvetica Neue", "Segoe UI", sans-serif;
+    font-size: 11pt;
+    color: #d0d0d0;
+    user-select: none;
+}
+
+.context-menu-item {
+    padding: 4px 16px;
+    white-space: nowrap;
+    cursor: default;
+}
+
+.context-menu-item:not(.disabled):hover {
+    background-color: #3a6ea5;
+    color: #ffffff;
+}
+
+.context-menu-item.disabled {
+    color: #6a6a6a;
+}
