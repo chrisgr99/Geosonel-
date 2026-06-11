@@ -216,8 +216,9 @@ const muteBadgeDecoration = Decoration.widget({
  * @type {Array<{prefix: string, length: number}>}
  */
 const CALLBACK_PREFIXES = [
-    { prefix: "beenHit_", length: "beenHit_".length },
-    { prefix: "hasHit_", length: "hasHit_".length },
+    { prefix: "beenTriggered_", length: "beenTriggered_".length },
+    { prefix: "onActiveBeat_", length: "onActiveBeat_".length },
+    { prefix: "hasCollided_", length: "hasCollided_".length },
     { prefix: "onTick_", length: "onTick_".length },
 ];
 

@@ -164,7 +164,14 @@ function _collectIdsFromNode(node, scene, result) {
             for (const obj of arr) {
                 if (typeof obj.id !== "string") continue;
                 for (const slot of CALLBACK_FIELD_NAMES) {
-                    if (obj[slot] === fnName) {
+                    // Match the explicit binding (the field holds the
+                    // function name) OR the slotName_<id> convention
+                    // (blank field, resolved by the firing engine's
+                    // fallback) — e.g. onActiveBeat_CRV4 binds CRV4 even
+                    // when onActiveBeatFunction isn't set.
+                    const conventionName =
+                        slot.replace(/Function$/, "") + "_" + obj.id;
+                    if (obj[slot] === fnName || fnName === conventionName) {
                         result.add(obj.id);
                         break;
                     }
