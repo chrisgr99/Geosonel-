@@ -5,13 +5,13 @@
  * of the canvas pane. Following the top-row elimination, the
  * toolbar is the only chrome strip in the app (above the
  * canvas / editor split) and hosts every persistent control:
- * the Focus Canvas toggle at the far left, the object-
- * creation tool buttons (sprite, trigger, curve, line-
- * segment, spline), the Play Selected toggle, the transport
- * cluster (rewind, play, musical position readout, BPM
- * input), and the MIDI indicator at the far right. Item
- * ordering is fixed by the IN_FLIGHT spec; see that file
- * for the rationale.
+ * the Focus Canvas toggle at the far left, then the object-
+ * creation tool buttons (sprite, trigger, curve), the Play
+ * Selected toggle, the selection-filter toggles (sprite,
+ * trigger, curve), the transport cluster (rewind, play,
+ * musical position readout, BPM input), and the Audition
+ * toggle. Item ordering is fixed by the IN_FLIGHT spec; see
+ * that file for the rationale.
  *
  * Tool buttons. Each tool has three states: idle, armed
  * (one-shot — single placement, then back to idle), and
@@ -43,12 +43,8 @@
  *
  * The Canvas W and H fields that used to live in this strip have
  * migrated to the Canvas inspector tab per DESIGN.md Section
- * 13.5; the freed-up space is absorbed by the existing
- * toolbar-spacer. The MIDI indicator at the far right is
- * wired by main.js's wireMidiIndicator helper after the
- * toolbar is constructed; the helper finds the indicator
- * element by id, attaches the MIDISender event handlers,
- * and updates the label and the per-send flash class.
+ * 13.5; the toolbar's controls are left-aligned (no trailing
+ * spacer or MIDI indicator).
  *
  * Subscriptions exposed:
  *   - onChange: active tool name (or null for idle) plus
@@ -587,11 +583,16 @@ export class Toolbar {
             this.container.appendChild(this._buildToolButton(def));
         }
 
-        // Allow-select filter toggles, immediately after the
-        // creation tools and before Play Selected. Each is
-        // pressed (enabled) by default = its kind is
-        // selectable; release one to make selection ignore
-        // that kind.
+        // Spacer, then Play Selected — sits between the object-
+        // creation tools and the selection filters. Flipping it
+        // changes what plays, not what's on the canvas.
+        this.container.appendChild(this._buildGroupSeparator());
+        this.container.appendChild(this._buildPlaySelectedButton());
+
+        // Spacer, then the allow-select filter toggles. Each is
+        // pressed (enabled) by default = its kind is selectable;
+        // release one to make selection ignore that kind.
+        this.container.appendChild(this._buildGroupSeparator());
         this.container.appendChild(this._buildSelectFilterButton(
             "sprite",
             "Allow Selecting Sprites",
@@ -611,56 +612,20 @@ export class Toolbar {
             SELECT_FILTER_CURVE_ICON_SVG,
         ));
 
-        // Group separator between the creation-tool cluster and the
-        // playback controls. (Background-image import lives in the
-        // canvas tab and the File menu now — the old toolbar import
-        // button was removed.)
+        // Spacer between the selection filters and the transport.
         this.container.appendChild(this._buildGroupSeparator());
 
-        // Position 6: Play Selected toggle. Sits with the
-        // playback-related controls because flipping it
-        // changes what plays, not what's on the canvas.
-        this.container.appendChild(this._buildPlaySelectedButton());
-
-        // Group separator between the Play Selected toggle
-        // and the transport cluster. Play Selected is a
-        // "what plays" gate; the transport is "is it playing
-        // right now" — different enough activities that the
-        // eye benefits from reading them as distinct groups.
-        this.container.appendChild(this._buildGroupSeparator());
-
-        // Positions 7-10: transport cluster (rewind, play,
-        // musical-position readout, BPM input). Same element
-        // IDs as the previous top-row transport-controls
-        // section so TransportBarView's getElementById
-        // lookups continue to find them without code changes
-        // to that module.
+        // Transport cluster (rewind, play, musical-position readout,
+        // BPM input). Same element IDs as before so TransportBarView's
+        // getElementById lookups continue to find them.
         this.container.appendChild(this._buildTransportCluster());
 
         // Group separator before the audition toggle.
         this.container.appendChild(this._buildGroupSeparator());
 
-        // Audition toggle: shows/hides the floating audition bar
-        // over the canvas (which carries Vary/Again, the beats
-        // field, and the seed readout). Sits to the right of the
-        // transport controls, before the spacer pushes the MIDI
-        // indicator to the far edge.
+        // Audition toggle: shows/hides the floating audition bar over
+        // the canvas (Vary/Again, the beats field, the seed readout).
         this.container.appendChild(this._buildAuditionToggle());
-
-        // Position 11: flex spacer. Pushes the MIDI
-        // indicator to the right edge of the toolbar.
-        // Absorbs the space previously occupied by the
-        // Canvas W and H fields, which now live in the
-        // Canvas inspector tab per DESIGN.md Section 13.5.
-        const spacer = document.createElement("div");
-        spacer.className = "toolbar-spacer";
-        this.container.appendChild(spacer);
-
-        // Position 12: MIDI indicator at the far right.
-        // wireMidiIndicator in main.js attaches the
-        // MIDISender event handlers to this element after
-        // the toolbar is constructed.
-        this.container.appendChild(this._buildMidiIndicator());
 
         this._refreshButtons();
     }
@@ -933,24 +898,6 @@ export class Toolbar {
         cluster.appendChild(bpmGroup);
 
         return cluster;
-    }
-
-    /**
-     * Build the MIDI indicator element. Lives at the far
-     * right of the toolbar; main.js's wireMidiIndicator
-     * helper finds it by id and attaches MIDISender event
-     * handlers (ready event for the port name, send event
-     * for the per-note flash). Placeholder text "MIDI: —"
-     * shows the indicator's footprint before init completes.
-     * @returns {HTMLDivElement}
-     */
-    _buildMidiIndicator() {
-        const el = document.createElement("div");
-        el.className = "midi-indicator";
-        el.id = "midi-indicator";
-        el.setAttribute("aria-label", "MIDI output status");
-        el.textContent = "MIDI: \u2014";
-        return el;
     }
 
     _refreshButtons() {

@@ -531,15 +531,9 @@ async function main() {
     // (requestMIDIAccess returns a promise); kicked off here
     // without await so the rest of app load proceeds. Sends
     // before init completes are no-ops gated by the sender's
-    // internal ready flag. The transport bar indicator
-    // subscribes via wireMidiIndicator and updates its label
-    // on the ready event, flashing on each note send.
+    // internal ready flag.
     const midiSender = new MIDISender(transport);
     void midiSender.init();
-    // wireMidiIndicator(midiSender) is deferred until after
-    // the canvas-toolbar is constructed below; the MIDI
-    // indicator element lives inside the toolbar now, so it
-    // doesn't exist in the DOM until Toolbar.render runs.
 
     // When the strudel engine finishes loading, re-parse
     // every curve's cyclePattern so marker diamonds appear
@@ -1884,18 +1878,14 @@ async function main() {
     // bar can also end any running audition.
     toolbar.setAuditionActive(auditionBar.isVisible());
 
-    // Wire the transport view and MIDI indicator now that
-    // the toolbar has built its DOM. Both modules find
-    // their elements by id; the transport view binds
-    // rewind-btn, play-btn, musical-position, bpm-input,
-    // bpm-group, and the MIDI indicator helper finds
-    // midi-indicator. These calls were deferred from the
-    // earlier transport / MIDISender construction because
-    // those elements now live inside the toolbar rather
-    // than in the top row and don't exist in the DOM until
-    // Toolbar.render runs.
+    // Wire the transport view now that the toolbar has built
+    // its DOM. TransportBarView finds its elements by id
+    // (rewind-btn, play-btn, musical-position, bpm-input,
+    // bpm-group). This was deferred from the earlier transport
+    // construction because those elements now live inside the
+    // toolbar rather than in the top row and don't exist in
+    // the DOM until Toolbar.render runs.
     const transportBarView = new TransportBarView(transport);
-    wireMidiIndicator(midiSender);
 
     canvas.setToolbar(toolbar);
     toolbar.onChange((tool, locked) => {
@@ -4829,43 +4819,6 @@ async function main() {
             // Skip the dialog; the user just won't see it.
         }
     }
-}
-
-/**
- * Wire the MIDI indicator in the transport bar to the
- * MIDISender's event stream. The indicator shows the chosen
- * port name once init completes and flashes a CSS class on
- * each note sent so the user can see audio is actually
- * going out the port.
- *
- * The flash is brief (a CSS transition removes it shortly
- * after the class is added). Because notes can fire in
- * rapid succession on short patterns, the indicator schedules
- * the flash-off through a single deferred timer that resets
- * on every send; multiple sends in a row produce a single
- * extended flash rather than rapid on-off flicker.
- *
- * @param {MIDISender} midiSender
- */
-function wireMidiIndicator(midiSender) {
-    const el = document.getElementById("midi-indicator");
-    if (!(el instanceof HTMLElement)) return;
-    /** @type {ReturnType<typeof setTimeout> | null} */
-    let flashTimeout = null;
-    midiSender.onEvent((event) => {
-        if (event.type === "ready") {
-            const portName = event.portName ?? "(unknown)";
-            el.textContent = `MIDI: ${portName}`;
-            el.classList.add("midi-indicator-active");
-        } else if (event.type === "send") {
-            el.classList.add("midi-indicator-flash");
-            if (flashTimeout !== null) clearTimeout(flashTimeout);
-            flashTimeout = setTimeout(() => {
-                el.classList.remove("midi-indicator-flash");
-                flashTimeout = null;
-            }, 80);
-        }
-    });
 }
 
 /**
