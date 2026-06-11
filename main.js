@@ -628,6 +628,13 @@ async function main() {
     // wiring; the canvas drives it only while playing.
     canvas.setActiveBeatSink((map) => editor.applyActiveBeats(map));
 
+    // Callback firing flash sink. The canvas emits a per-firing
+    // {paths, opacity} map each playing frame (a fading box per
+    // recent MOMENT-callback firing); the editor forwards it to the
+    // callback-flash highlighter, which boxes the firing function
+    // name and the this.* reads that executed on that firing.
+    canvas.setCallbackFlashSink((map) => editor.applyCallbackFlashes(map));
+
     // Inspector hover-preview sink. As the pointer hovers an object on
     // the canvas, the inspector peeks at that object's fields (even if a
     // different object — or nothing — is selected); moving off reverts to
@@ -681,6 +688,11 @@ async function main() {
                 sourceId, spec.value, spec.duration, spec.amplitude);
         }
     });
+
+    // Gate the script-editor callback flash by the same Play Selected
+    // rule the audio sink uses, so only objects that actually play flash
+    // their callbacks/reads in the editor.
+    simulation.setFlashAllowed((id) => firingEngine.playSelectedAllows(id));
 
     // Wire the firing-event subscription so the canvas
     // flashes the relevant colored element yellow each

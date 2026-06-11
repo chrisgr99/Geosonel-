@@ -386,6 +386,20 @@ export class Canvas {
         this._activeBeatSink = null;
 
         /**
+         * Sink for the Code-tab "callback firing flash" highlight,
+         * or null until main.js wires it via setCallbackFlashSink.
+         * Called from _emitActiveBeats (same per-frame spot as the
+         * active-beat sink) with a
+         * Map<functionName, {paths: string[], opacity: number}> of
+         * each recent MOMENT-callback firing's executed this.* reads
+         * and a fading opacity, which the editor forwards to the
+         * callback-flash highlighter so it boxes the firing function
+         * name and reads. Receives an empty map when not playing.
+         * @type {((map: Map<string, {paths: string[], opacity: number}>) => void) | null}
+         */
+        this._callbackFlashSink = null;
+
+        /**
          * Whether the active-beat sink was last sent an empty
          * map. Starts true (nothing playing yet). Lets
          * _emitActiveBeats send the clearing empty map exactly
@@ -984,6 +998,18 @@ export class Canvas {
     }
 
     /**
+     * Wire the per-frame "callback firing flash" map sink. main.js
+     * wires this to editor.applyCallbackFlashes so the editor boxes
+     * each recent MOMENT-callback firing's function name and
+     * executed this.* reads, fading out over a short window. Called
+     * once at startup; the canvas is fully usable without it.
+     * @param {(map: Map<string, {paths: string[], opacity: number}>) => void} fn
+     */
+    setCallbackFlashSink(fn) {
+        this._callbackFlashSink = fn;
+    }
+
+    /**
      * Subscribe to scene-edit and selection-change events.
      * The callback receives a structured object with a kind
      * field. See _onMouseUp for the event shapes.
@@ -1263,6 +1289,39 @@ export class Canvas {
         }
         this._activeBeatSink(map);
         this._activeBeatsCleared = false;
+
+        // Callback firing flash. Same per-frame spot: compute a fading
+        // opacity per recent MOMENT-callback firing from the
+        // simulation's recent-firings map and forward to the editor's
+        // callback-flash highlighter. Reuses the playing/scene/sim
+        // guards above (we only reach here while playing). Like the
+        // active-beat path, when not playing the early return above
+        // never sends a flash map; existing flashes simply age out as
+        // simNow stops advancing.
+        if (this._callbackFlashSink !== null
+            && typeof this._simulation.recentCallbackFlashes === "function") {
+            // Longer fade so rapid beats overlap into a steady glow
+            // rather than strobing on every fast firing.
+            const FADE = 1.0;
+            const simNow = (typeof this._simulation.simTime === "number")
+                ? this._simulation.simTime : 0;
+            /** @type {Map<string, {values: Map<string, any>, opacity: number}>} */
+            const flashMap = new Map();
+            const recent = this._simulation.recentCallbackFlashes();
+            if (recent instanceof Map) {
+                for (const [name, info] of recent) {
+                    if (info === null || typeof info !== "object") continue;
+                    const firedAt = (typeof info.firedAt === "number")
+                        ? info.firedAt : 0;
+                    const opacity = Math.max(0, 1 - (simNow - firedAt) / FADE);
+                    if (opacity <= 0) continue;
+                    const values = (info.values instanceof Map)
+                        ? info.values : new Map();
+                    flashMap.set(name, { values, opacity });
+                }
+            }
+            this._callbackFlashSink(flashMap);
+        }
     }
 
     // --- Internals ---

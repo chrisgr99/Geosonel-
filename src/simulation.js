@@ -267,6 +267,61 @@ import { srgbByteToOKLab } from "./oklab.js";
 const SIM_DT = 1 / 240;
 
 /**
+ * Wrap a firing context in a READ-RECORDING Proxy for the
+ * "callback firing flash" highlight. Every property read is
+ * recorded into `paths` (the dotted chain after `this`, e.g.
+ * "col", "col.r") and the REAL value is returned unchanged — the
+ * proxy is a pure side channel that cannot alter what the
+ * callback computes, so determinism is preserved. A plain-object
+ * value is itself wrapped one more level so nested reads
+ * (this.col.r) record the dotted path; recursion stops at depth 2
+ * (deeper or non-object values pass through bare).
+ *
+ * @param {any} target  The real firing context (or a nested object).
+ * @param {Map<string, any>} values  Accumulator: read path → its value.
+ * @param {string} prefix  Dotted path of `target` itself ("" at root).
+ * @param {number} depth  Remaining levels of nesting to wrap.
+ * @returns {any}
+ */
+function makeReadRecordingProxy(target, values, prefix, depth) {
+    return new Proxy(target, {
+        get(obj, key, receiver) {
+            const value = Reflect.get(obj, key, receiver);
+            if (typeof key !== "string") return value;
+            const path = prefix === "" ? key : prefix + "." + key;
+            const isPlain = value !== null && typeof value === "object"
+                && Object.getPrototypeOf(value) === Object.prototype;
+            // Record leaf reads with their value (the flash tints colour
+            // signals by value). A `this.*` whose value is undefined
+            // (shows "undefined" in the tooltip) is not recorded, so it
+            // doesn't flash. Intermediate objects (this.col) are recursed,
+            // not recorded.
+            if (value !== undefined && !isPlain) values.set(path, value);
+            if (depth > 0 && isPlain) {
+                return makeReadRecordingProxy(value, values, path, depth - 1);
+            }
+            return value;
+        },
+    });
+}
+
+/**
+ * Resolve a curve's onActiveBeat callback name: its explicit
+ * onActiveBeatFunction, or the `onActiveBeat_<id>` convention when that
+ * field is blank — so enabling canActiveBeat and writing the
+ * conventionally named function is enough to bind, without also typing
+ * the name into the inspector. Returns "" when neither is available.
+ * @param {any} curve
+ * @returns {string}
+ */
+function resolveOnActiveBeatName(curve) {
+    const f = curve.onActiveBeatFunction;
+    if (typeof f === "string" && f !== "") return f;
+    return (typeof curve.id === "string" && curve.id !== "")
+        ? "onActiveBeat_" + curve.id : "";
+}
+
+/**
  * onTick control rate (§3.6). onTick fires at a fixed 60 Hz in
  * SIMULATION time — once every ONTICK_DT seconds of sim clock, not
  * every fine step — so a non-trivial onTick body runs at the proven
@@ -1279,6 +1334,28 @@ export class Simulation {
          */
         this._lastCallbackContexts = new Map();
         /**
+         * Recent MOMENT-callback firings for the Script-tab "callback
+         * firing flash" highlight. Keyed by callback function name; the
+         * value records which `this.*` value-reads actually executed on
+         * the most recent firing (dotted paths gathered by a read-
+         * recording proxy) and the sim time it fired at. The canvas
+         * reads this each frame, computes a fading opacity, and the
+         * editor boxes the function name plus the executed reads.
+         * Overwritten each firing; cleared on setScene and rewind like
+         * _lastCallbackContexts. Only the two MOMENT sites (collision /
+         * beenTriggered and curve onActiveBeat) populate it — onTick
+         * fires continuously and is excluded.
+         * @type {Map<string, {paths: string[], firedAt: number}>}
+         */
+        this._recentCallbackFlashes = new Map();
+        /**
+         * Predicate gating which objects' callback flashes are recorded
+         * (so the script-editor flash matches what actually plays under
+         * Play Selected). Null = flash everything. Set via setFlashAllowed.
+         * @type {((id: string) => boolean) | null}
+         */
+        this._flashAllowed = null;
+        /**
          * Rolling trace of recent discrete musical events (onActiveBeat,
          * collision, beenTriggered) — each emitted note/sound plus the
          * firing context's colour signals and velocity. Read through the
@@ -1344,6 +1421,27 @@ export class Simulation {
     lastContextForFunction(name) {
         if (typeof name !== "string") return null;
         return this._lastCallbackContexts.get(name) ?? null;
+    }
+
+    /**
+     * The current simulation clock in seconds (the same _simTime
+     * that stamps firings). The canvas reads this to age the
+     * callback-flash entries (opacity = 1 - (now - firedAt)/FADE).
+     * @returns {number}
+     */
+    get simTime() {
+        return this._simTime;
+    }
+
+    /**
+     * The recent MOMENT-callback firings map for the Script-tab
+     * "callback firing flash" highlight:
+     * Map<functionName, {paths: string[], firedAt: number}>.
+     * Overwritten each firing, cleared on setScene / rewind.
+     * @returns {Map<string, {paths: string[], firedAt: number}>}
+     */
+    recentCallbackFlashes() {
+        return this._recentCallbackFlashes;
     }
 
     /**
@@ -1429,6 +1527,16 @@ export class Simulation {
      */
     setAudioSink(sink) {
         this._audioSink = typeof sink === "function" ? sink : null;
+    }
+
+    /**
+     * Gate which objects' callback flashes are recorded so the
+     * script-editor flash reflects what actually plays. main.js wires
+     * this to the firing engine's Play Selected gate.
+     * @param {((id: string) => boolean) | null} fn
+     */
+    setFlashAllowed(fn) {
+        this._flashAllowed = typeof fn === "function" ? fn : null;
     }
 
     /**
@@ -1649,9 +1757,26 @@ export class Simulation {
         // keyed by the callback's function name.
         this._lastCallbackContexts.set(name, ctx);
 
+        // Record which this.* reads execute on this firing for the
+        // Script-tab "callback firing flash" highlight. The proxy is a
+        // read-only side channel (returns real values unchanged), so it
+        // cannot affect what the callback computes — determinism holds.
+        // setCallbackContext keeps the REAL ctx (bare emitters route
+        // through that, not the proxy); only fn.call sees the proxy.
+        /** @type {Map<string, any>} */
+        const flashValues = new Map();
+        const recordingProxy = makeReadRecordingProxy(ctx, flashValues, "", 2);
         setCallbackContext(ctx);
         try {
-            fn.call(ctx);
+            fn.call(recordingProxy);
+            // Only flash objects that are actually playing: Play Selected
+            // excludes the rest via the firing-engine gate.
+            if (this._flashAllowed === null || this._flashAllowed(selfId)) {
+                this._recentCallbackFlashes.set(name, {
+                    values: flashValues,
+                    firedAt: this._simTime,
+                });
+            }
         } catch (err) {
             this._collisionDisabled.add(disableKey);
             const detail = (err instanceof Error && typeof err.message === "string")
@@ -1728,8 +1853,8 @@ export class Simulation {
         if (this._scene === null) return;
         if (curve.state !== "active") return;
         if (curve.canActiveBeat !== true) return;
-        const fnName = curve.onActiveBeatFunction;
-        if (typeof fnName !== "string" || fnName === "") return;
+        const fnName = resolveOnActiveBeatName(curve);
+        if (fnName === "") return;
         const fn = this._scene.functionMap[fnName];
         if (typeof fn !== "function") return;
         const disableKey = "onActiveBeat:" + curve.id;
@@ -1878,9 +2003,7 @@ export class Simulation {
         // The curve's OWN authored colour as signals (this.color.*),
         // distinct from `col` (the image colour beneath the beat point).
         const color = colorSignalsFromHex(curve.color);
-        const callbackName = (typeof curve.onActiveBeatFunction === "string"
-            && curve.onActiveBeatFunction !== "")
-            ? curve.onActiveBeatFunction : "onActiveBeat";
+        const callbackName = resolveOnActiveBeatName(curve) || "onActiveBeat";
 
         // The firing context is bound as the callback's `this`
         // (§3.2): reads are `this.vel` / `this.velocity` / `this.col.*`,
@@ -1955,13 +2078,28 @@ export class Simulation {
 
         // Stash this firing's context for the Script-tab value tooltip,
         // keyed by the callback's function name.
-        if (typeof curve.onActiveBeatFunction === "string" && curve.onActiveBeatFunction !== "") {
-            this._lastCallbackContexts.set(curve.onActiveBeatFunction, ctx);
+        const flashName = resolveOnActiveBeatName(curve) || null;
+        if (flashName !== null) {
+            this._lastCallbackContexts.set(flashName, ctx);
         }
 
+        // Read-recording proxy for the "callback firing flash" highlight
+        // (see the collision site for the determinism rationale): records
+        // executed this.* reads while returning real values unchanged.
+        /** @type {Map<string, any>} */
+        const flashValues = new Map();
+        const recordingProxy = makeReadRecordingProxy(ctx, flashValues, "", 2);
         setCallbackContext(ctx);
         try {
-            fn.call(ctx);
+            fn.call(recordingProxy);
+            // Only flash objects that are actually playing (Play Selected).
+            if (flashName !== null
+                && (this._flashAllowed === null || this._flashAllowed(curve.id))) {
+                this._recentCallbackFlashes.set(flashName, {
+                    values: flashValues,
+                    firedAt: this._simTime,
+                });
+            }
         } catch (err) {
             this._activeBeatDisabled.add(disableKey);
             const detail = (err instanceof Error && typeof err.message === "string")
@@ -2158,6 +2296,7 @@ export class Simulation {
         this._collisionDisabled.clear();
         this._activeBeatDisabled.clear();
         this._lastCallbackContexts.clear();
+        this._recentCallbackFlashes.clear();
         this._eventTrace.clear();
         this._scene = scene;
         if (scene === null) {
@@ -2762,6 +2901,7 @@ export class Simulation {
         // Drop cached firing contexts so the live value tooltip shows
         // nothing for a callback that hasn't fired since the rewind.
         this._lastCallbackContexts.clear();
+        this._recentCallbackFlashes.clear();
         this._eventTrace.clear();
         // Restart the metronome beat counter so the first beat crossing
         // after the rewind is beat 1 (the downbeat is the loop click).

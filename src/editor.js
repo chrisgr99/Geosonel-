@@ -33,6 +33,7 @@ import { CanvasInspector } from "./canvasInspector.js";
 import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect, setMutedObjectIdsEffect } from "./patternHighlight.js";
 import { activeBeatHighlightExtension, setActiveBeatsEffect, recomputeTokensEffect } from "./activeBeatHighlight.js";
+import { callbackFlashHighlightExtension, setCallbackFlashesEffect } from "./callbackFlashHighlight.js";
 import { parenHighlightExtension } from "./parenHighlight.js";
 import { jsAutocomplete } from "./codeAutocomplete.js";
 import { valueTooltipExtension, computeScriptFocus } from "./valueTooltip.js";
@@ -1099,6 +1100,26 @@ export class TabbedEditor {
     }
 
     /**
+     * Push the per-firing "callback firing flash" state to the
+     * Script-tab highlighter. The canvas computes a
+     * Map<functionName, {paths: string[], opacity: number}> each
+     * playing frame (a fading opacity per recent firing) and the
+     * editor forwards it; the highlighter boxes the matching
+     * function name and its executed this.* reads, fading with the
+     * opacity. Safe before mount (no-op). On any tab but script.js
+     * the highlighter's function map is empty, so the dispatch
+     * produces no boxes.
+     *
+     * @param {Map<string, {paths: string[], opacity: number}>} map
+     */
+    applyCallbackFlashes(map) {
+        if (this.view === null) return;
+        this.view.dispatch({
+            effects: setCallbackFlashesEffect.of(map),
+        });
+    }
+
+    /**
      * Force the active-token highlighter to rebuild its token
      * map from the current document without a document edit.
      * Token building depends on the strudel engine being loaded
@@ -1654,6 +1675,7 @@ export class TabbedEditor {
                 ...customDarkTheme(),
                 patternHighlightExtension(),
                 activeBeatHighlightExtension(),
+                callbackFlashHighlightExtension(),
                 // Enclosing-parenthesis highlight (always on):
                 // lights the innermost paren pair around the caret
                 // and around the mouse pointer, with a light span
