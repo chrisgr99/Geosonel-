@@ -4,6 +4,7 @@ commit-*.txt
 recent-commits.txt
 IN_FLIGHT.md
 DEFERRED.md
+CLAUDE_CODE_TASK.md
 .claude/settings.local.json
 
 # Electron migration (Stage 1+)
