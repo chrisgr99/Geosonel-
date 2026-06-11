@@ -75,6 +75,7 @@ import { installImageSignals } from "./src/strudel/signals.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
 import { MessageArea } from "./src/messages.js";
+import { showContextMenu } from "./src/contextMenu.js";
 import { ImageImporter } from "./src/imageImporter.js";
 import {
     loadImage as galleryLoadImage,
@@ -3239,7 +3240,7 @@ async function main() {
      * is a read-only operation as far as the scene is
      * concerned.
      */
-    const performCopy = () => {
+    const performCopyObjects = () => {
         const sel = canvas.getSelection();
         const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
         if (total === 0) return;
@@ -3277,6 +3278,21 @@ async function main() {
         }
         if (cs.length + ct.length + cc.length === 0) return;
         clipboard = { sprites: cs, triggers: ct, curves: cc };
+    };
+
+    /**
+     * Edit > Copy / Cmd-C entry point. A message-area text
+     * selection copies as text and takes priority over the
+     * canvas-object copy (this route is reached after the
+     * focus-aware editor copy declines). Otherwise falls
+     * through to performCopyObjects, which copies the canvas
+     * selection. The canvas context menu calls
+     * performCopyObjects directly so an explicit object copy
+     * is never hijacked by a leftover text selection.
+     */
+    const performCopy = () => {
+        if (messages.tryCopySelection()) return;
+        performCopyObjects();
     };
 
     /**
@@ -3435,6 +3451,54 @@ async function main() {
         }
         canvas.setSelection({ sprites, triggers, curves });
     };
+
+    // Canvas right-click context menu: Cut / Copy / Paste /
+    // Delete on the current selection. Right-clicking an
+    // unselected object selects exactly that object first
+    // (so the menu acts on what the user pointed at);
+    // right-clicking an already-selected object leaves a
+    // multi-selection intact so the menu operates on the
+    // whole group; right-clicking empty space leaves the
+    // selection unchanged. Copy routes through
+    // performCopyObjects (not performCopy) so an explicit
+    // object copy is never hijacked by a leftover message-
+    // area text selection.
+    canvas.canvasEl.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const hit = canvas.objectAtClientPoint(e.clientX, e.clientY);
+        if (hit !== null) {
+            const current = canvas.getSelection();
+            const alreadySelected =
+                (hit.kind === "sprite" && current.sprites.includes(hit.index)) ||
+                (hit.kind === "trigger" && current.triggers.includes(hit.index)) ||
+                (hit.kind === "curve" && current.curves.includes(hit.index));
+            if (!alreadySelected) {
+                canvas.setSelection({
+                    sprites: hit.kind === "sprite" ? [hit.index] : [],
+                    triggers: hit.kind === "trigger" ? [hit.index] : [],
+                    curves: hit.kind === "curve" ? [hit.index] : [],
+                });
+            }
+        }
+        const sel = canvas.getSelection();
+        const hasSel =
+            sel.sprites.length + sel.triggers.length + sel.curves.length > 0;
+        const hasClip = clipboard !== null;
+        const hasObjects = currentScene !== null
+            && (currentScene.sprites.length + currentScene.triggers.length
+                + currentScene.curves.length) > 0;
+        showContextMenu([
+            { label: "Cut", disabled: !hasSel, action: () => { void performCut(); } },
+            { label: "Copy", disabled: !hasSel, action: () => { performCopyObjects(); } },
+            { label: "Paste", disabled: !hasClip, action: () => { void performPaste(); } },
+            { label: "Duplicate", disabled: !hasSel, action: () => { void performDuplicate(); } },
+            { label: "Delete", disabled: !hasSel, action: () => { void performDeleteSelection(); } },
+            // Select All respects the toolbar's per-kind selection
+            // filters (performSelectAll only adds a kind when
+            // canvas.isKindSelectable(kind)).
+            { label: "Select All", disabled: !hasObjects, action: () => { performSelectAll(); } },
+        ], e.clientX, e.clientY);
+    });
 
     /**
      * Toggle the `mute` field on the cursor-derived

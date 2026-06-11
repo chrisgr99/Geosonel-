@@ -31,6 +31,25 @@ export const hitTestMethods = {
     },
 
     /**
+     * Public hit-test from viewport (client) coordinates.
+     * Converts the client point to canvas space using the
+     * same _eventToCanvas conversion the mousedown handler
+     * uses, then returns the topmost object under it as
+     * { kind, index } or null. Used by main.js's canvas
+     * right-click handler to decide which object the
+     * context menu targets.
+     * @param {number} clientX
+     * @param {number} clientY
+     * @returns {{kind: "sprite"|"trigger"|"curve", index: number} | null}
+     */
+    objectAtClientPoint(clientX, clientY) {
+        const pos = this._eventToCanvas(
+            /** @type {MouseEvent} */ ({ clientX, clientY }),
+        );
+        return this._hitTestObject(pos.x, pos.y);
+    },
+
+    /**
      * Find the topmost sprite under a canvas position, or
      * null if no sprite is hit. Iterates back-to-front so the
      * visually-topmost sprite (drawn last) wins ties.

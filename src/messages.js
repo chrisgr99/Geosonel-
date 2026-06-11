@@ -17,6 +17,8 @@
 
 // @ts-check
 
+import { showContextMenu } from "./contextMenu.js";
+
 /** @typedef {"info" | "error"} MessageLevel */
 
 export class MessageArea {
@@ -26,6 +28,7 @@ export class MessageArea {
     constructor(rootElement) {
         this.root = rootElement;
         this._hasMessages = false;
+        this._installContextMenu();
     }
 
     /**
@@ -63,5 +66,78 @@ export class MessageArea {
         placeholder.textContent = "(No messages)";
         this.root.appendChild(placeholder);
         this._hasMessages = false;
+    }
+
+    /**
+     * Text currently selected within the message area, or "" if
+     * the selection is empty or lies outside the area.
+     * @returns {string}
+     */
+    _selectionText() {
+        const sel = window.getSelection();
+        if (sel === null || sel.rangeCount === 0 || sel.isCollapsed) return "";
+        const range = sel.getRangeAt(0);
+        if (!this.root.contains(range.commonAncestorContainer)) return "";
+        return sel.toString();
+    }
+
+    /**
+     * All message text, newline-separated. "" when the log holds
+     * only the placeholder.
+     * @returns {string}
+     */
+    _allText() {
+        if (!this._hasMessages) return "";
+        return Array.from(this.root.querySelectorAll(".message-entry"))
+            .map((el) => el.textContent ?? "")
+            .join("\n");
+    }
+
+    /**
+     * Copy the message-area text selection to the clipboard if
+     * there is one. Returns true when it handled the copy — the
+     * Edit > Copy / Cmd-C chain calls this so selected log text
+     * copies before falling back to the canvas-object copy. Uses
+     * execCommand so it runs synchronously inside the menu's
+     * user-gesture context (matching the editor's copy path).
+     * @returns {boolean}
+     */
+    tryCopySelection() {
+        if (this._selectionText() === "") return false;
+        try {
+            return document.execCommand("copy");
+        } catch (_e) {
+            return false;
+        }
+    }
+
+    /**
+     * Right-click context menu: Copy (the selection), Copy All
+     * (the whole log), and Clear. Selection/all text is captured
+     * at menu-open time so a click that clears the page selection
+     * doesn't lose what the user meant to copy.
+     */
+    _installContextMenu() {
+        this.root.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            const selText = this._selectionText();
+            const allText = this._allText();
+            showContextMenu([
+                {
+                    label: "Copy",
+                    disabled: selText === "",
+                    action: () => { void navigator.clipboard.writeText(selText); },
+                },
+                {
+                    label: "Copy All",
+                    disabled: allText === "",
+                    action: () => { void navigator.clipboard.writeText(allText); },
+                },
+                {
+                    label: "Clear",
+                    action: () => { this.clear(); },
+                },
+            ], e.clientX, e.clientY);
+        });
     }
 }

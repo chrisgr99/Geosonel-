@@ -73,6 +73,10 @@
     overflow: auto;
     padding: 8px 12px;
     min-height: 56px;
+    /* Log text is selectable so it can be copied (Cmd-C or the
+     * right-click menu); the rest of the app chrome is not. */
+    user-select: text;
+    cursor: text;
 }
 
 .message-placeholder {
