@@ -2191,6 +2191,39 @@ export function setBeenTriggeredFunctionOnSelection(data, selection, value) {
  */
 export function setCanActiveBeatOnSelection(data, selection, value) {
     setBooleanFieldOnSelection(data, selection, "canActiveBeat", !!value, true);
+    // When enabling, pre-fill a blank onActiveBeatFunction with the
+    // onActiveBeat_<id> convention so the binding is explicit in the
+    // inspector and scene.json (and hints the function name to write).
+    // The firing engine also falls back to this convention, so a curve
+    // authored outside the inspector still fires; this just records it.
+    if (value) prefillOnActiveBeatFunction(data, selection);
+}
+
+/**
+ * For each selected curve/sprite whose onActiveBeatFunction is blank, set
+ * it to the onActiveBeat_<id> convention. Curves and sprites only
+ * (canActiveBeat doesn't apply to triggers).
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, curves?: Iterable<number>}} selection
+ */
+function prefillOnActiveBeatFunction(data, selection) {
+    /** @type {Array<[string, Iterable<number> | undefined]>} */
+    const arrays = [["sprites", selection.sprites], ["curves", selection.curves]];
+    for (const [arrayKey, indexes] of arrays) {
+        if (indexes === undefined) continue;
+        const arr = data?.[arrayKey];
+        if (!Array.isArray(arr)) continue;
+        for (const idx of indexes) {
+            if (idx < 0 || idx >= arr.length) continue;
+            const entry = arr[idx];
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            const cur = entry.onActiveBeatFunction;
+            if ((typeof cur !== "string" || cur === "")
+                && typeof entry.id === "string" && entry.id !== "") {
+                entry.onActiveBeatFunction = "onActiveBeat_" + entry.id;
+            }
+        }
+    }
 }
 
 /**
