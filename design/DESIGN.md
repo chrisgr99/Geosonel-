@@ -736,6 +736,14 @@ A mode dropdown — None / Normal / Euclidean / Strudel, extensible — drives w
   aligned under Beats/Cycle) + Beat Shift + Repeats; then the generated Active Beats pattern
   (LOCKED, read-only) and the Beat Strength string.
 
+  Active Beats characters (Normal and Euclidean): each character is one slot, read against the
+  Beats/Cycle grid (looping in Normal). `x` is a single beat at that slot's Beat Strength digit;
+  `.` (or a space) is a rest; a digit `1`–`9` is a RATCHET — that many evenly-spaced hits within
+  the slot's interval, ALL at the slot's strength. So `4` in a quarter-note grid is four 16th
+  notes and `7` is a septuplet across the quarter — the multiple-hits-per-step (ratchet) effect
+  of a hardware sequencer. The sub-hits are real beat points: each draws as a diamond and fires
+  onActiveBeat with the slot's strength. (`0` is not a valid slot character — a rest is `.`.)
+
   The Beat Interval (the note-duration of each beat, which with Beats/Cycle sets the cycle
   length) sits immediately RIGHT OF THE MODE DROPDOWN in both normal and euclidean — it is the
   same field/control in both, so the two modes read consistently. (Earlier it was euclidean-only
