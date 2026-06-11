@@ -161,15 +161,20 @@ export class SceneLoader {
         //        and read back after execution.
         const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
         // hasBackgroundImage tells a script whether the scene has a
-        // background image loaded — true exactly when scene.json names
-        // a non-empty imageName. A getter (not a snapshot) so a script
-        // reading it during a callback stays correct if the image
-        // changes; it reads the parsed scene data, which is the source
-        // of truth applyPieceLevelFields copies onto the Scene below.
+        // background image loaded. The image is tracked on the BUNDLE
+        // (bundle.imageName, set whenever the user loads/imports one) —
+        // that's the source the canvas samples for this.col, and a UI
+        // image-add updates the bundle, NOT scene.json's imageName. So
+        // read bundle.imageName, falling back to the parsed scene data
+        // (e.g. a freshly-declared imageName not yet loaded). A live
+        // getter, not a snapshot, so a callback sees an image added after
+        // the scene ran — the bundle is mutated in place, so this closure
+        // observes the change.
         Object.defineProperty(scoreGlobal, "hasBackgroundImage", {
             enumerable: true,
             get() {
-                return sceneDataHasBackgroundImage(sceneData);
+                return sceneDataHasBackgroundImage(bundle)
+                    || sceneDataHasBackgroundImage(sceneData);
             },
         });
         /** @type {Object<string, Function>} */
