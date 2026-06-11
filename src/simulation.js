@@ -318,6 +318,145 @@ function colFromSignals(px) {
     };
 }
 
+// ── agc (automatic gain control) — see design/agc.md ──────────────────
+//
+// The pure pieces are kept CDN/canvas-free so they unit-test under
+// `node --test` (test/agc.test.mjs). The simulation method _agc wires
+// them to the live canvas image and the firing context's col snapshot.
+
+/** The ten col-signal keys agc accepts (after stripping a "col." prefix). */
+const AGC_COL_KEYS = new Set([
+    "lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu",
+]);
+
+/** Upper bound on the number of pixels sampled when computing a range. */
+const AGC_MAX_SAMPLES = 10000;
+
+/** Percentile cut (5th–95th) that trims extremes from a channel's range. */
+const AGC_LOW_PCT = 0.05;
+const AGC_HIGH_PCT = 0.95;
+
+/**
+ * Flatness epsilon: a trimmed range narrower than this is treated as a
+ * flat channel (max ≈ min) and agc returns the output midpoint rather
+ * than dividing by a near-zero span.
+ */
+const AGC_FLAT_EPSILON = 1e-6;
+
+/**
+ * Normalise a channel argument to a bare col-signal key. Accepts the
+ * documented "col.r" form and the bare "r" form, stripping an optional
+ * leading "col." (case-insensitive on the prefix only). Returns null
+ * for a non-string, an unknown key, or empty input so the caller can
+ * fall back to the midpoint guard.
+ * @param {unknown} channel
+ * @returns {string | null}
+ */
+export function parseAgcChannel(channel) {
+    if (typeof channel !== "string") return null;
+    let key = channel.trim();
+    if (/^col\./i.test(key)) key = key.slice(4);
+    key = key.trim();
+    return AGC_COL_KEYS.has(key) ? key : null;
+}
+
+/**
+ * Compute a channel's trimmed [min, max] from an array of sampled
+ * values: sort ascending and take the 5th and 95th percentile by index
+ * so a few outlier pixels cannot blow the gain out. Deterministic (a
+ * pure function of the values, no clock/randomness). An empty input
+ * yields null.
+ * @param {number[]} values
+ * @returns {{min: number, max: number} | null}
+ */
+export function agcPercentileRange(values) {
+    if (!Array.isArray(values) || values.length === 0) return null;
+    const sorted = values.slice().sort((a, b) => a - b);
+    const n = sorted.length;
+    const loIdx = Math.min(n - 1, Math.max(0, Math.floor(AGC_LOW_PCT * (n - 1))));
+    const hiIdx = Math.min(n - 1, Math.max(0, Math.ceil(AGC_HIGH_PCT * (n - 1))));
+    return { min: sorted[loIdx], max: sorted[hiIdx] };
+}
+
+/**
+ * Map `value` from a channel's whole-image range [min, max] to the
+ * output range [lo, hi] and clamp to [lo, hi]. A flat channel
+ * (max - min ≤ epsilon), a non-finite value, or a missing range
+ * returns the midpoint (lo + hi) / 2 — the documented no-divide-by-zero
+ * guard. Tolerant of lo > hi (clamps to the actual extremes).
+ * @param {number} value
+ * @param {{min: number, max: number} | null | undefined} range
+ * @param {number} lo
+ * @param {number} hi
+ * @returns {number}
+ */
+export function agcMapClamp(value, range, lo, hi) {
+    const mid = (lo + hi) / 2;
+    if (range === null || range === undefined) return mid;
+    if (!Number.isFinite(value)) return mid;
+    const span = range.max - range.min;
+    if (!(span > AGC_FLAT_EPSILON)) return mid;
+    const t = (value - range.min) / span;
+    const out = lo + t * (hi - lo);
+    const clampLo = Math.min(lo, hi);
+    const clampHi = Math.max(lo, hi);
+    if (out < clampLo) return clampLo;
+    if (out > clampHi) return clampHi;
+    return out;
+}
+
+/**
+ * Compute every col channel's whole-image trimmed [min, max] from an
+ * OKLCh image view { data, width, height } where `data` is flat
+ * (idx = (py*w + px)*4 → L, C, a, b). Deterministic: a fixed stride
+ * (derived from the pixel count) subsamples at most AGC_MAX_SAMPLES
+ * pixels, each run through the SAME imageSignalsFromOKLCh →
+ * colFromSignals pipeline the firing reads use, then each channel's
+ * collected values are reduced to the 5th–95th percentile. No clock, no
+ * randomness — the same image yields the same Map every run. Returns a
+ * Map keyed by col-signal name. Channels with no usable samples are
+ * absent (the caller treats absence as "no range" → midpoint).
+ * @param {{data: ArrayLike<number>, width: number, height: number}} img
+ * @returns {Map<string, {min: number, max: number}>}
+ */
+function computeAgcRanges(img) {
+    const { data, width, height } = img;
+    const ranges = new Map();
+    const pixelCount = (typeof width === "number" && typeof height === "number")
+        ? width * height
+        : Math.floor((data.length || 0) / 4);
+    if (!(pixelCount > 0)) return ranges;
+    // Deterministic fixed stride: every `stride`-th pixel, so at most
+    // ~AGC_MAX_SAMPLES samples regardless of image size.
+    const stride = Math.max(1, Math.ceil(pixelCount / AGC_MAX_SAMPLES));
+    /** @type {Record<string, number[]>} */
+    const buckets = {
+        lt: [], chr: [], r: [], g: [], y: [], b: [],
+        or: [], li: [], cy: [], pu: [],
+    };
+    for (let p = 0; p < pixelCount; p += stride) {
+        const idx = p * 4;
+        const oklch = {
+            L: data[idx],
+            C: data[idx + 1],
+            a: data[idx + 2],
+            b: data[idx + 3],
+        };
+        if (!Number.isFinite(oklch.L)) continue;
+        const c = colFromSignals(imageSignalsFromOKLCh(oklch));
+        buckets.lt.push(c.lt); buckets.chr.push(c.chr);
+        buckets.r.push(c.r); buckets.g.push(c.g);
+        buckets.y.push(c.y); buckets.b.push(c.b);
+        buckets.or.push(c.or); buckets.li.push(c.li);
+        buckets.cy.push(c.cy); buckets.pu.push(c.pu);
+    }
+    for (const k of Object.keys(buckets)) {
+        const range = agcPercentileRange(buckets[k]);
+        if (range !== null) ranges.set(k, range);
+    }
+    return ranges;
+}
+
 /**
  * Parse a CSS hex colour ("#rgb", "#rrggbb", with or without the
  * leading "#") into an {r, g, b} byte triple, or null when the string
@@ -1208,6 +1347,17 @@ export class Simulation {
          */
         this._lastCallbackContexts = new Map();
         /**
+         * agc (automatic gain control) cache. _agcRanges holds the
+         * per-channel whole-image trimmed [min, max] ranges; _agcRangeKey
+         * is the OKLCh data reference they were computed from. Both reset
+         * to null so the first agc call (or a new image) recomputes. See
+         * _agcChannelRange and design/agc.md.
+         * @type {Map<string, {min: number, max: number}> | null}
+         */
+        this._agcRanges = null;
+        /** @type {ArrayLike<number> | null} */
+        this._agcRangeKey = null;
+        /**
          * Rolling trace of recent discrete musical events (onActiveBeat,
          * collision, beenTriggered) — each emitted note/sound plus the
          * firing context's colour signals and velocity. Read through the
@@ -1562,6 +1712,16 @@ export class Simulation {
                 });
                 self._recordSoundEvent(selfId, name, col, vel, beat, simTime, s);
             },
+            /**
+             * Automatic gain control (design/agc.md): map this firing's
+             * this.col[channel] from the channel's whole-image trimmed
+             * range to [lo, hi], clamped. lo/hi default 0/1.
+             * @param {unknown} channel  "col.r" or bare "r".
+             * @param {number} [lo]
+             * @param {number} [hi]
+             * @returns {number}
+             */
+            agc(channel, lo, hi) { return self._agc(this.col, channel, lo, hi); },
         };
 
         // Stash this firing's context for the Script-tab value tooltip,
@@ -1860,6 +2020,16 @@ export class Simulation {
                 });
                 self._recordSoundEvent(selfId, callbackName, col, vel, beat, simTime, s);
             },
+            /**
+             * Automatic gain control (design/agc.md): map this firing's
+             * this.col[channel] from the channel's whole-image trimmed
+             * range to [lo, hi], clamped. lo/hi default 0/1.
+             * @param {unknown} channel  "col.r" or bare "r".
+             * @param {number} [lo]
+             * @param {number} [hi]
+             * @returns {number}
+             */
+            agc(channel, lo, hi) { return self._agc(this.col, channel, lo, hi); },
         };
 
         // Stash this firing's context for the Script-tab value tooltip,
@@ -1945,6 +2115,65 @@ export class Simulation {
             ? this._canvas.sampleImageOKLCh(pos.x, pos.y)
             : null;
         return imageSignalsFromOKLCh(oklch);
+    }
+
+    /**
+     * Script-side automatic gain control (design/agc.md). Maps the
+     * CURRENT firing context's col[channel] from that channel's
+     * whole-image trimmed range to [lo, hi], clamped. Shared by every
+     * callback context that carries a `col` (the per-context `agc`
+     * method forwards here). Guards — flat channel, unknown channel, or
+     * no image loaded — return the midpoint (lo + hi) / 2, never a
+     * divide-by-zero.
+     * @param {any} col   The firing context's col snapshot (this.col).
+     * @param {unknown} channel  "col.r" or bare "r" (a col-signal name).
+     * @param {number} [lo=0]
+     * @param {number} [hi=1]
+     * @returns {number}
+     */
+    _agc(col, channel, lo = 0, hi = 1) {
+        const loNum = (typeof lo === "number" && Number.isFinite(lo)) ? lo : 0;
+        const hiNum = (typeof hi === "number" && Number.isFinite(hi)) ? hi : 1;
+        const key = parseAgcChannel(channel);
+        if (key === null) return (loNum + hiNum) / 2;
+        const value = (col !== null && typeof col === "object")
+            ? col[key]
+            : undefined;
+        const range = this._agcChannelRange(key);
+        return agcMapClamp(value, range, loNum, hiNum);
+    }
+
+    /**
+     * The whole-image trimmed [min, max] for one col channel, computed
+     * once per image and cached. Iterates the canvas OKLCh buffer
+     * (deterministic fixed-stride subsample, ≤ AGC_MAX_SAMPLES samples),
+     * runs each pixel through imageSignalsFromOKLCh → colFromSignals so
+     * the gain uses the exact same colour math as the firing reads, and
+     * takes the 5th–95th percentile. The cache is keyed on the OKLCh
+     * data reference, so a new image (different reference) recomputes
+     * and the same image always yields the same ranges (no clock, no
+     * randomness — the app requires deterministic reruns). Returns null
+     * when there is no image, which agcMapClamp maps to the midpoint.
+     * @param {string} key  A validated bare col-signal key.
+     * @returns {{min: number, max: number} | null}
+     */
+    _agcChannelRange(key) {
+        const img = (this._canvas !== null
+            && typeof this._canvas.imageOKLChData === "function")
+            ? this._canvas.imageOKLChData()
+            : null;
+        if (img === null || img.data === null || img.data === undefined) {
+            this._agcRanges = null;
+            this._agcRangeKey = null;
+            return null;
+        }
+        // Recompute only when the image (its OKLCh buffer) changed.
+        if (this._agcRanges === null || this._agcRangeKey !== img.data) {
+            this._agcRanges = computeAgcRanges(img);
+            this._agcRangeKey = img.data;
+        }
+        const range = this._agcRanges.get(key);
+        return range === undefined ? null : range;
     }
 
     /**
@@ -3723,6 +3952,16 @@ export class Simulation {
                 const prev = cur - (ONTICK_DT * this.bpm) / 60;
                 return crossesInterval(prev, cur, iv);
             },
+            /**
+             * Automatic gain control (design/agc.md): map this firing's
+             * this.col[channel] from the channel's whole-image trimmed
+             * range to [lo, hi], clamped. lo/hi default 0/1.
+             * @param {unknown} channel  "col.r" or bare "r".
+             * @param {number} [lo]
+             * @param {number} [hi]
+             * @returns {number}
+             */
+            agc(channel, lo, hi) { return self._agc(this.col, channel, lo, hi); },
         };
 
         // Stash this firing's context for the Script-tab value tooltip,
@@ -3869,6 +4108,16 @@ export class Simulation {
                 const prev = cur - (ONTICK_DT * this.bpm) / 60;
                 return crossesInterval(prev, cur, iv);
             },
+            /**
+             * Automatic gain control (design/agc.md): map this firing's
+             * this.col[channel] from the channel's whole-image trimmed
+             * range to [lo, hi], clamped. lo/hi default 0/1.
+             * @param {unknown} channel  "col.r" or bare "r".
+             * @param {number} [lo]
+             * @param {number} [hi]
+             * @returns {number}
+             */
+            agc(channel, lo, hi) { return self._agc(this.col, channel, lo, hi); },
         };
 
         // Stash this firing's context for the Script-tab value tooltip,

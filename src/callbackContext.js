@@ -96,3 +96,20 @@ export function onBeatInterval(...args) {
     }
     return false;
 }
+
+/**
+ * Bare agc — forwards to the firing object's agc (automatic gain
+ * control, design/agc.md), present on every context that carries a
+ * `col`. The whole-image range is object-independent, so the bare form
+ * needs no path to resolve — only the value comes from the ambient
+ * context, exactly like bare playNote. Outside a callback, or in a
+ * context kind without the method, returns undefined (a safe no-op).
+ * @param {...any} args  (channel, lo?, hi?)
+ * @returns {number | undefined}
+ */
+export function agc(...args) {
+    if (current !== null && typeof current.agc === "function") {
+        return current.agc(...args);
+    }
+    return undefined;
+}

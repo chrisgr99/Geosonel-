@@ -108,4 +108,27 @@ export const samplingMethods = {
             b: this._imageOKLCh[idx + 3],
         };
     },
+    /**
+     * Expose the whole-image OKLCh buffer (and its dimensions) for
+     * code that needs to scan every pixel rather than sample one
+     * point — currently the script-side `agc` automatic gain control,
+     * which derives each colour channel's whole-image range. Returns a
+     * read-only-by-convention view: { data, width, height } where
+     * `data` is the flat Float buffer (idx = (py*w + px)*4 → L, C, a, b),
+     * or null when no image is loaded. Keeps the buffer's privates
+     * (_imageOKLCh / _imagePixels) inside the canvas module so callers
+     * never reach into them directly. The `data` reference is stable
+     * for a given loaded image and changes when a new image is set, so
+     * consumers can cache keyed on it.
+     * @returns {{data: ArrayLike<number>, width: number, height: number} | null}
+     */
+    imageOKLChData() {
+        if (this._imageOKLCh === null) return null;
+        if (this._imagePixels === null) return null;
+        return {
+            data: this._imageOKLCh,
+            width: this._imagePixels.width,
+            height: this._imagePixels.height,
+        };
+    },
 };
