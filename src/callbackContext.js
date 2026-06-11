@@ -81,3 +81,18 @@ export function applyForce(...args) {
     }
     return undefined;
 }
+
+/**
+ * Bare onBeatInterval — forwards to the firing object's onBeatInterval
+ * (present only on onTick contexts). Returns false outside an onTick
+ * callback or in a context kind without the method, so the gate is a
+ * safe no-op anywhere it doesn't apply.
+ * @param {...any} args
+ * @returns {boolean}
+ */
+export function onBeatInterval(...args) {
+    if (current !== null && typeof current.onBeatInterval === "function") {
+        return current.onBeatInterval(...args);
+    }
+    return false;
+}

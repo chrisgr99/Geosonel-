@@ -204,7 +204,10 @@ Build tasks (the importer + a GeoSonix-compat runtime shim):
 - Object/geometry/rhythm converter (commands → scene.json), incl. curve+cursor
   merge, ticks→token tables, seconds→beats duration, background image → canvas.
 - `midi` shim (`midi.note` → `playNote`).
-- `onTick` musical-interval auto-message helper (library).
+- ~~`onTick` musical-interval auto-message helper~~ DONE: native `onBeatInterval(interval)`
+  library fn (token / "1/8" fraction / number of beats) + a wired curve `onTick`
+  dispatch path. Import translates a fixed-interval auto-message to
+  `onTick { if (onBeatInterval(token)) { … } }`.
 - Add the missing callback-context CAPABILITIES under OUR names: firing-point
   position, object-centre position, object's own colour (angle deferred). The
   importer's translation table maps GeoSonix names → these (§5).

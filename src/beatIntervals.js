@@ -132,3 +132,70 @@ export function isValidBeatInterval(value) {
 export function allBeatIntervalTokens() {
     return TOKENS.map((entry) => entry.token);
 }
+
+/**
+ * Parse a beat-interval value into a count of beats (quarter-notes),
+ * for the onTick `onBeatInterval(interval)` gate. Accepts three forms,
+ * all defensive — anything unrecognised or non-finite returns 0, which
+ * the caller treats as a no-op (the gate never fires):
+ *
+ *   (a) a token in the TOKENS table (e.g. "Qtr", "8th", "Dot 16th") →
+ *       its quarterNotes value (Qtr = 1, 8th = 0.5);
+ *   (b) a fraction string "N/D" naming a note value relative to a WHOLE
+ *       note → beats = 4 × (N / D), so "1/8" = 0.5, "1/4" = 1,
+ *       "3/32" = 0.375, "1/1" = 4. A zero or non-finite denominator,
+ *       or a non-finite numerator, yields 0;
+ *   (c) a plain finite number (or numeric string) → that many beats.
+ *
+ * @param {unknown} interval
+ * @returns {number}  Beats (quarter-notes); 0 when unparseable.
+ */
+export function parseBeatInterval(interval) {
+    // (c) a real number passed directly.
+    if (typeof interval === "number") {
+        return Number.isFinite(interval) && interval > 0 ? interval : 0;
+    }
+    if (typeof interval !== "string") return 0;
+    const s = interval.trim();
+    if (s === "") return 0;
+
+    // (a) a token in the table.
+    const entry = TOKEN_LOOKUP.get(s);
+    if (entry !== undefined) return entry.quarterNotes;
+
+    // (b) a fraction "N/D" — note value relative to a whole note.
+    const slash = s.indexOf("/");
+    if (slash !== -1) {
+        const num = Number(s.slice(0, slash).trim());
+        const den = Number(s.slice(slash + 1).trim());
+        if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) {
+            return 0;
+        }
+        const beats = 4 * (num / den);
+        return Number.isFinite(beats) && beats > 0 ? beats : 0;
+    }
+
+    // (c) a numeric string.
+    const n = Number(s);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Pure boundary test for the onTick `onBeatInterval` gate. Returns true
+ * when the musical-beat position crossed a multiple of intervalBeats
+ * between the previous onTick and this one — i.e. the floor of the beat
+ * position over the interval ticked up. Fires exactly once per boundary
+ * and tracks BPM (the caller derives prev/cur from this.beat, which is
+ * sim time scaled by tempo, not wall clock). A non-positive interval is
+ * a no-op (returns false), matching parseBeatInterval's 0 sentinel.
+ *
+ * @param {number} prevBeat  Beat position at the previous onTick.
+ * @param {number} curBeat   Beat position at this onTick.
+ * @param {number} intervalBeats  Boundary spacing in beats.
+ * @returns {boolean}
+ */
+export function crossesInterval(prevBeat, curBeat, intervalBeats) {
+    if (!(intervalBeats > 0)) return false;
+    if (!Number.isFinite(prevBeat) || !Number.isFinite(curBeat)) return false;
+    return Math.floor(curBeat / intervalBeats) > Math.floor(prevBeat / intervalBeats);
+}

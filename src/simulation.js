@@ -242,7 +242,12 @@
 
 // @ts-check
 
-import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "./beatIntervals.js";
+import {
+    getBeatIntervalEntry,
+    DEFAULT_BEAT_INTERVAL,
+    parseBeatInterval,
+    crossesInterval,
+} from "./beatIntervals.js";
 import { imageSignalsFromOKLCh } from "./strudel/signals.js";
 import { DEFAULT_KINEMATICS } from "./scene.js";
 import { computeOffset } from "./seed/seedOffset.js";
@@ -2771,6 +2776,21 @@ export class Simulation {
     _step(dt) {
         if (this._scene === null) return;
         const bpm = this._transport.bpm;
+        // onTick control-rate gate (§3.6): advance the 60 Hz accumulator
+        // ONCE per fine step and decide whether onTick runs this step.
+        // With SIM_DT = 1/240 and ONTICK_DT = 1/60 this is true on every
+        // 4th step; the other three integrate under the force the last
+        // onTick set. A single advance here (rather than per source kind)
+        // is what keeps curve and sprite onTick on the SAME cadence and
+        // preserves the existing sprite-onTick determinism — the
+        // accumulator must tick exactly once per fine step. A while-style
+        // subtract keeps it correct if dt ever exceeds ONTICK_DT.
+        this._onTickAccumulator += dt;
+        let runOnTick = false;
+        if (this._onTickAccumulator >= ONTICK_DT) {
+            this._onTickAccumulator -= ONTICK_DT;
+            runOnTick = true;
+        }
         for (const curve of this._scene.curves) {
             if (typeof curve.id !== "string") continue;
             // Disabled is frozen: no cursor sweep or cycle
@@ -2780,6 +2800,14 @@ export class Simulation {
             const state = this._curveState.get(curve.id);
             if (state === undefined) continue;
             if (state.halted) continue;
+            // onTick BEFORE the cursor advance, matching the sprite
+            // ordering intent (onTick runs ahead of physics). Gated
+            // internally by canTick / not-disabled / a resolved function
+            // name / the session-disable set, and passed ONTICK_DT (not
+            // the fine-step dt) so its beat math matches the control rate.
+            if (runOnTick) {
+                this._runCurveOnTick(curve, state, ONTICK_DT, bpm);
+            }
             const cd = cycleDurationSeconds(bpm, curve.beatsPerCycle, curve.beatInterval);
             this._stepCurve(curve, state, cd, dt);
         }
@@ -2800,7 +2828,10 @@ export class Simulation {
         // step's motion, which matches the intended
         // semantics: the sprite moved during the cycle, and
         // at cycle's end it returns to its starting point.
-        this._stepSprites(dt, bpm);
+        // runOnTick is the 60 Hz gate computed once above and shared
+        // with the curve onTick dispatch, so sprite onTick stays on the
+        // exact same cadence it had when the gate lived in _stepSprites.
+        this._stepSprites(dt, bpm, runOnTick);
     }
 
     /**
@@ -3676,6 +3707,22 @@ export class Simulation {
                     audioTime: self._transport.audioTimeForElapsed(simTime),
                 });
             },
+            /**
+             * onTick-only musical-beat gate (§3.6). Returns true on the
+             * one tick where the beat position crosses a multiple of
+             * `interval` — a token ("Qtr"), a fraction ("1/8"), or a beat
+             * count. Tracks BPM (prev/cur are this.beat, sim time scaled
+             * by tempo); an unparseable or non-positive interval no-ops.
+             * @param {unknown} interval
+             * @returns {boolean}
+             */
+            onBeatInterval(interval) {
+                const iv = parseBeatInterval(interval);
+                if (iv <= 0) return false;
+                const cur = this.beat;
+                const prev = cur - (ONTICK_DT * this.bpm) / 60;
+                return crossesInterval(prev, cur, iv);
+            },
         };
 
         // Stash this firing's context for the Script-tab value tooltip,
@@ -3710,6 +3757,147 @@ export class Simulation {
         // applying one), which _stepSprites reads as a dead zone
         // and responds to by suspending damping for this sub-step.
         return Math.hypot(netFx, netFy);
+    }
+
+    /**
+     * Run one curve's per-tick onTick callback at the 60 Hz control
+     * rate (§3.6). The curve analogue of _runSpriteOnTick: same gates
+     * (canTick, not disabled, a scene, a resolved function name, and the
+     * shared session-disable set keyed by id) and the same tick-based
+     * context shape, minus the physics (a curve has no velocity to push)
+     * — so there is no force return value. The context mirrors the curve
+     * onActiveBeat ctx but is tick-based: NO beatIndex/beatStrength, and
+     * vel defaults to 1.0 like the sprite onTick (the colour reads under
+     * the cursor are the natural velocity source). Adds onBeatInterval,
+     * the onTick-only musical-beat gate.
+     *
+     * A throw is caught, the curve's onTick is disabled for the rest of
+     * the session via the shared _onTickDisabled set, and the first
+     * error is logged once, matching the sprite path.
+     *
+     * @param {any} curve
+     * @param {CurveRuntimeState} state
+     * @param {number} dt  Control-period seconds (ONTICK_DT).
+     * @param {number | null} bpm
+     */
+    _runCurveOnTick(curve, state, dt, bpm) {
+        if (curve.canTick !== true) return;
+        if (curve.state === "disabled") return;
+        if (this._scene === null) return;
+        const name = curve.onTickFunction;
+        if (typeof name !== "string" || name === "") return;
+        const fn = this._scene.functionMap[name];
+        if (typeof fn !== "function") return;
+        if (this._onTickDisabled.has(curve.id)) return;
+
+        const self = this;
+        const selfId = curve.id;
+        const simTime = this._simTime;
+        const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
+        const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
+        // onTick has no beat accent, so the default velocity is full
+        // (1.0); the colour reads under the cursor are the natural
+        // source the author maps to velocity instead.
+        const vel = 1;
+
+        // Image colour beneath the curve's live cursor (the curve
+        // sampled at state.t plus the runtime offset), and the firing
+        // position those signals were read from. Same sampler the
+        // onActiveBeat / sprite onTick contexts use; all zero with no
+        // canvas or image.
+        const col = colFromSignals(this._sampleColorUnderObject(curve, "curve"));
+        const fire = this._objectFiringPosition(curve, "curve");
+        const center = this._objectCenter(curve, "curve");
+
+        const ctx = {
+            id: selfId,
+            kind: "curve",
+            vel,
+            velocity: vel,
+            // The ten image-colour signals beneath the cursor.
+            col,
+            // The cursor's firing position and the curve's own centre
+            // (both runtime-offset), plus the curve's authored colour.
+            x: fire.x,
+            y: fire.y,
+            centerX: center.x,
+            centerY: center.y,
+            color: colorSignalsFromHex(curve.color),
+            beat,
+            time: simTime,
+            bpm: bpmNum,
+            /** @param {...any} args  playNote(note, vel?, dur?, pan?) or ("instrument", note, ...) or ({...}). */
+            playNote(...args) {
+                if (self._audioSink === null) return;
+                const s = buildNoteSpec(args, vel);
+                self._audioSink(selfId, {
+                    type: "note",
+                    sound: s.sound,
+                    note: s.note,
+                    amplitude: s.velocity,
+                    duration: s.duration,
+                    pan: s.pan,
+                    audioTime: self._transport.audioTimeForElapsed(simTime),
+                });
+                self._recordNoteEvent(selfId, name, col, vel, beat, simTime, s);
+            },
+            /** @param {...any} args  playSound(sample, vel?) or ("bank", sample, vel?) or ({...}). */
+            playSound(...args) {
+                if (self._audioSink === null) return;
+                const s = buildSoundSpec(args, vel);
+                self._audioSink(selfId, {
+                    type: "sound",
+                    bank: s.bank,
+                    sample: s.sample,
+                    amplitude: s.velocity,
+                    audioTime: self._transport.audioTimeForElapsed(simTime),
+                });
+                self._recordSoundEvent(selfId, name, col, vel, beat, simTime, s);
+            },
+            /**
+             * onTick-only musical-beat gate (§3.6). True on the one tick
+             * where the beat position crosses a multiple of `interval`
+             * (a token, a fraction, or a beat count). Tracks BPM via
+             * this.beat; an unparseable/non-positive interval no-ops.
+             * @param {unknown} interval
+             * @returns {boolean}
+             */
+            onBeatInterval(interval) {
+                const iv = parseBeatInterval(interval);
+                if (iv <= 0) return false;
+                const cur = this.beat;
+                const prev = cur - (ONTICK_DT * this.bpm) / 60;
+                return crossesInterval(prev, cur, iv);
+            },
+        };
+
+        // Stash this firing's context for the Script-tab value tooltip,
+        // keyed by the callback's function name.
+        if (typeof name === "string" && name !== "") {
+            this._lastCallbackContexts.set(name, ctx);
+        }
+
+        setCallbackContext(ctx);
+        try {
+            fn.call(ctx);
+        } catch (err) {
+            this._onTickDisabled.add(curve.id);
+            const detail = (err instanceof Error && typeof err.message === "string")
+                ? err.message
+                : String(err);
+            const line = `onTick disabled for ${curve.id}: ${detail}`;
+            console.error("[onTick] " + line, err);
+            if (this._messageLogger !== null) {
+                try {
+                    this._messageLogger(line, "error");
+                } catch (_loggerErr) {
+                    // A logger fault must never destabilise the
+                    // simulation; the console line above stands.
+                }
+            }
+        } finally {
+            clearCallbackContext();
+        }
     }
 
     /**
@@ -3768,8 +3956,11 @@ export class Simulation {
      *
      * @param {number} dt  Elapsed seconds in this step (always SIM_DT).
      * @param {number | null} bpm  Master tempo from the transport.
+     * @param {boolean} runOnTick  The 60 Hz control-rate gate, computed
+     *     once per fine step by _step and shared with the curve onTick
+     *     dispatch (so the accumulator advances exactly once per step).
      */
-    _stepSprites(dt, bpm) {
+    _stepSprites(dt, bpm, runOnTick) {
         if (this._scene === null) return;
         const halfW = numberOrZero(this._scene.canvasW) / 2;
         const halfH = numberOrZero(this._scene.canvasH) / 2;
@@ -3790,18 +3981,12 @@ export class Simulation {
         const drag = kinNum(kin.drag, DEFAULT_KINEMATICS.drag);
         const jitter = kinNum(kin.jitter, DEFAULT_KINEMATICS.jitter);
         const coast = kinNum(kin.coast, DEFAULT_KINEMATICS.coast);
-        // onTick control-rate gate: advance the 60 Hz accumulator by
-        // this fine step's dt and decide whether onTick runs this
-        // step. With SIM_DT = 1/240 and ONTICK_DT = 1/60, this is true
-        // on every 4th step; the other three integrate physics under
-        // the force the last onTick set. A while-subtract keeps it
-        // correct if dt ever exceeds ONTICK_DT.
-        this._onTickAccumulator += dt;
-        let runOnTick = false;
-        if (this._onTickAccumulator >= ONTICK_DT) {
-            this._onTickAccumulator -= ONTICK_DT;
-            runOnTick = true;
-        }
+        // onTick control-rate gate (runOnTick) is computed once per fine
+        // step by _step and passed in, so the 60 Hz accumulator advances
+        // exactly once per step and curve + sprite onTick share a cadence.
+        // With SIM_DT = 1/240 and ONTICK_DT = 1/60 it is true on every 4th
+        // step; the other three integrate physics under the force the last
+        // onTick set.
         for (const sprite of this._scene.sprites) {
             if (typeof sprite.id !== "string") continue;
             // Disabled is frozen: skip physics AND onTick. A

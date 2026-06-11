@@ -75,6 +75,7 @@ import {
     playNote as bareplayNote,
     playSound as bareplaySound,
     applyForce as bareApplyForce,
+    onBeatInterval as bareOnBeatInterval,
 } from "./callbackContext.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
@@ -630,7 +631,8 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
         // Passed as parameters (not prepended to the source) so they
         // do not shift user line numbers in error reports.
         fn = new Function(
-            "score", "print", "playNote", "playSound", "applyForce", body);
+            "score", "print", "playNote", "playSound", "applyForce",
+            "onBeatInterval", body);
     } catch (err) {
         // Acorn already caught syntax errors at parse time, but
         // belt-and-braces in case the new Function path catches
@@ -646,7 +648,7 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
         raw = fn(
             scoreGlobal,
             typeof printFn === "function" ? printFn : () => {},
-            bareplayNote, bareplaySound, bareApplyForce);
+            bareplayNote, bareplaySound, bareApplyForce, bareOnBeatInterval);
     } catch (err) {
         return {
             ok: false,
