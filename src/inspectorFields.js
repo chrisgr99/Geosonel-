@@ -972,14 +972,16 @@ export const fieldMethods = {
         /** @param {string} ch */
         // A dot can be entered with EITHER the period or the SPACE
         // bar (space is the natural "rest" key while tapping in a
-        // rhythm). In Active Beats any other key becomes "x"; in
-        // Beat Strength a dot or space becomes a dot, digits 0-9
-        // pass through, and everything else is rejected. (Note:
-        // space is checked before the whitespace-drop rule, so it
-        // maps to "." rather than being discarded; tabs/newlines
-        // and pipes are still dropped.)
+        // rhythm). In Active Beats a dot/space is a rest, a digit 1-9
+        // is a ratchet (that many hits in the slot), and any other key
+        // becomes "x" (a single hit); in Beat Strength a dot or space
+        // becomes a dot, digits 0-9 pass through, and everything else
+        // is rejected. (Note: space is checked before the whitespace-
+        // drop rule, so it maps to "." rather than being discarded;
+        // tabs/newlines and pipes are still dropped.)
         const transform = isPattern
-            ? (ch) => (ch === "." || ch === " " ? "." : (/[|\s]/.test(ch) ? null : "x"))
+            ? (ch) => (ch === "." || ch === " " ? "."
+                : (/[1-9]/.test(ch) ? ch : (/[|\s]/.test(ch) ? null : "x")))
             : (ch) => (ch === "." || ch === " " ? "." : (/[0-9]/.test(ch) ? ch : null));
         const toLogical = (s) => s.replace(/\|/g, "");
 

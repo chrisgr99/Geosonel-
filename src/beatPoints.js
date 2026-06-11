@@ -91,6 +91,22 @@ function isDigit(ch) {
 }
 
 /**
+ * Hits a beat-pattern slot character produces. "x"/"X" is one hit; a
+ * digit 1-9 is a ratchet of that many evenly-spaced sub-hits across the
+ * slot's interval; anything else (".", "0") is a rest (0 hits).
+ * @param {string} ch
+ * @returns {number}
+ */
+function beatCountForSlot(ch) {
+    if (ch === "x" || ch === "X") return 1;
+    if (isDigit(ch)) {
+        const v = Number(ch);
+        return v >= 1 ? v : 0;
+    }
+    return 0;
+}
+
+/**
  * Derive positions + strengths from a full-length x/dot active-beats
  * string — the EUCLIDEAN path. Each character is one equal subdivision
  * of the cycle (the count is the string's own length, which the
@@ -115,12 +131,19 @@ function deriveFromActiveBeats(activeBeats, strength) {
     const inactivePositions = [];
     for (let i = 0; i < n; i++) {
         const ch = slots[i];
-        if (ch === "x" || ch === "X") {
-            positions.push(i / n);
+        const count = beatCountForSlot(ch);
+        if (count > 0) {
             const d = strengths[i];
-            out.push(d !== undefined && isDigit(d) ? Number(d) : DEFAULT_STRENGTH);
+            const strengthVal = (d !== undefined && isDigit(d))
+                ? Number(d) : DEFAULT_STRENGTH;
+            // A digit slot is a ratchet: `count` evenly-spaced sub-hits
+            // across the slot's interval, all at the slot's strength.
+            for (let k = 0; k < count; k++) {
+                positions.push((i + k / count) / n);
+                out.push(strengthVal);
+            }
         } else {
-            // "." (or any non-x slot) is an inactive beat: drawn
+            // "." (or any non-x/digit slot) is an inactive beat: drawn
             // small, never fired.
             inactivePositions.push(i / n);
         }
@@ -166,10 +189,17 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle) {
     const inactivePositions = [];
     for (let i = 0; i < n; i++) {
         const ch = slots[i % slots.length];
-        if (ch === "x" || ch === "X") {
-            positions.push(i / n);
+        const count = beatCountForSlot(ch);
+        if (count > 0) {
             const d = strengths[i % strengths.length];
-            out.push(d !== undefined && isDigit(d) ? Number(d) : DEFAULT_STRENGTH);
+            const strengthVal = (d !== undefined && isDigit(d))
+                ? Number(d) : DEFAULT_STRENGTH;
+            // A digit slot is a ratchet: `count` evenly-spaced sub-hits
+            // across the slot's interval, all at the slot's strength.
+            for (let k = 0; k < count; k++) {
+                positions.push((i + k / count) / n);
+                out.push(strengthVal);
+            }
         } else {
             inactivePositions.push(i / n);
         }

@@ -51,6 +51,27 @@ test("normal: strengths align slot-for-slot, including on rest slots", () => {
     assert.deepEqual(r.strengths, [7, 4]);
 });
 
+test("ratchet: a digit slot becomes that many evenly-spaced sub-hits", () => {
+    // 4-slot cycle; slot 1 is a 4-ratchet -> 4 sub-hits across [0.25, 0.5).
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x4x.", strength: "9999" }));
+    assert.deepEqual(r.positions, [0, 0.25, 0.3125, 0.375, 0.4375, 0.5]);
+    assert.deepEqual(r.strengths, [9, 9, 9, 9, 9, 9]);
+    assert.deepEqual(r.inactivePositions, [0.75]);
+});
+
+test("ratchet: all sub-hits carry the slot's strength digit", () => {
+    // 2-slot cycle; slot 0 = x (strength 7); slot 1 = 2-ratchet (strength 5).
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x2", strength: "75" }));
+    assert.deepEqual(r.positions, [0, 0.5, 0.75]);
+    assert.deepEqual(r.strengths, [7, 5, 5]);
+});
+
+test("ratchet: x is one hit; 0 and . are rests", () => {
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x1.0", strength: "9999" }));
+    assert.deepEqual(r.positions, [0, 0.25]);
+    assert.deepEqual(r.inactivePositions, [0.5, 0.75]);
+});
+
 test("bars and whitespace are layout only and ignored", () => {
     const a = deriveCurveBeatPoints(curve({ activeBeats: "x.x.|x.x.", strength: "9999|9999", beatPointsMode: "normal" }));
     // 8 slots, x at 0,2,4,6 -> fractions 0, .25, .5, .75

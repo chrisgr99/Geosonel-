@@ -231,10 +231,10 @@ export function validateActiveBeats(candidate) {
             message: "Empty Active Beats mutes the curve's rhythm.",
         };
     }
-    if (!/^[x.]+$/.test(stripped)) {
+    if (!/^[x.1-9]+$/.test(stripped)) {
         return {
             kind: "hard", value: "",
-            message: 'Active Beats may contain only "x" (active) and "." (inactive).',
+            message: 'Active Beats may contain "x" (active), "." (inactive), or a digit 1-9 (ratchet: that many hits in the slot).',
         };
     }
     return { kind: "ok", value: trimmed };
