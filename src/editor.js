@@ -40,6 +40,7 @@ import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
 import { getPreference, setPreference, subscribePreference } from "./preferences.js";
 import { codeSpeechExtension } from "./codeSpeech.js";
+import { showContextMenu } from "./contextMenu.js";
 
 /**
  * Sentinel name for the virtual Properties tab. The
@@ -1658,6 +1659,59 @@ export class TabbedEditor {
                 // and around the mouse pointer, with a light span
                 // on the hovered pair. See src/parenHighlight.js.
                 ...parenHighlightExtension(),
+                // Right-click context menu: the standard
+                // Cut / Copy / Paste / Select All set, wired
+                // to the same focus-gated clipboard helpers
+                // the native Edit menu uses. We focus the
+                // editor first so the gated helpers (which
+                // re-check document.activeElement is inside
+                // .cm-editor) run, and so Cut / Copy disabled
+                // state reflects the editor's own selection.
+                // The shared menu's mousedown-with-preventDefault
+                // activation keeps focus on the editor through
+                // the click; each action re-focuses anyway as a
+                // belt-and-suspenders against focus having moved
+                // between the menu build and the click.
+                EditorView.domEventHandlers({
+                    contextmenu: (event, view) => {
+                        event.preventDefault();
+                        view.focus();
+                        const empty = view.state.selection.main.empty;
+                        showContextMenu([
+                            {
+                                label: "Cut",
+                                disabled: empty,
+                                action: () => {
+                                    view.focus();
+                                    this.tryCutInFocus();
+                                },
+                            },
+                            {
+                                label: "Copy",
+                                disabled: empty,
+                                action: () => {
+                                    view.focus();
+                                    this.tryCopyInFocus();
+                                },
+                            },
+                            {
+                                label: "Paste",
+                                action: () => {
+                                    view.focus();
+                                    void this.tryPasteInFocus();
+                                },
+                            },
+                            {
+                                label: "Select All",
+                                action: () => {
+                                    view.focus();
+                                    this.trySelectAllInFocus();
+                                },
+                            },
+                        ], event.clientX, event.clientY);
+                        return true;
+                    },
+                }),
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         this._onDocChanged(update.state.doc.toString());
@@ -1685,7 +1739,7 @@ export class TabbedEditor {
                 EditorView.theme({
                     "&": {
                         height: "100%",
-                        fontSize: "14pt",
+                        fontSize: "12pt",
                     },
                     ".cm-scroller": {
                         fontFamily: "SF Mono, Menlo, Consolas, monospace",
