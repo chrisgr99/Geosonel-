@@ -13,6 +13,7 @@ design-strudel/
 # Local iReal Pro import test data + scratch (not distributed)
 Jazz 1460.html
 _ireal_poc.mjs
+_ireal_validate.mjs
 .claude/settings.local.json
 
 # Electron migration (Stage 1+)
