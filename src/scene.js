@@ -154,6 +154,21 @@ export class Scene {
          */
         this.timeSignature = [4, 4];
 
+        // --- Chosen progression (harmony import). ---
+        // A single Song picked from the harmony library, frozen into
+        // the score so it travels with the piece. Null when the
+        // composer hasn't chosen one. Serialisable shape (see
+        // src/harmonyScene.js):
+        //   { title, composer, key: {tonicPitchClass, mode},
+        //     timeSignature: [n, d], progression: ProgressionCell[] }
+        // The progression cells are already plain JSON (harmonyModel.js).
+        // The loader runs the raw scene.json value through
+        // sanitiseSceneHarmony so a malformed block reads as null
+        // rather than crashing the load. No engine wiring yet — this is
+        // pure storage; playback arrives in a later commit.
+        /** @type {import("./harmonyScene.js").SceneHarmony | null} */
+        this.harmony = null;
+
         // --- Harmony framework (score-level defaults). ---
         /** @type {string | null} */
         this.tonic = null;

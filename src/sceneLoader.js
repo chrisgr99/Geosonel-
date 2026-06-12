@@ -72,6 +72,7 @@
 
 import { Scene, DEFAULT_KINEMATICS, sceneDataHasBackgroundImage } from "./scene.js";
 import { sanitiseTimeSignature } from "./timeSignature.js";
+import { sanitiseSceneHarmony } from "./harmonyScene.js";
 import {
     playNote as bareplayNote,
     playSound as bareplaySound,
@@ -396,6 +397,10 @@ function applyPieceLevelFields(scene, data) {
     // field is absent or malformed. This restores the score-level
     // time signature that v2.3 had ignored.
     scene.timeSignature = sanitiseTimeSignature(data.timeSignature);
+    // Chosen progression. Run the raw value through sanitiseSceneHarmony,
+    // which returns a clean object on a well-formed value and null on
+    // anything malformed, so a hand-edited scene.json can't crash load.
+    if ("harmony" in data) scene.harmony = sanitiseSceneHarmony(data.harmony);
     if ("tonic" in data) scene.tonic = data.tonic;
     if ("scaleName" in data) scene.scaleName = data.scaleName;
     if ("root" in data) scene.root = data.root;

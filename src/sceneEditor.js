@@ -32,6 +32,7 @@
 
 import { generateId, ensureIdCounters } from "./idGen.js";
 import { isValidBeatInterval } from "./beatIntervals.js";
+import { sanitiseSceneHarmony } from "./harmonyScene.js";
 import { generateEuclideanPattern } from "./euclidean.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
@@ -1539,6 +1540,28 @@ export function setSceneTimeSignature(data, value) {
     if (num !== 3 && num !== 4) return;
     if (den !== 4) return;
     data.timeSignature = [num, den];
+}
+
+/**
+ * Set or clear the chosen progression at the top level of scene.json.
+ * Mirrors setSceneBpm's defensive style: a non-object data root is a
+ * no-op. Passing null (or anything that fails the shape check) CLEARS
+ * the field — `data.harmony` is set to null. A well-formed value is run
+ * through sanitiseSceneHarmony and stored in its cleaned, freshly-copied
+ * form, so the persisted block always matches the documented shape
+ *   { title, composer, key, timeSignature, progression }
+ * and never aliases the caller's object. The field saves with the scene
+ * automatically (it's a normal field); no engine wiring here.
+ * @param {any} data
+ * @param {unknown} harmony  the chosen Song's serialisable form, or null to clear.
+ */
+export function setSceneHarmony(data, harmony) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    if (harmony === null) {
+        data.harmony = null;
+        return;
+    }
+    data.harmony = sanitiseSceneHarmony(harmony);
 }
 
 /**

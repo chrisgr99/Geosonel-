@@ -196,6 +196,18 @@ export const SCENE_FIELDS = [
         type: "array",
         default: [4, 4],
     },
+    {
+        // Chosen progression: a single Song picked from the harmony
+        // library, frozen into the score. Null = none chosen. Stored
+        // as a serialisable object
+        //   { title, composer, key, timeSignature, progression }
+        // (see src/harmonyScene.js for the exact shape and the load-time
+        // sanitiser). No inspector widget yet — this is pure storage.
+        key: "harmony",
+        label: "Chosen Progression",
+        type: "object",
+        default: null,
+    },
     { key: "tonic", label: "Tonic", type: "string", default: null },
     { key: "scaleName", label: "Scale", type: "string", default: null },
     { key: "root", label: "Root", type: "string", default: null },
