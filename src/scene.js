@@ -290,6 +290,21 @@ export class Scene {
         /** @type {{drag: number, jitter: number, coast: number}} */
         this.kinematics = { ...DEFAULT_KINEMATICS };
 
+        // --- Polyphony (voice limiting) ---
+        // Whole-score and per-group voice caps (design/polyphony.md),
+        // set from script.js via `score.poly` / `score.groupPoly(name, n)`
+        // and read back here after the top-level script runs (same path
+        // as score.kinematics). poly is the whole-score cap; groupPoly is
+        // a plain { groupName: limit } object keyed by an object's `group`
+        // field. Unset = unlimited (Infinity / no entry). The simulation
+        // reads these at each note-start to drop notes once a scope is at
+        // its cap (suppress-new); per-object caps are enforced by the sim's
+        // _objectPoly map, not here.
+        /** @type {number} */
+        this.poly = Infinity;
+        /** @type {Object<string, number>} */
+        this.groupPoly = {};
+
         // --- Function map ---
         // Map of top-level function names in script.js to
         // their function references. Built by the scene loader

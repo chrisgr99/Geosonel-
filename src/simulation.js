@@ -253,6 +253,12 @@ import { DEFAULT_KINEMATICS } from "./scene.js";
 import { computeOffset } from "./seed/seedOffset.js";
 import { deriveCurveBeatPoints } from "./beatPoints.js";
 import { buildNoteSpec, buildSoundSpec } from "./emitters.js";
+import {
+    VoiceRegistry,
+    trimDuration,
+    timeToKthBeat,
+    shouldSuppress,
+} from "./polyphony.js";
 import { setCallbackContext, clearCallbackContext } from "./callbackContext.js";
 import { EventTrace } from "./eventTrace.js";
 import { sampleCurve, shapeCenter } from "./curveGeometry.js";
@@ -1383,6 +1389,149 @@ export class Simulation {
          * @type {((sourceId: string, spec: any) => void) | null}
          */
         this._audioSink = null;
+        /**
+         * Per-object voice limit (design/polyphony.md), written by a
+         * callback's `this.poly = N` and read back by its getter. id ->
+         * limit (1 = mono, N >= 1 = up to N overlapping voices). A missing
+         * entry means unlimited (Infinity). Persists across firings (it
+         * lives on the sim, not the per-firing context) so a poly set once
+         * in any callback governs the object thereafter. Cleared on
+         * setScene so a script reload starts from unlimited; survives a
+         * rewind (it's an authoring setting, not transport state).
+         * @type {Map<string, number>}
+         */
+        this._objectPoly = new Map();
+        /**
+         * Active-note registry for suppress-new voice limiting
+         * (design/polyphony.md): the notes currently sounding, as
+         * { objectId, group, endTime }. _emitNote prunes it by endTime
+         * against the current sim time, counts the relevant scope, and
+         * drops a new note when a scope is at its cap. Cleared on setScene
+         * and rewind so counts restart with the transport.
+         * @type {VoiceRegistry}
+         */
+        this._voiceRegistry = new VoiceRegistry();
+    }
+
+    /**
+     * Centralised note emission with polyphony enforcement
+     * (design/polyphony.md). Every context's playNote routes its built
+     * note spec through here instead of calling _audioSink directly, so
+     * both audio engines (MIDI and superdough) get identical voice
+     * limiting with no engine-specific code.
+     *
+     * Steps:
+     *  1. Resolve the object's per-object limit pObj (Infinity if unset).
+     *  2. STRICT per-object trim — only on the onActiveBeat path (when
+     *     timeToNextBeatSec, the time to the pObj-th upcoming beat, is
+     *     supplied) and pObj finite: shorten spec.duration so the note
+     *     ends just past that beat plus a legato overlap. The trim alone
+     *     caps the object here, so the object-count suppress check is
+     *     skipped on this path.
+     *  3. SUPPRESS-NEW: prune the registry by endTime, then drop the note
+     *     if the object (count fallback only — onTick / collision), its
+     *     group, or the whole score is already at its cap.
+     *  4. Register the surviving note's sounding window and forward the
+     *     spec to _audioSink.
+     *
+     * Limits are re-read every call (object map + scene fields), so a
+     * mid-run `this.poly` change applies on the next note. "Now" is sim
+     * time, keeping the whole decision a pure function of sim state + the
+     * deterministic beat schedule.
+     *
+     * @param {string} objectId  The emitting object's id.
+     * @param {string} group  The object's `group` field ("" = no group).
+     * @param {{sound: any, note: any, velocity: number, duration: number, pan: any}} spec
+     *   The built note spec (buildNoteSpec result). spec.duration may be
+     *   shortened in place by the trim.
+     * @param {number | null} timeToNextBeatSec  Time to the pObj-th upcoming
+     *   beat (s) on the onActiveBeat path; null elsewhere (count fallback).
+     * @returns {boolean} true if the note was emitted, false if suppressed.
+     */
+    _emitNote(objectId, group, spec, timeToNextBeatSec) {
+        if (this._audioSink === null) return false;
+        const now = this._simTime;
+
+        // (1) Re-read limits each call so a mid-run this.poly change applies.
+        const rawObj = this._objectPoly.get(objectId);
+        const pObj = (typeof rawObj === "number" && Number.isFinite(rawObj))
+            ? rawObj : Infinity;
+        const scene = this._scene;
+        const grp = typeof group === "string" ? group : "";
+        const pGrp = (scene !== null
+            && scene.groupPoly !== null
+            && typeof scene.groupPoly === "object"
+            && typeof scene.groupPoly[grp] === "number")
+            ? scene.groupPoly[grp] : Infinity;
+        const pScore = (scene !== null && typeof scene.poly === "number")
+            ? scene.poly : Infinity;
+
+        // (2) Strict per-object trim — only when the next-beat schedule is
+        // known (onActiveBeat) and the object has a finite cap. Shorten
+        // only; never extend. The trim caps the object on this path, so the
+        // per-object COUNT check below is skipped (trimmedObject = true).
+        let trimmedObject = false;
+        if (timeToNextBeatSec !== null && Number.isFinite(pObj)) {
+            spec.duration = trimDuration(spec.duration, timeToNextBeatSec);
+            trimmedObject = true;
+        }
+
+        // (3) Suppress-new: prune expired notes, then count each scope.
+        this._voiceRegistry.prune(now);
+        const suppress = shouldSuppress({
+            checkObject: !trimmedObject,
+            pObj,
+            countObject: this._voiceRegistry.countObject(objectId),
+            pGrp,
+            countGroup: this._voiceRegistry.countGroup(grp),
+            pScore,
+            countScore: this._voiceRegistry.countTotal(),
+        });
+        if (suppress) return false;
+
+        // (4) Register the surviving note and forward to the sink.
+        this._voiceRegistry.register(objectId, grp, now + spec.duration);
+        this._audioSink(objectId, {
+            type: "note",
+            sound: spec.sound,
+            note: spec.note,
+            amplitude: spec.velocity,
+            duration: spec.duration,
+            pan: spec.pan,
+            audioTime: this._transport.audioTimeForElapsed(now),
+        });
+        return true;
+    }
+
+    /**
+     * Install the `this.poly` getter/setter on a firing context
+     * (design/polyphony.md). The setter writes the object's persistent
+     * voice limit into _objectPoly (so it survives across firings); the
+     * getter reads it back, defaulting to Infinity (unlimited) when unset.
+     * Assigning a non-number or a value < 1 clears any cap back to
+     * unlimited, matching the score/group sanitiser. Defined per context so
+     * every callback (collision, onActiveBeat, onTick) can read and set it.
+     * @param {Record<string, any>} ctx  The firing context bound as `this`.
+     * @param {string} objectId  The object the limit persists on.
+     */
+    _definePolyAccessor(ctx, objectId) {
+        const self = this;
+        Object.defineProperty(ctx, "poly", {
+            enumerable: true,
+            configurable: true,
+            get() {
+                const v = self._objectPoly.get(objectId);
+                return (typeof v === "number" && Number.isFinite(v)) ? v : Infinity;
+            },
+            set(n) {
+                if (typeof n === "number" && Number.isFinite(n) && n >= 1) {
+                    self._objectPoly.set(objectId, n);
+                } else {
+                    // Infinity / unset / invalid => unlimited.
+                    self._objectPoly.delete(objectId);
+                }
+            },
+        });
     }
 
     /**
@@ -1712,15 +1861,12 @@ export class Simulation {
             playNote(...args) {
                 if (self._audioSink === null) return;
                 const s = buildNoteSpec(args, vel);
-                self._audioSink(selfId, {
-                    type: "note",
-                    sound: s.sound,
-                    note: s.note,
-                    amplitude: s.velocity,
-                    duration: s.duration,
-                    pan: s.pan,
-                    audioTime: self._transport.audioTimeForElapsed(simTime),
-                });
+                // Polyphony: collisions have no known next-note schedule,
+                // so the per-object cap falls back to count-based
+                // suppress-new (timeToNextBeatSec = null). A dropped note
+                // is not recorded in the event trace.
+                const group = typeof obj.group === "string" ? obj.group : "";
+                if (!self._emitNote(selfId, group, s, null)) return;
                 self._recordNoteEvent(selfId, name, col, vel, beat, simTime, s);
             },
             /**
@@ -1752,6 +1898,8 @@ export class Simulation {
              */
             agc(channel, lo, hi) { return self._agc(this.col, channel, lo, hi); },
         };
+        // Polyphony: this.poly reads/writes the object's persistent voice limit.
+        this._definePolyAccessor(ctx, selfId);
 
         // Stash this firing's context for the Script-tab value tooltip,
         // keyed by the callback's function name.
@@ -2005,6 +2153,37 @@ export class Simulation {
         const color = colorSignalsFromHex(curve.color);
         const callbackName = resolveOnActiveBeatName(curve) || "onActiveBeat";
 
+        // Polyphony (strict per-object trim): if this curve has a finite
+        // voice cap, compute the time to the pObj-th upcoming beat so
+        // _emitNote can trim the note's duration to end just past it
+        // (design/polyphony.md). The schedule is the same _beatOrder the
+        // crossing loop walks: order entries carry directional progress g,
+        // and _beatNextIdx already points PAST this just-fired beat. The
+        // effective cycle time is the base cycleDuration divided by the
+        // magnitude of the current cycle's speed (the same speedList entry
+        // _detectActiveBeatCrossings used to pick the order's direction).
+        // Computed once per firing and passed in; null (count fallback)
+        // when there's no cap or the schedule is degenerate.
+        const rawObjPoly = this._objectPoly.get(selfId);
+        const pObjForTrim = (typeof rawObjPoly === "number"
+            && Number.isFinite(rawObjPoly)) ? rawObjPoly : Infinity;
+        let timeToNthBeatSec = null;
+        if (Number.isFinite(pObjForTrim)) {
+            const order = state._beatOrder;
+            const loopLen = cycleSpeedsLoopLength(state.speedList);
+            const speed = loopLen > 0
+                ? state.speedList[state.cycleCount % loopLen] : 1;
+            const baseCycle = cycleDurationSeconds(
+                bpmNum, curve.beatsPerCycle, curve.beatInterval);
+            const effectiveCycleTime = (Number.isFinite(speed) && Math.abs(speed) > 0)
+                ? baseCycle / Math.abs(speed) : 0;
+            // The just-fired beat's own directional progress (the order is
+            // built with this same sign in _detectActiveBeatCrossings).
+            const gJustFired = state._beatOrderSign < 0 ? 1 - fraction : fraction;
+            timeToNthBeatSec = timeToKthBeat(
+                order, state._beatNextIdx, gJustFired, pObjForTrim, effectiveCycleTime);
+        }
+
         // The firing context is bound as the callback's `this`
         // (§3.2): reads are `this.vel` / `this.velocity` / `this.col.*`,
         // and the action functions are callable bare (playNote /
@@ -2040,15 +2219,12 @@ export class Simulation {
             playNote(...args) {
                 if (self._audioSink === null) return;
                 const s = buildNoteSpec(args, vel);
-                self._audioSink(selfId, {
-                    type: "note",
-                    sound: s.sound,
-                    note: s.note,
-                    amplitude: s.velocity,
-                    duration: s.duration,
-                    pan: s.pan,
-                    audioTime: self._transport.audioTimeForElapsed(simTime),
-                });
+                // Polyphony: onActiveBeat is the strict per-object path —
+                // pass the time to the pObj-th upcoming beat so _emitNote
+                // trims the duration (design/polyphony.md). group/score
+                // suppress-new still apply. A dropped note isn't recorded.
+                const group = typeof curve.group === "string" ? curve.group : "";
+                if (!self._emitNote(selfId, group, s, timeToNthBeatSec)) return;
                 self._recordNoteEvent(selfId, callbackName, col, vel, beat, simTime, s);
             },
             /** @param {...any} args  playSound(sample, vel?) or ("bank", sample, vel?) or ({...}). */
@@ -2088,6 +2264,8 @@ export class Simulation {
         // executed this.* reads while returning real values unchanged.
         /** @type {Map<string, any>} */
         const flashValues = new Map();
+        // Polyphony: this.poly reads/writes the curve's persistent voice limit.
+        this._definePolyAccessor(ctx, selfId);
         const recordingProxy = makeReadRecordingProxy(ctx, flashValues, "", 2);
         setCallbackContext(ctx);
         try {
@@ -2298,6 +2476,11 @@ export class Simulation {
         this._lastCallbackContexts.clear();
         this._recentCallbackFlashes.clear();
         this._eventTrace.clear();
+        // Polyphony: a scene re-run starts from unlimited voices (the
+        // script re-runs and re-sets any this.poly), and the active-note
+        // registry restarts so counts don't carry stale notes across.
+        this._objectPoly.clear();
+        this._voiceRegistry.clear();
         this._scene = scene;
         if (scene === null) {
             this._curveState.clear();
@@ -2903,6 +3086,11 @@ export class Simulation {
         this._lastCallbackContexts.clear();
         this._recentCallbackFlashes.clear();
         this._eventTrace.clear();
+        // Polyphony: the active-note registry restarts with the transport
+        // so suppress-new counts don't carry notes across a rewind. The
+        // per-object limits (_objectPoly) are an authoring setting and
+        // survive — a rewind replays the same score, not a reload.
+        this._voiceRegistry.clear();
         // Restart the metronome beat counter so the first beat crossing
         // after the rewind is beat 1 (the downbeat is the loop click).
         this._metronomeBeat = 0;
@@ -3938,15 +4126,11 @@ export class Simulation {
                 if (simTime - state._lastAudioFireTime < MIN_AUDIO_FIRE_INTERVAL) return;
                 state._lastAudioFireTime = simTime;
                 const s = buildNoteSpec(args, vel);
-                self._audioSink(sprite.id, {
-                    type: "note",
-                    sound: s.sound,
-                    note: s.note,
-                    amplitude: s.velocity,
-                    duration: s.duration,
-                    pan: s.pan,
-                    audioTime: self._transport.audioTimeForElapsed(simTime),
-                });
+                // Polyphony: onTick has no known next-note schedule, so the
+                // per-object cap falls back to count-based suppress-new
+                // (timeToNextBeatSec = null); group/score apply too.
+                const group = typeof sprite.group === "string" ? sprite.group : "";
+                self._emitNote(sprite.id, group, s, null);
             },
             /**
              * Fire a sample from the sprite's sound bank (§3.3).
@@ -3994,6 +4178,9 @@ export class Simulation {
              */
             agc(channel, lo, hi) { return self._agc(this.col, channel, lo, hi); },
         };
+
+        // Polyphony: this.poly reads/writes the sprite's persistent voice limit.
+        this._definePolyAccessor(ctx, sprite.id);
 
         // Stash this firing's context for the Script-tab value tooltip,
         // keyed by the callback's function name.
@@ -4100,15 +4287,12 @@ export class Simulation {
             playNote(...args) {
                 if (self._audioSink === null) return;
                 const s = buildNoteSpec(args, vel);
-                self._audioSink(selfId, {
-                    type: "note",
-                    sound: s.sound,
-                    note: s.note,
-                    amplitude: s.velocity,
-                    duration: s.duration,
-                    pan: s.pan,
-                    audioTime: self._transport.audioTimeForElapsed(simTime),
-                });
+                // Polyphony: curve onTick has no known next-note schedule,
+                // so the per-object cap falls back to count-based
+                // suppress-new (timeToNextBeatSec = null); group/score
+                // apply too. A dropped note isn't recorded.
+                const group = typeof curve.group === "string" ? curve.group : "";
+                if (!self._emitNote(selfId, group, s, null)) return;
                 self._recordNoteEvent(selfId, name, col, vel, beat, simTime, s);
             },
             /** @param {...any} args  playSound(sample, vel?) or ("bank", sample, vel?) or ({...}). */
@@ -4150,6 +4334,9 @@ export class Simulation {
              */
             agc(channel, lo, hi) { return self._agc(this.col, channel, lo, hi); },
         };
+
+        // Polyphony: this.poly reads/writes the curve's persistent voice limit.
+        this._definePolyAccessor(ctx, selfId);
 
         // Stash this firing's context for the Script-tab value tooltip,
         // keyed by the callback's function name.

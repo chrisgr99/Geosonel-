@@ -27,6 +27,7 @@
 import {
     autocompletion,
 } from "https://esm.sh/@codemirror/autocomplete@6?deps=@codemirror/state@6.5.2";
+import { DEFAULT_KINEMATICS } from "./scene.js";
 
 /**
  * Firing-context members offered after `this.` — the reads and
@@ -37,11 +38,22 @@ const THIS_MEMBERS = [
     "vel", "velocity", "beatStrength", "col", "x", "y", "vx", "vy", "speed",
     "flipX", "flipY", "cyclePhase", "cycleCount", "beat", "time", "bpm",
     "id", "kind", "beatIndex", "beatCount", "otherId", "otherKind",
-    "hitSpeed", "playNote", "playSound",
+    "hitSpeed", "poly", "playNote", "playSound",
 ];
 
 /** Colour channels offered after `this.col.` (lt = lightness, chr = chroma). */
 const COL_MEMBERS = ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"];
+
+/**
+ * The `score` global's members offered after `score.` — the score-wide
+ * config a setup (top-level) script reads/writes: kinematics knobs, the
+ * polyphony caps (poly value + groupPoly(name, N) setter), and the
+ * read-only hasBackgroundImage flag.
+ */
+const SCORE_MEMBERS = ["kinematics", "poly", "groupPoly", "hasBackgroundImage"];
+
+/** Kinematics knobs offered after `score.kinematics.` (kept in sync with the defaults). */
+const KINEMATICS_MEMBERS = Object.keys(DEFAULT_KINEMATICS);
 
 /** Bare action globals callable without a prefix. */
 const BARE_GLOBALS = ["playNote", "playSound", "applyForce", "print"];
@@ -100,6 +112,12 @@ function scriptCompletionSource(context) {
     }
     if (/this\.$/.test(before)) {
         return { from: word.from, options: opts(THIS_MEMBERS, "property"), validFor: /^[\w$]*$/ };
+    }
+    if (/score\.kinematics\.$/.test(before)) {
+        return { from: word.from, options: opts(KINEMATICS_MEMBERS, "property"), validFor: /^[\w$]*$/ };
+    }
+    if (/score\.$/.test(before)) {
+        return { from: word.from, options: opts(SCORE_MEMBERS, "property"), validFor: /^[\w$]*$/ };
     }
     if (word.from === word.to && !context.explicit) return null;
 

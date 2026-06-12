@@ -161,6 +161,7 @@ export class SceneLoader {
         //        score-wide kinematics; it's pre-filled with defaults
         //        and read back after execution.
         const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
+        seedScorePoly(scoreGlobal);
         // hasBackgroundImage tells a script whether the scene has a
         // background image loaded. The image is tracked on the BUNDLE
         // (bundle.imageName, set whenever the user loads/imports one) —
@@ -205,6 +206,11 @@ export class SceneLoader {
         scene.functionMap = functionMap;
         scene.labelledBlocks = labelledBlocks;
         scene.kinematics = sanitizeKinematics(scoreGlobal.kinematics);
+        {
+            const sp = readScorePoly(scoreGlobal);
+            scene.poly = sp.poly;
+            scene.groupPoly = sp.groupPoly;
+        }
 
         try {
             applyPieceLevelFields(scene, sceneData);
@@ -314,6 +320,7 @@ export class SceneLoader {
         const { strippedSource } = splitLabelledStatements(
             parseResult.ast, scriptSource);
         const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
+        seedScorePoly(scoreGlobal);
         const execResult = executeScript(
             strippedSource, parseResult.names, scoreGlobal, this._print);
         if (!execResult.ok) {
@@ -345,6 +352,7 @@ function executeSetupScript(source, api, printFn) {
     // are not persisted by setup (they ride on the next load, which re-reads
     // script.js); a fresh defaults object is enough to keep the script running.
     const scoreGlobal = { kinematics: { ...DEFAULT_KINEMATICS } };
+    seedScorePoly(scoreGlobal);
     const body =
         SCRIPT_PREFIX +
         source +
@@ -437,6 +445,56 @@ function sanitizeKinematics(kin) {
         coast: pick(src.coast, DEFAULT_KINEMATICS.coast),
         turnDamping: pick(src.turnDamping, DEFAULT_KINEMATICS.turnDamping),
     };
+}
+
+/**
+ * Pre-fill a freshly created `score` global with the polyphony API
+ * (design/polyphony.md), mirroring the `kinematics` defaults seeding:
+ *   score.poly = N            — whole-score voice cap
+ *   score.groupPoly(name, N)  — per-group cap (objects whose `group` is `name`)
+ * `poly` defaults to Infinity (unlimited); `groupPoly` records into a backing
+ * map read back by readScorePoly. Both are set on the SAME object the script's
+ * top-level body sees, so an assignment/call from script.js lands here.
+ * @param {Record<string, any>} scoreGlobal
+ */
+function seedScorePoly(scoreGlobal) {
+    scoreGlobal.poly = Infinity;
+    /** @type {Map<string, number>} */
+    const groupPolyMap = new Map();
+    scoreGlobal.groupPoly = (name, n) => {
+        if (typeof name === "string") groupPolyMap.set(name, n);
+    };
+    // Stash the backing map under a non-enumerable key so readScorePoly can
+    // recover it without colliding with script-visible fields.
+    Object.defineProperty(scoreGlobal, "__groupPolyMap", {
+        enumerable: false,
+        value: groupPolyMap,
+    });
+}
+
+/**
+ * Read the polyphony settings back off the `score` global after the top-level
+ * script has run. `poly` is sanitised to a finite number >= 1 (anything else
+ * — unset, NaN, < 1, non-number — means unlimited => Infinity). groupPoly
+ * entries are likewise sanitised into a plain { name: limit } object,
+ * dropping any with a non-finite or < 1 limit.
+ * @param {Record<string, any>} scoreGlobal
+ * @returns {{poly: number, groupPoly: Object<string, number>}}
+ */
+function readScorePoly(scoreGlobal) {
+    const sanitizeLimit = (v) =>
+        (typeof v === "number" && Number.isFinite(v) && v >= 1) ? v : Infinity;
+    const poly = sanitizeLimit(scoreGlobal.poly);
+    /** @type {Object<string, number>} */
+    const groupPoly = {};
+    const map = scoreGlobal.__groupPolyMap;
+    if (map instanceof Map) {
+        for (const [name, n] of map) {
+            const lim = sanitizeLimit(n);
+            if (Number.isFinite(lim)) groupPoly[name] = lim;
+        }
+    }
+    return { poly, groupPoly };
 }
 
 /**
