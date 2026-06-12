@@ -5,6 +5,10 @@ recent-commits.txt
 IN_FLIGHT.md
 DEFERRED.md
 CLAUDE_CODE_TASK.md
+
+# Superseded design docs — kept locally for reference, not distributed
+design/DESIGN.md
+design-strudel/
 .claude/settings.local.json
 
 # Electron migration (Stage 1+)
