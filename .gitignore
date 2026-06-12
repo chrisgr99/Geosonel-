@@ -9,6 +9,10 @@ CLAUDE_CODE_TASK.md
 # Superseded design docs — kept locally for reference, not distributed
 design/DESIGN.md
 design-strudel/
+
+# Local iReal Pro import test data + scratch (not distributed)
+Jazz 1460.html
+_ireal_poc.mjs
 .claude/settings.local.json
 
 # Electron migration (Stage 1+)
