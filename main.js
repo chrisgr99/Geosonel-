@@ -180,6 +180,7 @@ import {
     setCanvasW,
     setCanvasH,
     setSceneBpm,
+    setSceneTimeSignature,
     setSceneEngine,
     setSceneVoiceSuperdoughSound,
     setSceneVoiceSuperdoughBank,
@@ -3887,6 +3888,10 @@ async function main() {
             await applySceneEdit((data) =>
                 setSceneBpm(data, edit.value),
             );
+        } else if (edit.kind === "setTimeSignature") {
+            await applySceneEdit((data) =>
+                setSceneTimeSignature(data, edit.value),
+            );
         }
     });
 
@@ -4898,15 +4903,17 @@ async function main() {
 }
 
 /**
- * Apply scene-declared bpm to the Transport if the sketch
- * set one. v2.3 removes score-level time signature; per-curve
- * beatsPerBar + beatInterval express it instead, so the
- * transport's time signature stays at its initial null state.
+ * Apply scene-declared bpm and time signature to the Transport.
+ * Both are persisted scene fields; this pushes them on every
+ * successful scene load/run so the transport reflects the
+ * active scene. The time signature defaults to [4, 4] on the
+ * Scene, so this is always a valid [numerator, denominator].
  * @param {import("./src/scene.js").Scene} scene
  * @param {import("./src/transport.js").Transport} transport
  */
 function applySceneParamsToTransport(scene, transport) {
     transport.setBpm(scene.bpm, "sketch");
+    transport.setTimeSignature(scene.timeSignature);
 }
 
 /**

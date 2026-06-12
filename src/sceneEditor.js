@@ -1514,6 +1514,34 @@ export function setSceneBpm(data, value) {
 }
 
 /**
+ * Set the timeSignature field at the top level of scene.json.
+ * Mirrors setSceneBpm: used by the transport bar's time-
+ * signature input commit so user-typed signatures survive
+ * subsequent applySceneEdit round-trips. Without this
+ * persistence, every inspector edit would trigger runScene
+ * which calls applySceneParamsToTransport →
+ * transport.setTimeSignature(scene.timeSignature) and stomp
+ * the user's typed value back to whatever is in the file.
+ * Stored as a 2-element [numerator, denominator] array. v1
+ * supports only 3/4 and 4/4. Unsupported input (wrong shape or
+ * outside that set) is a no-op rather than wiping the field,
+ * matching the transport bar's numerator dropdown, which only
+ * offers 3 or 4.
+ * @param {any} data
+ * @param {[number, number]} value
+ */
+export function setSceneTimeSignature(data, value) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    if (!Array.isArray(value) || value.length !== 2) return;
+    const num = Number(value[0]);
+    const den = Number(value[1]);
+    // v1 supports only 3/4 and 4/4: numerator 3 or 4, denominator 4.
+    if (num !== 3 && num !== 4) return;
+    if (den !== 4) return;
+    data.timeSignature = [num, den];
+}
+
+/**
  * Set the engine field at the top level of scene.json.
  * Used by the property inspector's global band's Sound
  * Engine dropdown. The engine choice is per-score: it

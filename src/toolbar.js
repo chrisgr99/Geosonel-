@@ -897,6 +897,34 @@ export class Toolbar {
 
         cluster.appendChild(bpmGroup);
 
+        // Time-signature group, to the RIGHT of the BPM field: a
+        // numerator dropdown (3 or 4) followed by static "/4". The
+        // denominator is always 4 (quarter-note beats); no label.
+        // Keeps the id "time-signature-input" so TransportBarView
+        // binds it the same way.
+        const tsGroup = document.createElement("div");
+        tsGroup.className = "field-group";
+        tsGroup.id = "time-signature-group";
+
+        const tsSelect = document.createElement("select");
+        tsSelect.id = "time-signature-input";
+        tsSelect.className = "field-input";
+        for (const n of ["3", "4"]) {
+            const opt = document.createElement("option");
+            opt.value = n;
+            opt.textContent = n;
+            tsSelect.appendChild(opt);
+        }
+        tsSelect.value = "4";
+        tsGroup.appendChild(tsSelect);
+
+        const tsDenom = document.createElement("span");
+        tsDenom.className = "time-signature-denominator";
+        tsDenom.textContent = "/4";
+        tsGroup.appendChild(tsDenom);
+
+        cluster.appendChild(tsGroup);
+
         return cluster;
     }
 

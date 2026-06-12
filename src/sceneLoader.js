@@ -71,6 +71,7 @@
 // @ts-check
 
 import { Scene, DEFAULT_KINEMATICS, sceneDataHasBackgroundImage } from "./scene.js";
+import { sanitiseTimeSignature } from "./timeSignature.js";
 import {
     playNote as bareplayNote,
     playSound as bareplaySound,
@@ -389,11 +390,12 @@ function executeSetupScript(source, api, printFn) {
  */
 function applyPieceLevelFields(scene, data) {
     if ("bpm" in data) scene.bpm = data.bpm;
-    // v2.3 removed score-level timeSignature; if a legacy
-    // scene.json still carries the field, the migration pass
-    // (cleanLegacySceneFields) strips it before this loader
-    // runs, so we silently ignore it here without touching
-    // the Scene object.
+    // Global time signature. Read the scene-level timeSignature
+    // field (a [numerator, denominator] array), sanitised through
+    // sanitiseTimeSignature, which falls back to [4, 4] when the
+    // field is absent or malformed. This restores the score-level
+    // time signature that v2.3 had ignored.
+    scene.timeSignature = sanitiseTimeSignature(data.timeSignature);
     if ("tonic" in data) scene.tonic = data.tonic;
     if ("scaleName" in data) scene.scaleName = data.scaleName;
     if ("root" in data) scene.root = data.root;

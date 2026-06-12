@@ -146,6 +146,13 @@ export class Scene {
         // --- Transport ---
         /** @type {number | null} */
         this.bpm = null;
+        /**
+         * Global time signature as [numerator, denominator]. The
+         * numerator is beats-per-bar against the master BPM beat;
+         * the denominator is display-only in v1. Defaults to 4/4.
+         * @type {[number, number]}
+         */
+        this.timeSignature = [4, 4];
 
         // --- Harmony framework (score-level defaults). ---
         /** @type {string | null} */

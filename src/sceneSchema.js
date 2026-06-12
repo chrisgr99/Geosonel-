@@ -186,6 +186,16 @@ const VOICE_FIELDS = [
  */
 export const SCENE_FIELDS = [
     { key: "bpm", label: "BPM", type: "integer", default: null, min: 1, max: 1000 },
+    {
+        // Global time signature, stored as a 2-element array
+        // [numerator, denominator]. The numerator is the
+        // beats-per-bar count (against the master BPM beat); the
+        // denominator is display-only in v1. Default 4/4.
+        key: "timeSignature",
+        label: "Time Signature",
+        type: "array",
+        default: [4, 4],
+    },
     { key: "tonic", label: "Tonic", type: "string", default: null },
     { key: "scaleName", label: "Scale", type: "string", default: null },
     { key: "root", label: "Root", type: "string", default: null },

@@ -35,6 +35,7 @@
 
 /** @typedef {import("./transport.js").Transport} Transport */
 
+
 const PLAY_GLYPH = "▶";
 const PAUSE_GLYPH = "⏸";
 
@@ -77,15 +78,21 @@ export class TransportBarView {
             document.getElementById("bpm-input")
         );
         this.bpmGroup = document.getElementById("bpm-group");
+        this.timeSignatureInput = /** @type {HTMLSelectElement | null} */ (
+            document.getElementById("time-signature-input")
+        );
+        this.timeSignatureGroup = document.getElementById("time-signature-group");
 
         if (!this.playBtn || !this.rewindBtn ||
-            !this.musicalPositionEl || !this.bpmInput || !this.bpmGroup) {
+            !this.musicalPositionEl || !this.bpmInput || !this.bpmGroup ||
+            !this.timeSignatureInput || !this.timeSignatureGroup) {
             console.error("GXW: transport DOM elements missing; view not bound.");
             return;
         }
 
         this._wireEvents();
         this._applyBpmToField();
+        this._applyTimeSignatureToField();
         this._applyPlayState();
         this._applyBpmVisibility();
 
@@ -111,7 +118,8 @@ export class TransportBarView {
     }
 
     _wireEvents() {
-        if (!this.playBtn || !this.rewindBtn || !this.bpmInput) return;
+        if (!this.playBtn || !this.rewindBtn || !this.bpmInput ||
+            !this.timeSignatureInput) return;
 
         this.playBtn.addEventListener("click", () => this.transport.toggle());
         this.rewindBtn.addEventListener("click", () => this.transport.rewind());
@@ -142,6 +150,23 @@ export class TransportBarView {
             }
         });
 
+        // Time-signature numerator dropdown (3 or 4); the
+        // denominator is always 4. On change we apply to the
+        // transport (immediate UI feedback) and emit a
+        // setTimeSignature edit so the value persists into
+        // scene.json. The dropdown only offers valid numerators,
+        // so there is no parse/validate/revert path.
+        this.timeSignatureInput.addEventListener("change", () => {
+            if (!this.timeSignatureInput) return;
+            const num = Number(this.timeSignatureInput.value);
+            if (num !== 3 && num !== 4) return;
+            const ts = /** @type {[number, number]} */ ([num, 4]);
+            this.transport.setTimeSignature(ts);
+            if (this._editCallback !== null) {
+                this._editCallback({ kind: "setTimeSignature", value: ts });
+            }
+        });
+
         // Keyboard shortcuts. Spacebar (transport toggle) is
         // handled centrally in main.js alongside Cmd-Period
         // and the canvas-background double-click gesture, so
@@ -168,11 +193,13 @@ export class TransportBarView {
             this._applyBpmToField();
             this._applyBpmVisibility();
         });
-        // Time-signature changes are still emitted by the
-        // Transport but no longer drive any visible UI in v2.3.
-        // The musical-position readout uses the transport's
-        // internal default time signature, which the sketch
-        // loader does not override.
+        // Time-signature changes update the field and share the
+        // BPM visibility gate (the control is shown only for
+        // beat-based pieces, i.e. when BPM is non-null).
+        this.transport.on("timeSignature", () => {
+            this._applyTimeSignatureToField();
+            this._applyBpmVisibility();
+        });
     }
 
     /**
@@ -218,6 +245,15 @@ export class TransportBarView {
         }
     }
 
+    _applyTimeSignatureToField() {
+        if (!this.timeSignatureInput) return;
+        const ts = this.transport.timeSignature;
+        if (ts === null) return;
+        // The dropdown holds the numerator; the denominator is
+        // always 4. Select the option matching the numerator.
+        this.timeSignatureInput.value = String(ts[0]);
+    }
+
     _applyBpmVisibility() {
         // BPM field and musical-position display are visible
         // when the transport has a BPM (beat-based piece) and
@@ -233,6 +269,9 @@ export class TransportBarView {
         }
         if (this.bpmGroup) {
             this.bpmGroup.style.display = show ? "" : "none";
+        }
+        if (this.timeSignatureGroup) {
+            this.timeSignatureGroup.style.display = show ? "" : "none";
         }
     }
 
