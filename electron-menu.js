@@ -236,6 +236,20 @@ function buildTemplate() {
           click: () => send('delete-score'),
         },
         { type: 'separator' },
+        // Import iReal Pro Chart. Unlike the score-portability
+        // cluster (Export, Import, Back Up, Restore) \u2014 which is
+        // web-only because Electron scores already live on disk
+        // \u2014 the harmony library is localStorage-backed in the
+        // renderer with no on-disk folder equivalent, so its
+        // importer ships in the desktop build too. Dispatches
+        // import-harmony-chart; the renderer's menuActions
+        // dispatcher runs the same actionImportHarmonyChart the
+        // in-page menu uses.
+        {
+          label: 'Import iReal Pro Chart\u2026',
+          click: () => send('import-harmony-chart'),
+        },
+        { type: 'separator' },
         {
           label: 'Reload from Disk',
           // Greyed out for Untitled bundles since there's

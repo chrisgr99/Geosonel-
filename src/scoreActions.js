@@ -41,6 +41,11 @@ import {
 } from "./storage.js";
 import { promptDialog, confirmDialog, confirmDiscardDialog } from "./dialog.js";
 import { forgetScore, renameInRecentScores } from "./recentFiles.js";
+import { extractIrealPayload } from "./irealParse.js";
+import {
+    importPayload as importHarmonyPayload,
+    listPlaylists as listHarmonyPlaylists,
+} from "./harmonyLibrary.js";
 
 /** @typedef {import("./messages.js").MessageArea} MessageArea */
 /** @typedef {import("./editor.js").TabbedEditor} TabbedEditor */
@@ -908,6 +913,57 @@ export async function actionImportScore(ctx) {
 }
 
 /**
+ * Import an iReal Pro chart/playlist export into the app-level
+ * harmony library. iReal exports an .html file containing one or
+ * more irealb:// links; we extract the (first) payload, hand it to
+ * the localStorage-backed harmony library, and confirm with the
+ * imported playlist's name and song count.
+ *
+ * Plumbing only: this adds to the library and persists. It does
+ * not open a Harmony tab, show a picker, or touch scene.harmony.
+ * @param {ScoreActionsContext} ctx
+ */
+export async function actionImportHarmonyChart(ctx) {
+    // Two ways to pick + read the file. In Electron the menu click
+    // arrives via IPC (no user gesture), so a web <input type=file>
+    // is blocked — we use the native open-and-read dialog. The web
+    // build uses the file input.
+    let name;
+    let text;
+    const gxwDialog = /** @type {any} */ (window).gxwDialog;
+    if (gxwDialog && typeof gxwDialog.openTextFile === "function") {
+        const result = await gxwDialog.openTextFile({
+            title: "Import iReal Pro Chart",
+            filters: [
+                { name: "iReal Pro / HTML", extensions: ["html", "htm"] },
+                { name: "All Files", extensions: ["*"] },
+            ],
+        });
+        if (!result || result.canceled || typeof result.content !== "string") return;
+        name = typeof result.name === "string" ? result.name : "chart";
+        text = result.content;
+    } else {
+        const file = await chooseHtmlFile();
+        if (file === null) return;
+        name = file.name;
+        text = await file.text();
+    }
+    const payload = extractIrealPayload(text);
+    if (!payload) {
+        ctx.messages.write(
+            `"${name}" doesn't contain an iReal Pro chart.`,
+            "error"
+        );
+        return;
+    }
+    const id = importHarmonyPayload(payload);
+    const summary = listHarmonyPlaylists().find((p) => p.id === id);
+    const playlistName = summary ? summary.name : "Untitled Playlist";
+    const count = summary ? summary.songCount : 0;
+    ctx.messages.write(`Imported "${playlistName}" (${count} songs).`);
+}
+
+/**
  * Back Up All Scores: download a JSON file containing every
  * score in IndexedDB.
  * @param {ScoreActionsContext} ctx
@@ -1346,6 +1402,26 @@ function chooseJsonFile() {
         // If the dialog is cancelled, change doesn't fire; we
         // simply never resolve. That's fine — the user can
         // initiate again.
+        input.click();
+    });
+}
+
+/**
+ * Pick an HTML file (iReal Pro exports its charts/playlists as an
+ * .html file containing irealb:// links). Mirrors chooseJsonFile
+ * but accepts .html/.htm. Resolves to the chosen File, or null if
+ * none was picked (a cancelled dialog never fires change, so the
+ * promise simply never resolves — the user can re-initiate).
+ * @returns {Promise<File | null>}
+ */
+function chooseHtmlFile() {
+    return new Promise((resolve) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "text/html,.html,.htm";
+        input.addEventListener("change", () => {
+            resolve(input.files?.[0] ?? null);
+        });
         input.click();
     });
 }

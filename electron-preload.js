@@ -70,6 +70,10 @@ contextBridge.exposeInMainWorld('gxwDialog', {
     ipcRenderer.invoke('gxw:show-save-dialog', options),
   showOpenDialog: (options) =>
     ipcRenderer.invoke('gxw:show-open-dialog', options),
+  // Open a single file and read its text (used to import an iReal
+  // Pro .html chart from the native File menu — see electron-main).
+  openTextFile: (options) =>
+    ipcRenderer.invoke('gxw:open-text-file', options),
 });
 
 // System clipboard IPC (Paste Image command).

@@ -38,6 +38,7 @@ import {
     actionReloadFromDisk,
     actionRenameScore,
     actionDeleteScore,
+    actionImportHarmonyChart,
 } from "./scoreActions.js";
 import { openAboutDialog } from "./aboutDialog.js";
 import { openSettingsDialog } from "./settingsDialog.js";
@@ -171,6 +172,9 @@ export function installMenuActions(ctx) {
                 break;
             case "reload-from-disk":
                 void actionReloadFromDisk(actionCtx);
+                break;
+            case "import-harmony-chart":
+                void actionImportHarmonyChart(actionCtx);
                 break;
 
             // --- File: Open Recent / Revert to ---

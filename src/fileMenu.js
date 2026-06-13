@@ -33,6 +33,7 @@ import {
     actionDeleteScore,
     actionExportScore,
     actionImportScore,
+    actionImportHarmonyChart,
     actionBackUpAllScores,
     actionRestoreFromBackup,
 } from "./scoreActions.js";
@@ -141,6 +142,10 @@ export function installFileMenu(ctx) {
         entries.push({
             label: "Import\u2026",
             action: () => actionImportScore(actionCtx),
+        });
+        entries.push({
+            label: "Import iReal Pro Chart\u2026",
+            action: () => actionImportHarmonyChart(actionCtx),
         });
         entries.push({
             label: "Back Up All Scores\u2026",

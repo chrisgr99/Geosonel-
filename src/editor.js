@@ -30,6 +30,7 @@ import { completionKeymap } from "https://esm.sh/@codemirror/autocomplete@6?deps
 import * as acorn from "https://esm.sh/acorn@8";
 import { Inspector } from "./inspector.js";
 import { CanvasInspector } from "./canvasInspector.js";
+import { HarmonyPanel } from "./harmonyPanel.js";
 import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect, setMutedObjectIdsEffect } from "./patternHighlight.js";
 import { activeBeatHighlightExtension, setActiveBeatsEffect, recomputeTokensEffect } from "./activeBeatHighlight.js";
@@ -64,6 +65,18 @@ const VIRTUAL_TAB_INSPECTOR = "__inspector__";
  * inspector area. See DESIGN.md Section 13.5.
  */
 const VIRTUAL_TAB_CANVAS = "__canvas__";
+
+/**
+ * Sentinel name for the virtual Harmony tab. Like the
+ * Properties and Canvas tabs, the Harmony tab is
+ * selection-independent chrome that does not back onto any
+ * file in the bundle. Selecting it hides the CodeMirror
+ * area, the Properties inspector area, and the canvas-
+ * inspector area, and shows the harmony area. Scaffolding
+ * only for now: the harmony area holds placeholder content
+ * until the iReal Pro chart picker/view lands.
+ */
+const VIRTUAL_TAB_HARMONY = "__harmony__";
 
 /**
  * CodeMirror linter that runs the source through Acorn's
@@ -505,14 +518,16 @@ export class TabbedEditor {
      * @param {HTMLElement} editorAreaElement
      * @param {HTMLElement} inspectorAreaElement
      * @param {HTMLElement} canvasInspectorAreaElement
+     * @param {HTMLElement} harmonyAreaElement
      * @param {Bundle} bundle
      * @param {EditorCallbacks} [callbacks]
      */
-    constructor(tabBarElement, editorAreaElement, inspectorAreaElement, canvasInspectorAreaElement, bundle, callbacks = {}) {
+    constructor(tabBarElement, editorAreaElement, inspectorAreaElement, canvasInspectorAreaElement, harmonyAreaElement, bundle, callbacks = {}) {
         this.tabBar = tabBarElement;
         this.editorArea = editorAreaElement;
         this.inspectorArea = inspectorAreaElement;
         this.canvasInspectorArea = canvasInspectorAreaElement;
+        this.harmonyArea = harmonyAreaElement;
         this.bundle = bundle;
         this.onDirtyChange = callbacks.onDirtyChange ?? (() => {});
         this.onSaved = callbacks.onSaved ?? (() => {});
@@ -631,6 +646,7 @@ export class TabbedEditor {
         this._mountEditor();
         this._mountInspector();
         this._mountCanvasInspector();
+        this._mountHarmony();
         this._renderTabs();
         this._subscribeBundleDirty();
         this._subscribeStrudelPreferences();
@@ -858,7 +874,8 @@ export class TabbedEditor {
         this._renderTabs();
         const isVirtual =
             this.activeName === VIRTUAL_TAB_INSPECTOR ||
-            this.activeName === VIRTUAL_TAB_CANVAS;
+            this.activeName === VIRTUAL_TAB_CANVAS ||
+            this.activeName === VIRTUAL_TAB_HARMONY;
         const stillExists = this.activeName !== null &&
             !isVirtual &&
             this.bundle.getFile(this.activeName) !== null;
@@ -872,6 +889,10 @@ export class TabbedEditor {
             // keeps it active and the canvas-inspector
             // area visible.
             this.selectTab(VIRTUAL_TAB_CANVAS);
+        } else if (this.activeName === VIRTUAL_TAB_HARMONY) {
+            // Same treatment for the Harmony tab: reselect
+            // keeps it active and the harmony area visible.
+            this.selectTab(VIRTUAL_TAB_HARMONY);
         } else if (stillExists) {
             this.selectTab(/** @type {string} */ (this.activeName));
         } else if (this.bundle.textFiles.length > 0) {
@@ -1886,12 +1907,28 @@ export class TabbedEditor {
     }
 
     /**
-     * Show exactly one of the three editor-pane areas:
+     * Mount the Harmony picker into the harmony area. Like
+     * _mountCanvasInspector, the HarmonyPanel owns its own
+     * DOM subtree; the editor's job is to show or hide the
+     * area when the Harmony tab becomes active and to call
+     * the panel's refresh() on activation so a freshly
+     * imported playlist appears without an app restart.
+     * main.js reaches this.harmonyPanel after construction
+     * to wire onChooseSong (the scene-edit dispatch).
+     */
+    _mountHarmony() {
+        if (this.harmonyArea === null) return;
+        this.harmonyPanel = new HarmonyPanel(this.harmonyArea);
+    }
+
+    /**
+     * Show exactly one of the four editor-pane areas:
      * the CodeMirror editor area, the Properties
-     * inspector area, or the Canvas inspector area. All
-     * three occupy the same flex slot under the tab bar;
-     * the .hidden class controls which one paints.
-     * @param {"editor" | "inspector" | "canvas-inspector"} which
+     * inspector area, the Canvas inspector area, or the
+     * Harmony area. All four occupy the same flex slot
+     * under the tab bar; the .hidden class controls which
+     * one paints.
+     * @param {"editor" | "inspector" | "canvas-inspector" | "harmony"} which
      */
     _showArea(which) {
         this.editorArea.classList.toggle("hidden", which !== "editor");
@@ -1900,6 +1937,9 @@ export class TabbedEditor {
         }
         if (this.canvasInspectorArea !== null) {
             this.canvasInspectorArea.classList.toggle("hidden", which !== "canvas-inspector");
+        }
+        if (this.harmonyArea !== null) {
+            this.harmonyArea.classList.toggle("hidden", which !== "harmony");
         }
     }
 
@@ -1926,6 +1966,21 @@ export class TabbedEditor {
         if (name === VIRTUAL_TAB_CANVAS) {
             this.activeName = name;
             this._showArea("canvas-inspector");
+            this._reconfigureStrudelCompartment();
+            this._renderTabs();
+            this._emitCursorTargetIds();
+            return;
+        }
+
+        // Virtual Harmony tab. Same pattern: show the harmony
+        // area, no CodeMirror swap.
+        if (name === VIRTUAL_TAB_HARMONY) {
+            this.activeName = name;
+            this._showArea("harmony");
+            // Re-read the library on activation so a playlist
+            // imported via the File menu shows up without an
+            // app restart.
+            if (this.harmonyPanel) this.harmonyPanel.refresh();
             this._reconfigureStrudelCompartment();
             this._renderTabs();
             this._emitCursorTargetIds();
@@ -2089,6 +2144,18 @@ export class TabbedEditor {
      */
     selectCanvasTab() {
         this.selectTab(VIRTUAL_TAB_CANVAS);
+    }
+
+    /**
+     * Switch to the Harmony tab. Equivalent to clicking the
+     * Harmony tab in the tab bar: the other editor-pane
+     * areas are hidden and the harmony area is shown.
+     * Exposed symmetrically with selectCanvasTab so future
+     * menu items or gestures that want to land on the
+     * Harmony tab have a clean entry point.
+     */
+    selectHarmonyTab() {
+        this.selectTab(VIRTUAL_TAB_HARMONY);
     }
 
     /**
@@ -2658,6 +2725,18 @@ export class TabbedEditor {
             this._renderVirtualTab(
                 VIRTUAL_TAB_CANVAS,
                 "Canvas",
+                /* dirtyBackingFile */ null,
+            ),
+        );
+
+        // Virtual Harmony tab. Placed immediately after the
+        // Canvas tab. Scaffolding only — no dirty dot, no
+        // backing file; the harmony area holds placeholder
+        // content until the iReal Pro chart view lands.
+        this.tabBar.appendChild(
+            this._renderVirtualTab(
+                VIRTUAL_TAB_HARMONY,
+                "Harmony",
                 /* dirtyBackingFile */ null,
             ),
         );

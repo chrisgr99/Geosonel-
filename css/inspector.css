@@ -1081,3 +1081,184 @@
     margin: 0 8px;
     border-top: 1px solid #888888;
 }
+
+/* ======================================================================
+ * Harmony picker (src/harmonyPanel.js)
+ *
+ * The Harmony tab's playlist dropdown + type-to-filter song combobox.
+ * Renders into #harmony-area (dark idiom, see css/layout.css). Reuses the
+ * green-on-grey accents the inspector uses elsewhere.
+ * ==================================================================== */
+
+.harmony-placeholder-hint {
+    color: #aaaaaa;
+    font-size: 11pt;
+    line-height: 1.4;
+    max-width: 40em;
+}
+
+#harmony-area h2 {
+    color: #ffffff;
+    font-size: 13pt;
+    margin: 0 0 12px 0;
+}
+
+/* Top row: narrow playlist <select> + flex-grow song combobox. */
+.harmony-picker-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.harmony-playlist-select {
+    flex: 0 0 auto;
+    max-width: 200px;
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    padding: 0 8px;
+    color: #ffffff;
+    height: 26px;
+    font-size: 11pt;
+    font-family: inherit;
+    box-sizing: border-box;
+    cursor: pointer;
+}
+
+.harmony-playlist-select:focus {
+    outline: none;
+    border-color: #9ec79e;
+}
+
+/* The combobox: an input with a results dropdown rendered just below. */
+.harmony-combo {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.harmony-song-input {
+    width: 100%;
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    padding: 0 28px 0 8px;
+    color: #ffffff;
+    height: 26px;
+    font-size: 11pt;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+
+.harmony-song-input::placeholder {
+    color: #b0b0b0;
+}
+
+.harmony-song-input:focus {
+    outline: none;
+    border-color: #9ec79e;
+}
+
+/* Caret button overlaying the input's right edge — opens the song list. */
+.harmony-song-caret {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: #cfd8cf;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.harmony-song-caret:hover {
+    color: #ffffff;
+}
+
+/* Results dropdown, positioned below the input. */
+.harmony-song-list {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    max-height: 320px;
+    overflow-y: auto;
+    background-color: #3a3a3a;
+    border: 1px solid #789678;
+    border-radius: 3px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.harmony-song-list.hidden {
+    display: none;
+}
+
+.harmony-song-count {
+    padding: 4px 8px;
+    color: #9ec79e;
+    font-size: 9pt;
+    border-bottom: 1px solid #555555;
+    position: sticky;
+    top: 0;
+    background-color: #3a3a3a;
+}
+
+.harmony-song-empty {
+    padding: 8px;
+    color: #aaaaaa;
+    font-size: 10pt;
+}
+
+.harmony-song-result {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 8px;
+    color: #e8e8e8;
+    font-size: 11pt;
+    cursor: pointer;
+}
+
+.harmony-song-result.active {
+    background-color: #4a5a4a;
+}
+
+.harmony-song-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.harmony-song-match {
+    font-weight: 700;
+    color: #9ec79e;
+}
+
+.harmony-song-note {
+    flex: 0 0 auto;
+    color: #c8a06a;
+    font-size: 9pt;
+}
+
+.harmony-song-playlist {
+    flex: 0 0 auto;
+    color: #9a9a9a;
+    font-size: 9pt;
+}
+
+.harmony-now-line {
+    margin-top: 14px;
+    color: #ffffff;
+    font-size: 11pt;
+    min-height: 1.4em;
+}

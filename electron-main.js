@@ -1318,6 +1318,39 @@ function registerStorageHandlers() {
     return { canceled: false, filePath: result.filePaths[0] };
   });
 
+  // Open a single FILE (openFile mode, with filters) and read its
+  // text in the main process. Lets the renderer import an arbitrary
+  // text file — e.g. an iReal Pro .html export — from the NATIVE
+  // menu, which a web <input type=file> can't do: a menu click
+  // reaches the renderer via IPC, not a user gesture, so the browser
+  // blocks the file picker. Returns { canceled, name, content } with
+  // the file's UTF-8 text, or { canceled: true }.
+  ipcMain.handle('gxw:open-text-file', async (event, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const opts = options ?? {};
+    const dialogOpts = {
+      title: typeof opts.title === 'string' ? opts.title : 'Open File',
+      properties: ['openFile'],
+    };
+    if (Array.isArray(opts.filters)) dialogOpts.filters = opts.filters;
+    if (typeof opts.defaultPath === 'string') {
+      dialogOpts.defaultPath = opts.defaultPath;
+    }
+    const result = win !== null
+      ? await dialog.showOpenDialog(win, dialogOpts)
+      : await dialog.showOpenDialog(dialogOpts);
+    if (
+      result.canceled ||
+      !Array.isArray(result.filePaths) ||
+      result.filePaths.length === 0
+    ) {
+      return { canceled: true };
+    }
+    const filePath = result.filePaths[0];
+    const content = await fsp.readFile(filePath, 'utf8');
+    return { canceled: false, name: path.basename(filePath), content };
+  });
+
   // --- Native menu state push (Stage 5 commit 5a) ---
   //
   // The renderer is the source of truth for the state

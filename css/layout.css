@@ -112,7 +112,8 @@
 
 #editor-area,
 #inspector-area,
-#canvas-inspector-area {
+#canvas-inspector-area,
+#harmony-area {
     flex: 1 1 auto;
     overflow: hidden;
     min-height: 0;
@@ -121,7 +122,8 @@
 
 #editor-area.hidden,
 #inspector-area.hidden,
-#canvas-inspector-area.hidden {
+#canvas-inspector-area.hidden,
+#harmony-area.hidden {
     display: none;
 }
 
@@ -137,4 +139,10 @@
 #canvas-inspector-area {
     background-color: #2a2a2a;
     overflow-y: auto;
+}
+
+#harmony-area {
+    background-color: #2a2a2a;
+    overflow-y: auto;
+    padding: 16px;
 }

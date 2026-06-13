@@ -181,6 +181,7 @@ import {
     setCanvasH,
     setSceneBpm,
     setSceneTimeSignature,
+    setSceneHarmony,
     setSceneEngine,
     setSceneVoiceSuperdoughSound,
     setSceneVoiceSuperdoughBank,
@@ -416,10 +417,12 @@ async function main() {
     const editorAreaEl = document.getElementById("editor-area");
     const inspectorAreaEl = document.getElementById("inspector-area");
     const canvasInspectorAreaEl = document.getElementById("canvas-inspector-area");
+    const harmonyAreaEl = document.getElementById("harmony-area");
     if (!(tabBarEl instanceof HTMLElement) ||
         !(editorAreaEl instanceof HTMLElement) ||
         !(inspectorAreaEl instanceof HTMLElement) ||
-        !(canvasInspectorAreaEl instanceof HTMLElement)) {
+        !(canvasInspectorAreaEl instanceof HTMLElement) ||
+        !(harmonyAreaEl instanceof HTMLElement)) {
         console.error("GXW: editor mount points missing.");
         return;
     }
@@ -450,7 +453,7 @@ async function main() {
      */
     let currentScene = null;
 
-    const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, bundle, {
+    const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, harmonyAreaEl, bundle, {
         onDirtyChange: (dirty) => {
             updateTitleBar(dirty);
             // Push to the native menu so Revert to Saved's
@@ -1905,6 +1908,33 @@ async function main() {
     toolbar.onChange((tool, locked) => {
         canvas.setActiveTool(tool, locked);
     });
+
+    // The Harmony tab's picker emits the full parsed Song
+    // when a composer chooses one. Freeze it into the scene:
+    // set scene.harmony to its serialisable form AND align
+    // scene.timeSignature to the chart (so the transport
+    // measure grid matches), then re-run via applySceneEdit
+    // so it persists and objects pick it up. Mirrors the
+    // canvasInspector.onSceneEdit wiring below. An
+    // unsupported-meter chart still sets harmony; the
+    // setSceneTimeSignature call no-ops on a non-3/4-or-4/4
+    // signature, so the grid is left as-is rather than
+    // crashing.
+    if (editor.harmonyPanel) {
+        editor.harmonyPanel.onChooseSong(async (song) => {
+            await applySceneEdit((data) => {
+                setSceneHarmony(data, {
+                    title: song.title,
+                    composer: song.composer,
+                    key: song.key,
+                    timeSignature: song.timeSignature,
+                    progression: song.progression,
+                });
+                setSceneTimeSignature(data, song.timeSignature);
+            });
+        });
+    }
+
     // The Canvas inspector tab's W and H fields emit
     // edits with the same shape inspector and canvas edits
     // use ({kind, value}). Dispatched through applySceneEdit
