@@ -22,8 +22,69 @@
  * `current`.
  */
 
+import { mapToHarmonyCore, MAP_TO_HARMONY_DEFAULTS } from "./harmonyMap.js";
+
 /** @type {any} */
 let current = null;
+
+/**
+ * Ambient "current harmony" for the bare `mapToHarmony` global, mirroring the
+ * ambient `current` firing context. The engine sets it right before a
+ * callback fires (the chord sounding at that beat, plus the song key) and
+ * clears it after. `mapToHarmony` reads it so a bare `mapToHarmony(value)` maps
+ * to a tone of the chord under the playhead. null when no harmony is loaded or
+ * playback has ended (loop off) — `mapToHarmony` then degrades to a linear map.
+ * @type {{ chord: any, key: any } | null}
+ */
+let currentHarmony = null;
+
+/**
+ * Bind the ambient harmony for the bare `mapToHarmony` global. Called by the
+ * engine immediately before invoking a callback, alongside
+ * {@link setCallbackContext}.
+ * @param {{ chord: any, key: any } | null} harmony
+ */
+export function setCallbackHarmony(harmony) {
+    currentHarmony = harmony;
+}
+
+/** Clear the ambient harmony after a callback returns (or throws). */
+export function clearCallbackHarmony() {
+    currentHarmony = null;
+}
+
+/**
+ * Bare mapToHarmony — map a value to a MIDI note of the CURRENT chord (the
+ * chord sounding under the playhead at the moment the callback fires).
+ *
+ *   mapToHarmony(value, lowValue?, highValue?, rangeLow?, rangeHigh?)
+ *
+ * Defaults: lowValue=0, highValue=1, rangeLow=40, rangeHigh=70 (MIDI). The
+ * chord's tones are laid out ascending across [rangeLow, rangeHigh] and the
+ * value (clamped to [lowValue, highValue]) indexes into them — chord-tone
+ * INDEXING, like GeoSonix. With no current chord (no imported harmony, or
+ * playback ended with loop off) it degrades to a LINEAR map of the value
+ * across [rangeLow, rangeHigh]. Returns a MIDI note number; returns 60
+ * (middle C) as a last resort when called outside any callback.
+ * @param {number} value
+ * @param {number} [lowValue]
+ * @param {number} [highValue]
+ * @param {number} [rangeLow]
+ * @param {number} [rangeHigh]
+ * @returns {number}
+ */
+export function mapToHarmony(
+    value,
+    lowValue = MAP_TO_HARMONY_DEFAULTS.lowValue,
+    highValue = MAP_TO_HARMONY_DEFAULTS.highValue,
+    rangeLow = MAP_TO_HARMONY_DEFAULTS.rangeLow,
+    rangeHigh = MAP_TO_HARMONY_DEFAULTS.rangeHigh,
+) {
+    const v = (typeof value === "number" && Number.isFinite(value)) ? value : 0;
+    const chord = currentHarmony ? currentHarmony.chord : null;
+    const key = currentHarmony ? currentHarmony.key : null;
+    return mapToHarmonyCore(chord, key, v, lowValue, highValue, rangeLow, rangeHigh);
+}
 
 /**
  * Bind the firing context that bare emitter calls route to. Called by

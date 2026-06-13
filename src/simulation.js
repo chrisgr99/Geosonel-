@@ -259,7 +259,14 @@ import {
     timeToKthBeat,
     shouldSuppress,
 } from "./polyphony.js";
-import { setCallbackContext, clearCallbackContext } from "./callbackContext.js";
+import {
+    setCallbackContext,
+    clearCallbackContext,
+    setCallbackHarmony,
+    clearCallbackHarmony,
+} from "./callbackContext.js";
+import { buildHarmonyPlayer } from "./harmonyPlayer.js";
+import { chordStructure } from "./harmonyMap.js";
 import { EventTrace } from "./eventTrace.js";
 import { sampleCurve, shapeCenter } from "./curveGeometry.js";
 import { srgbByteToOKLab } from "./oklab.js";
@@ -1174,6 +1181,15 @@ export class Simulation {
         this._transport = transport;
         /** @type {import("./scene.js").Scene | null} */
         this._scene = null;
+        /**
+         * Harmony player for the scene's chosen progression (commit 3/4).
+         * Built on setScene when scene.harmony is non-null, cleared to null
+         * when absent. Each callback fire queries it at the current global
+         * beat to expose this.chord / this.nextChord / this.beatsToNext and
+         * to back the bare `mapToHarmony` helper. See _harmonyContextAt.
+         * @type {import("./harmonyPlayer.js").HarmonyPlayer | null}
+         */
+        this._harmonyPlayer = null;
         /** @type {Map<string, CurveRuntimeState>} */
         this._curveState = new Map();
         /** @type {Map<string, TriggerRuntimeState>} */
@@ -1914,6 +1930,9 @@ export class Simulation {
         /** @type {Map<string, any>} */
         const flashValues = new Map();
         const recordingProxy = makeReadRecordingProxy(ctx, flashValues, "", 2);
+        // Live harmony: this.chord / this.nextChord / this.beatsToNext and
+        // the ambient current chord backing the bare `mapToHarmony` global.
+        this._applyHarmonyToContext(ctx, beat);
         setCallbackContext(ctx);
         try {
             fn.call(recordingProxy);
@@ -1937,11 +1956,12 @@ export class Simulation {
                     this._messageLogger(line, "error");
                 } catch (_loggerErr) {
                     // A logger fault must never destabilise the
-                    // simulation; the console line above stands.
+                    // simulation; the console line above stands. (collision)
                 }
             }
         } finally {
             clearCallbackContext();
+            clearCallbackHarmony();
         }
         return true;
     }
@@ -1977,6 +1997,64 @@ export class Simulation {
             const state = this._curveState.get(c.id);
             if (state !== undefined) this._applyCurveBeatPoints(c, state);
         }
+    }
+
+    /**
+     * Resolve the live harmony at a global beat for a firing callback.
+     *
+     * Queries the scene's HarmonyPlayer (loop-aware via scene.harmonyLoop)
+     * and returns the raw current/next chord CELLS, the beats remaining in
+     * the current chord, and the song key. _applyHarmonyToContext turns the
+     * raw cells into the { root, notes } structure exposed as `this.chord` /
+     * `this.nextChord` and feeds the raw current cell + key to the ambient
+     * `mapToHarmony` global. Pure of the engine's mutable state apart from
+     * the player + beat, so it stays deterministic for a given sim moment.
+     *
+     * Returns null when no harmony is loaded — callers then expose
+     * this.chord = null and mapToHarmony degrades to a linear map.
+     *
+     * @param {number} globalBeat
+     * @returns {{ chord: any, next: any, beatsToNext: number|null, key: any } | null}
+     */
+    _harmonyContextAt(globalBeat) {
+        const player = this._harmonyPlayer;
+        if (player === null || this._scene === null) return null;
+        const harmony = this._scene.harmony;
+        if (!harmony) return null;
+        const loop = this._scene.harmonyLoop !== false;
+        const at = player.getHarmonyAt(globalBeat, loop);
+        return {
+            chord: at.current,
+            next: at.next,
+            beatsToNext: at.beatsToNext,
+            key: harmony.key,
+        };
+    }
+
+    /**
+     * Attach the live harmony to a firing context and arm the ambient
+     * `mapToHarmony` global, just before a callback runs. Sets ctx.chord
+     * and ctx.nextChord to a { root, notes } structure (root MIDI + chord
+     * tones as semitone offsets, via {@link chordStructure}; null for a
+     * No-Chord cell), and ctx.beatsToNext, and binds the ambient current
+     * chord + key that the bare `mapToHarmony(value, …)` reads — note the
+     * ambient binding stays on the RAW current cell, so mapToHarmony still
+     * maps over its wide MIDI range. Always paired with
+     * {@link clearCallbackHarmony} in the caller's finally block.
+     *
+     * With no harmony loaded (or playback ended, loop off), ctx.chord is
+     * null and mapToHarmony falls back to its linear map — so a callback is
+     * always safe to read this.chord / call mapToHarmony(value).
+     *
+     * @param {any} ctx   the firing context object (bound as `this`)
+     * @param {number} beat  the current global beat
+     */
+    _applyHarmonyToContext(ctx, beat) {
+        const h = this._harmonyContextAt(beat);
+        ctx.chord = h ? chordStructure(h.chord, h.key) : null;
+        ctx.nextChord = h ? chordStructure(h.next, h.key) : null;
+        ctx.beatsToNext = h ? h.beatsToNext : null;
+        setCallbackHarmony(h ? { chord: h.chord, key: h.key } : null);
     }
 
     /**
@@ -2267,6 +2345,9 @@ export class Simulation {
         // Polyphony: this.poly reads/writes the curve's persistent voice limit.
         this._definePolyAccessor(ctx, selfId);
         const recordingProxy = makeReadRecordingProxy(ctx, flashValues, "", 2);
+        // Live harmony: this.chord / this.nextChord / this.beatsToNext and
+        // the ambient current chord backing the bare `mapToHarmony` global.
+        this._applyHarmonyToContext(ctx, beat);
         setCallbackContext(ctx);
         try {
             fn.call(recordingProxy);
@@ -2294,6 +2375,7 @@ export class Simulation {
             }
         } finally {
             clearCallbackContext();
+            clearCallbackHarmony();
         }
 
         // Flash the fired beat's diamond yellow. The canvas matches
@@ -2482,6 +2564,12 @@ export class Simulation {
         this._objectPoly.clear();
         this._voiceRegistry.clear();
         this._scene = scene;
+        // Build (or clear) the harmony player from the scene's chosen
+        // progression. Non-null scene.harmony → an expanded HarmonyPlayer;
+        // null → no harmony, so mapToHarmony and this.chord degrade gracefully.
+        this._harmonyPlayer = (scene !== null && scene.harmony)
+            ? buildHarmonyPlayer(scene)
+            : null;
         if (scene === null) {
             this._curveState.clear();
             this._triggerState.clear();
@@ -4188,6 +4276,9 @@ export class Simulation {
             this._lastCallbackContexts.set(name, ctx);
         }
 
+        // Live harmony: this.chord / this.nextChord / this.beatsToNext and
+        // the ambient current chord backing the bare `mapToHarmony` global.
+        this._applyHarmonyToContext(ctx, beat);
         setCallbackContext(ctx);
         try {
             fn.call(ctx);
@@ -4203,11 +4294,12 @@ export class Simulation {
                     this._messageLogger(line, "error");
                 } catch (_loggerErr) {
                     // A logger fault must never destabilise the
-                    // simulation; the console line above stands.
+                    // simulation; the console line above stands. (sprite onTick)
                 }
             }
         } finally {
             clearCallbackContext();
+            clearCallbackHarmony();
         }
         // Magnitude of the net force applied this tick. Zero when
         // no force was applied (or the callback threw before
@@ -4344,6 +4436,9 @@ export class Simulation {
             this._lastCallbackContexts.set(name, ctx);
         }
 
+        // Live harmony: this.chord / this.nextChord / this.beatsToNext and
+        // the ambient current chord backing the bare `mapToHarmony` global.
+        this._applyHarmonyToContext(ctx, beat);
         setCallbackContext(ctx);
         try {
             fn.call(ctx);
@@ -4359,11 +4454,12 @@ export class Simulation {
                     this._messageLogger(line, "error");
                 } catch (_loggerErr) {
                     // A logger fault must never destabilise the
-                    // simulation; the console line above stands.
+                    // simulation; the console line above stands. (curve onTick)
                 }
             }
         } finally {
             clearCallbackContext();
+            clearCallbackHarmony();
         }
     }
 

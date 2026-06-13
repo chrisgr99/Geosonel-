@@ -39,6 +39,10 @@ const THIS_MEMBERS = [
     "flipX", "flipY", "cyclePhase", "cycleCount", "beat", "time", "bpm",
     "id", "kind", "beatIndex", "beatCount", "otherId", "otherKind",
     "hitSpeed", "poly", "playNote", "playSound",
+    // Live harmony under the playhead (commit 4): the current/next chord as
+    // { root, notes } (root MIDI + semitone offsets) and the beats remaining
+    // in the current chord.
+    "chord", "nextChord", "beatsToNext",
 ];
 
 /** Colour channels offered after `this.col.` (lt = lightness, chr = chroma). */
@@ -56,7 +60,7 @@ const SCORE_MEMBERS = ["kinematics", "poly", "groupPoly", "hasBackgroundImage"];
 const KINEMATICS_MEMBERS = Object.keys(DEFAULT_KINEMATICS);
 
 /** Bare action globals callable without a prefix. */
-const BARE_GLOBALS = ["playNote", "playSound", "applyForce", "print"];
+const BARE_GLOBALS = ["playNote", "playSound", "applyForce", "print", "mapToHarmony"];
 
 /** JS keywords, including the structural ones (function / for / if / …). */
 const JS_KEYWORDS = [
