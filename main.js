@@ -1969,6 +1969,21 @@ async function main() {
                 }
             });
         });
+
+        // Unwind: set how many times the song is written out flat (null = No /
+        // folded, 1..8 iterations). The structure changes, so rewind to the top
+        // — same as choosing a new chart.
+        editor.harmonyPanel.onChangeUnwind(async (iterations) => {
+            await applySceneEdit((data) => {
+                if (data && data.harmony) {
+                    setSceneHarmony(data, {
+                        ...data.harmony,
+                        unwind: iterations,
+                    });
+                }
+            });
+            transport.rewind();
+        });
     }
 
     // The Canvas inspector tab's W and H fields emit

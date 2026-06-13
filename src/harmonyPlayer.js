@@ -41,6 +41,9 @@
  * @property {boolean} [noChord]
  * @property {number} startBeat   inclusive, beats from 0
  * @property {number} endBeat     exclusive, beats from 0
+ * @property {string} [section]   section label opening at this bar; set only on
+ *   the FIRST span of a bar that a `sectionOpen` marker precedes (used by the
+ *   unwind to preserve the song's A/B sections).
  */
 
 /**
@@ -250,9 +253,16 @@ function barChordRanges(bar, beatsPerBar) {
  * @param {number} barStartBeat
  * @param {number} beatsPerBar
  * @param {Array<Array<{cell: ChordCellLite, start: number, end: number}>>} history
+ * @param {string | null} [section]  label to tag onto this bar's first span
  * @returns {number}
  */
-function emitBar(spans, bar, barStartBeat, beatsPerBar, history) {
+function emitBar(spans, bar, barStartBeat, beatsPerBar, history, section = null) {
+  const startLen = spans.length;
+  const tag = () => {
+    if (section != null && spans.length > startLen) {
+      spans[startLen].section = section;
+    }
+  };
   /** @type {Array<{cell: ChordCellLite, start: number, end: number}>} */
   let ranges;
   if (bar.simile === "repeatLastBar" || bar.simile === "repeatBar") {
@@ -271,12 +281,14 @@ function emitBar(spans, bar, barStartBeat, beatsPerBar, history) {
       cursor = emitRanges(spans, oneBack, cursor, beatsPerBar);
       history.push(cloneRanges(oneBack));
     }
+    tag();
     return cursor;
   } else {
     ranges = barChordRanges(bar, beatsPerBar);
   }
   const end = emitRanges(spans, ranges, barStartBeat, beatsPerBar);
   history.push(cloneRanges(ranges));
+  tag();
   return end;
 }
 
@@ -350,6 +362,10 @@ export function expandProgression(progression, timeSignature) {
   // live AFTER a repeatClose (e.g. a second ending N2) have no active frame,
   // so they read this to know which pass just finished.
   let lastClosedPass = 1;
+  // A section label awaiting the next bar (mirrors the layout's pending model),
+  // so the unwind can recover the song's sections from the played span list.
+  /** @type {string | null} */
+  let pendingSection = null;
 
   let i = 0;
   let guard = 0;
@@ -400,9 +416,12 @@ export function expandProgression(progression, timeSignature) {
           notes.push(`navigation marker '${cell.type}' not modelled; ignored`);
           break;
         }
+        case "sectionOpen": {
+          pendingSection = typeof cell.label === "string" ? cell.label : null;
+          break;
+        }
         case "end":
         case "bar":
-        case "sectionOpen":
         case "timeSignature":
         default:
           break;
@@ -411,8 +430,9 @@ export function expandProgression(progression, timeSignature) {
       continue;
     }
 
-    // A bar.
-    beat = emitBar(spans, ev.bar, beat, beatsPerBar, history);
+    // A bar. Attach any pending section label to its first span, then clear it.
+    beat = emitBar(spans, ev.bar, beat, beatsPerBar, history, pendingSection);
+    pendingSection = null;
     i += 1;
   }
 

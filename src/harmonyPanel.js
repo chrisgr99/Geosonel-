@@ -35,6 +35,7 @@ import {
     getSong,
 } from "./harmonyLibrary.js";
 import { layoutChart, groupRows, formatChordParts, buildBarPlayback } from "./harmonyChartLayout.js";
+import { applyUnwind, sanitiseUnwind } from "./harmonyUnwind.js";
 
 const SCOPE_ALL = "all";
 
@@ -139,6 +140,14 @@ export class HarmonyPanel {
          */
         this._onChangeKey = null;
 
+        /**
+         * Unwind callback wired by main.js. Receives the chosen iteration
+         * count (1..8) or null for "No"; main.js sets scene.harmony.unwind and
+         * re-runs. Null until wired.
+         * @type {((iterations: number | null) => void) | null}
+         */
+        this._onChangeUnwind = null;
+
         // --- Picker state ---
 
         /** Selected playlist id, or SCOPE_ALL. */
@@ -220,6 +229,10 @@ export class HarmonyPanel {
         this._menuPopup = null;
         /** The "Key" menu row (enabled only with a harmony). @type {HTMLElement | null} */
         this._keyMenuItem = null;
+        /** The "Unwind" menu row (enabled only with a harmony). @type {HTMLElement | null} */
+        this._unwindMenuItem = null;
+        /** The "Unwind" row's current-value span. @type {HTMLElement | null} */
+        this._unwindValueEl = null;
         /** Whether the hamburger popup is open. */
         this._menuOpen = false;
 
@@ -262,6 +275,14 @@ export class HarmonyPanel {
      */
     onChangeKey(cb) {
         this._onChangeKey = cb;
+    }
+
+    /**
+     * Wire the unwind callback (main.js owns the scene edit + re-run).
+     * @param {(iterations: number | null) => void} cb
+     */
+    onChangeUnwind(cb) {
+        this._onChangeUnwind = cb;
     }
 
     /**
@@ -314,6 +335,8 @@ export class HarmonyPanel {
         this._menuEl = null;
         this._menuPopup = null;
         this._keyMenuItem = null;
+        this._unwindMenuItem = null;
+        this._unwindValueEl = null;
         this._menuOpen = false;
 
         const playlists = listPlaylists();
@@ -697,6 +720,27 @@ export class HarmonyPanel {
         }
         popup.appendChild(keyItem.item);
 
+        // "Unwind" entry — fold (No) or write the song out flat in N repeated
+        // sections. The top-level row shows the current choice. Disabled with
+        // no harmony loaded.
+        const unwindItem = this._buildMenuItem("Unwind");
+        this._unwindMenuItem = unwindItem.item;
+        this._unwindValueEl = unwindItem.value;
+        const currentUnwind = this._harmony !== null
+            ? sanitiseUnwind(this._harmony.unwind) : null;
+        /** @type {Array<{ label: string, value: number | null }>} */
+        const unwindChoices = [{ label: "No", value: null }];
+        for (let i = 1; i <= 8; i += 1) unwindChoices.push({ label: String(i), value: i });
+        for (const c of unwindChoices) {
+            const opt = this._buildSubItem(c.label, c.value === currentUnwind, () => {
+                this._chooseUnwind(c.value);
+                this._closeMenu();
+            });
+            opt.dataset.unwind = c.value === null ? "no" : String(c.value);
+            unwindItem.submenu.appendChild(opt);
+        }
+        popup.appendChild(unwindItem.item);
+
         menu.appendChild(popup);
         this._menuPopup = popup;
         this._syncMenuState();
@@ -709,19 +753,30 @@ export class HarmonyPanel {
      * display mode. Safe to call before the menu exists.
      */
     _syncMenuState() {
+        const noHarmony = this._harmony === null;
         if (this._keyMenuItem !== null) {
-            const disabled = this._harmony === null;
-            this._keyMenuItem.classList.toggle("disabled", disabled);
-            if (disabled) this._keyMenuItem.setAttribute("aria-disabled", "true");
+            this._keyMenuItem.classList.toggle("disabled", noHarmony);
+            if (noHarmony) this._keyMenuItem.setAttribute("aria-disabled", "true");
             else this._keyMenuItem.removeAttribute("aria-disabled");
+        }
+        if (this._unwindMenuItem !== null) {
+            this._unwindMenuItem.classList.toggle("disabled", noHarmony);
+            if (noHarmony) this._unwindMenuItem.setAttribute("aria-disabled", "true");
+            else this._unwindMenuItem.removeAttribute("aria-disabled");
+        }
+        if (this._unwindValueEl !== null) {
+            const cur = noHarmony ? null : sanitiseUnwind(this._harmony.unwind);
+            this._unwindValueEl.textContent = cur === null ? "No" : String(cur);
         }
         this._syncMenuChecks();
     }
 
     /**
-     * Build a top-level menu row carrying a flyout submenu.
+     * Build a top-level menu row carrying a flyout submenu. The `value` span
+     * (right-aligned, before the arrow) shows the row's current choice; it
+     * stays empty for rows that don't display one.
      * @param {string} label
-     * @returns {{ item: HTMLElement, submenu: HTMLElement }}
+     * @returns {{ item: HTMLElement, submenu: HTMLElement, value: HTMLElement }}
      */
     _buildMenuItem(label) {
         const item = document.createElement("div");
@@ -732,6 +787,10 @@ export class HarmonyPanel {
         text.textContent = label;
         item.appendChild(text);
 
+        const value = document.createElement("span");
+        value.className = "harmony-menu-value";
+        item.appendChild(value);
+
         const arrow = document.createElement("span");
         arrow.className = "harmony-menu-arrow";
         arrow.textContent = "▸";
@@ -741,7 +800,7 @@ export class HarmonyPanel {
         submenu.className = "harmony-submenu";
         item.appendChild(submenu);
 
-        return { item, submenu };
+        return { item, submenu, value };
     }
 
     /**
@@ -788,6 +847,26 @@ export class HarmonyPanel {
         for (const el of this._menuPopup.querySelectorAll(".harmony-subitem[data-pc]")) {
             mark(el, Number(/** @type {HTMLElement} */ (el).dataset.pc) === currentPc);
         }
+        const curUnwind = this._harmony !== null
+            ? sanitiseUnwind(this._harmony.unwind) : null;
+        for (const el of this._menuPopup.querySelectorAll(".harmony-subitem[data-unwind]")) {
+            const raw = /** @type {HTMLElement} */ (el).dataset.unwind;
+            const v = raw === "no" ? null : Number(raw);
+            mark(el, v === curUnwind);
+        }
+    }
+
+    /**
+     * Apply an unwind choice (null = "No"/folded, or 1..8 iterations). No-op
+     * without a loaded harmony, a wired callback, or when unchanged. main.js
+     * sets scene.harmony.unwind, re-runs, and rewinds.
+     * @param {number | null} value
+     */
+    _chooseUnwind(value) {
+        if (this._harmony === null) return;
+        const current = sanitiseUnwind(this._harmony.unwind);
+        if (value === current) return;
+        if (this._onChangeUnwind !== null) this._onChangeUnwind(value);
     }
 
     /** Open/close the hamburger popup. */
@@ -846,7 +925,9 @@ export class HarmonyPanel {
             return;
         }
 
-        const h = this._harmony;
+        // Derive the unwound progression when Unwind is set (folded otherwise),
+        // so the chart matches what the player sounds.
+        const h = applyUnwind(this._harmony);
         const bars = layoutChart(
             /** @type {any} */ (h.progression),
             h.key,

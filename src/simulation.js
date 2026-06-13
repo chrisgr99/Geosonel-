@@ -265,7 +265,8 @@ import {
     setCallbackHarmony,
     clearCallbackHarmony,
 } from "./callbackContext.js";
-import { buildHarmonyPlayer } from "./harmonyPlayer.js";
+import { HarmonyPlayer } from "./harmonyPlayer.js";
+import { applyUnwind } from "./harmonyUnwind.js";
 import { chordStructure } from "./harmonyMap.js";
 import { EventTrace } from "./eventTrace.js";
 import { sampleCurve, shapeCenter } from "./curveGeometry.js";
@@ -2567,8 +2568,11 @@ export class Simulation {
         // Build (or clear) the harmony player from the scene's chosen
         // progression. Non-null scene.harmony → an expanded HarmonyPlayer;
         // null → no harmony, so mapToHarmony and this.chord degrade gracefully.
+        // applyUnwind derives the unwound progression when scene.harmony.unwind
+        // is set (folded stays untouched), so the played structure matches the
+        // chart's unwound display exactly.
         this._harmonyPlayer = (scene !== null && scene.harmony)
-            ? buildHarmonyPlayer(scene)
+            ? new HarmonyPlayer(applyUnwind(scene.harmony))
             : null;
         if (scene === null) {
             this._curveState.clear();

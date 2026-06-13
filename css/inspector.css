@@ -1345,12 +1345,26 @@
     position: relative;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    gap: 8px;
     padding: 5px 10px;
     color: #ffffff;
     font-size: 10pt;
     cursor: default;
+}
+
+/* Label pushes the value + arrow to the right edge of the row. */
+.harmony-menu-label {
+    margin-right: auto;
+}
+
+/* Current-choice readout on a top-level row (e.g. "Unwind: No"). */
+.harmony-menu-value {
+    color: #9ec79e;
+    font-size: 9pt;
+}
+
+.harmony-menu-item.disabled .harmony-menu-value {
+    color: #666666;
 }
 
 .harmony-menu-item:hover {

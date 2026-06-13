@@ -39,6 +39,9 @@
  * @property {{ tonicPitchClass: number, mode: "major" | "minor" }} key
  * @property {[number, number]} timeSignature
  * @property {Array<Object>} progression
+ * @property {number} [unwind]  unwound-display iterations (1..8), or absent/null
+ *   for the folded view. Both the chart and the player derive the unwound
+ *   progression from this; the stored `progression` stays folded.
  */
 
 /**
@@ -71,7 +74,7 @@ function isPlainObject(v) {
 export function sanitiseSceneHarmony(value) {
     if (!isPlainObject(value)) return null;
 
-    const { title, composer, key, timeSignature, progression } = value;
+    const { title, composer, key, timeSignature, progression, unwind } = value;
 
     if (typeof title !== "string") return null;
     if (typeof composer !== "string") return null;
@@ -99,11 +102,18 @@ export function sanitiseSceneHarmony(value) {
         if (typeof cell.type !== "string") return null;
     }
 
-    return {
+    /** @type {SceneHarmony} */
+    const out = {
         title,
         composer,
         key: { tonicPitchClass, mode },
         timeSignature: [num, den],
         progression: progression.slice(),
     };
+    // Optional unwind setting (1..8). Absent / out of range reads as folded.
+    if (typeof unwind === "number" && Number.isFinite(unwind)) {
+        const n = Math.round(unwind);
+        if (n >= 1) out.unwind = Math.min(8, n);
+    }
+    return out;
 }
