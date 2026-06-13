@@ -34,8 +34,12 @@ import {
     searchSongs,
     getSong,
 } from "./harmonyLibrary.js";
+import { layoutChart, groupRows, formatChordParts } from "./harmonyChartLayout.js";
 
 const SCOPE_ALL = "all";
+
+/** Bars per chart row before wrapping. */
+const BARS_PER_ROW = 4;
 
 // Pitch-class spelling for the "Now:" key label. Flat-side tonics spell
 // with flats (Eb not D#); everything else with sharps. Mirrors the bias
@@ -126,6 +130,24 @@ export class HarmonyPanel {
          */
         this._chosen = null;
 
+        // --- Chart-display state ---
+
+        /**
+         * The scene's current harmony (the chosen, frozen progression) or
+         * null. Pushed in from main.js via setHarmony after each scene
+         * load/re-run; the inbound direction that mirrors onChooseSong's
+         * outbound one. Drives both the "Now:" line and the chord chart.
+         * @type {import("./harmonyScene.js").SceneHarmony | null}
+         */
+        this._harmony = null;
+
+        /**
+         * Chord-label mode for the chart. "letter" → Cm7, "roman" → i7.
+         * Defaults to letter; flipped by the Letter/Roman toggle.
+         * @type {"letter" | "roman"}
+         */
+        this._displayMode = "letter";
+
         // --- DOM handles (filled by _render) ---
         /** @type {HTMLSelectElement | null} */
         this._playlistSelect = null;
@@ -135,6 +157,10 @@ export class HarmonyPanel {
         this._list = null;
         /** @type {HTMLDivElement | null} */
         this._nowLine = null;
+        /** @type {HTMLDivElement | null} */
+        this._chartEl = null;
+        /** @type {HTMLButtonElement | null} */
+        this._toggleBtn = null;
 
         this._render();
 
@@ -159,6 +185,31 @@ export class HarmonyPanel {
      */
     onChooseSong(cb) {
         this._onChooseSong = cb;
+    }
+
+    /**
+     * Reflect the scene's current harmony into the panel (the INBOUND
+     * direction; onChooseSong is the outbound one). main.js calls this
+     * after every scene load/re-run with `scene.harmony` (or null), so both
+     * picking a song (which re-runs) and reopening a saved score that
+     * already carries a stored progression populate the chart and the
+     * "Now:" line. Re-renders both from the stored harmony.
+     * @param {import("./harmonyScene.js").SceneHarmony | null} harmony
+     */
+    setHarmony(harmony) {
+        this._harmony = harmony || null;
+        // Keep the "Now:" line in sync even when the chart isn't visible
+        // (no library imported yet → picker is the placeholder hint, but a
+        // stored harmony should still announce itself).
+        if (this._harmony !== null) {
+            this._chosen = {
+                title: this._harmony.title,
+                key: this._harmony.key,
+                timeSignature: this._harmony.timeSignature,
+            };
+        }
+        this._renderNowLine();
+        this._renderChart();
     }
 
     /**
@@ -190,6 +241,16 @@ export class HarmonyPanel {
             hint.textContent =
                 "Import a chart from File → Import iReal Pro Chart…, then choose a song.";
             this.container.appendChild(hint);
+            // No library, but the scene may still carry a stored harmony
+            // (a saved score opened on a machine without the source
+            // playlist). Show its chart + "Now:" line anyway.
+            const nowLine = document.createElement("p");
+            nowLine.className = "harmony-now-line";
+            this._nowLine = nowLine;
+            this.container.appendChild(nowLine);
+            this._renderNowLine();
+            this._buildChartSection();
+            this._renderChart();
             return;
         }
 
@@ -285,6 +346,10 @@ export class HarmonyPanel {
         this._nowLine = nowLine;
         this.container.appendChild(nowLine);
         this._renderNowLine();
+
+        // Chord-chart section (heading + Letter/Roman toggle + chart grid).
+        this._buildChartSection();
+        this._renderChart();
 
         // Close the list on outside click.
         this._recomputeResults();
@@ -460,6 +525,302 @@ export class HarmonyPanel {
         }
         el.textContent =
             `Now: ${this._chosen.title} — ${keyLabel(this._chosen.key)}, ${tsLabel(this._chosen.timeSignature)}`;
+    }
+
+    /**
+     * Build the chord-chart section: a heading row carrying the
+     * Letter/Roman toggle, plus an (empty) chart grid container that
+     * _renderChart fills. Idempotent within a _render: rebuilds the
+     * subtree and re-captures the DOM handles.
+     */
+    _buildChartSection() {
+        const head = document.createElement("div");
+        head.className = "harmony-chart-head";
+
+        const title = document.createElement("span");
+        title.className = "harmony-chart-title";
+        title.textContent = "Chart";
+        head.appendChild(title);
+
+        // Letter/Roman toggle. A single two-state button: its label shows
+        // the CURRENT mode; clicking flips the mode and re-renders the
+        // chart labels via the other renderer. Default mode is "letter".
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "harmony-mode-toggle";
+        toggle.addEventListener("click", () => {
+            this._displayMode = this._displayMode === "letter" ? "roman" : "letter";
+            this._syncToggleLabel();
+            this._renderChart();
+        });
+        this._toggleBtn = toggle;
+        this._syncToggleLabel();
+        head.appendChild(toggle);
+
+        this.container.appendChild(head);
+
+        const chart = document.createElement("div");
+        chart.className = "harmony-chart";
+        this._chartEl = chart;
+        this.container.appendChild(chart);
+    }
+
+    /** Update the toggle button's label + title to the current mode. */
+    _syncToggleLabel() {
+        const btn = this._toggleBtn;
+        if (btn === null) return;
+        const isLetter = this._displayMode === "letter";
+        btn.textContent = isLetter ? "Letter" : "Roman";
+        btn.title = isLetter
+            ? "Showing letter names (Cm7). Click for Roman numerals."
+            : "Showing Roman numerals (i7). Click for letter names.";
+        btn.setAttribute("aria-pressed", isLetter ? "false" : "true");
+    }
+
+    /**
+     * Render the chord chart from the stored harmony. Lays the progression
+     * out into bars (harmonyChartLayout) and paints them into a single CSS
+     * grid of BARS_PER_ROW equal-width columns, so the barlines line up
+     * straight down the page. No-op when the chart container isn't mounted.
+     * Shows a hint when there's no harmony yet.
+     */
+    _renderChart() {
+        const chart = this._chartEl;
+        if (chart === null) return;
+        chart.innerHTML = "";
+
+        const head = this.container.querySelector(".harmony-chart-head");
+
+        if (this._harmony === null) {
+            if (head instanceof HTMLElement) head.classList.add("hidden");
+            const hint = document.createElement("div");
+            hint.className = "harmony-chart-empty";
+            hint.textContent = "Choose a song to see its chord chart.";
+            chart.appendChild(hint);
+            return;
+        }
+        if (head instanceof HTMLElement) head.classList.remove("hidden");
+
+        const h = this._harmony;
+        const bars = layoutChart(
+            /** @type {any} */ (h.progression),
+            h.key,
+            this._displayMode,
+            h.timeSignature,
+        );
+
+        if (bars.length === 0) {
+            const hint = document.createElement("div");
+            hint.className = "harmony-chart-empty";
+            hint.textContent = "This chart has no chord bars to display.";
+            chart.appendChild(hint);
+            return;
+        }
+
+        // Group the bars into ROWS that respect section/ending structure (a
+        // section starts a new row at the left; alternative endings indent to
+        // align under the first ending), then paint every row into the SAME
+        // BARS_PER_ROW equal-width grid so the vertical barlines line up
+        // straight down the page. Empty cells (short-row tails are simply left
+        // off; ending indents are explicit blanks) render as blank columns.
+        const rows = groupRows(bars, BARS_PER_ROW);
+        const grid = document.createElement("div");
+        grid.className = "harmony-chart-grid";
+        grid.style.gridTemplateColumns = `repeat(${BARS_PER_ROW}, 1fr)`;
+        for (const row of rows) {
+            for (const cell of row) {
+                grid.appendChild(
+                    cell && cell.empty === true
+                        ? this._renderEmptyCell()
+                        : this._renderBar(/** @type {any} */ (cell)),
+                );
+            }
+            // Pad a short row's TAIL with blank cells so the next row's first
+            // bar still starts in column 1 (the grid flows left-to-right with
+            // no per-row reset). These tail blanks carry no barline.
+            for (let i = row.length; i < BARS_PER_ROW; i += 1) {
+                grid.appendChild(this._renderEmptyCell());
+            }
+        }
+        chart.appendChild(grid);
+    }
+
+    /**
+     * Render a blank grid cell: a structural placeholder used to left-pad a
+     * row (an alternative ending indented under the first ending) or to fill a
+     * short row's tail. It occupies its column for alignment but draws nothing
+     * — no chord, no barline.
+     * @returns {HTMLDivElement}
+     */
+    _renderEmptyCell() {
+        const el = document.createElement("div");
+        el.className = "harmony-bar harmony-bar-empty";
+        return el;
+    }
+
+    /**
+     * Render a single bar as a grid cell, iReal-style. The bar draws a LEFT
+     * BARLINE (a thin vertical rule, or a repeat-open / double variant) hard
+     * against its left edge, then left-aligns its chord content right after
+     * it — the chord hugs the barline, it is not centred. Structural marks
+     * (section box, ending bracket, time-signature stack) sit at the top;
+     * the right edge may carry a close-repeat, double, or final barline.
+     *
+     * Structurally addressable for overlays: carries data-bar-index and
+     * data-beat-start so a now-playing highlight or chunk/phrase boundary can
+     * target a bar without re-walking the cells.
+     * @param {import("./harmonyChartLayout.js").ChartBar} bar
+     * @returns {HTMLDivElement}
+     */
+    _renderBar(bar) {
+        const el = document.createElement("div");
+        el.className = "harmony-bar";
+        el.dataset.barIndex = String(bar.index);
+        el.dataset.beatStart = String(bar.beatStart);
+
+        // --- Left barline (its variant depends on what opens here). ---
+        const left = document.createElement("span");
+        left.className = "harmony-barline harmony-barline-left";
+        if (bar.repeatOpen) left.classList.add("repeat-open");
+        el.appendChild(left);
+
+        // --- Top-row marks (section box / ending bracket / time-sig). ---
+        // Section label: small boxed letter sitting above the barline.
+        if (bar.section !== undefined) {
+            const sec = document.createElement("span");
+            sec.className = "harmony-bar-section";
+            sec.textContent = bar.section;
+            el.appendChild(sec);
+        }
+
+        // Ending bracket: a horizontal rule over the top with "1." / "2.".
+        if (bar.ending !== undefined) {
+            const ending = document.createElement("span");
+            ending.className = "harmony-bar-ending";
+            ending.textContent = String(bar.ending) + ".";
+            el.appendChild(ending);
+            el.classList.add("has-ending");
+        }
+
+        // Time-signature stack: numerator over denominator at the bar start.
+        if (bar.timeSignature !== undefined) {
+            const ts = document.createElement("span");
+            ts.className = "harmony-bar-ts";
+            const num = document.createElement("span");
+            num.className = "harmony-bar-ts-num";
+            num.textContent = String(bar.timeSignature[0]);
+            const den = document.createElement("span");
+            den.className = "harmony-bar-ts-den";
+            den.textContent = String(bar.timeSignature[1]);
+            ts.appendChild(num);
+            ts.appendChild(den);
+            el.appendChild(ts);
+        }
+
+        // --- Chord content, left-aligned right after the barline. ---
+        const slots = document.createElement("div");
+        slots.className = "harmony-bar-slots";
+        if (bar.slots.length > 1) slots.classList.add("split");
+        for (const slot of bar.slots) {
+            slots.appendChild(this._renderSlot(slot));
+        }
+        el.appendChild(slots);
+
+        // --- Right barline variant (close-repeat / double / final). ---
+        if (bar.repeatClose || bar.end || bar.doubleRight) {
+            const right = document.createElement("span");
+            right.className = "harmony-barline harmony-barline-right";
+            if (bar.repeatClose) right.classList.add("repeat-close");
+            else if (bar.end) right.classList.add("final");
+            else right.classList.add("double");
+            el.appendChild(right);
+        }
+
+        return el;
+    }
+
+    /**
+     * Render one chord slot with iReal-style typography: a big root, a
+     * raised accidental glyph, and a small subscripted quality/extension run
+     * (plus an optional slash-bass). N.C., simile and blank slots take their
+     * own simple presentation. Uses formatChordParts (pure) for the split.
+     * @param {import("./harmonyChartLayout.js").ChartSlot} slot
+     * @returns {HTMLSpanElement}
+     */
+    _renderSlot(slot) {
+        const chord = document.createElement("span");
+        chord.className = "harmony-chord";
+
+        if (slot.empty) {
+            chord.classList.add("blank");
+            return chord;
+        }
+        if (slot.simile) {
+            // CSS-DRAWN simile: iReal's %-style mark (a diagonal slash with a
+            // dot upper-right and lower-left), not a Unicode music glyph the
+            // system font lacks (which rendered as a missing-glyph box). A
+            // two-bar repeat draws the same mark twice.
+            chord.classList.add("simile");
+            chord.title = slot.simile === "double" ? "Repeat last two bars"
+                : slot.simile === "last" ? "Repeat last bar" : "Repeat bar";
+            const marks = slot.simile === "double" ? 2 : 1;
+            for (let i = 0; i < marks; i += 1) {
+                const mark = document.createElement("span");
+                mark.className = "harmony-simile-mark";
+                const slash = document.createElement("span");
+                slash.className = "harmony-simile-slash";
+                mark.appendChild(slash);
+                const dotTop = document.createElement("span");
+                dotTop.className = "harmony-simile-dot top";
+                mark.appendChild(dotTop);
+                const dotBot = document.createElement("span");
+                dotBot.className = "harmony-simile-dot bottom";
+                mark.appendChild(dotBot);
+                chord.appendChild(mark);
+            }
+            return chord;
+        }
+        if (slot.noChord) {
+            chord.classList.add("nc");
+            chord.textContent = slot.label || "N.C.";
+            return chord;
+        }
+
+        const parts = formatChordParts(slot.label, this._displayMode);
+        if (parts.plain || parts.root === "") {
+            // Unparseable (or empty): show the raw label as plain text.
+            chord.textContent = parts.root;
+            return chord;
+        }
+
+        const root = document.createElement("span");
+        root.className = "harmony-chord-root";
+        root.textContent = parts.root;
+        chord.appendChild(root);
+
+        if (parts.accidental !== "") {
+            const acc = document.createElement("span");
+            acc.className = "harmony-chord-acc";
+            acc.textContent = parts.accidental;
+            chord.appendChild(acc);
+        }
+        if (parts.ext !== "") {
+            const ext = document.createElement("span");
+            ext.className = "harmony-chord-ext";
+            ext.textContent = parts.ext;
+            chord.appendChild(ext);
+        }
+        if (parts.bass !== undefined) {
+            const slash = document.createElement("span");
+            slash.className = "harmony-chord-slash";
+            slash.textContent = "/";
+            chord.appendChild(slash);
+            const bass = document.createElement("span");
+            bass.className = "harmony-chord-bass";
+            bass.textContent = parts.bass;
+            chord.appendChild(bass);
+        }
+        return chord;
     }
 
     /**

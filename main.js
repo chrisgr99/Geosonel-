@@ -1052,6 +1052,14 @@ async function main() {
             // scene.json edit).
             currentScene = result.scene;
             editor.setScene(result.scene);
+            // Reflect the scene's chosen harmony into the Harmony tab's
+            // chart + "Now:" line (the inbound direction; onChooseSong is
+            // outbound). Lands on every successful reload, so both picking
+            // a song (which re-runs) and reopening a saved score that
+            // already carries a stored progression populate the chart.
+            if (editor.harmonyPanel) {
+                editor.harmonyPanel.setHarmony(result.scene.harmony ?? null);
+            }
             dispatchSelectedObjectIds(canvas.getSelection());
             dispatchKnownObjectIds();
             dispatchMutedObjectIds();

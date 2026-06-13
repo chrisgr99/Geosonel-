@@ -1262,3 +1262,335 @@
     font-size: 11pt;
     min-height: 1.4em;
 }
+
+/* ======================================================================
+ * Harmony chord chart (src/harmonyPanel.js + src/harmonyChartLayout.js)
+ *
+ * The progression rendered as bars laid out in wrapping rows below the
+ * picker. Reuses the harmony picker's green-on-grey palette. Bars are
+ * structurally addressable (data-bar-index / data-beat-start) for a future
+ * now-playing highlight and chunk/phrase overlays.
+ * ==================================================================== */
+
+.harmony-chart-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 18px;
+    margin-bottom: 8px;
+}
+
+.harmony-chart-head.hidden {
+    display: none;
+}
+
+.harmony-chart-title {
+    color: #9ec79e;
+    font-size: 10pt;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* Letter/Roman two-state toggle button. */
+.harmony-mode-toggle {
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    padding: 0 12px;
+    height: 24px;
+    color: #ffffff;
+    font-size: 10pt;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.harmony-mode-toggle:hover {
+    border-color: #9ec79e;
+}
+
+.harmony-mode-toggle[aria-pressed="true"] {
+    background-color: #4a5a4a;
+}
+
+.harmony-chart-empty {
+    color: #aaaaaa;
+    font-size: 10pt;
+    padding: 8px 0;
+}
+
+/* iReal-style lead sheet. A single grid of EQUAL-WIDTH columns (set inline
+ * to BARS_PER_ROW) so the vertical barlines line up straight down the page
+ * across every row. No per-bar boxes, frames, or rounded borders — the
+ * white-on-dark idiom reads like a chart, with generous row spacing. */
+.harmony-chart {
+    color: #ffffff;
+}
+
+.harmony-chart-grid {
+    display: grid;
+    /* grid-template-columns is set inline (repeat(N, 1fr)). */
+    row-gap: 26px;
+    column-gap: 0;
+    padding: 14px 6px 6px;
+}
+
+/* A single bar: a positioning context for its barlines and top marks. The
+ * chord content hugs the LEFT barline (left-aligned, not centred), exactly
+ * like iReal. No box/border/background of its own. */
+.harmony-bar {
+    position: relative;
+    min-height: 30px;
+    padding: 4px 6px 4px 12px;
+    display: flex;
+    align-items: center;
+}
+
+/* A blank placeholder cell (ending indent / short-row tail): holds its column
+ * for alignment but draws nothing — no chord, no barline. */
+.harmony-bar-empty {
+    min-height: 30px;
+}
+
+/* Barlines: thin vertical white rules drawn as bordered pseudo-spans. The
+ * LEFT barline sits at the cell's left edge; the chord starts just right of
+ * it. Variants thicken / double / add repeat dots. */
+.harmony-barline {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    width: 0;
+}
+
+.harmony-barline-left {
+    left: 0;
+    border-left: 1px solid #e6e6e6;
+}
+
+.harmony-barline-right {
+    right: 0;
+    border-left: 1px solid #e6e6e6;
+}
+
+/* Double barline (‖) — section end: two thin rules. */
+.harmony-barline.double {
+    border-left: 1px solid #e6e6e6;
+    border-right: 1px solid #e6e6e6;
+    width: 3px;
+}
+
+/* Final barline — a thin rule then a thick one. */
+.harmony-barline.final {
+    border-left: 1px solid #e6e6e6;
+    border-right: 3px solid #e6e6e6;
+    width: 4px;
+}
+
+/* Repeat-open ({:): a thick rule, a thin rule, then two dots to its right. */
+.harmony-barline.repeat-open {
+    border-left: 3px solid #e6e6e6;
+    box-shadow: 4px 0 0 -2px #e6e6e6; /* second thin rule */
+    width: 5px;
+}
+
+.harmony-barline.repeat-open::after,
+.harmony-barline.repeat-close::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background-color: #e6e6e6;
+    box-shadow: 0 -5px 0 0 #e6e6e6; /* the second (upper) dot */
+    margin-top: 2px;
+}
+
+.harmony-barline.repeat-open::after {
+    left: 7px;
+}
+
+/* Repeat-close (:}): two dots to the LEFT, then a thin + thick rule. */
+.harmony-barline.repeat-close {
+    border-left: 1px solid #e6e6e6;
+    border-right: 3px solid #e6e6e6;
+    width: 4px;
+}
+
+.harmony-barline.repeat-close::before {
+    right: 7px;
+}
+
+/* Section box: a small boxed capital letter sitting at the top-left, above
+ * the barline (iReal's boxed A / B). */
+.harmony-bar-section {
+    position: absolute;
+    top: -16px;
+    left: -1px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 2px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #e6e6e6;
+    color: #ffffff;
+    font-size: 8pt;
+    font-weight: 700;
+    line-height: 1;
+}
+
+/* Ending bracket: a horizontal rule over the top of the bar, dropping a
+ * short tick on the left, with the number ("1." / "2.") at its left. */
+.harmony-bar.has-ending {
+    border-top: 1px solid #e6e6e6;
+}
+
+.harmony-bar-ending {
+    position: absolute;
+    top: 1px;
+    left: 5px;
+    color: #ffffff;
+    font-size: 7.5pt;
+    font-weight: 700;
+}
+
+/* Time-signature stack: numerator over denominator at the start of the bar
+ * where it applies (iReal's small 4/4 stack), tucked left of the chord. */
+.harmony-bar-ts {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 0.9;
+    margin-right: 6px;
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 8pt;
+}
+
+.harmony-bar-slots {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: 16px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* A split bar (two chords) spaces them across the cell. */
+.harmony-bar-slots.split {
+    gap: 0;
+    justify-content: space-between;
+    padding-right: 8px;
+}
+
+/* One chord, baseline-aligned so the big root and small subscript ride a
+ * common baseline. */
+.harmony-chord {
+    display: inline-flex;
+    align-items: baseline;
+    color: #ffffff;
+    white-space: nowrap;
+    font-size: 15pt;
+    line-height: 1;
+}
+
+/* The big root letter / Roman numeral. */
+.harmony-chord-root {
+    font-size: 15pt;
+    font-weight: 600;
+}
+
+/* Accidental glyph on the root: smaller and raised slightly. */
+.harmony-chord-acc {
+    font-size: 10pt;
+    vertical-align: super;
+    position: relative;
+    top: -0.35em;
+    margin-left: 0.02em;
+}
+
+/* Quality + extensions: small and subscripted (lowered). */
+.harmony-chord-ext {
+    font-size: 9pt;
+    position: relative;
+    top: 0.28em;
+    margin-left: 0.04em;
+}
+
+/* Slash-bass: "/" then the bass note, at chord size. */
+.harmony-chord-slash {
+    font-size: 12pt;
+    margin: 0 0.04em;
+}
+
+.harmony-chord-bass {
+    font-size: 12pt;
+}
+
+.harmony-chord.nc {
+    color: #b8b8b8;
+    font-style: italic;
+    font-size: 11pt;
+}
+
+/* Simile / repeat-bar mark, centred in the cell. Drawn purely in CSS (no
+ * Unicode music glyph — the system font lacks 𝄍/𝄎 and rendered a missing-glyph
+ * box). Each mark is iReal's "%": a diagonal slash with a dot upper-right and a
+ * dot lower-left. A two-bar repeat shows two marks side by side. */
+.harmony-chord.simile {
+    color: #e6e6e6;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 0 auto;
+}
+
+.harmony-bar-slots:has(.simile) {
+    justify-content: center;
+}
+
+.harmony-simile-mark {
+    position: relative;
+    display: inline-block;
+    width: 16px;
+    height: 18px;
+}
+
+/* The diagonal slash: a thin rule rotated to lean like "/". */
+.harmony-simile-slash {
+    position: absolute;
+    top: 1px;
+    bottom: 1px;
+    left: 50%;
+    width: 2px;
+    margin-left: -1px;
+    background-color: #e6e6e6;
+    transform: rotate(28deg);
+    transform-origin: center;
+}
+
+/* The two dots: one upper-right, one lower-left of the slash. */
+.harmony-simile-dot {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background-color: #e6e6e6;
+}
+
+.harmony-simile-dot.top {
+    top: 1px;
+    right: 1px;
+}
+
+.harmony-simile-dot.bottom {
+    bottom: 1px;
+    left: 1px;
+}
+
+.harmony-chord.blank {
+    color: transparent;
+}
