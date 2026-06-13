@@ -32,7 +32,20 @@ v1 ships only a basic **`mapToHarmony`** (map an object value — 0..1 from posi
 
 **Status:** design idea; prototype against a real imported chart (one with a repeat) after the core harmony UI is in.
 
-### Loop a selected section of the chart (iReal-style, but the selection persists)
+### Phrases, audition-and-freeze, and named variations (the arrangement layer — SUPERSEDES the arbitrary-bar loop below)
+The arbitrary-bar "loop a selection" idea evolved (after Chris slept on it) into a richer, more musical system, because looping a tiny chunk is useless: you can't shape a chunk's *sound* independently — it comes from shared, looping callbacks + the harmony, so edits ripple everywhere. The lever isn't editing; it's **audition-and-freeze**, and the unit is a **chunk/phrase**.
+
+**Two levels:**
+- **Chunks (phrases).** Divide the chart into chunks SMALLER than a full repeating section — default a sensible size like 4 bars, adjustable; they tile the chart and stay **visually distinct** so you can see the segmentation. Each chunk is independently **auditioned** (loop it while the audition system mutates its seed, hearing variations) and **frozen** (lock the version you like; it then replays identically every recurrence and is immune to later edits — a captured performance, not a re-generation). Other chunks are independent (own seed, own lock), so shaping one never moves another.
+- **Named variations.** A *variation* is a named snapshot of ALL chunks' chosen/frozen states at once ("Variation 1"). Re-audition some chunks → save "Variation 2" → recall/switch between them. Like takes/scenes of the whole arrangement.
+
+**Storage (light, thanks to determinism):** a frozen chunk stores just its seed + the sprite trajectory record (enough to replay identically); a variation is the collection of those per-chunk captures (cheap to name/recall). The audition Loop becomes phrase-scoped. This unifies harmony form + the audition system + the section-loop record/replay mechanism.
+
+**Open questions:** chunk boundaries snapping to bars / respecting the chart's section + repeat lines (no straddling A/B); can a variation leave some chunks live while others are frozen; whole-piece variations vs A/B-ing a single chunk across variations.
+
+**Phase-1 impact (chord-chart display):** none functionally, but build the chart renderer so the bar/structure model stays addressable — so chunk boundaries + per-chunk lock/audition controls can overlay later without rework.
+
+### (superseded) Loop a selected section of the chart (iReal-style, but the selection persists)
 **Idea:** drag over bars in the chord chart to select a range; on play, that section loops. Unlike iReal Pro, the **selection persists** across stop/restart (stored on the scene, not transient). The section repeats *identically* — the whole score loops over it, not just the harmony (a vamp where objects keep evolving was rejected: "no point in having time evolve differently than if played from the start").
 
 **Mechanism (the determinism makes this tractable):**
