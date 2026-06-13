@@ -169,6 +169,13 @@ export class Scene {
         /** @type {import("./harmonyScene.js").SceneHarmony | null} */
         this.harmony = null;
 
+        // Whether the chosen progression loops at the end of the piece
+        // (true = play the whole progression on repeat) or stops once the
+        // last bar has sounded. Feeds the harmony player's `loop` argument
+        // (src/harmonyPlayer.js). Default true.
+        /** @type {boolean} */
+        this.harmonyLoop = true;
+
         // --- Harmony framework (score-level defaults). ---
         /** @type {string | null} */
         this.tonic = null;

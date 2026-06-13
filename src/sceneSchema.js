@@ -208,6 +208,17 @@ export const SCENE_FIELDS = [
         type: "object",
         default: null,
     },
+    {
+        // Whether the chosen progression LOOPS at the end of the piece
+        // (true = play the whole progression on repeat) or STOPS once the
+        // last bar has sounded (false). Feeds harmonyAt's `loop` argument in
+        // the harmony player. Default true so a short progression keeps
+        // sounding under a longer sketch. See src/harmonyPlayer.js.
+        key: "harmonyLoop",
+        label: "Loop Progression",
+        type: "boolean",
+        default: true,
+    },
     { key: "tonic", label: "Tonic", type: "string", default: null },
     { key: "scaleName", label: "Scale", type: "string", default: null },
     { key: "root", label: "Root", type: "string", default: null },

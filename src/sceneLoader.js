@@ -401,6 +401,12 @@ function applyPieceLevelFields(scene, data) {
     // which returns a clean object on a well-formed value and null on
     // anything malformed, so a hand-edited scene.json can't crash load.
     if ("harmony" in data) scene.harmony = sanitiseSceneHarmony(data.harmony);
+    // Loop the chosen progression at the piece end (default true). Only an
+    // explicit boolean overrides the default, so a malformed value can't
+    // accidentally disable looping.
+    if ("harmonyLoop" in data && typeof data.harmonyLoop === "boolean") {
+        scene.harmonyLoop = data.harmonyLoop;
+    }
     if ("tonic" in data) scene.tonic = data.tonic;
     if ("scaleName" in data) scene.scaleName = data.scaleName;
     if ("root" in data) scene.root = data.root;

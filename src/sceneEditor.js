@@ -1565,6 +1565,21 @@ export function setSceneHarmony(data, harmony) {
 }
 
 /**
+ * Set the harmonyLoop field at the top level of scene.json. Mirrors
+ * setSceneBpm's defensive style: a non-object data root is a no-op. The
+ * value is coerced to a strict boolean so the persisted field is always
+ * true/false. When true (the default) the harmony player loops the chosen
+ * progression at the piece end; when false it stops once the last bar has
+ * sounded. Feeds harmonyAt's `loop` argument (src/harmonyPlayer.js).
+ * @param {any} data
+ * @param {boolean} value
+ */
+export function setSceneHarmonyLoop(data, value) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    data.harmonyLoop = value === true;
+}
+
+/**
  * Set the engine field at the top level of scene.json.
  * Used by the property inspector's global band's Sound
  * Engine dropdown. The engine choice is per-score: it
