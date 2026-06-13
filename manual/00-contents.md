@@ -41,6 +41,7 @@ used for the application name in most places after this introduction.
 11. [Motion & Collisions](section-11-motion-and-collisions.md) — sprite motion, bouncing off the canvas edges, and what makes objects fire each other.
 12. [Scripting & the Sound API](section-12-scripting-and-sound-api.md) — writing callbacks, the playNote/playSound API, the `this` context, and polyphony.
 13. [Sound Output](section-13-sound-output.md) — the built-in audio engine versus MIDI, voices and sound banks, and the virtual MIDI port.
+13a. [Harmony](section-13a-harmony.md) — importing iReal Pro charts, the chord-chart view, and following a progression from a script. _(feature in progress; final number TBD)_
 14. [Creation, Mutation & Audition](section-14-creation-mutation-and-audition.md) — seed-driven variation and the audition workflow.
 15. [Saving & Score Files](section-15-saving-and-score-files.md) — score bundles, saving, loading, and sessions.
 16. [Reference](section-16-reference.md) — keyboard shortcuts, the scripting API, and the field reference (generated from and checked against the code).
