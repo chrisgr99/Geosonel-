@@ -639,6 +639,13 @@ async function main() {
     // name and the this.* reads that executed on that firing.
     canvas.setCallbackFlashSink((map) => editor.applyCallbackFlashes(map));
 
+    // Harmony now-playing cursor. The canvas feeds the current global beat
+    // each playing frame (null on stop); the Harmony tab's chord chart
+    // highlights the bar sounding at that beat.
+    canvas.setHarmonyBeatSink((beat) => {
+        if (editor.harmonyPanel) editor.harmonyPanel.setPlayhead(beat);
+    });
+
     // Inspector hover-preview sink. As the pointer hovers an object on
     // the canvas, the inspector peeks at that object's fields (even if a
     // different object — or nothing — is selected); moving off reverts to
@@ -1058,7 +1065,10 @@ async function main() {
             // a song (which re-runs) and reopening a saved score that
             // already carries a stored progression populate the chart.
             if (editor.harmonyPanel) {
-                editor.harmonyPanel.setHarmony(result.scene.harmony ?? null);
+                editor.harmonyPanel.setHarmony(
+                    result.scene.harmony ?? null,
+                    result.scene.harmonyLoop !== false,
+                );
             }
             dispatchSelectedObjectIds(canvas.getSelection());
             dispatchKnownObjectIds();
@@ -1940,6 +1950,10 @@ async function main() {
                 });
                 setSceneTimeSignature(data, song.timeSignature);
             });
+            // A new chart starts the piece over: rewind to the top so the
+            // chord chart and the music begin together. rewind() keeps
+            // playing if the score was playing, else stays paused at zero.
+            transport.rewind();
         });
 
         // Key transpose: rewrite the stored harmony's tonic root (mode and

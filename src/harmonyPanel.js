@@ -34,7 +34,7 @@ import {
     searchSongs,
     getSong,
 } from "./harmonyLibrary.js";
-import { layoutChart, groupRows, formatChordParts } from "./harmonyChartLayout.js";
+import { layoutChart, groupRows, formatChordParts, buildBarPlayback } from "./harmonyChartLayout.js";
 
 const SCOPE_ALL = "all";
 
@@ -200,6 +200,20 @@ export class HarmonyPanel {
         this._chartTitle = null;
         /** @type {HTMLDivElement | null} */
         this._chartEl = null;
+        /**
+         * Played-bar timeline for the now-playing cursor: expanded beat
+         * ranges → displayed bar index. Rebuilt by _renderChart.
+         * @type {import("./harmonyChartLayout.js").PlaybackBar[]}
+         */
+        this._playback = [];
+        /** Total expanded beats of the playback timeline. */
+        this._playbackTotal = 0;
+        /** Whether playback loops at the end (drives the cursor's wrap). */
+        this._loop = true;
+        /** Displayed bar index currently highlighted, or -1. */
+        this._nowBarIndex = -1;
+        /** Most recent global beat from setPlayhead (re-lights after a re-render). */
+        this._lastBeat = null;
         /** The hamburger menu container (button + popup). @type {HTMLElement | null} */
         this._menuEl = null;
         /** The hamburger popup panel. @type {HTMLElement | null} */
@@ -258,9 +272,11 @@ export class HarmonyPanel {
      * already carries a stored progression populate the chart and its
      * title. Re-renders both from the stored harmony.
      * @param {import("./harmonyScene.js").SceneHarmony | null} harmony
+     * @param {boolean} [loop=true]  whether playback loops (cursor wrap)
      */
-    setHarmony(harmony) {
+    setHarmony(harmony, loop = true) {
         this._harmony = harmony || null;
+        this._loop = loop !== false;
         // Keep the chart title in sync even when the chart isn't visible
         // (no library imported yet → picker is the placeholder hint, but a
         // stored harmony should still announce itself).
@@ -816,6 +832,11 @@ export class HarmonyPanel {
         const chart = this._chartEl;
         if (chart === null) return;
         chart.innerHTML = "";
+        // The DOM is rebuilt, so the old highlight handle is gone; the next
+        // setPlayhead re-lights from scratch.
+        this._playback = [];
+        this._playbackTotal = 0;
+        this._nowBarIndex = -1;
 
         if (this._harmony === null) {
             const hint = document.createElement("div");
@@ -840,6 +861,12 @@ export class HarmonyPanel {
             chart.appendChild(hint);
             return;
         }
+
+        // Build the now-playing timeline (expanded beats → displayed bar) so
+        // setPlayhead can light the sounding bar across repeats.
+        const playback = buildBarPlayback(bars);
+        this._playback = playback.timeline;
+        this._playbackTotal = playback.totalBeats;
 
         // Group the bars into ROWS that respect section/ending structure (a
         // section starts a new row at the left; alternative endings indent to
@@ -867,6 +894,76 @@ export class HarmonyPanel {
             }
         }
         chart.appendChild(grid);
+
+        // Re-light the cursor onto the freshly built DOM if a beat is current.
+        if (this._lastBeat !== null) this.setPlayhead(this._lastBeat);
+    }
+
+    /**
+     * Move the now-playing cursor to the bar sounding at `beat` (global beats).
+     * Called every playing frame by the canvas via main.js; pass null to clear
+     * (playback stopped). Wraps modulo the timeline when looping. Only touches
+     * the DOM when the highlighted bar changes, so it's cheap per frame.
+     * @param {number | null} beat
+     */
+    setPlayhead(beat) {
+        this._lastBeat = beat;
+        if (beat === null || this._playbackTotal <= 0 || this._chartEl === null) {
+            this._setNowBar(-1);
+            return;
+        }
+        let b = beat;
+        if (this._loop) {
+            b = ((b % this._playbackTotal) + this._playbackTotal) % this._playbackTotal;
+        }
+        if (b < 0 || b >= this._playbackTotal) {
+            this._setNowBar(-1); // before start or past the end (loop off)
+            return;
+        }
+        this._setNowBar(this._barIndexAtBeat(b));
+    }
+
+    /**
+     * Binary-search the playback timeline for the displayed bar index sounding
+     * at expanded beat `b` (0 <= b < totalBeats), or -1 if none.
+     * @param {number} b
+     * @returns {number}
+     */
+    _barIndexAtBeat(b) {
+        const tl = this._playback;
+        let lo = 0;
+        let hi = tl.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            const seg = tl[mid];
+            if (b < seg.startBeat) hi = mid - 1;
+            else if (b >= seg.endBeat) lo = mid + 1;
+            else return seg.index;
+        }
+        return -1;
+    }
+
+    /**
+     * Toggle the `now-playing` class so exactly the bar at displayed `index`
+     * is highlighted (or none, for -1). No-op when already on that bar.
+     * @param {number} index  displayed ChartBar.index, or -1 to clear
+     */
+    _setNowBar(index) {
+        if (index === this._nowBarIndex) return;
+        const chart = this._chartEl;
+        if (chart !== null) {
+            if (this._nowBarIndex >= 0) {
+                const prev = chart.querySelector(
+                    `.harmony-bar[data-bar-index="${this._nowBarIndex}"]`);
+                if (prev !== null) prev.classList.remove("now-playing");
+            }
+            if (index >= 0) {
+                const next = chart.querySelector(
+                    `.harmony-bar[data-bar-index="${index}"]`);
+                if (next !== null) next.classList.add("now-playing");
+            }
+        }
+        this._nowBarIndex = index;
     }
 
     /**

@@ -250,6 +250,113 @@ export function layoutChart(progression, key, mode, timeSignature) {
 }
 
 /**
+ * One PLAYED bar: a displayed bar sounding over an expanded beat range.
+ * `index` points back to the displayed {@link ChartBar} so a now-playing
+ * highlight can light the right bar even across repeats.
+ * @typedef {Object} PlaybackBar
+ * @property {number} index      displayed ChartBar.index sounding here
+ * @property {number} startBeat  inclusive, expanded beats from 0
+ * @property {number} endBeat    exclusive
+ */
+
+/**
+ * Find the bar where an ending block starting at `s` ends. The layout tags
+ * only the FIRST bar of an ending with `ending`; the block runs until the
+ * next ending/section bar, or through a `repeatClose`/`end` bar (inclusive).
+ * @param {ChartBar[]} bars
+ * @param {number} s  index of the ending's first bar
+ * @returns {{ endExclusive: number, hadClose: boolean }}
+ */
+function endingBlockEnd(bars, s) {
+    let j = s;
+    let hadClose = false;
+    while (j < bars.length) {
+        const b = bars[j];
+        if (j > s && (b.ending !== undefined || b.section !== undefined)) break;
+        if (b.repeatClose) { hadClose = true; j += 1; break; }
+        if (b.end) { j += 1; break; }
+        j += 1;
+    }
+    return { endExclusive: j, hadClose };
+}
+
+/**
+ * Unroll laid-out bars into the PLAYED order, honouring `{ }` repeats (2
+ * passes — matching the player's expandProgression default) and standard
+ * 1st/2nd endings, assigning each played bar an expanded beat range. The
+ * `index` on each entry points back to the displayed bar, so a now-playing
+ * cursor maps a global beat → the exact displayed bar even when a section
+ * repeats. Best-effort for exotic structures (nested repeats, two-bar
+ * similes); plain bars, splits, repeats and N1/N2 endings are exact.
+ *
+ * @param {ChartBar[]} bars
+ * @returns {{ timeline: PlaybackBar[], totalBeats: number }}
+ */
+export function buildBarPlayback(bars) {
+    /** @type {PlaybackBar[]} */
+    const timeline = [];
+    if (!Array.isArray(bars) || bars.length === 0) {
+        return { timeline, totalBeats: 0 };
+    }
+
+    let beat = 0;
+    let i = 0;
+    let guard = 0;
+    /** @type {Array<{ openIndex: number, passes: number, pass: number }>} */
+    const stack = [];
+    let lastClosedPass = 1;
+
+    while (i < bars.length) {
+        if (++guard > 100000) break; // pathological-structure backstop
+        const bar = bars[i];
+
+        // Open a repeat frame the first time we reach its opening bar (not on
+        // the jump-back, where the top frame already covers this openIndex).
+        if (bar.repeatOpen &&
+            (stack.length === 0 || stack[stack.length - 1].openIndex !== i)) {
+            stack.push({ openIndex: i, passes: 2, pass: 1 });
+        }
+
+        // Ending selection: an ending bar plays only on its matching pass.
+        if (bar.ending !== undefined) {
+            const frame = stack[stack.length - 1];
+            const pass = frame ? frame.pass : lastClosedPass;
+            if (bar.ending !== pass) {
+                const { endExclusive, hadClose } = endingBlockEnd(bars, i);
+                if (hadClose && frame) {
+                    lastClosedPass = frame.pass;
+                    stack.pop();
+                }
+                i = endExclusive;
+                continue;
+            }
+        }
+
+        // Play this bar.
+        timeline.push({ index: bar.index, startBeat: beat, endBeat: beat + bar.beats });
+        beat += bar.beats;
+
+        // Repeat close: loop back if passes remain, else close the frame.
+        if (bar.repeatClose) {
+            const frame = stack[stack.length - 1];
+            if (frame && frame.pass < frame.passes) {
+                frame.pass += 1;
+                i = frame.openIndex;
+                continue;
+            }
+            if (frame) {
+                lastClosedPass = frame.pass;
+                stack.pop();
+            }
+        }
+
+        i += 1;
+    }
+
+    return { timeline, totalBeats: beat };
+}
+
+/**
  * A cell in a laid-out ROW: either a real {@link ChartBar} or an EMPTY
  * placeholder used for left-padding (a section's short final row, or an
  * alternative ending indented under the first ending). An empty cell renders

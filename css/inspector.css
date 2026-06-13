@@ -1461,6 +1461,15 @@
     min-height: 30px;
 }
 
+/* Now-playing cursor: the bar sounding at the current global beat. A soft
+ * green wash + inset outline that rides over the barline grid without shifting
+ * layout (no border-box change). */
+.harmony-bar.now-playing {
+    background-color: rgba(158, 199, 158, 0.20);
+    box-shadow: inset 0 0 0 2px #9ec79e;
+    border-radius: 2px;
+}
+
 /* Barlines: thin vertical white rules drawn as bordered pseudo-spans. The
  * LEFT barline sits at the cell's left edge; the chord starts just right of
  * it. Variants thicken / double / add repeat dots. */

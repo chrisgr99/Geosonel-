@@ -412,6 +412,22 @@ export class Canvas {
         this._activeBeatsCleared = true;
 
         /**
+         * Sink for the Harmony tab's now-playing cursor, or null until
+         * main.js wires it via setHarmonyBeatSink. Called from
+         * _emitActiveBeats once per frame with the current global beat
+         * (transport.elapsedBeats) while playing, and once with null on the
+         * transition to not-playing so the panel clears its highlight.
+         * @type {((beat: number | null) => void) | null}
+         */
+        this._harmonyBeatSink = null;
+        /**
+         * Whether the harmony sink was last sent null (mirrors
+         * _activeBeatsCleared, so the clear fires once per stop).
+         * @type {boolean}
+         */
+        this._harmonyBeatCleared = true;
+
+        /**
          * Active toolbar tool, or null if no creation tool is
          * armed. When non-null the cursor is shown as a
          * crosshair and a click on the canvas places a new
@@ -998,6 +1014,17 @@ export class Canvas {
     }
 
     /**
+     * Wire the Harmony tab's now-playing cursor sink. main.js wires this to
+     * editor.harmonyPanel.setPlayhead so the chord chart highlights the bar
+     * sounding at the current global beat. Called once at startup; the canvas
+     * is fully usable without it.
+     * @param {(beat: number | null) => void} fn
+     */
+    setHarmonyBeatSink(fn) {
+        this._harmonyBeatSink = fn;
+    }
+
+    /**
      * Wire the per-frame "callback firing flash" map sink. main.js
      * wires this to editor.applyCallbackFlashes so the editor boxes
      * each recent MOMENT-callback firing's function name and
@@ -1261,8 +1288,24 @@ export class Canvas {
      * method.
      */
     _emitActiveBeats() {
-        if (this._activeBeatSink === null) return;
         const playing = this._transport !== null && this._transport.isPlaying;
+
+        // Harmony now-playing cursor: feed the current global beat every frame
+        // while playing; send one null on the stop transition so the chart
+        // clears. Independent of the active-beat sink below.
+        if (this._harmonyBeatSink !== null) {
+            const beat = playing && this._transport !== null
+                ? this._transport.elapsedBeats : null;
+            if (playing && typeof beat === "number" && Number.isFinite(beat)) {
+                this._harmonyBeatSink(beat);
+                this._harmonyBeatCleared = false;
+            } else if (!this._harmonyBeatCleared) {
+                this._harmonyBeatSink(null);
+                this._harmonyBeatCleared = true;
+            }
+        }
+
+        if (this._activeBeatSink === null) return;
         if (!playing ||
             this._scene === null ||
             this._simulation === null ||
