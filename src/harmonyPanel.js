@@ -41,6 +41,9 @@ const SCOPE_ALL = "all";
 /** Bars per chart row before wrapping. */
 const BARS_PER_ROW = 4;
 
+/** Debounce (ms) before an arrow-browse step loads its chart. */
+const BROWSE_DEBOUNCE_MS = 150;
+
 // Pitch-class spelling for the "Now:" key label. Flat-side tonics spell
 // with flats (Eb not D#); everything else with sharps. Mirrors the bias
 // irealChord.js uses for tonic spelling, kept local so this panel stays
@@ -48,6 +51,27 @@ const BARS_PER_ROW = 4;
 const PC_TO_NAME_SHARP = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const PC_TO_NAME_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
 const FLAT_TONIC_PCS = new Set([5, 10, 3, 8, 1, 6]);
+
+/**
+ * Tonic roots for the Key submenu, listed top-to-bottom DESCENDING the
+ * chromatic scale from C, black keys dual-labelled sharp/flat. Choosing one
+ * transposes the chart's root (mode unchanged).
+ * @type {Array<{ pc: number, label: string }>}
+ */
+const KEY_ROOTS = [
+    { pc: 0, label: "C" },
+    { pc: 11, label: "B" },
+    { pc: 10, label: "A♯ / B♭" },
+    { pc: 9, label: "A" },
+    { pc: 8, label: "G♯ / A♭" },
+    { pc: 7, label: "G" },
+    { pc: 6, label: "F♯ / G♭" },
+    { pc: 5, label: "F" },
+    { pc: 4, label: "E" },
+    { pc: 3, label: "D♯ / E♭" },
+    { pc: 2, label: "D" },
+    { pc: 1, label: "C♯ / D♭" },
+];
 
 /**
  * @param {{ tonicPitchClass: number, mode: "major" | "minor" }} key
@@ -107,6 +131,14 @@ export class HarmonyPanel {
          */
         this._onChooseSong = null;
 
+        /**
+         * Key-transpose callback wired by main.js. Receives the new tonic
+         * pitch class (0..11); main.js rewrites scene.harmony.key (root only,
+         * mode unchanged) and re-runs. Null until wired.
+         * @type {((tonicPitchClass: number) => void) | null}
+         */
+        this._onChangeKey = null;
+
         // --- Picker state ---
 
         /** Selected playlist id, or SCOPE_ALL. */
@@ -117,6 +149,11 @@ export class HarmonyPanel {
         this._activeIndex = -1;
         /** Whether the results dropdown is open. */
         this._open = false;
+        /**
+         * Pending debounce timer for arrow-browse live-load, or null.
+         * @type {ReturnType<typeof setTimeout> | null}
+         */
+        this._browseTimer = null;
         /**
          * Current result rows: flat hits with playlist context.
          * @type {Array<{playlistId: string, playlistName: string, index: number, title: string, supported: boolean}>}
@@ -155,12 +192,22 @@ export class HarmonyPanel {
         this._input = null;
         /** @type {HTMLDivElement | null} */
         this._list = null;
-        /** @type {HTMLDivElement | null} */
-        this._nowLine = null;
+        /** Wrapper holding the count + results menu. @type {HTMLDivElement | null} */
+        this._dropdown = null;
+        /** "N of M" count element above the menu. @type {HTMLDivElement | null} */
+        this._count = null;
+        /** Chart title heading (shows the chosen song). @type {HTMLElement | null} */
+        this._chartTitle = null;
         /** @type {HTMLDivElement | null} */
         this._chartEl = null;
-        /** @type {HTMLButtonElement | null} */
-        this._toggleBtn = null;
+        /** The hamburger menu container (button + popup). @type {HTMLElement | null} */
+        this._menuEl = null;
+        /** The hamburger popup panel. @type {HTMLElement | null} */
+        this._menuPopup = null;
+        /** The "Key" menu row (enabled only with a harmony). @type {HTMLElement | null} */
+        this._keyMenuItem = null;
+        /** Whether the hamburger popup is open. */
+        this._menuOpen = false;
 
         this._render();
 
@@ -168,12 +215,20 @@ export class HarmonyPanel {
         // Added once here (not per-render) and reads this._input live, so
         // it keeps working across refresh() re-renders.
         this._onDocMouseDown = (/** @type {MouseEvent} */ e) => {
-            if (!this._open) return;
-            const combo = this._input !== null
-                ? this._input.closest(".harmony-combo") : null;
-            if (combo !== null && combo.contains(/** @type {Node} */ (e.target))) return;
-            this._open = false;
-            this._renderList();
+            const target = /** @type {Node} */ (e.target);
+            if (this._open) {
+                const combo = this._input !== null
+                    ? this._input.closest(".harmony-combo") : null;
+                if (combo === null || !combo.contains(target)) {
+                    this._open = false;
+                    this._renderList();
+                }
+            }
+            if (this._menuOpen) {
+                if (this._menuEl === null || !this._menuEl.contains(target)) {
+                    this._closeMenu();
+                }
+            }
         };
         document.addEventListener("mousedown", this._onDocMouseDown);
     }
@@ -188,17 +243,25 @@ export class HarmonyPanel {
     }
 
     /**
+     * Wire the key-transpose callback (main.js owns the scene edit + re-run).
+     * @param {(tonicPitchClass: number) => void} cb
+     */
+    onChangeKey(cb) {
+        this._onChangeKey = cb;
+    }
+
+    /**
      * Reflect the scene's current harmony into the panel (the INBOUND
      * direction; onChooseSong is the outbound one). main.js calls this
      * after every scene load/re-run with `scene.harmony` (or null), so both
      * picking a song (which re-runs) and reopening a saved score that
-     * already carries a stored progression populate the chart and the
-     * "Now:" line. Re-renders both from the stored harmony.
+     * already carries a stored progression populate the chart and its
+     * title. Re-renders both from the stored harmony.
      * @param {import("./harmonyScene.js").SceneHarmony | null} harmony
      */
     setHarmony(harmony) {
         this._harmony = harmony || null;
-        // Keep the "Now:" line in sync even when the chart isn't visible
+        // Keep the chart title in sync even when the chart isn't visible
         // (no library imported yet → picker is the placeholder hint, but a
         // stored harmony should still announce itself).
         if (this._harmony !== null) {
@@ -208,8 +271,9 @@ export class HarmonyPanel {
                 timeSignature: this._harmony.timeSignature,
             };
         }
-        this._renderNowLine();
+        this._renderChartTitle();
         this._renderChart();
+        this._syncMenuState();
     }
 
     /**
@@ -229,10 +293,12 @@ export class HarmonyPanel {
     /** Full re-render from current library + picker state. */
     _render() {
         this.container.innerHTML = "";
-
-        const heading = document.createElement("h2");
-        heading.textContent = "Harmony";
-        this.container.appendChild(heading);
+        // No "Harmony" heading: the tab is already labelled "Harmony".
+        // Drop stale menu handles; _buildMenu re-sets them when it runs.
+        this._menuEl = null;
+        this._menuPopup = null;
+        this._keyMenuItem = null;
+        this._menuOpen = false;
 
         const playlists = listPlaylists();
         if (playlists.length === 0) {
@@ -243,12 +309,7 @@ export class HarmonyPanel {
             this.container.appendChild(hint);
             // No library, but the scene may still carry a stored harmony
             // (a saved score opened on a machine without the source
-            // playlist). Show its chart + "Now:" line anyway.
-            const nowLine = document.createElement("p");
-            nowLine.className = "harmony-now-line";
-            this._nowLine = nowLine;
-            this.container.appendChild(nowLine);
-            this._renderNowLine();
+            // playlist). Show its chart (titled with the song) anyway.
             this._buildChartSection();
             this._renderChart();
             return;
@@ -265,8 +326,21 @@ export class HarmonyPanel {
             this._scope = playlists[0].id;
         }
 
-        const row = document.createElement("div");
-        row.className = "harmony-picker-row";
+        // Picker grid: two columns (controls | song field), two rows.
+        // Row 1: hamburger menu (top-left) + the "N of M" filter count,
+        // the count left-aligned with the song field it filters. Row 2: the
+        // playlist dropdown + the song combobox.
+        const grid = document.createElement("div");
+        grid.className = "harmony-picker-grid";
+
+        // Hamburger menu (top-left): chord-display style + key transpose.
+        grid.appendChild(this._buildMenu());
+
+        // "N of M" filter count: above and left-aligned with the song field.
+        const count = document.createElement("div");
+        count.className = "harmony-song-count";
+        this._count = count;
+        grid.appendChild(count);
 
         // Playlist dropdown.
         const select = document.createElement("select");
@@ -288,7 +362,7 @@ export class HarmonyPanel {
             this._renderList();
         });
         this._playlistSelect = select;
-        row.appendChild(select);
+        grid.appendChild(select);
 
         // Song combobox (input + dropdown below).
         const combo = document.createElement("div");
@@ -301,6 +375,8 @@ export class HarmonyPanel {
         input.value = this._query;
         input.addEventListener("input", () => {
             this._query = input.value;
+            // A new search restarts browsing from the top of the new set.
+            this._activeIndex = -1;
             this._open = true;
             this._recomputeResults();
             this._renderList();
@@ -332,22 +408,22 @@ export class HarmonyPanel {
         });
         combo.appendChild(caret);
 
+        // Dropdown wrapper: the scrollable results menu, below the field.
+        const dropdown = document.createElement("div");
+        dropdown.className = "harmony-dropdown hidden";
+        this._dropdown = dropdown;
+
         const list = document.createElement("div");
-        list.className = "harmony-song-list hidden";
+        list.className = "harmony-song-list";
         this._list = list;
-        combo.appendChild(list);
+        dropdown.appendChild(list);
 
-        row.appendChild(combo);
-        this.container.appendChild(row);
+        combo.appendChild(dropdown);
 
-        // "Now:" chosen-song line.
-        const nowLine = document.createElement("p");
-        nowLine.className = "harmony-now-line";
-        this._nowLine = nowLine;
-        this.container.appendChild(nowLine);
-        this._renderNowLine();
+        grid.appendChild(combo);
+        this.container.appendChild(grid);
 
-        // Chord-chart section (heading + Letter/Roman toggle + chart grid).
+        // Chord-chart section (song-title heading + chart grid).
         this._buildChartSection();
         this._renderChart();
 
@@ -445,22 +521,22 @@ export class HarmonyPanel {
     _renderList() {
         const list = this._list;
         if (list === null) return;
+
+        // "N of M" count lives above the field, independent of the menu.
+        if (this._count !== null) {
+            this._count.textContent = `${this._results.length} of ${this._scopeTotal}`;
+        }
+
         list.innerHTML = "";
 
         if (!this._open) {
-            list.classList.add("hidden");
+            if (this._dropdown !== null) this._dropdown.classList.add("hidden");
             return;
         }
-        list.classList.remove("hidden");
+        if (this._dropdown !== null) this._dropdown.classList.remove("hidden");
 
         const needle = this._query.trim().toLowerCase();
         const showPlaylist = this._scope === SCOPE_ALL;
-
-        // "N of M" count header.
-        const count = document.createElement("div");
-        count.className = "harmony-song-count";
-        count.textContent = `${this._results.length} of ${this._scopeTotal}`;
-        list.appendChild(count);
 
         if (this._results.length === 0) {
             const empty = document.createElement("div");
@@ -515,49 +591,30 @@ export class HarmonyPanel {
         });
     }
 
-    /** Render the "Now: …" chosen-song line. */
-    _renderNowLine() {
-        const el = this._nowLine;
+    /** Render the chart title = the chosen song's name (key + meter). */
+    _renderChartTitle() {
+        const el = this._chartTitle;
         if (el === null) return;
         if (this._chosen === null) {
             el.textContent = "";
             return;
         }
         el.textContent =
-            `Now: ${this._chosen.title} — ${keyLabel(this._chosen.key)}, ${tsLabel(this._chosen.timeSignature)}`;
+            `${this._chosen.title} — ${keyLabel(this._chosen.key)}, ${tsLabel(this._chosen.timeSignature)}`;
     }
 
     /**
-     * Build the chord-chart section: a heading row carrying the
-     * Letter/Roman toggle, plus an (empty) chart grid container that
-     * _renderChart fills. Idempotent within a _render: rebuilds the
-     * subtree and re-captures the DOM handles.
+     * Build the chord-chart section: a title heading (the chosen song's
+     * name), plus an (empty) chart grid container that _renderChart fills.
+     * Idempotent within a _render: rebuilds the subtree and re-captures the
+     * DOM handles. The Letter/Roman toggle lives in the picker grid above.
      */
     _buildChartSection() {
-        const head = document.createElement("div");
-        head.className = "harmony-chart-head";
-
-        const title = document.createElement("span");
+        const title = document.createElement("h3");
         title.className = "harmony-chart-title";
-        title.textContent = "Chart";
-        head.appendChild(title);
-
-        // Letter/Roman toggle. A single two-state button: its label shows
-        // the CURRENT mode; clicking flips the mode and re-renders the
-        // chart labels via the other renderer. Default mode is "letter".
-        const toggle = document.createElement("button");
-        toggle.type = "button";
-        toggle.className = "harmony-mode-toggle";
-        toggle.addEventListener("click", () => {
-            this._displayMode = this._displayMode === "letter" ? "roman" : "letter";
-            this._syncToggleLabel();
-            this._renderChart();
-        });
-        this._toggleBtn = toggle;
-        this._syncToggleLabel();
-        head.appendChild(toggle);
-
-        this.container.appendChild(head);
+        this._chartTitle = title;
+        this.container.appendChild(title);
+        this._renderChartTitle();
 
         const chart = document.createElement("div");
         chart.className = "harmony-chart";
@@ -565,16 +622,187 @@ export class HarmonyPanel {
         this.container.appendChild(chart);
     }
 
-    /** Update the toggle button's label + title to the current mode. */
-    _syncToggleLabel() {
-        const btn = this._toggleBtn;
-        if (btn === null) return;
-        const isLetter = this._displayMode === "letter";
-        btn.textContent = isLetter ? "Letter" : "Roman";
-        btn.title = isLetter
-            ? "Showing letter names (Cm7). Click for Roman numerals."
-            : "Showing Roman numerals (i7). Click for letter names.";
-        btn.setAttribute("aria-pressed", isLetter ? "false" : "true");
+    /**
+     * Build the hamburger menu: a ☰ button that opens a popup with two
+     * entries — "Chords" (display style: Letter / Roman) and "Key" (transpose
+     * the root, mode unchanged). Each entry reveals a flyout submenu on hover.
+     * Returns the menu container for the caller to place in the picker grid.
+     * @returns {HTMLElement}
+     */
+    _buildMenu() {
+        const menu = document.createElement("div");
+        menu.className = "harmony-menu";
+        this._menuEl = menu;
+        this._menuOpen = false;
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "harmony-menu-btn";
+        btn.textContent = "☰";
+        btn.setAttribute("aria-label", "Chart options");
+        btn.setAttribute("aria-haspopup", "true");
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this._toggleMenu();
+        });
+        menu.appendChild(btn);
+
+        const popup = document.createElement("div");
+        popup.className = "harmony-menu-popup hidden";
+
+        // "Chords" entry — display style (view only).
+        const chordsItem = this._buildMenuItem("Chords");
+        for (const mode of /** @type {const} */ (["letter", "roman"])) {
+            const label = mode === "letter"
+                ? "Letter names (Cm7)" : "Roman numerals (i7)";
+            const opt = this._buildSubItem(label, this._displayMode === mode, () => {
+                this._displayMode = mode;
+                this._renderChart();
+                this._syncMenuChecks();
+                this._closeMenu();
+            });
+            opt.dataset.mode = mode;
+            chordsItem.submenu.appendChild(opt);
+        }
+        popup.appendChild(chordsItem.item);
+
+        // "Key" entry — transpose the root (disabled with no harmony loaded).
+        const keyItem = this._buildMenuItem("Key");
+        this._keyMenuItem = keyItem.item;
+        const currentPc = this._harmony !== null
+            ? ((this._harmony.key.tonicPitchClass % 12) + 12) % 12 : -1;
+        for (const root of KEY_ROOTS) {
+            const opt = this._buildSubItem(root.label, root.pc === currentPc, () => {
+                this._chooseKeyRoot(root.pc);
+                this._closeMenu();
+            });
+            opt.dataset.pc = String(root.pc);
+            keyItem.submenu.appendChild(opt);
+        }
+        popup.appendChild(keyItem.item);
+
+        menu.appendChild(popup);
+        this._menuPopup = popup;
+        this._syncMenuState();
+        return menu;
+    }
+
+    /**
+     * Reflect the loaded harmony into the menu: enable/disable the Key entry
+     * (nothing to transpose without a harmony) and re-tick the current key +
+     * display mode. Safe to call before the menu exists.
+     */
+    _syncMenuState() {
+        if (this._keyMenuItem !== null) {
+            const disabled = this._harmony === null;
+            this._keyMenuItem.classList.toggle("disabled", disabled);
+            if (disabled) this._keyMenuItem.setAttribute("aria-disabled", "true");
+            else this._keyMenuItem.removeAttribute("aria-disabled");
+        }
+        this._syncMenuChecks();
+    }
+
+    /**
+     * Build a top-level menu row carrying a flyout submenu.
+     * @param {string} label
+     * @returns {{ item: HTMLElement, submenu: HTMLElement }}
+     */
+    _buildMenuItem(label) {
+        const item = document.createElement("div");
+        item.className = "harmony-menu-item";
+
+        const text = document.createElement("span");
+        text.className = "harmony-menu-label";
+        text.textContent = label;
+        item.appendChild(text);
+
+        const arrow = document.createElement("span");
+        arrow.className = "harmony-menu-arrow";
+        arrow.textContent = "▸";
+        item.appendChild(arrow);
+
+        const submenu = document.createElement("div");
+        submenu.className = "harmony-submenu";
+        item.appendChild(submenu);
+
+        return { item, submenu };
+    }
+
+    /**
+     * Build a checkable submenu choice.
+     * @param {string} label
+     * @param {boolean} checked
+     * @param {() => void} onChoose
+     * @returns {HTMLButtonElement}
+     */
+    _buildSubItem(label, checked, onChoose) {
+        const opt = document.createElement("button");
+        opt.type = "button";
+        opt.className = "harmony-subitem" + (checked ? " checked" : "");
+
+        const tick = document.createElement("span");
+        tick.className = "harmony-subitem-tick";
+        tick.textContent = checked ? "✓" : "";
+        opt.appendChild(tick);
+
+        const text = document.createElement("span");
+        text.textContent = label;
+        opt.appendChild(text);
+
+        opt.addEventListener("click", (e) => {
+            e.stopPropagation();
+            onChoose();
+        });
+        return opt;
+    }
+
+    /** Re-tick the submenu choices to match the current state. */
+    _syncMenuChecks() {
+        if (this._menuPopup == null) return;
+        const mark = (/** @type {Element} */ el, /** @type {boolean} */ on) => {
+            el.classList.toggle("checked", on);
+            const tick = el.querySelector(".harmony-subitem-tick");
+            if (tick !== null) tick.textContent = on ? "✓" : "";
+        };
+        for (const el of this._menuPopup.querySelectorAll(".harmony-subitem[data-mode]")) {
+            mark(el, /** @type {HTMLElement} */ (el).dataset.mode === this._displayMode);
+        }
+        const currentPc = this._harmony !== null
+            ? ((this._harmony.key.tonicPitchClass % 12) + 12) % 12 : -1;
+        for (const el of this._menuPopup.querySelectorAll(".harmony-subitem[data-pc]")) {
+            mark(el, Number(/** @type {HTMLElement} */ (el).dataset.pc) === currentPc);
+        }
+    }
+
+    /** Open/close the hamburger popup. */
+    _toggleMenu() {
+        if (this._menuOpen) this._closeMenu();
+        else this._openMenu();
+    }
+
+    _openMenu() {
+        if (this._menuPopup == null) return;
+        this._menuOpen = true;
+        this._menuPopup.classList.remove("hidden");
+    }
+
+    _closeMenu() {
+        if (this._menuPopup == null) return;
+        this._menuOpen = false;
+        this._menuPopup.classList.add("hidden");
+    }
+
+    /**
+     * Transpose the chart to a new tonic root (mode unchanged). No-op without
+     * a loaded harmony or a wired callback. main.js rewrites scene.harmony.key
+     * and re-runs, then pushes the result back via setHarmony.
+     * @param {number} pc  tonic pitch class 0..11
+     */
+    _chooseKeyRoot(pc) {
+        if (this._harmony === null) return;
+        const current = ((this._harmony.key.tonicPitchClass % 12) + 12) % 12;
+        if (pc === current) return;
+        if (this._onChangeKey !== null) this._onChangeKey(pc);
     }
 
     /**
@@ -589,17 +817,13 @@ export class HarmonyPanel {
         if (chart === null) return;
         chart.innerHTML = "";
 
-        const head = this.container.querySelector(".harmony-chart-head");
-
         if (this._harmony === null) {
-            if (head instanceof HTMLElement) head.classList.add("hidden");
             const hint = document.createElement("div");
             hint.className = "harmony-chart-empty";
             hint.textContent = "Choose a song to see its chord chart.";
             chart.appendChild(hint);
             return;
         }
-        if (head instanceof HTMLElement) head.classList.remove("hidden");
 
         const h = this._harmony;
         const bars = layoutChart(
@@ -827,31 +1051,88 @@ export class HarmonyPanel {
      * @param {KeyboardEvent} e
      */
     _onKeyDown(e) {
-        if (e.key === "ArrowDown") {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
-            if (!this._open) { this._open = true; this._recomputeResults(); }
-            if (this._results.length > 0) {
+            // Browse the candidate set with the list CLOSED, so the chord
+            // chart stays visible. Each step live-loads its chart (debounced).
+            if (this._results.length === 0) this._recomputeResults();
+            if (this._results.length === 0) return;
+            if (this._open) { this._open = false; this._renderList(); }
+            if (this._activeIndex < 0) {
+                this._activeIndex = e.key === "ArrowDown" ? 0 : this._results.length - 1;
+            } else if (e.key === "ArrowDown") {
                 this._activeIndex = Math.min(this._activeIndex + 1, this._results.length - 1);
-                if (this._activeIndex < 0) this._activeIndex = 0;
-            }
-            this._renderList();
-        } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            if (this._results.length > 0) {
+            } else {
                 this._activeIndex = Math.max(this._activeIndex - 1, 0);
             }
-            this._renderList();
+            this._scheduleBrowseApply();
         } else if (e.key === "Enter") {
-            if (this._open && this._activeIndex >= 0 && this._activeIndex < this._results.length) {
-                e.preventDefault();
-                this._select(this._activeIndex);
+            e.preventDefault();
+            // Flush any pending browse load so the highlighted chart is
+            // applied immediately.
+            if (this._browseTimer !== null) {
+                clearTimeout(this._browseTimer);
+                this._browseTimer = null;
+                if (this._activeIndex >= 0 && this._activeIndex < this._results.length) {
+                    this._browseApply(this._activeIndex);
+                }
+            }
+            // Close the list but leave the filter text and the text cursor
+            // exactly where they are.
+            if (this._open) {
+                this._open = false;
+                this._renderList();
             }
         } else if (e.key === "Escape") {
-            if (this._open) {
+            if (this._query !== "") {
+                // Clear the filter to reveal the whole list.
+                e.preventDefault();
+                this._query = "";
+                if (this._input !== null) this._input.value = "";
+                this._activeIndex = -1;
+                this._open = true;
+                this._recomputeResults();
+                this._renderList();
+            } else if (this._open) {
+                // Already unfiltered — Escape dismisses the list.
                 e.preventDefault();
                 this._open = false;
                 this._renderList();
             }
+        }
+    }
+
+    /** Debounce a live-load of the arrow-browse-highlighted chart. */
+    _scheduleBrowseApply() {
+        if (this._browseTimer !== null) clearTimeout(this._browseTimer);
+        this._browseTimer = setTimeout(() => {
+            this._browseTimer = null;
+            this._browseApply(this._activeIndex);
+        }, BROWSE_DEBOUNCE_MS);
+    }
+
+    /**
+     * Load the chart at index i WITHOUT closing or clearing the search field —
+     * the arrow-browse path. Updates the "Now:" line and dispatches the edit
+     * (which re-runs the scene; main.js pushes the harmony back and the chart
+     * redraws). Keeps the field text and browse index so stepping continues.
+     * @param {number} i
+     */
+    _browseApply(i) {
+        const r = this._results[i];
+        if (!r) return;
+        const song = getSong(r.playlistId, r.index);
+        if (song === null) return;
+
+        this._chosen = {
+            title: song.title,
+            key: song.key,
+            timeSignature: song.timeSignature,
+        };
+        this._renderChartTitle();
+
+        if (this._onChooseSong !== null) {
+            this._onChooseSong(song);
         }
     }
 
@@ -872,14 +1153,11 @@ export class HarmonyPanel {
             timeSignature: song.timeSignature,
         };
         this._open = false;
-        // The field is a pure SEARCH box: clear it after a pick (the
-        // chosen chart shows in the "Now:" line). Re-focusing then shows
-        // the FULL list again so you can choose a different chart, rather
-        // than the one already selected.
-        if (this._input !== null) this._input.value = "";
-        this._query = "";
-        this._activeIndex = -1;
-        this._renderNowLine();
+        // Keep the typed filter text in the field after a pick, so it shows
+        // the context you were browsing. Re-focusing reopens the SAME filtered
+        // list; Escape clears the filter to reveal everything; Backspace
+        // widens it incrementally.
+        this._renderChartTitle();
         this._renderList();
 
         if (this._onChooseSong !== null) {

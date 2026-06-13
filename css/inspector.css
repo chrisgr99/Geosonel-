@@ -1104,6 +1104,19 @@
 }
 
 /* Top row: narrow playlist <select> + flex-grow song combobox. */
+/* Picker grid: two columns (controls | song field), two rows.
+ * Row 1: Letter/Roman toggle + "N of M" count (count aligned over the
+ * song field). Row 2: playlist dropdown + song combobox. The shared
+ * `auto` first column keeps the count's left edge flush with the field.
+ * A little top margin replaces the removed "Harmony" heading's spacing. */
+.harmony-picker-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 8px;
+    align-items: center;
+    margin-top: 10px;
+}
+
 .harmony-picker-row {
     display: flex;
     align-items: flex-start;
@@ -1182,33 +1195,37 @@
     color: #ffffff;
 }
 
-/* Results dropdown, positioned below the input. */
-.harmony-song-list {
+/* Dropdown wrapper (count + menu), positioned below the input. */
+.harmony-dropdown {
     position: absolute;
     top: calc(100% + 2px);
     left: 0;
     right: 0;
     z-index: 20;
+}
+
+.harmony-dropdown.hidden {
+    display: none;
+}
+
+/* "N of M" count: row 1, col 2 of the picker grid — left-aligned over
+ * the song field it filters. */
+.harmony-song-count {
+    margin: 0;
+    color: #9ec79e;
+    font-size: 9pt;
+    text-align: left;
+    justify-self: start;
+}
+
+/* Results menu. */
+.harmony-song-list {
     max-height: 320px;
     overflow-y: auto;
     background-color: #3a3a3a;
     border: 1px solid #789678;
     border-radius: 3px;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-}
-
-.harmony-song-list.hidden {
-    display: none;
-}
-
-.harmony-song-count {
-    padding: 4px 8px;
-    color: #9ec79e;
-    font-size: 9pt;
-    border-bottom: 1px solid #555555;
-    position: sticky;
-    top: 0;
-    background-color: #3a3a3a;
 }
 
 .harmony-song-empty {
@@ -1272,44 +1289,137 @@
  * now-playing highlight and chunk/phrase overlays.
  * ==================================================================== */
 
-.harmony-chart-head {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 18px;
-    margin-bottom: 8px;
-}
-
-.harmony-chart-head.hidden {
-    display: none;
-}
-
+/* Chart title = the chosen song's name (replaces the old "Now:" line). */
 .harmony-chart-title {
-    color: #9ec79e;
-    font-size: 10pt;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    margin: 16px 0 8px 0;
+    color: #ffffff;
+    font-size: 12pt;
+    font-weight: 600;
+    min-height: 1.4em;
 }
 
-/* Letter/Roman two-state toggle button. */
-.harmony-mode-toggle {
+/* Hamburger menu (picker grid, row 1, col 1): chord-display style + key
+ * transpose. The ☰ button opens a popup; each row flies a submenu out to
+ * the right on hover. */
+.harmony-menu {
+    position: relative;
+    justify-self: start;
+}
+
+.harmony-menu-btn {
     background-color: #646464;
     border: 2px solid #789678;
     border-radius: 3px;
-    padding: 0 12px;
+    width: 30px;
     height: 24px;
     color: #ffffff;
-    font-size: 10pt;
+    font-size: 12pt;
+    line-height: 1;
     font-family: inherit;
     cursor: pointer;
 }
 
-.harmony-mode-toggle:hover {
+.harmony-menu-btn:hover {
     border-color: #9ec79e;
 }
 
-.harmony-mode-toggle[aria-pressed="true"] {
+.harmony-menu-popup {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    z-index: 30;
+    min-width: 140px;
+    background-color: #3a3a3a;
+    border: 1px solid #789678;
+    border-radius: 3px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+    padding: 4px 0;
+}
+
+.harmony-menu-popup.hidden {
+    display: none;
+}
+
+/* Top-level menu row carrying a flyout submenu. */
+.harmony-menu-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 10px;
+    color: #ffffff;
+    font-size: 10pt;
+    cursor: default;
+}
+
+.harmony-menu-item:hover {
     background-color: #4a5a4a;
+}
+
+.harmony-menu-item.disabled {
+    color: #777777;
+    pointer-events: none;
+}
+
+.harmony-menu-arrow {
+    color: #9ec79e;
+    font-size: 9pt;
+}
+
+.harmony-menu-item.disabled .harmony-menu-arrow {
+    color: #666666;
+}
+
+/* Flyout submenu: hidden until its parent row is hovered. */
+.harmony-submenu {
+    display: none;
+    position: absolute;
+    top: -5px;
+    left: 100%;
+    z-index: 31;
+    min-width: 150px;
+    max-height: 320px;
+    overflow-y: auto;
+    background-color: #3a3a3a;
+    border: 1px solid #789678;
+    border-radius: 3px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+    padding: 4px 0;
+}
+
+.harmony-menu-item:hover > .harmony-submenu {
+    display: block;
+}
+
+/* A checkable submenu choice. */
+.harmony-subitem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 5px 10px 5px 6px;
+    color: #ffffff;
+    font-size: 10pt;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.harmony-subitem:hover {
+    background-color: #4a5a4a;
+}
+
+.harmony-subitem.checked {
+    color: #9ec79e;
+}
+
+.harmony-subitem-tick {
+    flex: 0 0 auto;
+    width: 12px;
+    color: #9ec79e;
 }
 
 .harmony-chart-empty {

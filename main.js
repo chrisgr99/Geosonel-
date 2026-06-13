@@ -1941,6 +1941,20 @@ async function main() {
                 setSceneTimeSignature(data, song.timeSignature);
             });
         });
+
+        // Key transpose: rewrite the stored harmony's tonic root (mode and
+        // Roman-relative progression unchanged) and re-run, so the chart
+        // relabels and harmony-following objects sound in the new key.
+        editor.harmonyPanel.onChangeKey(async (tonicPitchClass) => {
+            await applySceneEdit((data) => {
+                if (data && data.harmony && data.harmony.key) {
+                    setSceneHarmony(data, {
+                        ...data.harmony,
+                        key: { ...data.harmony.key, tonicPitchClass },
+                    });
+                }
+            });
+        });
     }
 
     // The Canvas inspector tab's W and H fields emit
