@@ -229,11 +229,15 @@ function isStrongBeat(beatIndex) {
  * @param {number} beatIndex        beat index in the cycle (strong-beat detection)
  * @param {number} dice             draw in [0, 1) — the colour under the cursor
  * @param {MelodyProfile} profile
+ * @param {number[]} [anchorPcs]     pitch classes to favour at a phrase boundary
+ *   (e.g. tonic / dominant / chord root at a phrase start, tonic / root at its
+ *   end). Empty for a mid-phrase note.
+ * @param {number} [anchorStrength]  weight multiplier for anchorPcs (1 = none)
  * @returns {number} a MIDI note in [rangeLow, rangeHigh]
  */
 export function melodicStep(
     prevNote, scalePcs, chordPcs, rootPc, nextChordPcs,
-    beatsToNext, beatIndex, dice, profile,
+    beatsToNext, beatIndex, dice, profile, anchorPcs = [], anchorStrength = 1,
 ) {
     const lo = Math.ceil(profile.rangeLow);
     const hi = Math.floor(profile.rangeHigh);
@@ -242,6 +246,8 @@ export function melodicStep(
     const chordSet = new Set(chordPcs);
     const nextSet = new Set(nextChordPcs);
     const scaleSet = new Set(scalePcs);
+    const anchorSet = (anchorPcs.length > 0 && anchorStrength !== 1)
+        ? new Set(anchorPcs.map((pc) => ((pc % 12) + 12) % 12)) : null;
     const strong = isStrongBeat(beatIndex);
     const leadOn = typeof beatsToNext === "number"
         && beatsToNext <= profile.leadWindow && nextSet.size > 0;
@@ -275,6 +281,8 @@ export function melodicStep(
         }
         // Register gravity: pull toward the window centre.
         w *= 1 - profile.gravity * (Math.abs(n - centre) / halfSpan);
+        // Phrase anchoring: at a phrase boundary, favour primary/cadential tones.
+        if (anchorSet !== null && anchorSet.has(pc)) w *= anchorStrength;
         if (!(w > 0)) continue;
         cands.push({ note: n, w });
         total += w;

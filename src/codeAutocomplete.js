@@ -13,12 +13,18 @@
  * the top level and inside a function.
  *
  * What it offers, merged and de-duplicated:
- *   - After `this.col.` → the colour channels.
+ *   - After `this.col.` / `this.ownColor.` → the colour channels.
  *   - After `this.` → the firing-context reads/emitters.
+ *   - After `styles.` → the built-in nxtNote style profiles.
  *   - Otherwise (a normal identifier position):
- *       · the bare action globals (playNote/playSound/applyForce/print),
- *       · JS keywords (including the structural ones like
- *         function / for / if),
+ *       · the curated callback API (playNote, nxtNote, reRange, …), each
+ *         carrying its signature + a docs panel (info) — keyboard-navigable,
+ *         no hover needed;
+ *       · SNIPPET FAMILIES — type a family word (vel / dur / note / play /
+ *         cb) to expand a tab-stop template for that building block, so the
+ *         callback's arguments can be built piecewise instead of one long
+ *         line;
+ *       · JS keywords (including structural ones like function / for / if);
  *       · every identifier already defined/used in the document (a
  *         scope-agnostic scan — covers defined variables and used
  *         property names).
@@ -26,6 +32,7 @@
 
 import {
     autocompletion,
+    snippetCompletion,
 } from "https://esm.sh/@codemirror/autocomplete@6?deps=@codemirror/state@6.5.2";
 import { DEFAULT_KINEMATICS } from "./scene.js";
 import { styles as STYLE_DEFS } from "./harmonyMelody.js";
@@ -69,9 +76,106 @@ const STYLE_MEMBERS = Object.keys(STYLE_DEFS);
 
 /** Bare action globals callable without a prefix. */
 const BARE_GLOBALS = [
-    "playNote", "playSound", "applyForce", "print", "mapToHarmony",
-    "nxtNote", "styles",
+    "playNote", "playSound", "applyForce", "print", "onBeatInterval",
+    "mapToHarmony", "reRange", "nxtNote", "styles", "score",
 ];
+
+/**
+ * Function/parameter documentation for the callback API. `detail` is the short
+ * signature shown inline in the completion; `info` is the longer description
+ * shown in the side panel when the entry is highlighted. Keyboard-navigable —
+ * arrow through the suggestions and the panel updates, no hover needed.
+ * @type {Record<string, {detail: string, info: string}>}
+ */
+const API_DOCS = {
+    playNote: {
+        detail: "(sound, note, vel?, dur?)",
+        info: "Play a pitched note from this object's voice. sound e.g. \"piano\"; note is a MIDI number or name (\"c4\"); vel 0–1; dur in beats. Also (\"instrument\", note, …) or an options object.",
+    },
+    playSound: {
+        detail: "(sample, vel?)",
+        info: "Play a sample / one-shot, e.g. playSound(\"bd\"). Optional bank: (\"bank\", sample, vel?).",
+    },
+    applyForce: {
+        detail: "(fx, fy)",
+        info: "Push a sprite (onTick) — x/y force components steer its motion.",
+    },
+    print: {
+        detail: "(...args)",
+        info: "Print values to the message area for debugging.",
+    },
+    onBeatInterval: {
+        detail: "(interval)",
+        info: "In an onTick callback, returns true once per beat interval — gate a body to a musical pulse.",
+    },
+    mapToHarmony: {
+        detail: "(value, lowValue, highValue, rangeLow, rangeHigh)",
+        info: "Map a value onto a tone of the CURRENT chord laid out across [rangeLow, rangeHigh]. Indexes chord tones, so it can leap. For a stepwise line use nxtNote.",
+    },
+    reRange: {
+        detail: "(value, lo, hi)",
+        info: "Re-map an already-0–1 value into [lo, hi], clamped. The colour channels (this.col.*) are already 0–1, so e.g. reRange(this.col.r, 0.3, 1) for velocity, reRange(this.col.b, 0.2, 1.5) for a note length. Works on any 0–1 value.",
+    },
+    nxtNote: {
+        detail: "(drive, style, low?, span?)",
+        info: "Next note of a melodic line — stepwise, chord-aware. drive is a 0–1 signal you choose (e.g. this.col.lt); style is a styles.* profile; low/span optionally override the register.",
+    },
+    styles: {
+        detail: "melody / bass / lead",
+        info: "Built-in nxtNote style profiles. Customise by spreading: { ...styles.melody, scale: \"blues\" }.",
+    },
+    score: {
+        detail: "kinematics / poly / groupPoly",
+        info: "Score-wide configuration, read/written in a top-level setup script.",
+    },
+};
+
+/**
+ * Snippet families — keyed by the word you type; each variant is
+ * [label-suffix, template]. The shared key groups the family in the popup
+ * (type "vel" → all velocity variants). Templates use ${} tab-stops whose text
+ * is the pre-selected default. Adding a variant is one row; adding a family is
+ * one key.
+ * @type {Record<string, Array<[string, string]>>}
+ */
+const SNIPPET_FAMILIES = {
+    vel: [
+        ["colour", "const vel = this.col.${r};"],
+        ["colour → range", "const vel = reRange(this.col.${r}, ${0.3}, ${1});"],
+        ["beat strength", "const vel = this.vel * ${1.2};"],
+        ["constant", "const vel = ${0.8};"],
+    ],
+    dur: [
+        ["colour → range", "const dur = reRange(this.col.${b}, ${0.2}, ${1.5});"],
+        ["constant", "const dur = ${1};"],
+    ],
+    note: [
+        ["melody", "const note = nxtNote(this.col.lt, styles.melody);"],
+        ["bass", "const note = nxtNote(this.col.lt, styles.bass);"],
+        ["harmony", "const note = mapToHarmony(this.col.lt, 0, 1, ${48}, ${72});"],
+    ],
+    play: [
+        ["note", 'playNote("${piano}", note, vel, dur);'],
+    ],
+    cb: [
+        ["callback", "function ${name}() {\n  ${}\n}"],
+    ],
+};
+
+/** Build the snippet completions from {@link SNIPPET_FAMILIES}. */
+function snippetOptions() {
+    /** @type {any[]} */
+    const out = [];
+    for (const [key, variants] of Object.entries(SNIPPET_FAMILIES)) {
+        for (const [suffix, template] of variants) {
+            out.push(snippetCompletion(template, {
+                label: `${key}: ${suffix}`,
+                type: "snippet",
+            }));
+        }
+    }
+    return out;
+}
 
 /** JS keywords, including the structural ones (function / for / if / …). */
 const JS_KEYWORDS = [
@@ -145,7 +249,17 @@ function scriptCompletionSource(context) {
     /** @type {Map<string, any>} */
     const byLabel = new Map();
     const add = (entry) => { if (!byLabel.has(entry.label)) byLabel.set(entry.label, entry); };
-    for (const e of opts(BARE_GLOBALS, "function")) add(e);
+    // Curated callback API — each carries its signature (detail) + docs (info,
+    // shown in the side panel when highlighted).
+    for (const label of BARE_GLOBALS) {
+        const doc = API_DOCS[label];
+        add(doc
+            ? { label, type: "function", detail: doc.detail, info: doc.info }
+            : { label, type: "function" });
+    }
+    // Snippet families — unique "key: variant" labels, so they survive dedup
+    // and the shared key groups them when you type it.
+    for (const e of snippetOptions()) add(e);
     for (const e of opts(JS_KEYWORDS, "keyword")) add(e);
     for (const e of docIdentifiers(context.state, word.from)) add(e);
     return { from: word.from, options: [...byLabel.values()], validFor: /^[\w$]*$/ };

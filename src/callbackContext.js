@@ -22,7 +22,7 @@
  * `current`.
  */
 
-import { mapToHarmonyCore, MAP_TO_HARMONY_DEFAULTS } from "./harmonyMap.js";
+import { mapToHarmonyCore, mapRange, MAP_TO_HARMONY_DEFAULTS } from "./harmonyMap.js";
 import {
     melodicStep,
     scalePitchClasses,
@@ -54,15 +54,21 @@ let current = null;
  * clears it after. `mapToHarmony` reads it so a bare `mapToHarmony(value)` maps
  * to a tone of the chord under the playhead. null when no harmony is loaded or
  * playback has ended (loop off) — `mapToHarmony` then degrades to a linear map.
- * @type {{ chord: any, key: any } | null}
+ *
+ * It also carries the optional `phrase` state for `nxtNote` (the musical
+ * phrasing grid, scene.harmony.phrases): whether this beat falls in a gap
+ * between phrases (rest), and whether it is a phrase's first / last note (so
+ * the line can anchor to a primary / cadential tone). Absent when no phrase
+ * grid is defined — the line then plays continuously, as before.
+ * @type {{ chord: any, key: any, phrase?: { inGap: boolean, atStart: boolean, atEnd: boolean } } | null}
  */
 let currentHarmony = null;
 
 /**
- * Bind the ambient harmony for the bare `mapToHarmony` global. Called by the
- * engine immediately before invoking a callback, alongside
+ * Bind the ambient harmony for the bare `mapToHarmony` / `nxtNote` globals.
+ * Called by the engine immediately before invoking a callback, alongside
  * {@link setCallbackContext}.
- * @param {{ chord: any, key: any } | null} harmony
+ * @param {{ chord: any, key: any, phrase?: { inGap: boolean, atStart: boolean, atEnd: boolean } } | null} harmony
  */
 export function setCallbackHarmony(harmony) {
     currentHarmony = harmony;
@@ -139,6 +145,12 @@ function chordStructurePcs(c) {
 export function nxtNote(drive, style, low, span) {
     if (current === null) return 60;
     const ctx = current;
+    const phrase = currentHarmony ? currentHarmony.phrase : null;
+    // Gap between phrases → silence. Returning 0 (which playNote treats as a
+    // rest) keeps the line's previous note untouched, so the phrase after the
+    // gap resumes its melodic memory rather than re-seeding.
+    if (phrase && phrase.inGap) return 0;
+
     const prof = style || STYLES.melody;
     const key = (currentHarmony && currentHarmony.key)
         ? currentHarmony.key : { tonicPitchClass: 0, mode: "major" };
@@ -150,6 +162,11 @@ export function nxtNote(drive, style, low, span) {
     const nextPcs = chordStructurePcs(ctx.nextChord);
     const raw = expandProfile(prof, low, span);
 
+    // Phrase anchoring: a phrase START leans on a primary tone (tonic /
+    // dominant / the chord's own root); a phrase END leans on a cadential
+    // resting tone (tonic / chord root). Mid-phrase notes anchor to nothing.
+    const anchorPcs = phraseAnchorPcs(phrase, key, rootPc);
+
     const id = typeof ctx.id === "string" ? ctx.id : "";
     const prev = melodyState.has(id) ? melodyState.get(id) : null;
     const dice = (typeof drive === "number" && Number.isFinite(drive)) ? drive : 0;
@@ -160,9 +177,41 @@ export function nxtNote(drive, style, low, span) {
         prev === undefined ? null : prev,
         scalePcs, chordPcs, rootPc, nextPcs,
         beatsToNext, beatIndex, dice, raw,
+        anchorPcs, anchorPcs.length > 0 ? PHRASE_ANCHOR_STRENGTH : 1,
     );
     melodyState.set(id, note);
     return note;
+}
+
+/** Weight multiplier applied to anchor tones at a phrase boundary. */
+const PHRASE_ANCHOR_STRENGTH = 4;
+
+/**
+ * Pitch classes to favour at a phrase boundary. A phrase START anchors to the
+ * tonic, the dominant, and the current chord's root (a strong, grounded entry);
+ * a phrase END anchors to the tonic and the chord root (a resting cadential
+ * note). Returns [] for a mid-phrase note (or no phrase grid), which disables
+ * anchoring in {@link melodicStep}.
+ * @param {{ atStart: boolean, atEnd: boolean } | null | undefined} phrase
+ * @param {{ tonicPitchClass: number }} key
+ * @param {number | null} rootPc
+ * @returns {number[]}
+ */
+function phraseAnchorPcs(phrase, key, rootPc) {
+    if (!phrase) return [];
+    const tonic = (typeof key.tonicPitchClass === "number")
+        ? (((key.tonicPitchClass % 12) + 12) % 12) : 0;
+    const dominant = (tonic + 7) % 12;
+    /** @type {number[]} */
+    const pcs = [];
+    if (phrase.atStart) {
+        pcs.push(tonic, dominant);
+        if (rootPc !== null) pcs.push(rootPc);
+    } else if (phrase.atEnd) {
+        pcs.push(tonic);
+        if (rootPc !== null) pcs.push(rootPc);
+    }
+    return pcs;
 }
 
 /**
@@ -238,18 +287,19 @@ export function onBeatInterval(...args) {
 }
 
 /**
- * Bare agc — forwards to the firing object's agc (automatic gain
- * control, design/agc.md), present on every context that carries a
- * `col`. The whole-image range is object-independent, so the bare form
- * needs no path to resolve — only the value comes from the ambient
- * context, exactly like bare playNote. Outside a callback, or in a
- * context kind without the method, returns undefined (a safe no-op).
- * @param {...any} args  (channel, lo?, hi?)
- * @returns {number | undefined}
+ * Bare reRange — re-map an already-0..1 value into the range [lo, hi],
+ * clamped. The image colour channels (this.col.*) are already gain-stretched
+ * to 0..1 per image, so this is the everyday tool for putting a colour read
+ * (or any 0..1 value — this.vel, a computed number) onto a useful output
+ * band: `reRange(this.col.r, 0.3, 1)` for velocity, `reRange(this.col.b, 0.2,
+ * 1.5)` for a note length. Pure (no firing context needed); defaults lo=0,
+ * hi=1. A non-finite value reads as 0.
+ * @param {number} value  a value in [0, 1]
+ * @param {number} [lo]
+ * @param {number} [hi]
+ * @returns {number}
  */
-export function agc(...args) {
-    if (current !== null && typeof current.agc === "function") {
-        return current.agc(...args);
-    }
-    return undefined;
+export function reRange(value, lo = 0, hi = 1) {
+    const v = (typeof value === "number" && Number.isFinite(value)) ? value : 0;
+    return mapRange(v, 0, 1, lo, hi);
 }

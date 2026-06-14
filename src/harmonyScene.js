@@ -42,6 +42,9 @@
  * @property {number} [unwind]  unwound-display iterations (1..8), or absent/null
  *   for the folded view. Both the chart and the player derive the unwound
  *   progression from this; the stored `progression` stays folded.
+ * @property {Array<{start: number, end: number}>} [phrases]  musical phrase
+ *   spans in player beats. Beats outside every span rest; a span's first/last
+ *   note anchors to a primary/cadential tone. Drawn on the chord chart.
  */
 
 /**
@@ -73,6 +76,7 @@ function isPlainObject(v) {
  */
 export function sanitiseSceneHarmony(value) {
     if (!isPlainObject(value)) return null;
+    const phrases = sanitisePhrases(/** @type {any} */ (value).phrases);
 
     const { title, composer, key, timeSignature, progression, unwind } = value;
 
@@ -115,5 +119,32 @@ export function sanitiseSceneHarmony(value) {
         const n = Math.round(unwind);
         if (n >= 1) out.unwind = Math.min(8, n);
     }
+    // Optional phrase grid: spans (in player beats) marking musical phrases.
+    if (phrases.length > 0) out.phrases = phrases;
+    return out;
+}
+
+/**
+ * Sanitise a phrase grid: an array of { start, end } spans in player beats
+ * (start < end, both finite >= 0), sorted by start. A phrase span gates the
+ * line (beats outside every span rest) and anchors its first/last note to
+ * primary/cadential tones. Bad entries are dropped, not failed, so a malformed
+ * phrase never invalidates the whole harmony.
+ * @param {unknown} value
+ * @returns {Array<{start: number, end: number}>}
+ */
+function sanitisePhrases(value) {
+    if (!Array.isArray(value)) return [];
+    /** @type {Array<{start: number, end: number}>} */
+    const out = [];
+    for (const p of value) {
+        if (!isPlainObject(p)) continue;
+        const start = p.start;
+        const end = p.end;
+        if (typeof start !== "number" || !Number.isFinite(start) || start < 0) continue;
+        if (typeof end !== "number" || !Number.isFinite(end) || end <= start) continue;
+        out.push({ start, end });
+    }
+    out.sort((a, b) => a.start - b.start);
     return out;
 }

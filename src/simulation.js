@@ -1468,6 +1468,10 @@ export class Simulation {
      */
     _emitNote(objectId, group, spec, timeToNextBeatSec) {
         if (this._audioSink === null) return false;
+        // A note of 0 is a REST: nxtNote returns 0 in a phrase gap (the silence
+        // between phrases), and the convention is that note 0 plays nothing.
+        // Emit no voice — the beat is handled, just silent.
+        if (spec.note === 0) return false;
         const now = this._simTime;
 
         // (1) Re-read limits each call so a mid-run this.poly change applies.
@@ -2056,7 +2060,43 @@ export class Simulation {
         ctx.chord = h ? chordStructure(h.chord, h.key) : null;
         ctx.nextChord = h ? chordStructure(h.next, h.key) : null;
         ctx.beatsToNext = h ? h.beatsToNext : null;
-        setCallbackHarmony(h ? { chord: h.chord, key: h.key } : null);
+        if (!h) { setCallbackHarmony(null); return; }
+        const phrase = this._phraseStateAt(beat);
+        setCallbackHarmony(phrase
+            ? { chord: h.chord, key: h.key, phrase }
+            : { chord: h.chord, key: h.key });
+    }
+
+    /**
+     * Resolve the musical-phrase state at a global beat from
+     * scene.harmony.phrases — the grid `nxtNote` reads to gate (rest in the
+     * gaps between phrases) and anchor (lean on a primary/cadential tone at a
+     * phrase's first/last beat). Phrase spans are in the PLAYER's beat timeline
+     * (the same one chords play on), so they loop with the chart.
+     *
+     * Returns null when no phrase grid is defined (the line plays continuously,
+     * as before). Otherwise { inGap, atStart, atEnd } for this beat — inGap when
+     * the beat falls outside every span; atStart/atEnd when it lands within one
+     * beat of a containing span's start/end (beat-resolution boundaries).
+     *
+     * @param {number} beat  the current global beat
+     * @returns {{ inGap: boolean, atStart: boolean, atEnd: boolean } | null}
+     */
+    _phraseStateAt(beat) {
+        const harmony = this._scene ? this._scene.harmony : null;
+        const phrases = harmony ? harmony.phrases : null;
+        if (!phrases || phrases.length === 0) return null;
+        const player = this._harmonyPlayer;
+        const loop = this._scene.harmonyLoop !== false;
+        const total = player ? player.totalBeats : 0;
+        let b = beat;
+        if (loop && total > 0) b = ((beat % total) + total) % total;
+        for (const p of phrases) {
+            if (b >= p.start && b < p.end) {
+                return { inGap: false, atStart: b < p.start + 1, atEnd: b >= p.end - 1 };
+            }
+        }
+        return { inGap: true, atStart: false, atEnd: false };
     }
 
     /**

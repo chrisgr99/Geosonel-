@@ -112,6 +112,42 @@ test("sanitiseSceneHarmony: malformed inputs all return null", () => {
     }
 });
 
+test("sanitiseSceneHarmony: a valid phrase grid is kept and sorted", () => {
+    const out = sanitiseSceneHarmony({
+        ...VALID_HARMONY,
+        phrases: [{ start: 8, end: 16 }, { start: 0, end: 4 }],
+    });
+    assert.ok(out);
+    assert.deepEqual(out.phrases, [{ start: 0, end: 4 }, { start: 8, end: 16 }]);
+});
+
+test("sanitiseSceneHarmony: malformed phrase spans are dropped, not failed", () => {
+    const out = sanitiseSceneHarmony({
+        ...VALID_HARMONY,
+        phrases: [
+            { start: 0, end: 4 },        // good
+            { start: 4, end: 4 },        // end == start
+            { start: 8, end: 2 },        // end < start
+            { start: -1, end: 3 },       // negative start
+            { start: "x", end: 5 },      // non-number
+            null,                        // not an object
+            { start: 10, end: 14 },      // good
+        ],
+    });
+    assert.ok(out);
+    assert.deepEqual(out.phrases, [{ start: 0, end: 4 }, { start: 10, end: 14 }]);
+});
+
+test("sanitiseSceneHarmony: an empty / all-bad phrase grid leaves phrases absent", () => {
+    const none = sanitiseSceneHarmony({ ...VALID_HARMONY, phrases: [] });
+    const bad = sanitiseSceneHarmony({ ...VALID_HARMONY, phrases: [{ start: 5, end: 5 }] });
+    const missing = sanitiseSceneHarmony(VALID_HARMONY);
+    assert.ok(none && bad && missing);
+    assert.equal("phrases" in none, false);
+    assert.equal("phrases" in bad, false);
+    assert.equal("phrases" in missing, false);
+});
+
 // =====================================================================
 // Part B — harmonyLibrary pure logic
 // =====================================================================

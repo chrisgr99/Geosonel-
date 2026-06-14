@@ -142,3 +142,33 @@ test("melodicStep: voice-leading boosts tones a step from the next chord", () =>
     // no-lead set is less inclined toward — sanity that the branch fires.
     assert.ok(withLead.size > 0 && noLead.size > 0);
 });
+
+/** Sweep dice, collecting notes, with phrase anchoring engaged. */
+function sweepAnchored(prev, chordPcs, rootPc, profile, anchorPcs, strength, steps = 50) {
+    const out = [];
+    for (let i = 0; i < steps; i++) {
+        out.push(melodicStep(prev, C_MAJ_PCS, chordPcs, rootPc, [],
+            null, 0, i / steps, profile, anchorPcs, strength));
+    }
+    return out;
+}
+
+test("melodicStep: phrase anchoring biases toward the anchor pitch classes", () => {
+    // Anchor on the tonic (C=0) only, with a strong multiplier: the proportion
+    // of notes landing on C should rise sharply versus no anchoring.
+    const plain = sweepAnchored(67, CMAJ7, 0, MELODY, [], 1);
+    const anchored = sweepAnchored(67, CMAJ7, 0, MELODY, [0], 8);
+    const tonics = (notes) => notes.filter((n) => ((n % 12) + 12) % 12 === 0).length;
+    assert.ok(tonics(anchored) > tonics(plain),
+        `anchored ${tonics(anchored)} should beat plain ${tonics(plain)}`);
+});
+
+test("melodicStep: anchorStrength of 1 (or empty anchorPcs) is a no-op", () => {
+    // Identical to the un-anchored call: the boost is disabled at strength 1 and
+    // when no anchor pitch classes are supplied.
+    const base = melodicStep(67, C_MAJ_PCS, CMAJ7, 0, [], null, 0, 0.42, MELODY);
+    const strengthOne = melodicStep(67, C_MAJ_PCS, CMAJ7, 0, [], null, 0, 0.42, MELODY, [0, 7], 1);
+    const emptyPcs = melodicStep(67, C_MAJ_PCS, CMAJ7, 0, [], null, 0, 0.42, MELODY, [], 8);
+    assert.equal(strengthOne, base);
+    assert.equal(emptyPcs, base);
+});

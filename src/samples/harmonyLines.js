@@ -124,23 +124,29 @@ export const harmonyLines = {
 
         bundle.addTextFile(
             "script.js",
-            `// Each circle reads the image colour under its 16 beat points
-// (this.col.lt = lightness) and turns it into a melodic LINE that follows
-// the chord progression: nxtNote favours stepwise motion and chord tones,
-// so the colours shape a real melody and bass rather than leaping randomly.
-// Inner circle = bass, outer = melody. Drop an image on the canvas to drive
-// them; edit the changes in the Harmony tab. Try styles.lead, or a custom
-// { ...styles.melody, scale: "blues" }.
+            `// Each circle reads the image colour under its 16 beat points and
+// turns it into a melodic LINE that follows the chord progression. Every note
+// is shaped by the colour: PITCH from lightness (nxtNote, which favours
+// stepwise motion + chord tones), LOUDNESS from red, and LENGTH from blue
+// (reRange maps a 0-1 channel onto a useful range). Inner circle = bass,
+// outer = melody. Drop an image on the canvas to drive them; edit the changes
+// in the Harmony tab. Try styles.lead, or a custom { ...styles.melody, scale: "blues" }.
 
 function bass() {
   // Inner circle — low, root-locked, walking the changes.
-  playNote("sawtooth", nxtNote(this.col.lt, styles.bass), this.vel, 1);
+  const note = nxtNote(this.col.lt, styles.bass);  // pitch from lightness
+  const vel  = reRange(this.col.r, 0.4, 1);         // loudness from red
+  const dur  = reRange(this.col.b, 0.3, 1);         // length from blue
+  playNote("sawtooth", note, vel, dur);
 }
 
 function melody() {
-  // Outer circle — larger radius samples the image further out, so it's an
+  // Outer circle — larger radius, so it samples the image further out: an
   // independent voice in the upper register.
-  playNote("piano", nxtNote(this.col.lt, styles.melody), this.vel, 1);
+  const note = nxtNote(this.col.lt, styles.melody);
+  const vel  = reRange(this.col.r, 0.3, 1);
+  const dur  = reRange(this.col.b, 0.2, 1.5);
+  playNote("piano", note, vel, dur);
 }
 `,
         );
