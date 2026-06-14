@@ -23,6 +23,26 @@
  */
 
 import { mapToHarmonyCore, MAP_TO_HARMONY_DEFAULTS } from "./harmonyMap.js";
+import {
+    melodicStep,
+    scalePitchClasses,
+    expandProfile,
+    styles as STYLES,
+} from "./harmonyMelody.js";
+
+/**
+ * Per-object melodic memory for nxtNote: object id → its last MIDI note. The
+ * generator is sequential (each note depends on the previous), so the line's
+ * state lives here, keyed by the firing object's id, and is CLEARED on rewind /
+ * scene change ({@link clearMelodyState}) so a replay reproduces the same line.
+ * @type {Map<string, number>}
+ */
+const melodyState = new Map();
+
+/** Reset the per-object melodic memory (called by the engine on rewind / setScene). */
+export function clearMelodyState() {
+    melodyState.clear();
+}
 
 /** @type {any} */
 let current = null;
@@ -84,6 +104,65 @@ export function mapToHarmony(
     const chord = currentHarmony ? currentHarmony.chord : null;
     const key = currentHarmony ? currentHarmony.key : null;
     return mapToHarmonyCore(chord, key, v, lowValue, highValue, rangeLow, rangeHigh);
+}
+
+/**
+ * Pitch classes (0..11) of a chord STRUCTURE ({root: MIDI, notes: offsets})
+ * as exposed on the firing context (this.chord / this.nextChord). Empty for a
+ * null chord.
+ * @param {{ root: number, notes: number[] } | null | undefined} c
+ * @returns {number[]}
+ */
+function chordStructurePcs(c) {
+    if (c === null || c === undefined || !Array.isArray(c.notes)) return [];
+    return c.notes.map((n) => (((c.root + n) % 12) + 12) % 12);
+}
+
+/**
+ * Bare nxtNote — the next note of a melodic LINE for the firing object.
+ *
+ *   nxtNote(drive, style, low?, span?)
+ *
+ * `drive` is the signal you choose (the colour under the cursor, 0..1 — that's
+ * the control you keep); `style` is a {@link styles} profile object (or a
+ * spread-customised copy); `low`/`span` optionally override the output register
+ * ([low, low+span]). The CURRENT chord, NEXT chord, beats-to-next, beat index,
+ * key, and the object's previous note are all read from the ambient firing
+ * context — nothing else to pass. Returns a MIDI note; 60 outside any callback.
+ *
+ * @param {number} drive
+ * @param {import("./harmonyMelody.js").Style} [style]
+ * @param {number} [low]
+ * @param {number} [span]
+ * @returns {number}
+ */
+export function nxtNote(drive, style, low, span) {
+    if (current === null) return 60;
+    const ctx = current;
+    const prof = style || STYLES.melody;
+    const key = (currentHarmony && currentHarmony.key)
+        ? currentHarmony.key : { tonicPitchClass: 0, mode: "major" };
+
+    const scalePcs = scalePitchClasses(key, prof.scale);
+    const chordPcs = chordStructurePcs(ctx.chord);
+    const rootPc = (ctx.chord && typeof ctx.chord.root === "number")
+        ? (((ctx.chord.root % 12) + 12) % 12) : null;
+    const nextPcs = chordStructurePcs(ctx.nextChord);
+    const raw = expandProfile(prof, low, span);
+
+    const id = typeof ctx.id === "string" ? ctx.id : "";
+    const prev = melodyState.has(id) ? melodyState.get(id) : null;
+    const dice = (typeof drive === "number" && Number.isFinite(drive)) ? drive : 0;
+    const beatsToNext = typeof ctx.beatsToNext === "number" ? ctx.beatsToNext : null;
+    const beatIndex = typeof ctx.beatIndex === "number" ? ctx.beatIndex : 0;
+
+    const note = melodicStep(
+        prev === undefined ? null : prev,
+        scalePcs, chordPcs, rootPc, nextPcs,
+        beatsToNext, beatIndex, dice, raw,
+    );
+    melodyState.set(id, note);
+    return note;
 }
 
 /**

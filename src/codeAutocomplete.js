@@ -28,6 +28,7 @@ import {
     autocompletion,
 } from "https://esm.sh/@codemirror/autocomplete@6?deps=@codemirror/state@6.5.2";
 import { DEFAULT_KINEMATICS } from "./scene.js";
+import { styles as STYLE_DEFS } from "./harmonyMelody.js";
 
 /**
  * Firing-context members offered after `this.` — the reads and
@@ -38,14 +39,18 @@ const THIS_MEMBERS = [
     "vel", "velocity", "beatStrength", "col", "x", "y", "vx", "vy", "speed",
     "flipX", "flipY", "cyclePhase", "cycleCount", "beat", "time", "bpm",
     "id", "kind", "beatIndex", "beatCount", "otherId", "otherKind",
-    "hitSpeed", "poly", "playNote", "playSound",
+    "hitSpeed", "poly", "playNote", "playSound", "ownColor",
     // Live harmony under the playhead (commit 4): the current/next chord as
     // { root, notes } (root MIDI + semitone offsets) and the beats remaining
     // in the current chord.
     "chord", "nextChord", "beatsToNext",
 ];
 
-/** Colour channels offered after `this.col.` (lt = lightness, chr = chroma). */
+/**
+ * Colour channels offered after `this.col.` (image colour under the cursor)
+ * AND `this.ownColor.` (the object's own authored colour). lt = lightness,
+ * chr = chroma.
+ */
 const COL_MEMBERS = ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"];
 
 /**
@@ -59,8 +64,14 @@ const SCORE_MEMBERS = ["kinematics", "poly", "groupPoly", "hasBackgroundImage"];
 /** Kinematics knobs offered after `score.kinematics.` (kept in sync with the defaults). */
 const KINEMATICS_MEMBERS = Object.keys(DEFAULT_KINEMATICS);
 
+/** Built-in melodic styles offered after `styles.` (nxtNote profiles). */
+const STYLE_MEMBERS = Object.keys(STYLE_DEFS);
+
 /** Bare action globals callable without a prefix. */
-const BARE_GLOBALS = ["playNote", "playSound", "applyForce", "print", "mapToHarmony"];
+const BARE_GLOBALS = [
+    "playNote", "playSound", "applyForce", "print", "mapToHarmony",
+    "nxtNote", "styles",
+];
 
 /** JS keywords, including the structural ones (function / for / if / …). */
 const JS_KEYWORDS = [
@@ -111,7 +122,7 @@ function scriptCompletionSource(context) {
     // (Ctrl-Space) — except right after a member dot, where showing
     // the members on the bare dot is the point.
     const before = context.state.sliceDoc(Math.max(0, word.from - 24), word.from);
-    if (/this\.col\.$/.test(before)) {
+    if (/this\.col\.$/.test(before) || /this\.ownColor\.$/.test(before)) {
         return { from: word.from, options: opts(COL_MEMBERS, "property"), validFor: /^[\w$]*$/ };
     }
     if (/this\.$/.test(before)) {
@@ -122,6 +133,9 @@ function scriptCompletionSource(context) {
     }
     if (/score\.$/.test(before)) {
         return { from: word.from, options: opts(SCORE_MEMBERS, "property"), validFor: /^[\w$]*$/ };
+    }
+    if (/styles\.$/.test(before)) {
+        return { from: word.from, options: opts(STYLE_MEMBERS, "property"), validFor: /^[\w$]*$/ };
     }
     if (word.from === word.to && !context.explicit) return null;
 

@@ -77,8 +77,8 @@ test("curve onTick context exposes curve identity, position and colour", () => {
     assert.equal(ctx.beatIndex, undefined);
     assert.equal(ctx.beatStrength, undefined);
     // Authored colour decoded to signals (red -> r channel high).
-    assert.equal(typeof ctx.color, "object");
-    assert.ok(ctx.color.r > 0);
+    assert.equal(typeof ctx.ownColor, "object");
+    assert.ok(ctx.ownColor.r > 0);
 });
 
 test("curve onTick does not fire when canTick is false", () => {

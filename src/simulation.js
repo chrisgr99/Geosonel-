@@ -264,6 +264,7 @@ import {
     clearCallbackContext,
     setCallbackHarmony,
     clearCallbackHarmony,
+    clearMelodyState,
 } from "./callbackContext.js";
 import { HarmonyPlayer } from "./harmonyPlayer.js";
 import { applyUnwind } from "./harmonyUnwind.js";
@@ -489,7 +490,7 @@ function rgbFromHex(hex) {
 /**
  * Build the firing context's `col`-shaped signal object from an
  * object's OWN authored colour (a hex string like "#7dd68a"), so a
- * composer can read this.color.r / this.color.lt exactly as they read
+ * composer can read this.ownColor.r / this.ownColor.lt exactly as they read
  * the image colour under the object (this.col.*). The pipeline mirrors
  * the image path: hex -> sRGB bytes -> OKLab (srgbByteToOKLab) ->
  * {L, C: hypot(a, b), a, b} -> imageSignalsFromOKLCh -> colFromSignals.
@@ -1846,7 +1847,7 @@ export class Simulation {
         const firePos = this._objectFiringPosition(obj, selfKind);
         const center = this._objectCenter(obj, selfKind);
         // The collider's OWN authored colour in our signal space, read
-        // as this.color.r / this.color.lt — distinct from `col`, which
+        // as this.ownColor.r / this.ownColor.lt — distinct from `col`, which
         // is the image colour beneath it.
         const color = colorSignalsFromHex(obj.color);
         const ctx = {
@@ -1864,7 +1865,7 @@ export class Simulation {
             y: firePos.y,
             centerX: center.x,
             centerY: center.y,
-            color,
+            ownColor: color,
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -2227,7 +2228,7 @@ export class Simulation {
         // plus the runtime offset — NOT the beat point, which moves
         // along the curve.
         const center = this._objectCenter(curve, "curve");
-        // The curve's OWN authored colour as signals (this.color.*),
+        // The curve's OWN authored colour as signals (this.ownColor.*),
         // distinct from `col` (the image colour beneath the beat point).
         const color = colorSignalsFromHex(curve.color);
         const callbackName = resolveOnActiveBeatName(curve) || "onActiveBeat";
@@ -2290,7 +2291,7 @@ export class Simulation {
             y: fireY,
             centerX: center.x,
             centerY: center.y,
-            color,
+            ownColor: color,
             beat,
             time: simTime,
             bpm: bpmNum,
@@ -2564,6 +2565,7 @@ export class Simulation {
         // registry restarts so counts don't carry stale notes across.
         this._objectPoly.clear();
         this._voiceRegistry.clear();
+        clearMelodyState(); // nxtNote per-object line memory restarts with the scene
         this._scene = scene;
         // Build (or clear) the harmony player from the scene's chosen
         // progression. Non-null scene.harmony → an expanded HarmonyPlayer;
@@ -3183,6 +3185,9 @@ export class Simulation {
         // per-object limits (_objectPoly) are an authoring setting and
         // survive — a rewind replays the same score, not a reload.
         this._voiceRegistry.clear();
+        // nxtNote's per-object line memory restarts too, so a replay from the
+        // top reproduces the same melodic line deterministically.
+        clearMelodyState();
         // Restart the metronome beat counter so the first beat crossing
         // after the rewind is beat 1 (the downbeat is the loop click).
         this._metronomeBeat = 0;
@@ -4179,9 +4184,9 @@ export class Simulation {
             // The ten image-colour signals beneath the sprite. Read as
             // this.col.r, this.col.y, this.col.lt, etc.
             col: colFromSignals(px),
-            // The sprite's OWN authored colour as signals (this.color.*),
+            // The sprite's OWN authored colour as signals (this.ownColor.*),
             // distinct from `col` (the image colour beneath it).
-            color: colorSignalsFromHex(sprite.color),
+            ownColor: colorSignalsFromHex(sprite.color),
             /**
              * Apply a literal force this sub-step. The engine
              * divides by the sprite's mass and integrates over
@@ -4375,7 +4380,7 @@ export class Simulation {
             y: fire.y,
             centerX: center.x,
             centerY: center.y,
-            color: colorSignalsFromHex(curve.color),
+            ownColor: colorSignalsFromHex(curve.color),
             beat,
             time: simTime,
             bpm: bpmNum,

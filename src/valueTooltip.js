@@ -25,7 +25,9 @@ import { syntaxTree } from "https://esm.sh/@codemirror/language@6?deps=@codemirr
 import * as acorn from "https://esm.sh/acorn@8";
 
 /** Functions whose calls must never be evaluated — they have side effects. */
-const BLOCKED_CALLS = new Set(["playNote", "playSound", "applyForce", "print"]);
+const BLOCKED_CALLS = new Set([
+    "playNote", "playSound", "applyForce", "print", "nxtNote",
+]);
 
 /**
  * Walk an acorn AST, visiting every node.

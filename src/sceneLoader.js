@@ -80,7 +80,9 @@ import {
     onBeatInterval as bareOnBeatInterval,
     agc as bareAgc,
     mapToHarmony as bareMapToHarmony,
+    nxtNote as bareNxtNote,
 } from "./callbackContext.js";
+import { styles as STYLE_LIBRARY } from "./harmonyMelody.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const SCRIPT_PREFIX = `"use strict";\n`;
@@ -710,7 +712,7 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
         // do not shift user line numbers in error reports.
         fn = new Function(
             "score", "print", "playNote", "playSound", "applyForce",
-            "onBeatInterval", "agc", "mapToHarmony", body);
+            "onBeatInterval", "agc", "mapToHarmony", "nxtNote", "styles", body);
     } catch (err) {
         // Acorn already caught syntax errors at parse time, but
         // belt-and-braces in case the new Function path catches
@@ -727,7 +729,7 @@ function executeScript(source, functionNames, scoreGlobal, printFn) {
             scoreGlobal,
             typeof printFn === "function" ? printFn : () => {},
             bareplayNote, bareplaySound, bareApplyForce, bareOnBeatInterval,
-            bareAgc, bareMapToHarmony);
+            bareAgc, bareMapToHarmony, bareNxtNote, STYLE_LIBRARY);
     } catch (err) {
         return {
             ok: false,
