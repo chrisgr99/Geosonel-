@@ -33,6 +33,7 @@
 import { generateId, ensureIdCounters } from "./idGen.js";
 import { isValidBeatInterval } from "./beatIntervals.js";
 import { sanitiseSceneHarmony } from "./harmonyScene.js";
+import { autoPhrase } from "./harmonyPhrasing.js";
 import { generateEuclideanPattern } from "./euclidean.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
@@ -1552,6 +1553,12 @@ export function setSceneTimeSignature(data, value) {
  *   { title, composer, key, timeSignature, progression }
  * and never aliases the caller's object. The field saves with the scene
  * automatically (it's a normal field); no engine wiring here.
+ *
+ * AUTO PRE-PHRASING: a freshly chosen chart arrives with no `phrases`, so we
+ * derive them from the changes ({@link autoPhrase}) and attach them — the line
+ * then cadences on grounded tones from the start. We only generate when none
+ * are present, so a re-commit that already carries phrases (a key transpose, or
+ * a future manual edit) keeps them untouched.
  * @param {any} data
  * @param {unknown} harmony  the chosen Song's serialisable form, or null to clear.
  */
@@ -1561,7 +1568,12 @@ export function setSceneHarmony(data, harmony) {
         data.harmony = null;
         return;
     }
-    data.harmony = sanitiseSceneHarmony(harmony);
+    const cleaned = sanitiseSceneHarmony(harmony);
+    if (cleaned !== null && (!Array.isArray(cleaned.phrases) || cleaned.phrases.length === 0)) {
+        const phrases = autoPhrase(cleaned);
+        if (phrases.length > 0) cleaned.phrases = phrases;
+    }
+    data.harmony = cleaned;
 }
 
 /**

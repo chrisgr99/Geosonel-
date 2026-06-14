@@ -266,7 +266,7 @@ import {
     clearCallbackHarmony,
     clearMelodyState,
 } from "./callbackContext.js";
-import { HarmonyPlayer } from "./harmonyPlayer.js";
+import { HarmonyPlayer, expandProgression } from "./harmonyPlayer.js";
 import { applyUnwind } from "./harmonyUnwind.js";
 import { chordStructure } from "./harmonyMap.js";
 import { EventTrace } from "./eventTrace.js";
@@ -1192,6 +1192,17 @@ export class Simulation {
          * @type {import("./harmonyPlayer.js").HarmonyPlayer | null}
          */
         this._harmonyPlayer = null;
+        /**
+         * Length in beats of ONE base cycle of the chosen progression — the
+         * repeat-expanded chart BEFORE any unwind. Phrase spans
+         * (scene.harmony.phrases) are authored in this space, so the engine
+         * folds the player beat into it (beat mod base cycle): one set of
+         * phrases then applies to every unwind copy and every loop, and no copy
+         * is ever left unphrased (which, with gaps = silence, would mute it).
+         * 0 when no harmony is loaded.
+         * @type {number}
+         */
+        this._harmonyBaseCycleBeats = 0;
         /** @type {Map<string, CurveRuntimeState>} */
         this._curveState = new Map();
         /** @type {Map<string, TriggerRuntimeState>} */
@@ -2071,8 +2082,9 @@ export class Simulation {
      * Resolve the musical-phrase state at a global beat from
      * scene.harmony.phrases — the grid `nxtNote` reads to gate (rest in the
      * gaps between phrases) and anchor (lean on a primary/cadential tone at a
-     * phrase's first/last beat). Phrase spans are in the PLAYER's beat timeline
-     * (the same one chords play on), so they loop with the chart.
+     * phrase's first/last beat). Phrase spans are authored in BASE-CYCLE beats
+     * (the chart before unwind), so we fold the player beat into that cycle:
+     * the same phrases then apply to every unwind copy and every loop.
      *
      * Returns null when no phrase grid is defined (the line plays continuously,
      * as before). Otherwise { inGap, atStart, atEnd } for this beat — inGap when
@@ -2086,11 +2098,9 @@ export class Simulation {
         const harmony = this._scene ? this._scene.harmony : null;
         const phrases = harmony ? harmony.phrases : null;
         if (!phrases || phrases.length === 0) return null;
-        const player = this._harmonyPlayer;
-        const loop = this._scene.harmonyLoop !== false;
-        const total = player ? player.totalBeats : 0;
+        const cycle = this._harmonyBaseCycleBeats;
         let b = beat;
-        if (loop && total > 0) b = ((beat % total) + total) % total;
+        if (cycle > 0) b = ((beat % cycle) + cycle) % cycle;
         for (const p of phrases) {
             if (b >= p.start && b < p.end) {
                 return { inGap: false, atStart: b < p.start + 1, atEnd: b >= p.end - 1 };
@@ -2616,6 +2626,19 @@ export class Simulation {
         this._harmonyPlayer = (scene !== null && scene.harmony)
             ? new HarmonyPlayer(applyUnwind(scene.harmony))
             : null;
+        // Base-cycle length for phrase folding: the chart's repeat-expanded
+        // beats BEFORE unwind (phrases are authored in this space). Computed
+        // from the folded progression, independent of the unwind multiplier.
+        if (scene !== null && scene.harmony) {
+            const ts = Array.isArray(scene.harmony.timeSignature)
+                ? /** @type {[number, number]} */ (scene.harmony.timeSignature)
+                : /** @type {[number, number]} */ ([4, 4]);
+            this._harmonyBaseCycleBeats = expandProgression(
+                /** @type {any} */ (scene.harmony.progression), ts,
+            ).totalBeats;
+        } else {
+            this._harmonyBaseCycleBeats = 0;
+        }
         if (scene === null) {
             this._curveState.clear();
             this._triggerState.clear();
