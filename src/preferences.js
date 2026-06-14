@@ -109,15 +109,6 @@ export const PREFERENCES = [
         category: "Code Editor",
     },
     {
-        key: "enableStrudelTooltips",
-        label: "Function Documentation Tooltips",
-        description:
-            "Hold the Control key and hover a function name in the Script tab to see its Strudel documentation: a short description, its parameters, and a usage example.",
-        type: "boolean",
-        default: true,
-        category: "Code Editor",
-    },
-    {
         key: "codeSpeakOnHover",
         label: "Speak Code on Hover",
         description:

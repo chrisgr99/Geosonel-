@@ -38,7 +38,6 @@ import { callbackFlashHighlightExtension, setCallbackFlashesEffect } from "./cal
 import { parenHighlightExtension } from "./parenHighlight.js";
 import { jsAutocomplete } from "./codeAutocomplete.js";
 import { valueTooltipExtension, computeScriptFocus } from "./valueTooltip.js";
-import { isTooltipEnabled } from "./strudel/codemirror/tooltip.mjs";
 import { deriveCursorTargetIds } from "./cursorTargets.js";
 import { getPreference, setPreference, subscribePreference } from "./preferences.js";
 import { codeSpeechExtension } from "./codeSpeech.js";
@@ -595,19 +594,13 @@ export class TabbedEditor {
         this._linterCompartment = new Compartment();
 
         /**
-         * Compartment holding the Strudel autocomplete and
-         * Ctrl-hover tooltip extensions. Reconfigured to an
-         * empty array on every non-Script tab so the popup
-         * and tooltip stay silent on scene.json and the
-         * virtual Properties / Canvas tabs, and reconfigured
-         * to the live extension list when the Script tab
-         * (script.js or script.js) is active. The
-         * extension list inside is itself gated on the user's
-         * Enable Autocompletion and Function Documentation
-         * Tooltips preferences, so a flip of either control
-         * in the Settings dialog immediately removes or
-         * restores the corresponding behaviour without
-         * needing a tab switch. See _strudelExtensionsForActiveTab.
+         * Compartment holding the Script-tab autocomplete extension.
+         * Reconfigured to an empty array on every non-Script tab so the
+         * completion popup stays silent on scene.json and the virtual
+         * Properties / Canvas tabs, and to the live extension when the Script
+         * tab is active. The extension inside is gated on the user's Enable
+         * Autocompletion preference, so flipping it in Settings takes effect
+         * without a tab switch. See _strudelExtensionsForActiveTab.
          * @type {Compartment}
          */
         this._strudelCompartment = new Compartment();
@@ -720,11 +713,9 @@ export class TabbedEditor {
         if (!isCodeTab) return [];
         return [
             // JavaScript autocompletion (local symbols, keywords/
-            // snippets, any-word, and the curated callback API) —
-            // replaces the old Strudel-symbol completion. Gated by the
-            // same "Enable Autocompletion" preference.
+            // snippets, any-word, and the curated callback API). Gated by the
+            // "Enable Autocompletion" preference.
             getPreference("enableStrudelAutocomplete") ? jsAutocomplete : [],
-            isTooltipEnabled(getPreference("enableStrudelTooltips")),
         ];
     }
 
@@ -750,23 +741,19 @@ export class TabbedEditor {
     }
 
     /**
-     * Subscribe to the two Strudel-related preferences
-     * (enableStrudelAutocomplete and enableStrudelTooltips)
-     * so a flip of either control in the Settings dialog
-     * immediately reconfigures the editor's Strudel
-     * compartment. The reconfigure honours the active-tab
-     * gate, so flipping a preference on while a non-Code
-     * tab is active leaves the compartment empty (the next
-     * selectTab into the Script tab picks up the new state).
+     * Subscribe to the Enable Autocompletion preference so a flip in the
+     * Settings dialog immediately reconfigures the editor's Script-tab
+     * autocomplete compartment. The reconfigure honours the active-tab gate,
+     * so flipping it on while a non-Script tab is active leaves the
+     * compartment empty (the next selectTab into the Script tab picks up the
+     * new state).
      *
-     * Called once at construction; no unsubscribe is wired
-     * because the editor lives for the duration of the
-     * app session.
+     * Called once at construction; no unsubscribe is wired because the editor
+     * lives for the duration of the app session.
      */
     _subscribeStrudelPreferences() {
         const onChange = () => this._reconfigureStrudelCompartment();
         subscribePreference("enableStrudelAutocomplete", onChange);
-        subscribePreference("enableStrudelTooltips", onChange);
     }
 
     /**
