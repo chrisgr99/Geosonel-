@@ -2039,14 +2039,19 @@ async function main() {
                 const name = id + ".jpg";
                 session.bundle.replaceImage(name, bytes, mimeType, contentHash);
                 await canvas.setImage({ bytes, mimeType });
-                try {
-                    await session.bundle.save();
-                } catch (err) {
-                    console.error("GXW: failed to persist bundle after gallery set:", err);
-                    messages.write(
-                        "Image applied but could not be saved to storage.",
-                        "error",
-                    );
+                // An untitled score has no path yet; the image stays in the
+                // (now dirty) bundle and persists on the first Save As, so
+                // don't attempt to save or flag a failure here.
+                if (session.bundle.path !== null) {
+                    try {
+                        await session.bundle.save();
+                    } catch (err) {
+                        console.error("GXW: failed to persist bundle after gallery set:", err);
+                        messages.write(
+                            "Image applied but could not be saved to storage.",
+                            "error",
+                        );
+                    }
                 }
                 // Stage 5: recency-bump the clicked entry to
                 // the front of the shared section. galleryTouch
@@ -2164,17 +2169,20 @@ async function main() {
                 // selection this time.
             }
 
-            try {
-                await session.bundle.save();
-            } catch (err) {
-                console.error(
-                    "GXW: failed to persist bundle after pinned slot click:",
-                    err,
-                );
-                messages.write(
-                    "Image applied but could not be saved to storage.",
-                    "error",
-                );
+            // Untitled scores persist on first Save As (see gallery-set above).
+            if (session.bundle.path !== null) {
+                try {
+                    await session.bundle.save();
+                } catch (err) {
+                    console.error(
+                        "GXW: failed to persist bundle after pinned slot click:",
+                        err,
+                    );
+                    messages.write(
+                        "Image applied but could not be saved to storage.",
+                        "error",
+                    );
+                }
             }
 
             if (editor.canvasInspector) {
@@ -2265,15 +2273,19 @@ async function main() {
             // stays dirty so the next Cmd-S retries.
             pushPinnedSnapshot();
 
-            try {
-                await session.bundle.save();
-            } catch (err) {
-                console.error("GXW: failed to persist bundle after drag-to-pin:", err);
-                messages.write(
-                    "Image pinned but could not be saved to storage.",
-                    "error",
-                );
-                return;
+            // Untitled scores persist on first Save As; skip the save (and its
+            // error) and fall through to the success message.
+            if (session.bundle.path !== null) {
+                try {
+                    await session.bundle.save();
+                } catch (err) {
+                    console.error("GXW: failed to persist bundle after drag-to-pin:", err);
+                    messages.write(
+                        "Image pinned but could not be saved to storage.",
+                        "error",
+                    );
+                    return;
+                }
             }
             if (source.kind === "pinned") {
                 messages.write(`Pinned image moved to slot ${targetSlotIndex + 1}.`);
@@ -2343,15 +2355,19 @@ async function main() {
             if (!becameDirty && !session.bundle.dirty) {
                 return;
             }
-            try {
-                await session.bundle.save();
-            } catch (err) {
-                console.error("GXW: failed to persist bundle after unpin:", err);
-                messages.write(
-                    "Image unpinned but could not be saved to storage.",
-                    "error",
-                );
-                return;
+            // Untitled scores persist on first Save As; skip the save (and its
+            // error) and fall through to the confirmation.
+            if (session.bundle.path !== null) {
+                try {
+                    await session.bundle.save();
+                } catch (err) {
+                    console.error("GXW: failed to persist bundle after unpin:", err);
+                    messages.write(
+                        "Image unpinned but could not be saved to storage.",
+                        "error",
+                    );
+                    return;
+                }
             }
             messages.write(`Slot ${source.sourceSlotIndex + 1} unpinned.`);
         });
