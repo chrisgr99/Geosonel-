@@ -182,6 +182,7 @@ import {
     setSceneBpm,
     setSceneTimeSignature,
     setSceneHarmony,
+    setScenePhrases,
     setSceneEngine,
     setSceneVoiceSuperdoughSound,
     setSceneVoiceSuperdoughBank,
@@ -1983,6 +1984,16 @@ async function main() {
                 }
             });
             transport.rewind();
+        });
+
+        // Phrase editing: the drawing tool commits the whole phrase-span array
+        // (base-cycle beats). Write it onto scene.harmony.phrases and re-run so
+        // the line re-phrases live. No rewind — phrasing is a non-structural
+        // edit, so playback keeps its position.
+        editor.harmonyPanel.onEditPhrases(async (phrases) => {
+            await applySceneEdit((data) => {
+                setScenePhrases(data, phrases);
+            });
         });
     }
 

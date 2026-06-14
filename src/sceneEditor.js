@@ -32,7 +32,7 @@
 
 import { generateId, ensureIdCounters } from "./idGen.js";
 import { isValidBeatInterval } from "./beatIntervals.js";
-import { sanitiseSceneHarmony } from "./harmonyScene.js";
+import { sanitiseSceneHarmony, sanitisePhrases } from "./harmonyScene.js";
 import { autoPhrase } from "./harmonyPhrasing.js";
 import { generateEuclideanPattern } from "./euclidean.js";
 import * as acorn from "https://esm.sh/acorn@8";
@@ -1574,6 +1574,26 @@ export function setSceneHarmony(data, harmony) {
         if (phrases.length > 0) cleaned.phrases = phrases;
     }
     data.harmony = cleaned;
+}
+
+/**
+ * Replace the musical-phrase grid on the chosen progression
+ * (scene.harmony.phrases). The drawing tool on the chart edits phrases live and
+ * commits the whole array here. A non-object root, or no harmony loaded, is a
+ * no-op. The spans are run through {@link sanitisePhrases} (each { start, end }
+ * with start < end, both finite >= 0, sorted), and an empty result REMOVES the
+ * field so a fully-cleared grid reads as "no phrasing" (continuous line) rather
+ * than an empty array.
+ * @param {any} data
+ * @param {unknown} phrases  the phrase spans (base-cycle beats), or [] to clear.
+ */
+export function setScenePhrases(data, phrases) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    const harmony = data.harmony;
+    if (harmony === null || typeof harmony !== "object" || Array.isArray(harmony)) return;
+    const clean = sanitisePhrases(phrases);
+    if (clean.length > 0) harmony.phrases = clean;
+    else delete harmony.phrases;
 }
 
 /**

@@ -133,7 +133,7 @@ export function sanitiseSceneHarmony(value) {
  * @param {unknown} value
  * @returns {Array<{start: number, end: number}>}
  */
-function sanitisePhrases(value) {
+export function sanitisePhrases(value) {
     if (!Array.isArray(value)) return [];
     /** @type {Array<{start: number, end: number}>} */
     const out = [];

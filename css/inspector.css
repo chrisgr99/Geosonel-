@@ -1484,6 +1484,103 @@
     border-radius: 2px;
 }
 
+/* ---- Phrase overlay + drawing tool ---------------------------------- */
+
+/* Chart header: song title on the left, phrase-tool toggle on the right. */
+.harmony-chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.harmony-chart-header .harmony-chart-title {
+    margin: 16px 0 8px 0;
+}
+
+/* The phrase-tool toggle button. */
+.harmony-phrase-tool-btn {
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    height: 24px;
+    padding: 0 10px;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 10pt;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.harmony-phrase-tool-btn:hover { border-color: #9ec79e; }
+.harmony-phrase-tool-btn:disabled { opacity: 0.45; cursor: default; }
+/* Armed: light-orange to match the lines it draws. */
+.harmony-phrase-tool-btn.active {
+    background-color: #7a5a36;
+    border-color: #ffb266;
+    color: #ffd9b3;
+}
+
+/* While the tool is armed, bars invite a click. */
+.harmony-chart.phrase-tool-active .harmony-bar[data-bar-index] { cursor: crosshair; }
+
+/* A phrase line: a light-orange rule sitting in the gap just above the bar's
+ * chord content. left/width are set inline (the fraction of the bar covered). */
+.harmony-phrase-line {
+    position: absolute;
+    top: -7px;
+    height: 4px;
+    background-color: #ffb266;
+    border-radius: 2px;
+    pointer-events: none;
+}
+/* Clickable (for selection) only while the tool is armed. */
+.harmony-chart.phrase-tool-active .harmony-phrase-line { pointer-events: auto; }
+.harmony-phrase-line.selected {
+    background-color: #ffa64d;
+    box-shadow: 0 0 4px rgba(255, 166, 77, 0.9);
+    height: 5px;
+    top: -7.5px;
+}
+
+/* Downturned end-caps: a short stub dropping from the line at the phrase's TRUE
+ * start / end, so a segment that just runs off the row edge (a continuation)
+ * stays flush and reads as "carries on". inherit picks up the selected colour. */
+.harmony-phrase-line.start-cap::before,
+.harmony-phrase-line.end-cap::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    width: 3px;
+    height: 9px;
+    background-color: inherit;
+    border-radius: 2px;
+}
+.harmony-phrase-line.start-cap::before { left: 0; }
+.harmony-phrase-line.end-cap::after { right: 0; }
+
+/* Drag handles at the selected phrase's two ends, and the pending-start tick. */
+.harmony-phrase-handle {
+    position: absolute;
+    top: -11px;
+    width: 9px;
+    height: 12px;
+    margin-left: -4.5px;
+    background-color: #ffd9b3;
+    border: 1.5px solid #ffa64d;
+    border-radius: 2px;
+    cursor: ew-resize;
+    z-index: 5;
+}
+.harmony-phrase-handle.pending {
+    cursor: default;
+    background-color: transparent;
+    border: none;
+    border-left: 2px dashed #ffb266;
+    width: 0;
+    margin-left: -1px;
+    height: 14px;
+    top: -12px;
+}
+
 /* Barlines: thin vertical white rules drawn as bordered pseudo-spans. The
  * LEFT barline sits at the cell's left edge; the chord starts just right of
  * it. Variants thicken / double / add repeat dots. */

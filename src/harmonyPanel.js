@@ -36,6 +36,8 @@ import {
 } from "./harmonyLibrary.js";
 import { layoutChart, groupRows, formatChordParts, buildBarPlayback } from "./harmonyChartLayout.js";
 import { applyUnwind, sanitiseUnwind } from "./harmonyUnwind.js";
+import { expandProgression } from "./harmonyPlayer.js";
+import { phraseSegments, beatAtFraction, locateBeat } from "./harmonyPhraseGeometry.js";
 
 const SCOPE_ALL = "all";
 
@@ -148,6 +150,14 @@ export class HarmonyPanel {
          */
         this._onChangeUnwind = null;
 
+        /**
+         * Phrase-edit callback wired by main.js. Receives the full phrase-span
+         * array (base-cycle beats); main.js writes scene.harmony.phrases and
+         * re-runs. Null until wired.
+         * @type {((phrases: Array<{start: number, end: number}>) => void) | null}
+         */
+        this._onEditPhrases = null;
+
         // --- Picker state ---
 
         /** Selected playlist id, or SCOPE_ALL. */
@@ -236,6 +246,33 @@ export class HarmonyPanel {
         /** Whether the hamburger popup is open. */
         this._menuOpen = false;
 
+        // --- Phrase-editing state (Phase 3) ---
+
+        /**
+         * Working copy of the chart's phrase spans (base-cycle beats), edited
+         * live by the drawing tool and committed via _onEditPhrases. Synced
+         * from this._harmony.phrases on each inbound setHarmony (except while a
+         * gesture is mid-flight). @type {Array<{start: number, end: number}>}
+         */
+        this._phrasesLocal = [];
+        /** Base-cycle length in beats (folded-progression total). Rebuilt by _renderChart. */
+        this._baseCycle = 0;
+        /** Laid-out displayed bars from the last _renderChart (for click mapping). @type {any[]} */
+        this._displayBars = [];
+        /** Whether the phrase drawing tool is armed. */
+        this._phraseTool = false;
+        /** First click of a two-click create: a base-cycle beat, or null. @type {number | null} */
+        this._pendingStart = null;
+        /** Selected phrase index, or -1. */
+        this._selectedPhrase = -1;
+        /**
+         * Active handle drag: which phrase end is being dragged, or null.
+         * @type {{ phraseIndex: number, edge: "start" | "end" } | null}
+         */
+        this._dragHandle = null;
+        /** The phrase-tool toggle button. @type {HTMLButtonElement | null} */
+        this._phraseToolBtn = null;
+
         this._render();
 
         // Close the dropdown when the user clicks outside the combo.
@@ -258,6 +295,19 @@ export class HarmonyPanel {
             }
         };
         document.addEventListener("mousedown", this._onDocMouseDown);
+
+        // Delete/Backspace removes the selected phrase while the tool is armed.
+        // Ignored when typing in a field (the filter input) so it can't eat a
+        // backspace meant for text.
+        this._onDocKeyDown = (/** @type {KeyboardEvent} */ e) => {
+            if (!this._phraseTool || this._selectedPhrase < 0) return;
+            if (e.key !== "Delete" && e.key !== "Backspace") return;
+            const ae = document.activeElement;
+            if (ae !== null && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
+            e.preventDefault();
+            this._deleteSelectedPhrase();
+        };
+        document.addEventListener("keydown", this._onDocKeyDown);
     }
 
     /**
@@ -286,6 +336,14 @@ export class HarmonyPanel {
     }
 
     /**
+     * Wire the phrase-edit callback (main.js owns the scene edit + re-run).
+     * @param {(phrases: Array<{start: number, end: number}>) => void} cb
+     */
+    onEditPhrases(cb) {
+        this._onEditPhrases = cb;
+    }
+
+    /**
      * Reflect the scene's current harmony into the panel (the INBOUND
      * direction; onChooseSong is the outbound one). main.js calls this
      * after every scene load/re-run with `scene.harmony` (or null), so both
@@ -298,6 +356,15 @@ export class HarmonyPanel {
     setHarmony(harmony, loop = true) {
         this._harmony = harmony || null;
         this._loop = loop !== false;
+        // Sync the phrase working copy from the stored grid, unless a drag is
+        // mid-flight (the local copy is then authoritative until it commits).
+        if (this._dragHandle === null) {
+            const stored = this._harmony && Array.isArray(this._harmony.phrases)
+                ? this._harmony.phrases : [];
+            this._phrasesLocal = stored.map((p) => ({ start: p.start, end: p.end }));
+            this._selectedPhrase = -1;
+            this._pendingStart = null;
+        }
         // Keep the chart title in sync even when the chart isn't visible
         // (no library imported yet → picker is the placeholder hint, but a
         // stored harmony should still announce itself).
@@ -311,6 +378,7 @@ export class HarmonyPanel {
         this._renderChartTitle();
         this._renderChart();
         this._syncMenuState();
+        this._syncPhraseToolBtn();
     }
 
     /**
@@ -649,14 +717,37 @@ export class HarmonyPanel {
      * DOM handles. The Letter/Roman toggle lives in the picker grid above.
      */
     _buildChartSection() {
+        // Header row: the song title on the left, a phrase-tool toggle on the
+        // right. The toggle arms the light-orange phrase drawing tool.
+        const header = document.createElement("div");
+        header.className = "harmony-chart-header";
+
         const title = document.createElement("h3");
         title.className = "harmony-chart-title";
         this._chartTitle = title;
-        this.container.appendChild(title);
+        header.appendChild(title);
+
+        const phraseBtn = document.createElement("button");
+        phraseBtn.type = "button";
+        phraseBtn.className = "harmony-phrase-tool-btn";
+        phraseBtn.textContent = "✎ Phrases";
+        phraseBtn.title = "Draw musical phrases: click a start, then an end. "
+            + "Click a phrase to select it; drag its handles or press Delete.";
+        phraseBtn.setAttribute("aria-pressed", "false");
+        phraseBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this._togglePhraseTool();
+        });
+        this._phraseToolBtn = phraseBtn;
+        header.appendChild(phraseBtn);
+
+        this.container.appendChild(header);
         this._renderChartTitle();
+        this._syncPhraseToolBtn();
 
         const chart = document.createElement("div");
         chart.className = "harmony-chart";
+        chart.addEventListener("mousedown", (e) => this._onChartMouseDown(e));
         this._chartEl = chart;
         this.container.appendChild(chart);
     }
@@ -916,6 +1007,8 @@ export class HarmonyPanel {
         this._playback = [];
         this._playbackTotal = 0;
         this._nowBarIndex = -1;
+        this._displayBars = [];
+        this._baseCycle = 0;
 
         if (this._harmony === null) {
             const hint = document.createElement("div");
@@ -924,6 +1017,13 @@ export class HarmonyPanel {
             chart.appendChild(hint);
             return;
         }
+
+        // Base-cycle length (folded progression, repeats honoured but NOT
+        // unwound) — the beat space phrases are authored in.
+        this._baseCycle = expandProgression(
+            /** @type {any} */ (this._harmony.progression),
+            /** @type {any} */ (this._harmony.timeSignature || [4, 4]),
+        ).totalBeats;
 
         // Derive the unwound progression when Unwind is set (folded otherwise),
         // so the chart matches what the player sounds.
@@ -934,6 +1034,7 @@ export class HarmonyPanel {
             this._displayMode,
             h.timeSignature,
         );
+        this._displayBars = bars;
 
         if (bars.length === 0) {
             const hint = document.createElement("div");
@@ -976,8 +1077,285 @@ export class HarmonyPanel {
         }
         chart.appendChild(grid);
 
+        // Paint the phrase overlay (light-orange lines) and reflect the tool's
+        // armed/selected state onto the chart.
+        this._renderPhrases();
+        chart.classList.toggle("phrase-tool-active", this._phraseTool);
+
         // Re-light the cursor onto the freshly built DOM if a beat is current.
         if (this._lastBeat !== null) this.setPlayhead(this._lastBeat);
+    }
+
+    /**
+     * Paint the phrase overlay onto the freshly built chart: for each phrase
+     * span, a light-orange rule across the fraction of every bar it covers
+     * ({@link phraseSegments}). The selected phrase is brighter and grows drag
+     * HANDLES at its two ends. Each line/handle is a child of its bar cell, so
+     * the overlay rides the grid's wrapping for free (a phrase crossing a row
+     * break simply draws a piece in each row's bars).
+     */
+    _renderPhrases() {
+        const chart = this._chartEl;
+        if (chart === null) return;
+        // Clear any prior overlay pieces (the grid cells persist).
+        for (const old of chart.querySelectorAll(".harmony-phrase-line, .harmony-phrase-handle")) {
+            old.remove();
+        }
+        const segs = phraseSegments(this._displayBars, this._baseCycle, this._phrasesLocal);
+        for (const seg of segs) {
+            const cell = chart.querySelector(
+                `.harmony-bar[data-bar-index="${seg.barIndex}"]`);
+            if (cell === null) continue;
+            const line = document.createElement("div");
+            line.className = "harmony-phrase-line";
+            if (seg.phraseIndex === this._selectedPhrase) line.classList.add("selected");
+            // Downturned caps mark the phrase's TRUE start/end, so a segment
+            // that merely runs off the row edge (a continuation) reads as flush.
+            if (seg.isStart) line.classList.add("start-cap");
+            if (seg.isEnd) line.classList.add("end-cap");
+            line.style.left = `${seg.x0 * 100}%`;
+            line.style.width = `${(seg.x1 - seg.x0) * 100}%`;
+            line.dataset.phraseIndex = String(seg.phraseIndex);
+            cell.appendChild(line);
+        }
+        // Handles on the selected phrase's two ends.
+        if (this._selectedPhrase >= 0 && this._selectedPhrase < this._phrasesLocal.length) {
+            const p = this._phrasesLocal[this._selectedPhrase];
+            this._placeHandle(p.start, "start");
+            this._placeHandle(p.end, "end");
+        }
+        // The first click of a two-click create.
+        if (this._phraseTool && this._pendingStart !== null) {
+            this._placePending(this._pendingStart);
+        }
+    }
+
+    /**
+     * Place a drag handle for the selected phrase at a base-cycle beat, on the
+     * bar that begins ("start") or ends ("end") there.
+     * @param {number} beat
+     * @param {"start" | "end"} edge
+     */
+    _placeHandle(beat, edge) {
+        const chart = this._chartEl;
+        if (chart === null) return;
+        const loc = locateBeat(this._displayBars, this._baseCycle, beat, edge === "end");
+        if (loc === null) return;
+        const cell = chart.querySelector(`.harmony-bar[data-bar-index="${loc.barIndex}"]`);
+        if (cell === null) return;
+        const handle = document.createElement("div");
+        handle.className = `harmony-phrase-handle ${edge}`;
+        handle.style.left = `${loc.frac * 100}%`;
+        handle.dataset.edge = edge;
+        handle.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            this._beginHandleDrag(edge);
+        });
+        cell.appendChild(handle);
+    }
+
+    /**
+     * Place the pending-start marker (the first click of a two-click create):
+     * a vertical tick at a base-cycle beat, on the bar that begins there.
+     * @param {number} beat
+     */
+    _placePending(beat) {
+        const chart = this._chartEl;
+        if (chart === null) return;
+        const loc = locateBeat(this._displayBars, this._baseCycle, beat, false);
+        if (loc === null) return;
+        const cell = chart.querySelector(`.harmony-bar[data-bar-index="${loc.barIndex}"]`);
+        if (cell === null) return;
+        const mark = document.createElement("div");
+        mark.className = "harmony-phrase-handle pending";
+        mark.style.left = `${loc.frac * 100}%`;
+        cell.appendChild(mark);
+    }
+
+    /** Toggle the phrase drawing tool on/off, resetting any in-progress edit. */
+    _togglePhraseTool() {
+        this._phraseTool = !this._phraseTool;
+        this._pendingStart = null;
+        if (!this._phraseTool) this._selectedPhrase = -1;
+        this._syncPhraseToolBtn();
+        if (this._chartEl !== null) {
+            this._chartEl.classList.toggle("phrase-tool-active", this._phraseTool);
+        }
+        this._renderPhrases();
+    }
+
+    /** Reflect the tool's armed/disabled state onto its toggle button. */
+    _syncPhraseToolBtn() {
+        const btn = this._phraseToolBtn;
+        if (btn === null) return;
+        btn.classList.toggle("active", this._phraseTool);
+        btn.setAttribute("aria-pressed", this._phraseTool ? "true" : "false");
+        btn.disabled = this._harmony === null;
+    }
+
+    /**
+     * Chart mousedown while the tool is armed: select a clicked phrase, place a
+     * two-click create point on a bar, or clear the pending point / selection
+     * on empty space. Handle drags are caught earlier (they stopPropagation).
+     * @param {MouseEvent} e
+     */
+    _onChartMouseDown(e) {
+        if (!this._phraseTool) return;
+        const target = /** @type {Element} */ (e.target);
+        const line = target.closest ? target.closest(".harmony-phrase-line") : null;
+        if (line !== null) {
+            const pi = Number(/** @type {HTMLElement} */ (line).dataset.phraseIndex);
+            if (Number.isInteger(pi)) {
+                this._selectedPhrase = pi;
+                this._pendingStart = null;
+                this._renderPhrases();
+            }
+            return;
+        }
+        const cell = target.closest ? target.closest(".harmony-bar[data-bar-index]") : null;
+        if (cell === null) {
+            if (this._pendingStart !== null) this._pendingStart = null;
+            else this._selectedPhrase = -1;
+            this._renderPhrases();
+            return;
+        }
+        const bar = this._barFromCell(/** @type {HTMLElement} */ (cell));
+        if (bar === null) return;
+        const beat = this._beatAtEvent(/** @type {HTMLElement} */ (cell), bar, e.clientX);
+        this._onPhraseClickBeat(beat);
+    }
+
+    /** The displayed ChartBar for a bar cell, or null. */
+    _barFromCell(cell) {
+        const idx = Number(cell.dataset.barIndex);
+        const bar = this._displayBars.find((b) => b.index === idx);
+        return bar === undefined ? null : bar;
+    }
+
+    /** The snapped base-cycle beat at a client-x over a bar cell. */
+    _beatAtEvent(cell, bar, clientX) {
+        const rect = cell.getBoundingClientRect();
+        const frac = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+        return beatAtFraction(bar, frac, this._baseCycle);
+    }
+
+    /**
+     * Apply a two-click create: the first click arms a start beat, the second
+     * forms the phrase [min, max] (when at least a beat wide) and commits it.
+     * @param {number} beat
+     */
+    _onPhraseClickBeat(beat) {
+        if (this._pendingStart === null) {
+            this._pendingStart = beat;
+            this._selectedPhrase = -1;
+            this._renderPhrases();
+            return;
+        }
+        const a = Math.min(this._pendingStart, beat);
+        const b = Math.max(this._pendingStart, beat);
+        this._pendingStart = null;
+        if (b - a >= 1) {
+            const span = { start: a, end: b };
+            this._phrasesLocal.push(span);
+            this._normalizePhrases();
+            this._selectedPhrase = this._phrasesLocal.indexOf(span);
+            this._commitPhrases();
+        } else {
+            this._renderPhrases();
+        }
+    }
+
+    /** Begin dragging one end of the selected phrase. */
+    _beginHandleDrag(edge) {
+        if (this._selectedPhrase < 0) return;
+        this._dragHandle = { phraseIndex: this._selectedPhrase, edge };
+        this._onDragMove = (/** @type {MouseEvent} */ ev) => this._handleDragMove(ev);
+        this._onDragUp = () => this._endHandleDrag();
+        document.addEventListener("mousemove", this._onDragMove);
+        document.addEventListener("mouseup", this._onDragUp);
+    }
+
+    /**
+     * The bar cell nearest a viewport point, scanning every bar's rect. Unlike
+     * elementFromPoint, this works when the pointer sits in the ROW GAP above
+     * the bars (where the drag handles live): it picks the vertically-closest
+     * row, then the bar in it whose horizontal span contains (or is nearest)
+     * the x. Returns the cell element, or null when there are no bars.
+     * @param {number} clientX
+     * @param {number} clientY
+     * @returns {HTMLElement | null}
+     */
+    _barCellAtPoint(clientX, clientY) {
+        const chart = this._chartEl;
+        if (chart === null) return null;
+        const cells = chart.querySelectorAll(".harmony-bar[data-bar-index]");
+        let best = null;
+        let bestScore = Infinity;
+        for (const cell of cells) {
+            const r = cell.getBoundingClientRect();
+            const dy = clientY < r.top ? r.top - clientY
+                : clientY > r.bottom ? clientY - r.bottom : 0;
+            const dx = clientX < r.left ? r.left - clientX
+                : clientX > r.right ? clientX - r.right : 0;
+            // Row first (dy dominates), then horizontal within the row.
+            const score = dy * 10000 + dx;
+            if (score < bestScore) { bestScore = score; best = cell; }
+        }
+        return /** @type {HTMLElement | null} */ (best);
+    }
+
+    /** Live-update the dragged phrase end to the bar under the pointer. */
+    _handleDragMove(e) {
+        if (this._dragHandle === null) return;
+        const cell = this._barCellAtPoint(e.clientX, e.clientY);
+        if (cell === null) return;
+        const bar = this._barFromCell(cell);
+        if (bar === null) return;
+        const beat = this._beatAtEvent(cell, bar, e.clientX);
+        const p = this._phrasesLocal[this._dragHandle.phraseIndex];
+        if (p === undefined) return;
+        // Keep the span at least a beat wide; the moving edge can't cross the other.
+        if (this._dragHandle.edge === "start") {
+            if (beat <= p.end - 1) p.start = beat;
+        } else if (beat >= p.start + 1) {
+            p.end = beat;
+        }
+        this._renderPhrases();
+    }
+
+    /** Finish a handle drag and commit. */
+    _endHandleDrag() {
+        if (this._onDragMove) document.removeEventListener("mousemove", this._onDragMove);
+        if (this._onDragUp) document.removeEventListener("mouseup", this._onDragUp);
+        this._dragHandle = null;
+        this._normalizePhrases();
+        this._commitPhrases();
+    }
+
+    /** Delete the selected phrase (Delete/Backspace from the tool). */
+    _deleteSelectedPhrase() {
+        if (this._selectedPhrase < 0 || this._selectedPhrase >= this._phrasesLocal.length) return;
+        this._phrasesLocal.splice(this._selectedPhrase, 1);
+        this._selectedPhrase = -1;
+        this._pendingStart = null;
+        this._commitPhrases();
+    }
+
+    /** Sort the working phrases by start, preserving the selection by identity. */
+    _normalizePhrases() {
+        const sel = this._selectedPhrase >= 0
+            ? this._phrasesLocal[this._selectedPhrase] : null;
+        this._phrasesLocal.sort((a, b) => a.start - b.start || a.end - b.end);
+        if (sel !== null) this._selectedPhrase = this._phrasesLocal.indexOf(sel);
+    }
+
+    /** Repaint the overlay and push the working phrases out to main.js. */
+    _commitPhrases() {
+        this._renderPhrases();
+        if (this._onEditPhrases !== null) {
+            this._onEditPhrases(this._phrasesLocal.map((p) => ({ start: p.start, end: p.end })));
+        }
     }
 
     /**
