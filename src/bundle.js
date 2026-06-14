@@ -816,14 +816,12 @@ export class Bundle {
 }
 
 /**
- * Produce the contents of a freshly-created score. The score
- * holds two text files: scene.json (declarative data, edited
- * via the Properties tab and a future property panel) and
- * script.js (named function definitions, edited via the
- * Script tab). The scene loader stitches them together
- * at run time. See DESIGN.md v2.4 for the data and behaviour
- * split, and §9 for the slot-naming convention used in the
- * template below.
+ * Produce the contents of a freshly-created EMPTY score — a blank canvas.
+ * The score holds two text files: scene.json (declarative data: just the
+ * score-wide fields and empty object arrays) and script.js (empty). The
+ * composer adds objects on the canvas and writes their behaviour. Rich
+ * starting points live as sample scores (src/samples/), opened via
+ * File → Sample Scores.
  *
  * @param {string} name
  * @returns {Bundle}
@@ -831,16 +829,11 @@ export class Bundle {
 export function makeEmptyBundle(name) {
     const bundle = new Bundle(name);
 
-    // Per-score display scales are baked into scene.json at
-    // creation time, seeded from the user's defaultTriggerScale
-    // and defaultSpriteScale preferences. Once stored in the
-    // score they stay put — changing the preference later
-    // doesn't reach back into existing scores. spriteScale is
-    // part of the music (it changes how sprites bounce off
-    // canvas walls); triggerScale is purely visual but still
-    // travels with the score so visual layout is consistent
-    // across users. Both can be edited later via the Properties
-    // tab if the composer wants to fine-tune.
+    // Per-score display scales are baked into scene.json at creation time,
+    // seeded from the user's defaultTriggerScale / defaultSpriteScale
+    // preferences. Once stored they stay put (changing the preference later
+    // doesn't reach back into existing scores); both are editable via the
+    // Properties tab.
     const triggerScale = getPreference("defaultTriggerScale");
     const spriteScale = getPreference("defaultSpriteScale");
 
@@ -854,37 +847,11 @@ export function makeEmptyBundle(name) {
   "spriteScale": ${spriteScale},
   "engine": "superdough",
 
-  "curves": [
-    {
-      "id": "CRV1",
-      "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 12, "h": 12 },
-      "cursorR": 2,
-      "cursorL": 0,
-      "cyclePattern": "sound(\\"bd sn bd sn\\")",
-      "cycleSpeeds": "1 -2"
-    },
-    {
-      "id": "CRV2",
-      "shape": { "type": "ellipse", "cx": 0, "cy": 0, "w": 20, "h": 20 },
-      "cursorR": 2,
-      "cursorL": 0,
-      "cyclePattern": "note(\\"c4  e4 d4 f4  e4  g4  f4 a4\\")",
-      "cycleSpeeds": "1 -1"
-    }
-  ],
+  "curves": [],
+  "triggers": [],
+  "sprites": [],
 
-  "triggers": [
-    { "id": "TRG1", "x":  9, "y":  0, "note": 60 },
-    { "id": "TRG2", "x": -9, "y":  0, "note": 64 },
-    { "id": "TRG3", "x":  0, "y":  9, "note": 67 },
-    { "id": "TRG4", "x":  0, "y": -9, "note": 72 }
-  ],
-
-  "sprites": [
-    { "id": "SPR1", "x": 0, "y": 0, "vx": 1, "vy": 1, "cycleSpeeds": "1 -1" }
-  ],
-
-  "idCounters": { "sprite": 2, "trigger": 5, "curve": 3 }
+  "idCounters": { "sprite": 1, "trigger": 1, "curve": 1 }
 }
 `,
         "application/json"
@@ -892,9 +859,8 @@ export function makeEmptyBundle(name) {
 
     bundle.addTextFile(
         "script.js",
-        `$CRV1: sound("bd sn bd sn");
-
-$CRV2: note("c4  e4 d4 f4  e4  g4  f4 a4");
+        `// Empty score. Add objects on the canvas, then write their behaviour here
+// (see File → Sample Scores for worked examples).
 `,
     );
 

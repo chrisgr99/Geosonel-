@@ -55,6 +55,9 @@ const menuState = {
   recentScores: [],
   /** @type {Array<{slotNumber: number, label: string}>} */
   backups: [],
+  // Built-in sample scores (static; pushed once by the renderer on startup).
+  /** @type {Array<{id: string, name: string}>} */
+  samples: [],
 };
 
 let currentWindow = null;
@@ -105,7 +108,15 @@ function send(action, payload = null) {
 }
 
 function buildTemplate() {
-  const { dirty, isUntitled, autoZoom, recentScores, backups, hasClipboardImage } = menuState;
+  const { dirty, isUntitled, autoZoom, recentScores, backups, samples, hasClipboardImage } = menuState;
+
+  // Sample Scores submenu items: one per built-in sample, each opening it as
+  // a new untitled copy in the renderer. Static list (pushed once on startup).
+  /** @type {any[]} */
+  const sampleItems = samples.map((s) => ({
+    label: s.name,
+    click: () => send('open-sample', { id: s.id }),
+  }));
 
   // Open Recent submenu items. macOS convention: list of
   // recent entries, separator, Clear Menu (always present,
@@ -213,6 +224,10 @@ function buildTemplate() {
           label: 'New\u2026',
           accelerator: 'CmdOrCtrl+N',
           click: () => send('new-score'),
+        },
+        {
+          label: 'Sample Scores',
+          submenu: sampleItems,
         },
         {
           label: 'Open\u2026',
@@ -459,7 +474,7 @@ function installMenu(win) {
  * electron-main.js whenever the renderer reports a state
  * change. Partial updates are supported — fields not in
  * the patch keep their previous values.
- * @param {{dirty?: boolean, isUntitled?: boolean, autoZoom?: boolean, recentScores?: Array<{path: string, name: string}>, backups?: Array<{slotNumber: number, label: string}>}} state
+ * @param {{dirty?: boolean, isUntitled?: boolean, autoZoom?: boolean, recentScores?: Array<{path: string, name: string}>, backups?: Array<{slotNumber: number, label: string}>, samples?: Array<{id: string, name: string}>}} state
  */
 function updateMenuState(state) {
   if (typeof state.dirty === 'boolean') menuState.dirty = state.dirty;
@@ -467,6 +482,7 @@ function updateMenuState(state) {
   if (typeof state.autoZoom === 'boolean') menuState.autoZoom = state.autoZoom;
   if (Array.isArray(state.recentScores)) menuState.recentScores = state.recentScores;
   if (Array.isArray(state.backups)) menuState.backups = state.backups;
+  if (Array.isArray(state.samples)) menuState.samples = state.samples;
   rebuildMenu();
 }
 

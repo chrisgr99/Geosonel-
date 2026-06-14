@@ -29,6 +29,7 @@
 
 import {
     actionNewScore,
+    actionOpenSample,
     actionOpenScore,
     actionOpenScoreByPath,
     actionDuplicateScore,
@@ -40,6 +41,7 @@ import {
     actionDeleteScore,
     actionImportHarmonyChart,
 } from "./scoreActions.js";
+import { SAMPLE_META } from "./samples/index.js";
 import { openAboutDialog } from "./aboutDialog.js";
 import { openSettingsDialog } from "./settingsDialog.js";
 import {
@@ -87,6 +89,7 @@ import { relativeDateLabel } from "./relativeDate.js";
  * @property {boolean} [autoZoom]
  * @property {Array<{path: string, name: string}>} [recentScores]
  * @property {Array<{slotNumber: number, label: string}>} [backups]
+ * @property {Array<{id: string, name: string}>} [samples]
  */
 
 /**
@@ -117,6 +120,11 @@ export function installMenuActions(ctx) {
         return false;
     }
     gxwMenu = w.gxwMenu;
+
+    // Samples are static, so push the list to the native menu once here; the
+    // main process builds the Sample Scores submenu from it. (recentScores /
+    // backups are pushed dynamically as they change.)
+    void gxwMenu.pushState({ samples: SAMPLE_META });
 
     const actionCtx = {
         session: ctx.session,
@@ -157,6 +165,11 @@ export function installMenuActions(ctx) {
                 break;
             case "new-score":
                 void actionNewScore(actionCtx);
+                break;
+            case "open-sample":
+                if (payload && typeof payload.id === "string") {
+                    void actionOpenSample(actionCtx, payload.id);
+                }
                 break;
             case "open-score":
                 void actionOpenScore(actionCtx);

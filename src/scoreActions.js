@@ -25,6 +25,7 @@ import {
     listAvailableScores,
     deleteScoreByPath,
 } from "./bundle.js";
+import { buildSample } from "./samples/index.js";
 import {
     saveScoreRecord,
     loadScoreRecord,
@@ -188,6 +189,26 @@ export async function actionNewScore(ctx) {
     const bundle = createUntitledScore();
     await ctx.session.switchToBundle(bundle);
     ctx.messages.write("New untitled score.");
+}
+
+/**
+ * Open a built-in Sample Score as a new UNTITLED copy. Same flow as New
+ * (dirty-state gate, then switch), but the bundle is built from the sample
+ * manifest. Born untitled (path null), so the user's edits go through Save As
+ * and never touch the bundled original.
+ *
+ * @param {ScoreActionsContext} ctx
+ * @param {string} sampleId
+ */
+export async function actionOpenSample(ctx, sampleId) {
+    if (!(await confirmDiscardChanges(ctx))) return;
+    const bundle = buildSample(sampleId);
+    if (bundle === null) {
+        ctx.messages.write(`Sample score "${sampleId}" not found.`, "error");
+        return;
+    }
+    await ctx.session.switchToBundle(bundle);
+    ctx.messages.write(`Opened sample "${bundle.name}" (untitled copy).`);
 }
 
 /**

@@ -20,8 +20,10 @@ import { buildDropdown, findMenuItem, wireDropdown } from "./menuUtil.js";
 import { getRecentScores, clearRecentScores } from "./recentFiles.js";
 import { listBackups, scoreNameFromPath } from "./storage.js";
 import { relativeDateLabel } from "./relativeDate.js";
+import { SAMPLES } from "./samples/index.js";
 import {
     actionNewScore,
+    actionOpenSample,
     actionOpenScore,
     actionOpenScoreByPath,
     actionDuplicateScore,
@@ -105,6 +107,10 @@ export function installFileMenu(ctx) {
             action: () => actionNewScore(actionCtx),
         },
         {
+            label: "Sample Scores",
+            buildSubmenu: () => buildSampleScoresSubmenu(actionCtx),
+        },
+        {
             label: "Open\u2026",
             action: () => actionOpenScore(actionCtx),
         },
@@ -172,6 +178,19 @@ export function installFileMenu(ctx) {
 
     document.body.appendChild(dropdown);
     wireDropdown(fileItem, dropdown);
+}
+
+/**
+ * Build the Sample Scores submenu: one entry per built-in sample (from the
+ * manifest), each opening that sample as a new untitled copy.
+ * @param {import("./scoreActions.js").ScoreActionsContext} actionCtx
+ * @returns {DropdownEntry[]}
+ */
+function buildSampleScoresSubmenu(actionCtx) {
+    return SAMPLES.map((s) => ({
+        label: s.name,
+        action: () => { void actionOpenSample(actionCtx, s.id); },
+    }));
 }
 
 /**
