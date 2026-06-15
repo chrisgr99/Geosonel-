@@ -145,9 +145,50 @@ proportional stretch; (3) UI polish.
   `applySceneEdit`. NO behaviour yet — the field is stored and surfaced; the
   slaving is stage 2. `autoPhrase` also TWEAKED: a sub-minimum tail phrase now
   folds into a neighbour (no 1-bar remainders), keeping lengths in a sane band.
-- **(2) next** — harmony lookup becomes phrase-relative off the master's groove
-  progress; chart phrases stretch to fit. Nothing reads `masterObjectId` until
-  this lands.
+- **(2a) DONE — the slaving + option B.** `src/phraseSync.js` (`phraseSyncBeat`,
+  pure + tested) maps the master's groove phase to a base-cycle harmony beat:
+  the sweep (cycleProgress 0→1) splits into `repeats` groove phrases, phrase k of
+  sweep cc → chart phrase (cc*repeats+k) mod P (wrapping), and a chord change
+  snaps to the master's nearest preceding onset (option B). simulation.js wires
+  it in `_harmonyLookupBeat(globalBeat)` — the master's phase is derived in closed
+  form from the global beat (computeCyclePhaseFromGlobalTime), onsets from the
+  curve's cached `_beatFractions` (or deriveCurveBeatPoints for other kinds),
+  direction from the speed list — and `_applyHarmonyToContext` looks the chord +
+  phrase state up at that beat. No master → returns the global beat unchanged, so
+  prior behaviour is untouched. NOTE: `beatsToNext` is still the base-cycle value,
+  not yet re-timed to the stretched groove (minor; revisit if a callback leans on
+  it under sync).
+- **(2b) DONE — the ensemble loop on chart wrap.** Object motion/cycle phase is a
+  pure function of global `_simTime`, so a recognizable repeat means looping the
+  whole clock. Confirmed with Chris: loop the whole transport at the chart period,
+  reusing the rewind path. Rather than wrap `_simTime` by hand (would desync the
+  position display, metronome, and firing engine, which read the transport), the
+  sim's `tick()` watches `transport.elapsedBeats` against `_syncLoopBeats` and
+  calls `transport.rewind()` at the boundary — a genuine backward jump that BOTH
+  the sim (`_rewind`: object home, melody memory, voice registry, metronome) and
+  the firing engine reset on via their existing detection (the audition Loop uses
+  the same path; `setSeamBoundary` turned out to be an unwired TODO). The period
+  (`_computeSyncLoopBeats`, recomputed in setScene) = `numChartPhrases × the
+  master's base-pattern beats` (beatsPerCycle × beat-interval quarters) — tracks
+  the master, BPM-independent, Repeats-independent. Deferred while an audition
+  boundary is armed (the two loops are mutually exclusive). It aligns exactly with
+  2a's chart wrap (same global beat, period = numChartPhrases groove phrases), so
+  the harmony continuity is unchanged; 2b only adds the motion reset.
+- Settled with Chris for stage 2:
+  - **Chord placement = snap to the master's onsets (option B), not proportional
+    slide.** Within a groove phrase, a chord change lands on the master's beat
+    grid (it changes ON a hit), trading exact proportional timing for always
+    landing on a heard beat — more musical. (Option A, proportional stretch with
+    off-grid landings, was the alternative.)
+  - **Ensemble reset on chart wrap.** When the chart phrase index wraps back to
+    phrase 0 (the whole progression has played through), reset the runtime state
+    of ALL objects to their chart-start state, so the whole piece repeats
+    recognizably — the chart becomes the top-level loop and the ensemble
+    re-seeds together (deterministic retrace). Build as 2a (slaving + option B)
+    then 2b (the wrap reset).
+  - `repeats = N` on the master → N chord-phrase slots per path sweep; the
+    master's groove drives the chord clock for ALL voices (each keeps its own
+    groove); the chart-phrase index advances one per groove phrase and wraps.
 
 ## Relationship to compose-by-phrases
 
