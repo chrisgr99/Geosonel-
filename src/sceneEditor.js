@@ -1930,8 +1930,9 @@ function applyBeatFieldFormatting(data, selection, regenerate) {
                 const n = Math.max(1, Math.round(Number(entry.beatsPerCycle ?? 16)) || 1);
                 const k = Math.max(0, Math.round(Number(entry.activeBeatsCount ?? 0)) || 0);
                 const shift = Math.round(Number(entry.beatShift ?? 0)) || 0;
-                const reps = Math.max(1, Math.round(Number(entry.repeats ?? 1)) || 1);
-                entry.activeBeats = repipeWithBars(generateEuclideanPattern(n, k, shift, reps), bar);
+                // Repeats no longer feeds the generator (it multiplies copies in
+                // the derivation); the stored Euclidean pattern is one cycle.
+                entry.activeBeats = repipeWithBars(generateEuclideanPattern(n, k, shift), bar);
             } else {
                 // Absent (a brand-new object that has never had the
                 // field written) falls back to the schema default

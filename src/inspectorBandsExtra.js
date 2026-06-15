@@ -344,6 +344,21 @@ export const bandExtraMethods = {
                 editable: active,
                 editKind: "setAutoStyle",
             }));
+            // Repeats sits at the end of this row (same end-of-row-2 slot as
+            // Euclidean); future style controls (Genre, …) go between Style and
+            // it. Lays N whole copies of the generated phrase around the path.
+            const autoRepeatsAgg = aggregateString(bpObjs, "repeats");
+            rStyle.appendChild(mkLabel("Repeats", { width: W.beatStackLabel, disabled: !active }));
+            rStyle.appendChild(this._buildEditableField({
+                value: autoRepeatsAgg === "varies" ? "" : autoRepeatsAgg,
+                numeric: true,
+                width: W.beatNum,
+                editable: active,
+                validator: (c) => validateRepeats(c),
+                editKind: "setRepeats",
+                spinStep: 1,
+                selectOnFocus: false,
+            }));
             band.appendChild(rStyle);
         }
 
@@ -396,7 +411,7 @@ export const bandExtraMethods = {
                 numeric: true,
                 width: W.beatNum,
                 editable: active,
-                validator: (c) => validateRepeats(c, cycleDur),
+                validator: (c) => validateRepeats(c),
                 editKind: "setRepeats",
                 spinStep: 1,
                 selectOnFocus: false,

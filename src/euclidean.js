@@ -27,18 +27,13 @@
  * placement is what musicians expect; rotation is then
  * cleanly expressed via the beatShift parameter.
  *
- * Repeats. When repeats > 1, the generator builds a sub-
- * pattern of length floor(cycleDuration / repeats) carrying
- * round(activeBeatsCount / repeats) actives, then
- * concatenates that sub-pattern `repeats` times. If the
- * concatenation falls short of cycleDuration (because the
- * division wasn't exact), the remainder pads with rests; if
- * it overshoots (which shouldn't happen given the floor
- * division but defensive against degenerate inputs), it
- * truncates to cycleDuration. This matches DESIGN.md §10's
- * "Numeric field bounds": repeats values that don't divide
- * cycleDuration evenly produce a partial-segment final bar
- * rather than rejecting the commit.
+ * Repeats. The "Repeats" control is NOT handled here. It no
+ * longer subdivides the cycle; it lays whole copies of the
+ * generated pattern end-to-end around the path (N copies →
+ * N × beat points, the cursor sweeping all of them in one
+ * longer traversal). That multiplication lives in the
+ * beat-points derivation (src/beatPoints.js), so this
+ * generator only ever produces one base pattern.
  *
  * Beat shift. Positive beatShift values rotate the pattern
  * to the right by N slots (delaying every beat by N slots);
@@ -63,43 +58,18 @@
  * @param {number} cycleDuration  The cycle's slot count, ≥ 1.
  * @param {number} activeBeatsCount  Count of actives to distribute, in [0, cycleDuration].
  * @param {number} beatShift  Rotational offset in slots (any integer; modulo applied internally).
- * @param {number} repeats  Internal repetition count, in [1, cycleDuration].
  * @returns {string}  A string of length cycleDuration containing only "x" and ".".
  */
-export function generateEuclideanPattern(cycleDuration, activeBeatsCount, beatShift, repeats) {
+export function generateEuclideanPattern(cycleDuration, activeBeatsCount, beatShift) {
     const n = Math.max(0, Math.round(cycleDuration));
     if (n === 0) return "";
 
     const k = Math.max(0, Math.min(n, Math.round(activeBeatsCount)));
-    const r = Math.max(1, Math.min(n, Math.round(repeats)));
-
-    // Sub-pattern length and per-segment active count. With
-    // repeats === 1 this collapses to the simple "k actives
-    // in n slots" case. With repeats > 1, each segment
-    // carries floor(k / repeats) actives; the rounding here
-    // keeps the per-segment count an integer at the cost of
-    // possibly losing 1-2 actives across the full cycle for
-    // non-divisible inputs. Acceptable because repeats > 1
-    // with k not divisible by r is a degenerate corner of
-    // the parameter space; users hitting it are expected to
-    // adjust k or r to a sensible pairing.
-    const segmentLength = Math.floor(n / r);
-    const segmentActives = segmentLength === 0 ? 0 : Math.round(k / r);
-
-    let pattern;
-    if (segmentLength === 0) {
-        // Defensive fallback: repeats greater than n means
-        // each segment has zero slots. Treat as repeats === 1.
-        pattern = euclideanFloorFormula(k, n);
-    } else {
-        const sub = euclideanFloorFormula(segmentActives, segmentLength);
-        let acc = "";
-        for (let i = 0; i < r; i++) acc += sub;
-        if (acc.length > n) acc = acc.substring(0, n);
-        while (acc.length < n) acc += ".";
-        pattern = acc;
-    }
-
+    // A single Euclidean distribution of k actives over n slots. "Repeats" no
+    // longer subdivides the pattern; it lays whole copies of this base pattern
+    // end-to-end around the path (applied in the beat-points derivation, not
+    // here), so this generator produces only the one base pattern.
+    const pattern = euclideanFloorFormula(k, n);
     return rotateRight(pattern, beatShift);
 }
 

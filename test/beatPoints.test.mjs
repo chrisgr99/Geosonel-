@@ -87,12 +87,12 @@ test("bars and whitespace are layout only and ignored", () => {
     assert.deepEqual(a.strengths, [9, 9, 9, 9]);
 });
 
-test("euclidean: missing/non-digit strength slot falls back to default 9 (no loop)", () => {
-    // euclidean reads strength slot-for-slot and defaults the rest —
-    // it does NOT loop (normal does; see the normal-loop tests below).
+test("euclidean derives like Manual: the strength string loops over its length", () => {
+    // Euclidean now flows through the same looped derivation as Manual, so a
+    // short strength string loops (modulo its length) rather than defaulting.
     const r = deriveCurveBeatPoints(curve({ beatPointsMode: "euclidean", activeBeats: "xxxx", strength: "12" }));
     assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
-    assert.deepEqual(r.strengths, [1, 2, 9, 9]);
+    assert.deepEqual(r.strengths, [1, 2, 1, 2]);
 });
 
 test("strength digit 0 is a real zero-strength beat (still a beat point)", () => {
@@ -115,10 +115,28 @@ test("all-rest pattern yields no beat points", () => {
     assert.deepEqual(r.strengths, []);
 });
 
-test("euclidean: empty activeBeats yields no beat points", () => {
-    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "euclidean", activeBeats: "", strength: "" }));
+test("euclidean: an all-rest pattern (k=0 result) yields no beat points", () => {
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "euclidean", activeBeats: "........", strength: "99999999" }));
     assert.deepEqual(r.positions, []);
     assert.deepEqual(r.strengths, []);
+});
+
+test("repeats lays N copies of the pattern end-to-end (N x beat points)", () => {
+    // "x.x." (4 slots, beats at 0 & 2) with beatsPerCycle 4 and repeats 3 →
+    // 12 slots, the pattern tiled 3 times, beats at 0,2,4,6,8,10 of 12.
+    const r = deriveCurveBeatPoints(curve({
+        beatPointsMode: "euclidean", activeBeats: "x.x.", strength: "9999",
+        beatsPerCycle: 4, repeats: 3,
+    }));
+    assert.deepEqual(r.positions, [0, 2 / 12, 4 / 12, 6 / 12, 8 / 12, 10 / 12]);
+    assert.equal(r.positions.length, 6); // 2 beats per copy x 3 copies
+});
+
+test("repeats defaults to 1 (one copy) when absent or < 1", () => {
+    const one = deriveCurveBeatPoints(curve({ activeBeats: "x.x.", strength: "9999", beatsPerCycle: 4 }));
+    const zero = deriveCurveBeatPoints(curve({ activeBeats: "x.x.", strength: "9999", beatsPerCycle: 4, repeats: 0 }));
+    assert.deepEqual(one.positions, [0, 0.5]);
+    assert.deepEqual(zero.positions, [0, 0.5]);
 });
 
 // --- Normal mode: the activeBeats and strength strings LOOP (each

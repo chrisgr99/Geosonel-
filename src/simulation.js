@@ -599,6 +599,27 @@ function cycleDurationSeconds(bpm, beatsPerCycle, beatInterval) {
 }
 
 /**
+ * The beats-per-cycle to use for an object's CYCLE DURATION: its authored
+ * beatsPerCycle times the Repeats count when it carries beat points
+ * (normal/euclidean/auto). Repeats lays N whole copies of the pattern end-to-
+ * end (N × beat points; see src/beatPoints.js), so the cursor's traversal — and
+ * thus the cycle duration — stretches by N, keeping each beat one Beat-Interval
+ * apart. Objects without a beat-points mode (mode "none", triggers) return
+ * beatsPerCycle unchanged, so their timing is untouched.
+ * @param {any} obj
+ * @returns {any} a number, or the original (possibly invalid) beatsPerCycle
+ */
+function effectiveBeatsPerCycle(obj) {
+    const base = obj ? obj.beatsPerCycle : undefined;
+    if (typeof base !== "number" || !Number.isFinite(base) || base <= 0) return base;
+    const mode = obj.beatPointsMode;
+    if (mode !== "normal" && mode !== "euclidean" && mode !== "auto") return base;
+    const r = Number(obj.repeats);
+    const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
+    return base * reps;
+}
+
+/**
  * Parse a cycleSpeeds string into an array of numbers.
  * Permissive runtime parser: any malformed input falls back
  * to [1] (the default single-positive-speed list) so a hand-
@@ -2316,7 +2337,7 @@ export class Simulation {
             const speed = loopLen > 0
                 ? state.speedList[state.cycleCount % loopLen] : 1;
             const baseCycle = cycleDurationSeconds(
-                bpmNum, curve.beatsPerCycle, curve.beatInterval);
+                bpmNum, effectiveBeatsPerCycle(curve), curve.beatInterval);
             const effectiveCycleTime = (Number.isFinite(speed) && Math.abs(speed) > 0)
                 ? baseCycle / Math.abs(speed) : 0;
             // The just-fired beat's own directional progress (the order is
@@ -2691,7 +2712,7 @@ export class Simulation {
                 const newState = new CurveRuntimeState(c);
                 this._snapNewStateToGrid(
                     newState,
-                    cycleDurationSeconds(bpm, c.beatsPerCycle, c.beatInterval),
+                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(c), c.beatInterval),
                     true,
                 );
                 this._applyCurveBeatPoints(c, newState);
@@ -2755,7 +2776,7 @@ export class Simulation {
                 const newState = new TriggerRuntimeState();
                 this._snapNewStateToGrid(
                     newState,
-                    cycleDurationSeconds(bpm, t.beatsPerCycle, t.beatInterval),
+                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(t), t.beatInterval),
                     false,
                 );
                 this._triggerState.set(t.id, newState);
@@ -2777,7 +2798,7 @@ export class Simulation {
                 const newState = new SpriteRuntimeState(s);
                 this._snapNewStateToGrid(
                     newState,
-                    cycleDurationSeconds(bpm, s.beatsPerCycle, s.beatInterval),
+                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(s), s.beatInterval),
                     false,
                 );
                 // Scale the launch velocity by the speed entry
@@ -2984,7 +3005,7 @@ export class Simulation {
             const state = this._curveState.get(curve.id);
             if (state === undefined) continue;
             if (state.halted) continue;
-            const cd = cycleDurationSeconds(bpm, curve.beatsPerCycle, curve.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(curve), curve.beatInterval);
             if (cd <= 0) continue;
             if (state._lastCycleDuration <= 0) continue;
             if (state._lastCycleDuration === cd) continue;
@@ -3001,7 +3022,7 @@ export class Simulation {
             if (trigger.state === "disabled") continue;
             const state = this._triggerState.get(trigger.id);
             if (state === undefined) continue;
-            const cd = cycleDurationSeconds(bpm, trigger.beatsPerCycle, trigger.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(trigger), trigger.beatInterval);
             if (cd <= 0) continue;
             if (state._lastCycleDuration <= 0) continue;
             if (state._lastCycleDuration === cd) continue;
@@ -3017,7 +3038,7 @@ export class Simulation {
             if (sprite.state === "disabled") continue;
             const state = this._spriteState.get(sprite.id);
             if (state === undefined) continue;
-            const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle, sprite.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(sprite), sprite.beatInterval);
             if (cd <= 0) continue;
             if (state._lastCycleDuration <= 0) continue;
             if (state._lastCycleDuration === cd) continue;
@@ -3428,7 +3449,7 @@ export class Simulation {
             if (runOnTick) {
                 this._runCurveOnTick(curve, state, ONTICK_DT, bpm);
             }
-            const cd = cycleDurationSeconds(bpm, curve.beatsPerCycle, curve.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(curve), curve.beatInterval);
             this._stepCurve(curve, state, cd, dt);
         }
         for (const trigger of this._scene.triggers) {
@@ -3438,7 +3459,7 @@ export class Simulation {
             if (trigger.state === "disabled") continue;
             const state = this._triggerState.get(trigger.id);
             if (state === undefined) continue;
-            const cd = cycleDurationSeconds(bpm, trigger.beatsPerCycle, trigger.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(trigger), trigger.beatInterval);
             this._stepTrigger(trigger, state, cd, dt);
         }
         // Sprite physics doesn't read BPM, but the cycle
@@ -4775,7 +4796,7 @@ export class Simulation {
             //    duration is 0 (missing/zero BPM, missing/zero
             //    beatsPerCycle) — physics still runs but the
             //    sprite never wraps.
-            const cd = cycleDurationSeconds(bpm, sprite.beatsPerCycle, sprite.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(sprite), sprite.beatInterval);
             if (cd <= 0) continue;
             // Timing-edit snap. Mirrors _stepCurve's snap
             // with the cursor and direction branches removed

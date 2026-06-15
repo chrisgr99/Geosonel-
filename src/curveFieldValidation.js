@@ -596,48 +596,32 @@ export function validateBeatShift(candidate) {
 }
 
 /**
- * Validate Repeats (the Euclidean parameter). Runtime value
- * is a positive integer in [1, cycleDuration]. Out-of-range
- * values silently clamp with a soft warning; non-integer
- * input rounds with a soft warning; non-numeric and empty
- * input are hard-blocked. The cycleDuration argument bounds
- * the clamp.
+ * Validate Repeats. Runtime value is a positive integer (≥ 1) — the number of
+ * whole copies of the pattern laid end-to-end around the path. There is NO upper
+ * bound (it's a multiplier, not a within-cycle subdivision). Sub-1 values clamp
+ * to 1 with a soft warning; non-integer input rounds; non-numeric / empty input
+ * is hard-blocked.
  *
  * @param {string} candidate
- * @param {number} cycleDuration
  * @returns {ValidationResult}
  */
-export function validateRepeats(candidate, cycleDuration) {
+export function validateRepeats(candidate) {
     const trimmed = candidate.trim();
     if (trimmed === "") {
-        return {
-            kind: "hard", value: "",
-            message: "Repeats is required.",
-        };
+        return { kind: "hard", value: "", message: "Repeats is required." };
     }
     const n = Number(trimmed);
     if (!Number.isFinite(n)) {
-        return {
-            kind: "hard", value: "",
-            message: `"${trimmed}" is not a number.`,
-        };
+        return { kind: "hard", value: "", message: `"${trimmed}" is not a number.` };
     }
-    const upper = Math.max(1, Math.round(cycleDuration));
     const rounded = Math.round(n);
-    const wasIntegerInput = (n === rounded);
     if (rounded < 1) {
         return {
             kind: "soft", value: "1",
             message: "Repeats clamped to 1 (must be at least 1).",
         };
     }
-    if (rounded > upper) {
-        return {
-            kind: "soft", value: String(upper),
-            message: `Repeats clamped to ${upper} (cannot exceed cycle length).`,
-        };
-    }
-    if (!wasIntegerInput) {
+    if (n !== rounded) {
         return {
             kind: "soft", value: String(rounded),
             message: `Repeats must be an integer; rounded to ${rounded}.`,

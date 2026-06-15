@@ -107,52 +107,7 @@ function beatCountForSlot(ch) {
 }
 
 /**
- * Derive positions + strengths from a full-length x/dot active-beats
- * string — the EUCLIDEAN path. Each character is one equal subdivision
- * of the cycle (the count is the string's own length, which the
- * Euclidean generator makes beatsPerCycle long); an "x" slot is a beat,
- * a "." slot a rest. The strength string is read slot-for-slot against
- * the active-beats string; a missing or non-digit strength slot falls
- * back to DEFAULT_STRENGTH. No looping — Euclidean already spans the
- * whole cycle.
- * @param {unknown} activeBeats
- * @param {unknown} strength
- * @returns {BeatPoints}
- */
-function deriveFromActiveBeats(activeBeats, strength) {
-    const slots = bareString(activeBeats);
-    const strengths = bareString(strength);
-    const n = slots.length;
-    /** @type {number[]} */
-    const positions = [];
-    /** @type {number[]} */
-    const out = [];
-    /** @type {number[]} */
-    const inactivePositions = [];
-    for (let i = 0; i < n; i++) {
-        const ch = slots[i];
-        const count = beatCountForSlot(ch);
-        if (count > 0) {
-            const d = strengths[i];
-            const strengthVal = (d !== undefined && isDigit(d))
-                ? Number(d) : DEFAULT_STRENGTH;
-            // A digit slot is a ratchet: `count` evenly-spaced sub-hits
-            // across the slot's interval, all at the slot's strength.
-            for (let k = 0; k < count; k++) {
-                positions.push((i + k / count) / n);
-                out.push(strengthVal);
-            }
-        } else {
-            // "." (or any non-x/digit slot) is an inactive beat: drawn
-            // small, never fired.
-            inactivePositions.push(i / n);
-        }
-    }
-    return { positions, strengths: out, inactivePositions };
-}
-
-/**
- * Derive positions + strengths for the NORMAL path, where the
+ * Derive positions + strengths for the looped beat-points path, where the
  * active-beats and strength strings LOOP to fill the cycle.
  *
  * The number of beats is `beatsPerCycle` (Per Cycle), NOT the string
@@ -168,19 +123,26 @@ function deriveFromActiveBeats(activeBeats, strength) {
  * valid beatsPerCycle is supplied (degenerate data or a legacy caller)
  * the count falls back to the active-beats string's own length.
  *
- * (Looping is NORMAL-only by design: Euclidean generates a full-length
- * string — see deriveFromActiveBeats — and Strudel carries its own
- * length, so neither loops.)
+ * Manual, Euclidean, and Auto all flow through here: Euclidean and Auto store
+ * a full-length (beatsPerCycle) generated pattern, Manual a short looping one,
+ * and `repeats` then multiplies the whole thing N times around the path.
  * @param {unknown} activeBeats
  * @param {unknown} strength
  * @param {unknown} beatsPerCycle
+ * @param {unknown} repeats
  * @returns {BeatPoints}
  */
-function deriveNormalLooped(activeBeats, strength, beatsPerCycle) {
+function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats) {
     const slots = bareString(activeBeats) || "x";
     const strengths = bareString(strength) || String(DEFAULT_STRENGTH);
     const bpc = Number(beatsPerCycle);
-    const n = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : slots.length;
+    const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : slots.length;
+    // Repeats lays whole copies of the base pattern end-to-end around the path:
+    // N copies → N × beat points, the pattern tiling across all of them, the
+    // cursor sweeping them in one (proportionally longer) traversal.
+    const r = Number(repeats);
+    const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
+    const n = base * reps;
     /** @type {number[]} */
     const positions = [];
     /** @type {number[]} */
@@ -338,13 +300,12 @@ export function deriveCurveBeatPoints(curve) {
     const mode = curve !== null && typeof curve.beatPointsMode === "string"
         ? curve.beatPointsMode
         : "none";
-    if (mode === "normal" || mode === "auto") {
-        // Auto generates its pattern into activeBeats/strength (like Euclidean),
-        // then plays through the same looped derivation as Manual.
-        return deriveNormalLooped(curve.activeBeats, curve.strength, curve.beatsPerCycle);
-    }
-    if (mode === "euclidean") {
-        return deriveFromActiveBeats(curve.activeBeats, curve.strength);
+    if (mode === "normal" || mode === "auto" || mode === "euclidean") {
+        // Manual, Auto, and Euclidean all play their (possibly generated)
+        // activeBeats/strength through one looped derivation, with Repeats
+        // multiplying the beat-point count.
+        return deriveNormalLooped(
+            curve.activeBeats, curve.strength, curve.beatsPerCycle, curve.repeats);
     }
     if (mode === "strudel") {
         return deriveFromStrudel(curve.beatPattern);
