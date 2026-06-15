@@ -482,8 +482,9 @@ export function validateBeatOffset(candidate) {
 
 /**
  * Validate Curve Beat Points mode. Runtime value is one of
- * "normal", "euclidean", "strudel", or "none". Empty input and
- * unrecognised values are hard-blocked. Case-sensitive
+ * "normal" (shown as "Manual"), "euclidean", "auto", "strudel"
+ * (legacy, no longer offered in the dropdown), or "none". Empty
+ * input and unrecognised values are hard-blocked. Case-sensitive
  * match against the enum.
  *
  * @param {string} candidate
@@ -491,12 +492,13 @@ export function validateBeatOffset(candidate) {
  */
 export function validateBeatPointsMode(candidate) {
     const trimmed = candidate.trim();
-    if (trimmed === "normal" || trimmed === "euclidean" || trimmed === "strudel" || trimmed === "none") {
+    if (trimmed === "normal" || trimmed === "euclidean" || trimmed === "auto"
+        || trimmed === "strudel" || trimmed === "none") {
         return { kind: "ok", value: trimmed };
     }
     return {
         kind: "hard", value: "",
-        message: `"${trimmed}" is not a recognised beat-points mode (expected normal, euclidean, or none).`,
+        message: `"${trimmed}" is not a recognised beat-points mode (expected normal, euclidean, auto, or none).`,
     };
 }
 

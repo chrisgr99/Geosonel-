@@ -25,6 +25,15 @@ test("mode none yields no beat points", () => {
     assert.deepEqual(r.inactivePositions, []);
 });
 
+test("mode auto yields no beat points yet (generator lands in a later milestone)", () => {
+    // The Auto source is selectable but un-generated until M2; the engine must
+    // fall through to empty rather than crash on the unknown mode.
+    const r = deriveCurveBeatPoints(curve({ beatPointsMode: "auto", activeBeats: "x.x." }));
+    assert.deepEqual(r.positions, []);
+    assert.deepEqual(r.strengths, []);
+    assert.deepEqual(r.inactivePositions, []);
+});
+
 test("normal: every-slot pattern places a beat per x at slot fraction", () => {
     const r = deriveCurveBeatPoints(curve({ activeBeats: "x.x.", strength: "9595" }));
     assert.deepEqual(r.positions, [0, 0.5]);

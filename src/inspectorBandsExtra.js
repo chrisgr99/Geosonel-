@@ -216,6 +216,10 @@ export const bandExtraMethods = {
             const n = Number(beatsPerCycleAgg);
             return Number.isFinite(n) && n >= 1 ? n : 16;
         })();
+        // Grid-based sources share the Beat Interval / Per-Cycle / Per-Bar row.
+        // Auto is grid-based too (it generates onto this grid); its pattern
+        // fields arrive with the generator in a later milestone.
+        const gridMode = mode === "normal" || mode === "euclidean" || mode === "auto";
 
         // Row 1: the mode dropdown, always present. For normal /
         // euclidean it is followed on the same row by Beat Interval
@@ -225,12 +229,15 @@ export const bandExtraMethods = {
         // description whether the pattern is defined by x/dot, the
         // Euclidean generator, or a Strudel mini-notation expression.
         r1.appendChild(mkLabel("Beat\nPattern", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+        // Sources: None / Manual (stored as "normal") / Euclidean / Auto.
+        // "strudel" is a legacy value (no longer offered) — a legacy strudel
+        // curve renders its own fields below and leaves this trigger blank.
         r1.appendChild(this._buildDropdownField({
             options: [
                 { value: "none", label: "None" },
-                { value: "normal", label: "Normal" },
+                { value: "normal", label: "Manual" },
                 { value: "euclidean", label: "Euclidean" },
-                { value: "strudel", label: "Strudel" },
+                { value: "auto", label: "Auto" },
             ],
             value: mode,
             width: W.beatPointsMode,
@@ -243,7 +250,7 @@ export const bandExtraMethods = {
         // it in every mode). Shown for normal AND euclidean (both
         // grid-based), placed right of the mode dropdown. Strudel has
         // its own Cycle Length interval; None has no beats.
-        if (mode === "normal" || mode === "euclidean") {
+        if (gridMode) {
             const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
             r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildDropdownField({
@@ -255,8 +262,10 @@ export const bandExtraMethods = {
             }));
         }
 
-        if (mode === "normal" || mode === "euclidean") {
-            r1.appendChild(mkLabel("Per\nCycle", { width: W.beatPerCycleLabel, disabled: !active, multiline: true }));
+        if (gridMode) {
+            // Auto treats Beats/Cycle as the PHRASE length (Repeats lays
+            // multiple phrase instances around the path).
+            r1.appendChild(mkLabel(mode === "auto" ? "Per\nPhrase" : "Per\nCycle", { width: W.beatPerCycleLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
                 value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
                 numeric: true,
@@ -300,7 +309,7 @@ export const bandExtraMethods = {
         // time signature's beat count (e.g. 3 for 3/4), and it groups
         // the Active Beats / Beat Strength strings into bars with `|`
         // separators.
-        if (mode === "normal" || mode === "euclidean") {
+        if (gridMode) {
             const beatsPerBarAgg = aggregateString(bpObjs, "beatsPerBar");
             r1.appendChild(mkLabel("Per\nBar", { width: W.beatPerBarLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
@@ -378,7 +387,7 @@ export const bandExtraMethods = {
         // the pattern is typed directly; in Euclidean it is the
         // generated result, and Beat Strength still sets per-beat
         // velocity. Both strings loop.
-        if (mode === "normal" || mode === "euclidean") {
+        if (gridMode) {
             const activeBeatsAgg = aggregateString(bpObjs, "activeBeats");
             const strengthAgg = aggregateString(bpObjs, "strength");
             // Beats/Bar drives the live bar grouping in both fields.
@@ -393,10 +402,10 @@ export const bandExtraMethods = {
                 value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
                 width: W.beatString,
                 editable: active,
-                // In Euclidean the pattern is generated from the
-                // parameters, so lock it (read-only) — it's a
-                // reference, not directly editable.
-                locked: mode === "euclidean",
+                // Generated patterns are locked (read-only reference): Euclidean
+                // generates Active Beats; Auto generates BOTH Active Beats and
+                // Beat Strength.
+                locked: mode === "euclidean" || mode === "auto",
                 beatsPerBar: bpbForBars,
                 kind: "pattern",
                 editKind: "setActiveBeats",
@@ -410,6 +419,9 @@ export const bandExtraMethods = {
                 value: strengthAgg === "varies" ? "" : strengthAgg,
                 width: W.beatString,
                 editable: active,
+                // Auto generates Beat Strength too, so lock it there; Euclidean
+                // and Manual leave it editable (it sets per-beat velocity).
+                locked: mode === "auto",
                 beatsPerBar: bpbForBars,
                 kind: "strength",
                 editKind: "setStrength",

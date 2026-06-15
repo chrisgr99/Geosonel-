@@ -121,7 +121,7 @@ const CALLBACK_SLOT_FIELDS = [
     // Active Beats pattern (x active, . inactive, | bar split)
     // and Beat Strength digit string both loop. Stored lowercase
     // for mode to match validateBeatPointsMode.
-    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "none", enumValues: ["none", "normal", "euclidean", "strudel"] },
+    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "none", enumValues: ["none", "normal", "euclidean", "auto", "strudel"] },
     { key: "activeBeats", label: "Active Beats", type: "string", default: "x" },
     { key: "strength", label: "Beat Strength", type: "string", default: "9" },
     // Strudel beat-points mode (beatPointsMode === "strudel"): a
