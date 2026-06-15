@@ -58,6 +58,14 @@ const BREATH_BEATS = 0.5;
 const MIN_VOICED_BEATS = 2;
 
 /**
+ * The auto-breath is SET ASIDE for now (it clipped notes at chord-phrase ends
+ * that drifted against the groove; see design/phrase-sync.md). Drawn-gap rests
+ * and start/end anchoring still apply — only the release-cap breath is off. Flip
+ * to true to restore it (the logic below and nxtNote's handling are intact).
+ */
+const BREATH_ENABLED = false;
+
+/**
  * Resolve the phrase state at a base-cycle beat for the melodic line. What a
  * voice reads:
  *   - `inGap`  — a real gap between phrases (or outside them all). Every phrased
@@ -82,7 +90,8 @@ export function phraseStateAt(phrases, beat) {
     if (!Array.isArray(phrases) || phrases.length === 0) return null;
     for (const p of phrases) {
         if (beat >= p.start && beat < p.end) {
-            const breathes = (p.end - p.start) - BREATH_BEATS >= MIN_VOICED_BEATS;
+            const breathes = BREATH_ENABLED
+                && (p.end - p.start) - BREATH_BEATS >= MIN_VOICED_BEATS;
             const release = breathes ? (p.end - BREATH_BEATS) - beat : null;
             return {
                 inGap: false,

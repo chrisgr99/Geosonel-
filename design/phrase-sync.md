@@ -80,37 +80,52 @@ generated length per phrase (a 4-bar phrase → a 4-bar groove, a 6-bar phrase �
 6-bar groove). That removes stretch entirely; the chart phrase structure becomes
 the skeleton and the groove fills each phrase exactly.
 
-## Open decisions
+## Settled (Q&A with Chris)
 
-1. **Master/skeleton.** Chris's first framing was "groove is master, stretch the
-   chords." With the commensurability constraint, the simplest is closer to
-   "the chart phrase defines the bar count, the groove fills it 1:1" — the chart
-   supplies structure + chords, the groove supplies rhythm + the clock. Decide
-   which side owns the length (and whether it's authored or derived).
-2. **What is "one groove phrase"** — the unit that maps to a chart phrase? The
-   generated phrase (Beats/Phrase) is the natural candidate; Repeats then means
-   "this chart phrase spans N groove phrases" (a clean integer multiple).
-3. **Multiple grooves with different lengths.** The harmony is global but grooves
-   are per-curve. Likely: the harmony owns a phrase clock; nominate one curve
-   (the lead) as the clock source; others snap to the same phrase boundaries (or
-   free-run). Their lengths must each be commensurate with the phrase.
-4. **Per-voice opt-in to chart phrasing.** Following the chart phrasing should be
-   a deliberate per-voice choice (one switch gating breath + gaps + anchoring),
-   defaulting on for melodic roles (tune/lead), off for grooves/percussion. The
-   current `breathe` flag folds into this. A pure groove then never inherits a
-   breath it didn't ask for, even before the full sync lands.
-5. **Terminology.** Rename the Auto "Beats/Phrase" to e.g. "Beats/Figure" /
+- **Beat pattern drives, not the chart.** The groove is the master clock; the
+  chart is OPTIONAL (no chart → the groove just plays). This is cleaner than
+  "chart defines the skeleton" because the user may not care about changes.
+- **One "beat-pattern phrase" = one generated pattern** (the Beats/Phrase unit),
+  even when Repeats lays several copies around the object. So Repeats = N means N
+  phrase-slots per path sweep, each mapping to one chart phrase 1:1 (and each
+  slot can carry its own colour-driven groove + its own chord phrase — the
+  compose-by-phrases picture).
+- **Stretch, never drop.** A chart phrase is time-scaled to fit its beat-pattern
+  phrase; no chords lost. Lengths are usually integer multiples so the stretch
+  lands on bar lines; the awkward case (a short groove phrase, < 4 bars, vs a
+  longer chart phrase) gets reasonable-results rules TBD. We may enforce
+  nice (multiple-of-4-ish) lengths on the beat-pattern side.
+- **Master object** = any one beat-pattern object (curve OR sprite — sprites have
+  patterns too). Mutually exclusive (designating one clears the previous), opt-in
+  (none by default). Other voices read whatever chord the master is on (one
+  shared harmony clock, many independent grooves).
+- **Chart phrases** = the existing `scene.harmony.phrases`; chords laid out
+  proportionally inside each. The auto-phraser (`autoPhrase`) should be TWEAKED
+  to avoid extremes — merge a sub-minimum remainder (no 1-bar tail), and keep a
+  tighter band (no 8-bar monsters) — which also keeps the stretch ratios sane.
+- **Breath set aside** (see below) until we know we need it.
+
+## Still open
+
+1. **Multiple grooves with different lengths.** Confirmed one master drives the
+   chord clock; the open part is whether non-master objects snap to the master's
+   phrase boundaries or free-run (default: free-run, just reading the chords).
+2. **The stretch edge case** — a short groove phrase vs a longer chart phrase
+   (extreme compression). Reasonable-results rules to design.
+3. **Terminology.** Rename the Auto "Beats/Phrase" to e.g. "Beats/Figure" /
    "Pattern Length" — it's the groove's repeat unit, not articulation phrasing.
-   Reserve "phrase/phrasing" for the chart's melodic articulation. This removes
-   most of the conceptual collision on its own.
 
 ## Done already / regardless of the above
 
-- The degenerate near-zero note is fixed: a note trimmed below ~5 ms (the breath
-  landing on a beat, or any degenerate trim) now RESTS instead of emitting an
-  inaudible click (src/simulation.js, MIN_AUDIBLE_DURATION_SECONDS).
-- Interim relief while we design: clear a score's `scene.harmony.phrases` to stop
-  the breaths, or set a voice's style to a non-breathing one.
+- The auto-breath is SET ASIDE — disabled behind `BREATH_ENABLED = false` in
+  src/harmonyPhrasing.js (`phraseStateAt` produces no release-cap). Drawn-gap
+  rests and start/end anchoring still apply; only the note-clipping breath is
+  off. The mechanism (the release computation and nxtNote's handling) is intact,
+  so flipping the flag restores it. Revisit once the sync lands and we can see
+  whether a breath landing cleanly on groove boundaries is wanted.
+- The degenerate near-zero note is fixed regardless: a note trimmed below ~5 ms
+  now RESTS instead of emitting an inaudible click (src/simulation.js,
+  MIN_AUDIBLE_DURATION_SECONDS).
 
 ## Relationship to compose-by-phrases
 
