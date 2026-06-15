@@ -338,7 +338,9 @@ export function deriveCurveBeatPoints(curve) {
     const mode = curve !== null && typeof curve.beatPointsMode === "string"
         ? curve.beatPointsMode
         : "none";
-    if (mode === "normal") {
+    if (mode === "normal" || mode === "auto") {
+        // Auto generates its pattern into activeBeats/strength (like Euclidean),
+        // then plays through the same looped derivation as Manual.
         return deriveNormalLooped(curve.activeBeats, curve.strength, curve.beatsPerCycle);
     }
     if (mode === "euclidean") {

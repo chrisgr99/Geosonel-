@@ -148,6 +148,7 @@ import {
     setBeatsPerCycleOnSelection,
     setBeatIntervalOnSelection,
     setBeatPointsModeOnSelection,
+    setAutoStyleOnSelection,
     setActiveBeatsOnSelection,
     setStrengthOnSelection,
     setBeatPatternOnSelection,
@@ -4117,6 +4118,10 @@ async function main() {
             } else if (edit.kind === "setBeatPointsMode") {
                 await applySceneEdit((data) =>
                     setBeatPointsModeOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setAutoStyle") {
+                await applySceneEdit((data) =>
+                    setAutoStyleOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setActiveBeats") {
                 await applySceneEdit((data) =>

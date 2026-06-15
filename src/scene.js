@@ -733,6 +733,8 @@ export class Curve {
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
         /** @type {"none" | "normal" | "euclidean" | "auto" | "strudel"} Beat Points mode (Band 5). */
         this.beatPointsMode = opts.beatPointsMode ?? "none";
+        /** @type {"melody"|"lead"|"bass"} Auto-mode rhythmic style (Band 5). */
+        this.autoStyle = opts.autoStyle ?? "melody";
         /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
@@ -892,6 +894,8 @@ export class Trigger {
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
         /** @type {"none" | "normal" | "euclidean" | "auto" | "strudel"} Beat Points mode (Band 5). */
         this.beatPointsMode = opts.beatPointsMode ?? "none";
+        /** @type {"melody"|"lead"|"bass"} Auto-mode rhythmic style (Band 5). */
+        this.autoStyle = opts.autoStyle ?? "melody";
         /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
@@ -1099,6 +1103,8 @@ export class Sprite {
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
         /** @type {"none" | "normal" | "euclidean" | "auto" | "strudel"} Beat Points mode (Band 5). */
         this.beatPointsMode = opts.beatPointsMode ?? "none";
+        /** @type {"melody"|"lead"|"bass"} Auto-mode rhythmic style (Band 5). */
+        this.autoStyle = opts.autoStyle ?? "melody";
         /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */

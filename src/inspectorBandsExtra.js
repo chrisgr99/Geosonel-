@@ -325,6 +325,28 @@ export const bandExtraMethods = {
         }
         band.appendChild(r1);
 
+        // Auto: a dedicated Style row below the source/grid row, so row 1
+        // doesn't overflow and later style controls (Genre, …) can sit beside
+        // the Style menu on this line. Generated Active Beats / Beat Strength
+        // (shown below) update on change via the edit pipeline.
+        if (mode === "auto") {
+            const styleAgg = aggregateString(bpObjs, "autoStyle");
+            const rStyle = mkRow();
+            rStyle.appendChild(mkLabel("Style", { width: W.beatStackLabel, disabled: !active }));
+            rStyle.appendChild(this._buildDropdownField({
+                options: [
+                    { value: "melody", label: "Tune" },
+                    { value: "lead", label: "Lead" },
+                    { value: "bass", label: "Bass" },
+                ],
+                value: styleAgg === "varies" ? "" : styleAgg,
+                width: W.beatPointsMode,
+                editable: active,
+                editKind: "setAutoStyle",
+            }));
+            band.appendChild(rStyle);
+        }
+
         // Euclidean generator parameters (Euclidean only): the
         // Active Beats COUNT (k), Beat Shift, and Repeats. The
         // count is the INPUT the pattern is generated from, as

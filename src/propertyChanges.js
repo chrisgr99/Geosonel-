@@ -31,6 +31,7 @@ import {
     setNameOnSelection,
     setGroupOnSelection,
     setBeatPointsModeOnSelection,
+    setAutoStyleOnSelection,
     setActiveBeatsOnSelection,
     setStrengthOnSelection,
     setBeatPatternOnSelection,
@@ -145,6 +146,7 @@ const FIELDS = {
 
     // --- Beat points ---
     beatPointsMode: { apply: (d, s, v) => setBeatPointsModeOnSelection(d, s, v), read: (r) => r.beatPointsMode, kinds: ["curve", "sprite"] },
+    autoStyle: { apply: (d, s, v) => setAutoStyleOnSelection(d, s, v), read: (r) => r.autoStyle, kinds: ["curve", "sprite"] },
     activeBeats: { apply: (d, s, v) => setActiveBeatsOnSelection(d, s, v), read: (r) => r.activeBeats, kinds: ["curve", "sprite"] },
     strength: { apply: (d, s, v) => setStrengthOnSelection(d, s, v), read: (r) => r.strength, kinds: ["curve", "sprite"] },
     beatPattern: { apply: (d, s, v) => setBeatPatternOnSelection(d, s, v), read: (r) => r.beatPattern, kinds: ["curve", "sprite"] },

@@ -35,6 +35,7 @@ import { isValidBeatInterval } from "./beatIntervals.js";
 import { sanitiseSceneHarmony, sanitisePhrases } from "./harmonyScene.js";
 import { autoPhrase } from "./harmonyPhrasing.js";
 import { generateEuclideanPattern } from "./euclidean.js";
+import { generatePhrase } from "./rhythmGenerator.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
@@ -1908,8 +1909,23 @@ function applyBeatFieldFormatting(data, selection, regenerate) {
             const entry = arr[idx];
             if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
             const mode = entry.beatPointsMode;
-            if (mode !== "normal" && mode !== "euclidean") continue;
+            if (mode !== "normal" && mode !== "euclidean" && mode !== "auto") continue;
             const bar = Math.max(1, Math.round(Number(entry.beatsPerBar ?? 1)) || 1);
+            // Auto generates BOTH strings from its style + meter (v0: deterministic;
+            // a later milestone feeds the image as the per-slot dice). On a
+            // non-regenerating pass it just re-bars the stored pattern, below.
+            if (regenerate && mode === "auto") {
+                const n = Math.max(1, Math.round(Number(entry.beatsPerCycle ?? 16)) || 1);
+                const gen = generatePhrase({
+                    beatsPerBar: bar,
+                    beatsPerPhrase: n,
+                    style: typeof entry.autoStyle === "string" ? entry.autoStyle : "melody",
+                    dice: null,
+                });
+                entry.activeBeats = repipeWithBars(gen.activeBeats, bar);
+                entry.strength = repipeWithBars(gen.strength, bar);
+                continue;
+            }
             if (regenerate && mode === "euclidean") {
                 const n = Math.max(1, Math.round(Number(entry.beatsPerCycle ?? 16)) || 1);
                 const k = Math.max(0, Math.round(Number(entry.activeBeatsCount ?? 0)) || 0);
@@ -1983,8 +1999,20 @@ function repipeWithBars(s, beatsPerBar) {
  */
 export function setBeatPointsModeOnSelection(data, selection, value) {
     setStringFieldOnSelection(data, selection, "beatPointsMode", String(value));
-    // Switching into euclidean fills the pattern from the current
+    // Switching into euclidean / auto fills the pattern from the current
     // generator inputs straight away.
+    regenerateAndRebarForSelection(data, selection);
+}
+
+/**
+ * Set the Auto-mode rhythmic style (Band 5) across the selection — melody /
+ * lead / bass — and regenerate the Auto pattern. Mutates `data`.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setAutoStyleOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "autoStyle", String(value));
     regenerateAndRebarForSelection(data, selection);
 }
 
