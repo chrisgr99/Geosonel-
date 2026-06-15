@@ -10,8 +10,11 @@ CLAUDE_CODE_TASK.md
 design/DESIGN.md
 design-strudel/
 
-# Local iReal Pro import test data + scratch (not distributed)
-Jazz 1460.html
+# Local iReal Pro chart lists to import + scratch (not distributed).
+# iReal Pro exports are named "<Playlist> <songCount>.html" (a trailing space
+# + number), which the app's own HTML (index.html, spike-strudel.html, …) is
+# not — so this glob catches the chart lists without touching app files.
+* [0-9]*.html
 _ireal_poc.mjs
 _ireal_validate.mjs
 .claude/settings.local.json
