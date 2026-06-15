@@ -271,12 +271,8 @@ export class HarmonyPanel {
         this._unwindMenuItem = null;
         /** The "Unwind" row's current-value span. @type {HTMLElement | null} */
         this._unwindValueEl = null;
-        /** The "Master" menu row. @type {HTMLElement | null} */
-        this._masterMenuItem = null;
-        /** The "Master" row's current-value span. @type {HTMLElement | null} */
-        this._masterValueEl = null;
-        /** The "Master" row's flyout submenu (rebuilt as candidates change). @type {HTMLElement | null} */
-        this._masterSubmenu = null;
+        /** The visible "Master" dropdown in the chart header (phrase-sync). @type {HTMLSelectElement | null} */
+        this._masterSelect = null;
         /** Whether the hamburger popup is open. */
         this._menuOpen = false;
 
@@ -400,7 +396,7 @@ export class HarmonyPanel {
     setMasterContext(candidates, masterObjectId) {
         this._masterCandidates = Array.isArray(candidates) ? candidates : [];
         this._masterObjectId = typeof masterObjectId === "string" ? masterObjectId : null;
-        this._syncMenuState();
+        this._syncMasterControl();
     }
 
     /**
@@ -465,9 +461,7 @@ export class HarmonyPanel {
         this._keyMenuItem = null;
         this._unwindMenuItem = null;
         this._unwindValueEl = null;
-        this._masterMenuItem = null;
-        this._masterValueEl = null;
-        this._masterSubmenu = null;
+        this._masterSelect = null;
         this._menuOpen = false;
 
         const playlists = listPlaylists();
@@ -780,8 +774,9 @@ export class HarmonyPanel {
      * DOM handles. The Letter/Roman toggle lives in the picker grid above.
      */
     _buildChartSection() {
-        // Header row: the song title on the left, a phrase-tool toggle on the
-        // right. The toggle arms the light-orange phrase drawing tool.
+        // Header row: the song title on the left, and on the right the
+        // phrase-sync Master picker + the phrase-tool toggle (which arms the
+        // light-orange phrase drawing tool).
         const header = document.createElement("div");
         header.className = "harmony-chart-header";
 
@@ -789,6 +784,10 @@ export class HarmonyPanel {
         title.className = "harmony-chart-title";
         this._chartTitle = title;
         header.appendChild(title);
+
+        const controls = document.createElement("div");
+        controls.className = "harmony-chart-controls";
+        controls.appendChild(this._buildMasterControl());
 
         const phraseBtn = document.createElement("button");
         phraseBtn.type = "button";
@@ -802,7 +801,8 @@ export class HarmonyPanel {
             this._togglePhraseTool();
         });
         this._phraseToolBtn = phraseBtn;
-        header.appendChild(phraseBtn);
+        controls.appendChild(phraseBtn);
+        header.appendChild(controls);
 
         this.container.appendChild(header);
         this._renderChartTitle();
@@ -895,18 +895,9 @@ export class HarmonyPanel {
         }
         popup.appendChild(unwindItem.item);
 
-        // "Master" entry — which beat-pattern object's groove drives the chord
-        // clock (phrase-sync; see design/phrase-sync.md). The submenu lists
-        // "None" plus every candidate object, rebuilt from the candidate list
-        // (which changes as objects come and go), so it is filled dynamically
-        // rather than statically like Key/Unwind. Disabled when nothing in the
-        // scene has a beat pattern to drive the changes.
-        const masterItem = this._buildMenuItem("Master");
-        this._masterMenuItem = masterItem.item;
-        this._masterValueEl = masterItem.value;
-        this._masterSubmenu = masterItem.submenu;
-        popup.appendChild(masterItem.item);
-        this._populateMasterSubmenu();
+        // (The phrase-sync "Master" picker is NOT in this menu — it's a visible
+        // dropdown in the chart header, _buildMasterControl, so designating the
+        // object whose groove drives the chord changes is discoverable.)
 
         menu.appendChild(popup);
         this._menuPopup = popup;
@@ -915,38 +906,61 @@ export class HarmonyPanel {
     }
 
     /**
-     * (Re)fill the "Master" submenu from the current candidate list and tick the
-     * designated one. Called when the menu is built and whenever the candidates
-     * or the selection change (setMasterContext). The submenu options are
-     * dynamic — built here, not in _buildMenu — because the object list varies.
+     * Build the visible phrase-sync "Master" control for the chart header: a
+     * small label + a dropdown listing "None" plus every candidate object (the
+     * ones carrying a beat pattern). Designating one makes its groove drive the
+     * chord changes and loops the whole chart as one unit (design/phrase-sync.md).
+     * The options are filled by _syncMasterControl, since the object list varies.
+     * @returns {HTMLElement}
      */
-    _populateMasterSubmenu() {
-        const submenu = this._masterSubmenu;
-        if (submenu === null) return;
-        submenu.innerHTML = "";
-        const current = this._masterObjectId;
+    _buildMasterControl() {
+        const wrap = document.createElement("label");
+        wrap.className = "harmony-master";
+        wrap.title = "The object whose groove drives the chord changes. "
+            + "The whole chart then loops as one unit.";
 
-        // "None" first — clears the designation.
-        const noneOpt = this._buildSubItem("None", !current, () => {
-            this._chooseMaster(null);
-            this._closeMenu();
+        const text = document.createElement("span");
+        text.className = "harmony-master-label";
+        text.textContent = "Master";
+        wrap.appendChild(text);
+
+        const select = document.createElement("select");
+        select.className = "harmony-master-select";
+        select.addEventListener("change", () => {
+            this._chooseMaster(select.value || null);
         });
-        noneOpt.dataset.master = "none";
-        submenu.appendChild(noneOpt);
+        this._masterSelect = select;
+        wrap.appendChild(select);
 
+        this._syncMasterControl();
+        return wrap;
+    }
+
+    /**
+     * (Re)fill the master dropdown from the current candidate list and select
+     * the designated object. Disabled (and forced to "None") when nothing in the
+     * scene carries a beat pattern. Called on build and on setMasterContext.
+     */
+    _syncMasterControl() {
+        const sel = this._masterSelect;
+        if (sel === null) return;
+        sel.innerHTML = "";
+        const none = document.createElement("option");
+        none.value = "";
+        none.textContent = "None";
+        sel.appendChild(none);
         for (const cand of this._masterCandidates) {
-            const opt = this._buildSubItem(cand.label, cand.id === current, () => {
-                this._chooseMaster(cand.id);
-                this._closeMenu();
-            });
-            opt.dataset.master = cand.id;
-            submenu.appendChild(opt);
+            const opt = document.createElement("option");
+            opt.value = cand.id;
+            opt.textContent = cand.label;
+            sel.appendChild(opt);
         }
-
-        if (this._masterValueEl !== null) {
-            const chosen = this._masterCandidates.find((c) => c.id === current);
-            this._masterValueEl.textContent = chosen ? chosen.label : "None";
-        }
+        const current = this._masterObjectId || "";
+        sel.value = current;
+        const noCandidates = this._masterCandidates.length === 0;
+        sel.disabled = noCandidates;
+        // Highlight when a master is actually driving the chords.
+        sel.classList.toggle("active", !noCandidates && current !== "");
     }
 
     /**
@@ -959,7 +973,7 @@ export class HarmonyPanel {
         const id = objectId === "" ? null : objectId;
         if (id === this._masterObjectId) return;
         this._masterObjectId = id;
-        this._populateMasterSubmenu();
+        this._syncMasterControl();
         if (this._onChangeMaster !== null) this._onChangeMaster(id);
     }
 
@@ -984,15 +998,6 @@ export class HarmonyPanel {
             const cur = noHarmony ? null : sanitiseUnwind(this._harmony.unwind);
             this._unwindValueEl.textContent = cur === null ? "No" : String(cur);
         }
-        // Master: disabled when nothing in the scene has a beat pattern to drive
-        // the changes. Refill the submenu so it reflects the latest candidates.
-        if (this._masterMenuItem !== null) {
-            const noCandidates = this._masterCandidates.length === 0;
-            this._masterMenuItem.classList.toggle("disabled", noCandidates);
-            if (noCandidates) this._masterMenuItem.setAttribute("aria-disabled", "true");
-            else this._masterMenuItem.removeAttribute("aria-disabled");
-        }
-        this._populateMasterSubmenu();
         this._syncMenuChecks();
     }
 

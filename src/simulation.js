@@ -2169,6 +2169,20 @@ export class Simulation {
      * @param {number} globalBeat
      * @returns {number}
      */
+    /**
+     * Public view of the harmony-lookup beat for a global beat — the base-cycle
+     * beat the chord chart should HIGHLIGHT so its now-playing bar matches the
+     * sounding chord. Under phrase-sync this is the master-slaved beat; without a
+     * master it's the global beat unchanged. Mirrors what _applyHarmonyToContext
+     * looks the chord up at, so the chart and the audio agree.
+     * @param {number} globalBeat
+     * @returns {number}
+     */
+    harmonyLookupBeat(globalBeat) {
+        if (typeof globalBeat !== "number" || !Number.isFinite(globalBeat)) return globalBeat;
+        return this._harmonyLookupBeat(globalBeat);
+    }
+
     _harmonyLookupBeat(globalBeat) {
         const scene = this._scene;
         if (scene === null) return globalBeat;

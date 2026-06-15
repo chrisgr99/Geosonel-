@@ -174,6 +174,18 @@ proportional stretch; (3) UI polish.
   boundary is armed (the two loops are mutually exclusive). It aligns exactly with
   2a's chart wrap (same global beat, period = numChartPhrases groove phrases), so
   the harmony continuity is unchanged; 2b only adds the motion reset.
+- **(3) DONE — UI polish.** The master picker moved from the chart's hamburger
+  menu to a VISIBLE labelled dropdown in the chart header ("Master ▾", beside the
+  Phrases toggle), per Chris's wish for a more discoverable location
+  (harmonyPanel.js `_buildMasterControl` / `_syncMasterControl`; styled in
+  css/inspector.css). It lists None + every beat-pattern object, disables when
+  there are none, and takes a light-orange accent when a master is actually
+  driving the chords. The hamburger "Master" entry is gone (no duplication).
+  The now-playing cursor is sync-aware too: the harmony beat sink (main.js) maps
+  the playhead beat through `simulation.harmonyLookupBeat` (a public view of the
+  slaving) before `setPlayhead`, so under sync the highlighted bar tracks the
+  chord the master's groove is on, not the wall-clock beat. Without a master it
+  returns the beat unchanged, so ordinary playback is untouched.
 - Settled with Chris for stage 2:
   - **Chord placement = snap to the master's onsets (option B), not proportional
     slide.** Within a groove phrase, a chord change lands on the master's beat

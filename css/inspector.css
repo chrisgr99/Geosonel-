@@ -1519,6 +1519,49 @@
     color: #ffd9b3;
 }
 
+/* Right-side header controls: the phrase-sync Master picker + the Phrases
+ * toggle, grouped so the song title stays left-aligned. */
+.harmony-chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+/* The phrase-sync Master picker: a label + a dropdown of beat-pattern objects. */
+.harmony-master {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10pt;
+    color: #cfcfcf;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.harmony-master-label { user-select: none; }
+.harmony-master-select {
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    height: 24px;
+    padding: 0 6px;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 10pt;
+    cursor: pointer;
+    max-width: 130px;
+    box-sizing: border-box;
+}
+.harmony-master-select:focus { outline: none; border-color: #9ec79e; }
+.harmony-master-select:disabled { opacity: 0.45; cursor: default; }
+/* A master is actively driving the chords: light-orange accent, matching the
+ * phrase lines and the sync. */
+.harmony-master-select.active {
+    background-color: #7a5a36;
+    border-color: #ffb266;
+    color: #ffd9b3;
+}
+
 /* While the tool is armed, bars invite a click. */
 .harmony-chart.phrase-tool-active .harmony-bar[data-bar-index] { cursor: crosshair; }
 

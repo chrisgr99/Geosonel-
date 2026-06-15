@@ -644,9 +644,14 @@ async function main() {
 
     // Harmony now-playing cursor. The canvas feeds the current global beat
     // each playing frame (null on stop); the Harmony tab's chord chart
-    // highlights the bar sounding at that beat.
+    // highlights the bar sounding at that beat. Under phrase-sync the sounding
+    // chord follows the MASTER's groove, not the wall clock, so map the beat
+    // through the same slaving the engine uses (harmonyLookupBeat) — without a
+    // master it returns the beat unchanged, so ordinary playback is untouched.
     canvas.setHarmonyBeatSink((beat) => {
-        if (editor.harmonyPanel) editor.harmonyPanel.setPlayhead(beat);
+        if (!editor.harmonyPanel) return;
+        const hb = beat === null ? null : simulation.harmonyLookupBeat(beat);
+        editor.harmonyPanel.setPlayhead(hb);
     });
 
     // Inspector hover-preview sink. As the pointer hovers an object on
