@@ -139,6 +139,17 @@ export function layoutChart(progression, key, mode, timeSignature) {
 
     const ensureBar = () => { if (current === null) startBar(); };
 
+    // A measure-repeat (simile) occupies its OWN bar. A common iReal idiom
+    // writes `C-7 XyQ Kcl` with NO barline before the repeat, meaning "bar 1 =
+    // C-7, bar 2 = repeat bar 1". So if the open bar already holds a real
+    // (non-empty) slot, close it first, or the simile would be swallowed into
+    // the chord's bar and that whole measure would vanish from the chart. This
+    // mirrors expandProgression's grouping, so the chart and playback agree on
+    // the bar count.
+    const breakBeforeSimile = () => {
+        if (current !== null && current.slots.some((s) => !s.empty)) closeBar();
+    };
+
     for (const cell of progression) {
         switch (cell.type) {
             case "chord":
@@ -162,14 +173,17 @@ export function layoutChart(progression, key, mode, timeSignature) {
                 break;
 
             case "repeatBar":
+                breakBeforeSimile();
                 ensureBar();
                 /** @type {ChartBar} */ (current).slots.push({ label: "%", simile: "single" });
                 break;
             case "repeatTwoBars":
+                breakBeforeSimile();
                 ensureBar();
                 /** @type {ChartBar} */ (current).slots.push({ label: "%%", simile: "double" });
                 break;
             case "repeatLastBar":
+                breakBeforeSimile();
                 ensureBar();
                 /** @type {ChartBar} */ (current).slots.push({ label: "%", simile: "last" });
                 break;
