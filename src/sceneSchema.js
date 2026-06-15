@@ -222,6 +222,16 @@ export const SCENE_FIELDS = [
         type: "boolean",
         default: true,
     },
+    {
+        // The phrase-sync MASTER: id of the beat-pattern object whose groove
+        // drives the chord clock (see design/phrase-sync.md). Null = none
+        // designated. Set from the Harmony chart's master dropdown, not a
+        // per-object field; one value, so it is naturally mutually exclusive.
+        key: "masterObjectId",
+        label: "Master Object",
+        type: "string",
+        default: null,
+    },
     { key: "tonic", label: "Tonic", type: "string", default: null },
     { key: "scaleName", label: "Scale", type: "string", default: null },
     { key: "root", label: "Root", type: "string", default: null },

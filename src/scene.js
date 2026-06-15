@@ -176,6 +176,16 @@ export class Scene {
         /** @type {boolean} */
         this.harmonyLoop = true;
 
+        // The beat-pattern object (curve/sprite/trigger, by id) designated as
+        // the MASTER: its groove is the master clock the chord changes follow,
+        // so chart phrases advance in step with its generated beat-pattern
+        // phrases (see design/phrase-sync.md). One value, so it is naturally
+        // mutually exclusive; null = none designated (the chord changes run on
+        // their own beat loop, the pre-phrase-sync behaviour). Chosen from a
+        // dropdown in the Harmony chart, not a per-object toggle.
+        /** @type {string | null} */
+        this.masterObjectId = null;
+
         // --- Harmony framework (score-level defaults). ---
         /** @type {string | null} */
         this.tonic = null;

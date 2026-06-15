@@ -60,6 +60,14 @@ test("autoPhrase: runs PAST the target to reach a cadence (up to the cap)", () =
     assert.deepEqual(phrases, [{ start: 0, end: 16 }, { start: 16, end: 36 }]);
 });
 
+test("autoPhrase: a sub-minimum tail is folded into the previous phrase", () => {
+    // 9 cadence-free bars → 4 + 4 + 1; the lone 1-bar tail is too short to stand
+    // alone, so it merges into the previous phrase → 4 + 5 (no 1-bar remainder).
+    const phrases = autoPhrase(harmonyOf(
+        ["C", "F", "C", "F", "C", "F", "C", "F", "C"]));
+    assert.deepEqual(phrases, [{ start: 0, end: 16 }, { start: 16, end: 36 }]);
+});
+
 test("autoPhrase: never exceeds the 8-bar cap", () => {
     // 16 cadence-free bars → four 4-bar phrases, none longer than 8.
     const phrases = autoPhrase(harmonyOf(Array(16).fill("C")));

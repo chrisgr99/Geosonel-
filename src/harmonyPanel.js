@@ -163,6 +163,15 @@ export class HarmonyPanel {
          */
         this._onEditPhrases = null;
 
+        /**
+         * Master-object callback wired by main.js. Receives the chosen object
+         * id (e.g. "CRV1") or null for "None"; main.js sets scene.masterObjectId
+         * and re-runs. The master's groove drives the chord clock (phrase-sync;
+         * see design/phrase-sync.md). Null until wired.
+         * @type {((objectId: string | null) => void) | null}
+         */
+        this._onChangeMaster = null;
+
         // --- Picker state ---
 
         /** Selected playlist id, or SCOPE_ALL. */
@@ -209,6 +218,20 @@ export class HarmonyPanel {
          */
         this._displayMode = "letter";
 
+        /**
+         * The currently designated master object id, or null for none. Pushed
+         * in from main.js via setMasterContext after each scene load/re-run.
+         * @type {string | null}
+         */
+        this._masterObjectId = null;
+        /**
+         * Candidate master objects (those with a beat pattern), pushed in from
+         * main.js via setMasterContext. Each is {id, label} where label is a
+         * human-readable name for the dropdown (id, plus the user's name if set).
+         * @type {Array<{ id: string, label: string }>}
+         */
+        this._masterCandidates = [];
+
         // --- DOM handles (filled by _render) ---
         /** @type {HTMLSelectElement | null} */
         this._playlistSelect = null;
@@ -248,6 +271,12 @@ export class HarmonyPanel {
         this._unwindMenuItem = null;
         /** The "Unwind" row's current-value span. @type {HTMLElement | null} */
         this._unwindValueEl = null;
+        /** The "Master" menu row. @type {HTMLElement | null} */
+        this._masterMenuItem = null;
+        /** The "Master" row's current-value span. @type {HTMLElement | null} */
+        this._masterValueEl = null;
+        /** The "Master" row's flyout submenu (rebuilt as candidates change). @type {HTMLElement | null} */
+        this._masterSubmenu = null;
         /** Whether the hamburger popup is open. */
         this._menuOpen = false;
 
@@ -352,6 +381,29 @@ export class HarmonyPanel {
     }
 
     /**
+     * Wire the master-object callback (main.js owns the scene edit + re-run).
+     * @param {(objectId: string | null) => void} cb
+     */
+    onChangeMaster(cb) {
+        this._onChangeMaster = cb;
+    }
+
+    /**
+     * Reflect the scene's phrase-sync master state into the panel (the INBOUND
+     * direction; onChangeMaster is the outbound one). main.js calls this after
+     * each scene load/re-run with the list of candidate beat-pattern objects and
+     * the currently designated master id (or null). Re-syncs the "Master" menu
+     * row's value and submenu ticks.
+     * @param {Array<{ id: string, label: string }>} candidates  objects with a beat pattern
+     * @param {string | null} masterObjectId  the designated master, or null for none
+     */
+    setMasterContext(candidates, masterObjectId) {
+        this._masterCandidates = Array.isArray(candidates) ? candidates : [];
+        this._masterObjectId = typeof masterObjectId === "string" ? masterObjectId : null;
+        this._syncMenuState();
+    }
+
+    /**
      * Reflect the scene's current harmony into the panel (the INBOUND
      * direction; onChooseSong is the outbound one). main.js calls this
      * after every scene load/re-run with `scene.harmony` (or null), so both
@@ -413,6 +465,9 @@ export class HarmonyPanel {
         this._keyMenuItem = null;
         this._unwindMenuItem = null;
         this._unwindValueEl = null;
+        this._masterMenuItem = null;
+        this._masterValueEl = null;
+        this._masterSubmenu = null;
         this._menuOpen = false;
 
         const playlists = listPlaylists();
@@ -840,10 +895,72 @@ export class HarmonyPanel {
         }
         popup.appendChild(unwindItem.item);
 
+        // "Master" entry — which beat-pattern object's groove drives the chord
+        // clock (phrase-sync; see design/phrase-sync.md). The submenu lists
+        // "None" plus every candidate object, rebuilt from the candidate list
+        // (which changes as objects come and go), so it is filled dynamically
+        // rather than statically like Key/Unwind. Disabled when nothing in the
+        // scene has a beat pattern to drive the changes.
+        const masterItem = this._buildMenuItem("Master");
+        this._masterMenuItem = masterItem.item;
+        this._masterValueEl = masterItem.value;
+        this._masterSubmenu = masterItem.submenu;
+        popup.appendChild(masterItem.item);
+        this._populateMasterSubmenu();
+
         menu.appendChild(popup);
         this._menuPopup = popup;
         this._syncMenuState();
         return menu;
+    }
+
+    /**
+     * (Re)fill the "Master" submenu from the current candidate list and tick the
+     * designated one. Called when the menu is built and whenever the candidates
+     * or the selection change (setMasterContext). The submenu options are
+     * dynamic — built here, not in _buildMenu — because the object list varies.
+     */
+    _populateMasterSubmenu() {
+        const submenu = this._masterSubmenu;
+        if (submenu === null) return;
+        submenu.innerHTML = "";
+        const current = this._masterObjectId;
+
+        // "None" first — clears the designation.
+        const noneOpt = this._buildSubItem("None", !current, () => {
+            this._chooseMaster(null);
+            this._closeMenu();
+        });
+        noneOpt.dataset.master = "none";
+        submenu.appendChild(noneOpt);
+
+        for (const cand of this._masterCandidates) {
+            const opt = this._buildSubItem(cand.label, cand.id === current, () => {
+                this._chooseMaster(cand.id);
+                this._closeMenu();
+            });
+            opt.dataset.master = cand.id;
+            submenu.appendChild(opt);
+        }
+
+        if (this._masterValueEl !== null) {
+            const chosen = this._masterCandidates.find((c) => c.id === current);
+            this._masterValueEl.textContent = chosen ? chosen.label : "None";
+        }
+    }
+
+    /**
+     * Apply a master-object choice (an object id, or null to clear). No-op
+     * without a wired callback or when unchanged. main.js sets
+     * scene.masterObjectId and re-runs.
+     * @param {string | null} objectId
+     */
+    _chooseMaster(objectId) {
+        const id = objectId === "" ? null : objectId;
+        if (id === this._masterObjectId) return;
+        this._masterObjectId = id;
+        this._populateMasterSubmenu();
+        if (this._onChangeMaster !== null) this._onChangeMaster(id);
     }
 
     /**
@@ -867,6 +984,15 @@ export class HarmonyPanel {
             const cur = noHarmony ? null : sanitiseUnwind(this._harmony.unwind);
             this._unwindValueEl.textContent = cur === null ? "No" : String(cur);
         }
+        // Master: disabled when nothing in the scene has a beat pattern to drive
+        // the changes. Refill the submenu so it reflects the latest candidates.
+        if (this._masterMenuItem !== null) {
+            const noCandidates = this._masterCandidates.length === 0;
+            this._masterMenuItem.classList.toggle("disabled", noCandidates);
+            if (noCandidates) this._masterMenuItem.setAttribute("aria-disabled", "true");
+            else this._masterMenuItem.removeAttribute("aria-disabled");
+        }
+        this._populateMasterSubmenu();
         this._syncMenuChecks();
     }
 

@@ -168,6 +168,23 @@ export function autoPhrase(harmony) {
         });
         start = endBar + 1;
     }
+
+    // Avoid very short phrases. A sub-minimum span — typically a one-bar
+    // cadential remainder left at the tail — shouldn't stand on its own: fold it
+    // into a neighbour (the previous phrase, or the next when it's the very
+    // first). This keeps phrase lengths in a sane band, which also keeps the
+    // phrase-sync stretch ratios clean (see design/phrase-sync.md).
+    const minBeats = MIN_BARS * beatsPerBar;
+    for (let i = phrases.length - 1; i >= 0 && phrases.length > 1; i -= 1) {
+        if (phrases[i].end - phrases[i].start >= minBeats) continue;
+        if (i > 0) {
+            phrases[i - 1].end = phrases[i].end; // fold into the previous
+            phrases.splice(i, 1);
+        } else {
+            phrases[1].start = phrases[0].start; // first phrase: fold into the next
+            phrases.splice(0, 1);
+        }
+    }
     return phrases;
 }
 

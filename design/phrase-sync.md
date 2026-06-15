@@ -127,6 +127,28 @@ the skeleton and the groove fills each phrase exactly.
   now RESTS instead of emitting an inaudible click (src/simulation.js,
   MIN_AUDIBLE_DURATION_SECONDS).
 
+## Build status
+
+Staged: (1) master designation + autoPhrase tweak; (2) harmony-slaving +
+proportional stretch; (3) UI polish.
+
+- **(1) DONE.** `scene.masterObjectId` (a top-level nullable string; scene.js,
+  sceneLoader.js, sceneSchema.js) names the master object. One value, so it is
+  naturally mutually exclusive — designating a new one replaces the old. Set via
+  `setSceneMasterObjectId` (sceneEditor.js, validates the id exists / clears a
+  dangling one). UI: a **"Master" entry in the Harmony chart's hamburger menu**
+  (alongside Chords / Key / Unwind), a flyout listing "None" + every candidate
+  object — chosen at Chris's suggestion over per-object toggles, since one
+  dropdown where the chords live reads clearer. Candidates = objects with a beat
+  pattern (`beatPointsMode !== "none"`), built in main.js (`buildMasterCandidates`)
+  and pushed via `harmonyPanel.setMasterContext`; the pick dispatches through
+  `applySceneEdit`. NO behaviour yet — the field is stored and surfaced; the
+  slaving is stage 2. `autoPhrase` also TWEAKED: a sub-minimum tail phrase now
+  folds into a neighbour (no 1-bar remainders), keeping lengths in a sane band.
+- **(2) next** — harmony lookup becomes phrase-relative off the master's groove
+  progress; chart phrases stretch to fit. Nothing reads `masterObjectId` until
+  this lands.
+
 ## Relationship to compose-by-phrases
 
 This is [variations-and-repeats.md](variations-and-repeats.md)'s "compose by
