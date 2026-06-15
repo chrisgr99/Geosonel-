@@ -369,6 +369,13 @@ export class Inspector {
     }
 
     _render() {
+        // A re-render (a commit re-running the scene, a hover preview, a
+        // selection change, playback) rebuilds the whole form, which would drop
+        // focus from a field the user is editing — and then a stray Backspace/
+        // Delete falls through to the canvas's delete-selection handler. Capture
+        // the focused field + caret here and restore them after the rebuild so
+        // editing survives a re-render.
+        const focusKey = this._captureFieldFocus();
         this.container.innerHTML = "";
 
         // A rebuild destroys the Object ID picker's trigger (and orphans
@@ -463,6 +470,66 @@ export class Inspector {
         panel.appendChild(spacer);
 
         this.container.appendChild(panel);
+        this._restoreFieldFocus(focusKey);
+    }
+
+    /**
+     * Capture the currently-focused editable inspector field so {@link
+     * _restoreFieldFocus} can re-focus it after a rebuild. Returns null unless
+     * the active element is an editable field INSIDE this inspector carrying a
+     * data-edit-kind key — so a re-render driven by the user moving focus away
+     * (clicking a canvas object, the Script tab) never re-steals it. Records the
+     * caret/selection offsets so the cursor lands where it was.
+     * @returns {{ editKind: string, start: number, end: number } | null}
+     */
+    _captureFieldFocus() {
+        const a = document.activeElement;
+        if (!(a instanceof HTMLElement)) return null;
+        if (!this.container.contains(a)) return null;
+        const editKind = a.dataset.editKind;
+        if (typeof editKind !== "string" || editKind === "") return null;
+        if (a.tagName === "INPUT" || a.tagName === "TEXTAREA") {
+            const inp = /** @type {HTMLInputElement} */ (a);
+            return { editKind, start: inp.selectionStart ?? 0, end: inp.selectionEnd ?? 0 };
+        }
+        // contenteditable: offsets within its single text node.
+        const sel = window.getSelection();
+        if (sel !== null && sel.rangeCount > 0) {
+            const r = sel.getRangeAt(0);
+            if (a.contains(r.startContainer)) {
+                return { editKind, start: r.startOffset, end: r.endOffset };
+            }
+        }
+        return { editKind, start: 0, end: 0 };
+    }
+
+    /**
+     * Re-focus the field captured by {@link _captureFieldFocus} after a rebuild
+     * and restore its caret, clamped to the (possibly changed) text length. A
+     * no-op when nothing was captured or the field no longer exists (e.g. the
+     * selection changed so the band is gone).
+     * @param {{ editKind: string, start: number, end: number } | null} key
+     */
+    _restoreFieldFocus(key) {
+        if (key === null) return;
+        const el = this.container.querySelector(`[data-edit-kind="${CSS.escape(key.editKind)}"]`);
+        if (!(el instanceof HTMLElement)) return;
+        el.focus();
+        if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+            const inp = /** @type {HTMLInputElement} */ (el);
+            const len = inp.value.length;
+            try { inp.setSelectionRange(Math.min(key.start, len), Math.min(key.end, len)); } catch (_e) { /* ignore */ }
+            return;
+        }
+        const node = el.firstChild;
+        if (node !== null && node.nodeType === Node.TEXT_NODE) {
+            const len = (node.textContent ?? "").length;
+            const r = document.createRange();
+            r.setStart(node, Math.min(key.start, len));
+            r.setEnd(node, Math.min(key.end, len));
+            const sel = window.getSelection();
+            if (sel !== null) { sel.removeAllRanges(); sel.addRange(r); }
+        }
     }
 }
 

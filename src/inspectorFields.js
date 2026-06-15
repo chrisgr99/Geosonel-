@@ -215,6 +215,9 @@ export const fieldMethods = {
         el.setAttribute("contenteditable", "plaintext-only");
         el.setAttribute("spellcheck", "false");
         el.textContent = opts.value;
+        // Stable key so the inspector can restore focus + caret to this field
+        // after a re-render rebuilds the form (see Inspector._render).
+        if (typeof opts.editKind === "string") el.dataset.editKind = opts.editKind;
 
         // Focus selection. Mouse focus leaves the caret at
         // the click position so a single click positions
@@ -791,6 +794,7 @@ export const fieldMethods = {
 
         el.setAttribute("contenteditable", "plaintext-only");
         el.setAttribute("spellcheck", "false");
+        if (typeof opts.editKind === "string") el.dataset.editKind = opts.editKind;
 
         // The displayed name is the committed binding if there is one,
         // otherwise the proposed default — shown as ORDINARY editable
@@ -949,6 +953,8 @@ export const fieldMethods = {
         input.spellcheck = false;
         if (opts.ariaLabel) input.setAttribute("aria-label", opts.ariaLabel);
         input.value = opts.value ?? "";
+        // Stable key for focus restoration across an inspector re-render.
+        if (typeof opts.editKind === "string") input.dataset.editKind = opts.editKind;
         if (!opts.editable) {
             input.classList.add("disabled");
             input.disabled = true;
