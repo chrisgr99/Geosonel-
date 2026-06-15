@@ -110,24 +110,26 @@ independent variations, keep the index in pocket.
 
 ## Swing
 
-Represented in the GRID via a TRIPLET subdivision, not a separate timing
-parameter. The beat-interval table already carries triplet intervals — `Qtr Tr`
-is a triplet within a quarter (three slots per quarter beat), plus `8th Tr` /
-`Half Tr`. Choose a triplet interval and swing is just a pattern: a tick on
-slots 1 & 3 of each triplet (`x.x`) is a swing eighth; ticking all three (`xxx`)
-is a straight triplet. This is grid-native (no scheduler timing math), fully
-deterministic, and flexible — every triplet feel (swing, shuffle, straight
-triplets, 6/8 gallops) is one pattern over the same grid.
+No special machinery — swing FALLS OUT of the existing model, where the grid
+encodes ONSET POSITIONS only and note DURATION is set by the callback
+(`playNote`'s duration argument), never by the grid.
 
-Trade-off: the swing ratio is fixed at the triplet 2:1 — "close enough" for our
-purposes. Real swing is lighter/harder and tempo-dependent; a continuous
-timing-offset could be layered on later (not mutually exclusive — it could even
-nudge the triplet grid), but it's deferred.
+Choose an even subdivision (e.g. `8th`) and group it in threes; onsets on slots
+1 & 3 of each group (`x.x`) give the long-short swing spacing — the first onset
+spans two slots, the second spans one, a 2:1 feel — and ticking all three
+(`xxx`) gives straight triplets. The notes' actual sustain (legato vs staccato)
+is the callback's concern; the swing lives in the onset spacing. So swing,
+shuffle, and triplets are all just onset placements on an even grid grouped in
+threes — nothing swing-specific to build.
 
-Auto needs no special swing logic: a swing/jazz GENRE is a triplet-grid preset
-(`Qtr Tr`) whose metric weighting favours the 1 & 3 triplet positions (the swing
-eighths) and leaves the middle slot weak — the generator then produces swing
-patterns naturally from subdivision + position weights.
+(The triplet beat intervals `Qtr Tr` / `8th Tr` are an alternative route to the
+same feel — three slots per beat — but aren't required; plain subdivision + a
+group-of-three already does it. The ratio is the grid's 2:1, "close enough"; a
+continuous timing nudge stays a deferred option.)
+
+For Auto, a swing/shuffle GENRE just groups onsets in threes and favours slots 1
+& 3 — the generator places onsets + strength, durations stay the script's
+concern, exactly as Manual and Euclidean already work.
 
 ## Calibration knobs (the creative surface)
 
@@ -162,8 +164,8 @@ a style, a popover is for AUTHORING one.
 - Row 1 (character): `Source: Auto` · `Style ▾` (with an "Edit… / New…"
   affordance) · `Genre ▾` (optional, neutral default)
 - Row 2 (grid & length): `Beat Interval ▾` · `Beats / Bar` · `Beats / Phrase` ·
-  `Repeats`. (Swing is not a field — it's a triplet beat interval, e.g. `Qtr
-  Tr`; see Swing below.)
+  `Repeats`. (Swing is not a field — it emerges from onset placement on an even
+  grid grouped in threes; see Swing below.)
 - Result (read-only, Euclidean-style locked fields): `Active Beats` (locked) ·
   `Beat Strength` (locked) — show both, so you see the whole generated result.
 
