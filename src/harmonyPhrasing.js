@@ -46,6 +46,56 @@ const MAX_BARS = 8;
 const MIN_BARS = 2;
 
 /**
+ * The automatic BREATH at a phrase's tail: the line releases this many beats
+ * before the phrase ends, so a wind player (or the ear) gets a short pause
+ * before the next phrase, the way real phrases breathe — even when the spans
+ * sit edge to edge with no drawn gap. A fraction of a beat, so the breath is
+ * short and independent of the beat-point grid (it shortens the last note's
+ * sounding, rather than resting a whole beat point).
+ */
+const BREATH_BEATS = 0.5;
+/** …applied only when at least this many beats remain voiced (don't gut a short phrase). */
+const MIN_VOICED_BEATS = 2;
+
+/**
+ * Resolve the phrase state at a base-cycle beat for the melodic line. What a
+ * voice reads:
+ *   - `inGap`  — a real gap between phrases (or outside them all). Every phrased
+ *     voice rests here; it's deliberate silence.
+ *   - `release` — beats this note may sound before the phrase's auto-breath
+ *     (`(end - BREATH) - beat`), or null when the phrase is too short to breathe
+ *     (or the beat is in a gap). A BREATHING voice caps its note to this so the
+ *     line releases just before the next phrase; a value <= 0 means the beat
+ *     itself falls in the breath tail (rest it). A bass / accompaniment ignores
+ *     `release` and plays through.
+ *   - `atStart` / `atEnd` — anchor the first beat to a primary tone and the last
+ *     beat to a cadential tone.
+ *
+ * `beat` must already be folded into [0, cycle). Returns null when there are no
+ * phrases (the line plays continuously).
+ *
+ * @param {PhraseSpan[]} phrases  spans in base-cycle beats
+ * @param {number} beat           a base-cycle beat
+ * @returns {{ inGap: boolean, release: number | null, atStart: boolean, atEnd: boolean } | null}
+ */
+export function phraseStateAt(phrases, beat) {
+    if (!Array.isArray(phrases) || phrases.length === 0) return null;
+    for (const p of phrases) {
+        if (beat >= p.start && beat < p.end) {
+            const breathes = (p.end - p.start) - BREATH_BEATS >= MIN_VOICED_BEATS;
+            const release = breathes ? (p.end - BREATH_BEATS) - beat : null;
+            return {
+                inGap: false,
+                release,
+                atStart: beat < p.start + 1,
+                atEnd: beat >= p.end - 1,
+            };
+        }
+    }
+    return { inGap: true, release: null, atStart: false, atEnd: false };
+}
+
+/**
  * Whether a chord is the DOMINANT (scale degree 5, diatonic root) — the chord
  * that resolves at an authentic cadence. Quality is not required: degree 5
  * resolving to degree 1 is signal enough, and constraining the resolution to a

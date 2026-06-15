@@ -147,6 +147,10 @@ function clamp01(v) {
  * @property {number} [descendBias]   multiplier for descending candidates
  * @property {number} [lead]          voice-leading boost into the next chord
  * @property {number} [gravity]       pull toward the register centre
+ * @property {boolean} [breathe]      take the automatic phrase-end breath (rest
+ *   the phrase's last beat). True for singing voices (melody/lead); set false
+ *   for a continuous foundation (bass, accompaniment) that plays through.
+ *   Defaults to true when unset.
  */
 
 /**
@@ -158,17 +162,18 @@ export const styles = Object.freeze({
     // Singable mid-register line: mostly steps, chord tones on strong beats.
     melody: Object.freeze({
         scale: "key", range: [60, 84], smoothness: 0.75, chordLock: 0.55,
-        descendBias: 1.1, lead: 1.8, gravity: 0.4,
+        descendBias: 1.1, lead: 1.8, gravity: 0.4, breathe: true,
     }),
-    // Low, narrow, root on the change, walks to the next root.
+    // Low, narrow, root on the change, walks to the next root. A foundation
+    // voice: it plays THROUGH phrase ends (no breath).
     bass: Object.freeze({
         scale: "key", range: [36, 55], smoothness: 0.55, chordLock: 0.85,
-        rootPull: 4, descendBias: 1.0, lead: 2.5, gravity: 0.5,
+        rootPull: 4, descendBias: 1.0, lead: 2.5, gravity: 0.5, breathe: false,
     }),
     // Lead-guitar feel: high, minor-pentatonic, leapier and looser on the chord.
     lead: Object.freeze({
         scale: "minorPentatonic", range: [64, 88], smoothness: 0.5, chordLock: 0.4,
-        descendBias: 1.0, lead: 1.4, gravity: 0.3,
+        descendBias: 1.0, lead: 1.4, gravity: 0.3, breathe: true,
     }),
 });
 

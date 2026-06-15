@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { autoPhrase } from "../src/harmonyPhrasing.js";
+import { autoPhrase, phraseStateAt } from "../src/harmonyPhrasing.js";
 import { parseChord, parseKey } from "../src/irealChord.js";
 
 const KEY = parseKey("C"); // C major: C=I (degree 1), G=V (degree 5)
@@ -82,4 +82,54 @@ test("autoPhrase: empty / malformed input yields no phrases", () => {
     assert.deepEqual(autoPhrase(null), []);
     assert.deepEqual(autoPhrase({ progression: [], timeSignature: [4, 4] }), []);
     assert.deepEqual(autoPhrase({ timeSignature: [4, 4] }), []);
+});
+
+// ---- phraseStateAt: gate, anchor, and the automatic breath ----------
+
+test("phraseStateAt: no phrases → null (continuous line)", () => {
+    assert.equal(phraseStateAt([], 4), null);
+    assert.equal(phraseStateAt(undefined, 4), null);
+});
+
+test("phraseStateAt: a beat between phrases rests (a gap)", () => {
+    const phrases = [{ start: 0, end: 8 }, { start: 16, end: 24 }];
+    assert.deepEqual(phraseStateAt(phrases, 12),
+        { inGap: true, release: null, atStart: false, atEnd: false });
+});
+
+test("phraseStateAt: the last note releases early for the auto-breath", () => {
+    // [0,8): BREATH 0.5. Beat 7 is the last beat → cadential anchor, and may
+    // sound (8 - 0.5) - 7 = 0.5 beats before the breath.
+    const phrases = [{ start: 0, end: 8 }];
+    assert.deepEqual(phraseStateAt(phrases, 7),
+        { inGap: false, release: 0.5, atStart: false, atEnd: true });
+    // A mid-phrase beat plays; its release is large (no real cap), no anchor.
+    assert.deepEqual(phraseStateAt(phrases, 3),
+        { inGap: false, release: 4.5, atStart: false, atEnd: false });
+    // The first beat anchors to a primary tone.
+    assert.deepEqual(phraseStateAt(phrases, 0),
+        { inGap: false, release: 7.5, atStart: true, atEnd: false });
+});
+
+test("phraseStateAt: a beat in the breath tail has release <= 0 (rest it)", () => {
+    // A fine-grid beat point at 7.6 sits past the breath point (7.5).
+    const phrases = [{ start: 0, end: 8 }];
+    assert.ok(phraseStateAt(phrases, 7.6).release <= 0);
+});
+
+test("phraseStateAt: a very short phrase is not gutted by the breath", () => {
+    // len 2 → would leave only 1.5 voiced beats (< MIN_VOICED) → no breath.
+    const phrases = [{ start: 0, end: 2 }];
+    const s = phraseStateAt(phrases, 1);
+    assert.equal(s.inGap, false);
+    assert.equal(s.release, null); // no breath: plays full
+    assert.equal(s.atEnd, true);
+});
+
+test("phraseStateAt: the breath is distinct from a drawn gap after the phrase", () => {
+    const phrases = [{ start: 0, end: 8 }, { start: 16, end: 24 }];
+    assert.equal(phraseStateAt(phrases, 7).release, 0.5);  // auto-breath (note caps)
+    assert.equal(phraseStateAt(phrases, 7).inGap, false);
+    assert.equal(phraseStateAt(phrases, 10).inGap, true);  // drawn gap
+    assert.equal(phraseStateAt(phrases, 10).release, null);
 });

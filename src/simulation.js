@@ -262,12 +262,14 @@ import {
 import {
     setCallbackContext,
     clearCallbackContext,
+    getCallbackContext,
     setCallbackHarmony,
     clearCallbackHarmony,
     clearMelodyState,
 } from "./callbackContext.js";
 import { HarmonyPlayer, expandProgression } from "./harmonyPlayer.js";
 import { applyUnwind } from "./harmonyUnwind.js";
+import { phraseStateAt } from "./harmonyPhrasing.js";
 import { chordStructure } from "./harmonyMap.js";
 import { EventTrace } from "./eventTrace.js";
 import { sampleCurve, shapeCenter } from "./curveGeometry.js";
@@ -1509,6 +1511,21 @@ export class Simulation {
             trimmedObject = true;
         }
 
+        // (2b) Phrase BREATH: a breathing voice's nxtNote stamps the firing
+        // context with how many beats the note may sound before the phrase's
+        // auto-breath (_breathReleaseBeats). Cap the duration so the line
+        // releases just before the next phrase. A no-op away from a phrase tail
+        // (the cap is large there) and for non-breathing voices (never stamped).
+        const fctx = getCallbackContext();
+        if (fctx !== null
+            && typeof fctx._breathReleaseBeats === "number"
+            && fctx._breathReleaseBeats > 0
+            && typeof fctx.bpm === "number" && fctx.bpm > 0
+            && typeof spec.duration === "number" && Number.isFinite(spec.duration)) {
+            const releaseSec = (fctx._breathReleaseBeats * 60) / fctx.bpm;
+            if (releaseSec < spec.duration) spec.duration = releaseSec;
+        }
+
         // (3) Suppress-new: prune expired notes, then count each scope.
         this._voiceRegistry.prune(now);
         const suppress = shouldSuppress({
@@ -2087,9 +2104,10 @@ export class Simulation {
      * the same phrases then apply to every unwind copy and every loop.
      *
      * Returns null when no phrase grid is defined (the line plays continuously,
-     * as before). Otherwise { inGap, atStart, atEnd } for this beat — inGap when
-     * the beat falls outside every span; atStart/atEnd when it lands within one
-     * beat of a containing span's start/end (beat-resolution boundaries).
+     * as before). Otherwise { inGap, atStart, atEnd } — see {@link phraseStateAt},
+     * which also rests each phrase's last beat as an automatic breath. We fold
+     * the global beat into the base cycle here, then delegate the (pure) span
+     * logic.
      *
      * @param {number} beat  the current global beat
      * @returns {{ inGap: boolean, atStart: boolean, atEnd: boolean } | null}
@@ -2099,14 +2117,8 @@ export class Simulation {
         const phrases = harmony ? harmony.phrases : null;
         if (!phrases || phrases.length === 0) return null;
         const cycle = this._harmonyBaseCycleBeats;
-        let b = beat;
-        if (cycle > 0) b = ((beat % cycle) + cycle) % cycle;
-        for (const p of phrases) {
-            if (b >= p.start && b < p.end) {
-                return { inGap: false, atStart: b < p.start + 1, atEnd: b >= p.end - 1 };
-            }
-        }
-        return { inGap: true, atStart: false, atEnd: false };
+        const b = cycle > 0 ? ((beat % cycle) + cycle) % cycle : beat;
+        return phraseStateAt(phrases, b);
     }
 
     /**

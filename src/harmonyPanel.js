@@ -37,7 +37,12 @@ import {
 import { layoutChart, groupRows, formatChordParts, buildBarPlayback } from "./harmonyChartLayout.js";
 import { applyUnwind, sanitiseUnwind } from "./harmonyUnwind.js";
 import { expandProgression } from "./harmonyPlayer.js";
-import { phraseSegments, beatAtFraction, locateBeat } from "./harmonyPhraseGeometry.js";
+import {
+    phraseSegments,
+    beatAtSegmentFraction,
+    locateBeat,
+    segmentForBar,
+} from "./harmonyPhraseGeometry.js";
 
 const SCOPE_ALL = "all";
 
@@ -255,10 +260,13 @@ export class HarmonyPanel {
          * gesture is mid-flight). @type {Array<{start: number, end: number}>}
          */
         this._phrasesLocal = [];
-        /** Base-cycle length in beats (folded-progression total). Rebuilt by _renderChart. */
+        /**
+         * Base-cycle length in beats (folded-progression expanded total) — the
+         * span phrases are authored in. Used to fold the playback timeline onto
+         * one cycle so phrases repeat across unwind copies. Rebuilt by
+         * _renderChart.
+         */
         this._baseCycle = 0;
-        /** Laid-out displayed bars from the last _renderChart (for click mapping). @type {any[]} */
-        this._displayBars = [];
         /** Whether the phrase drawing tool is armed. */
         this._phraseTool = false;
         /** First click of a two-click create: a base-cycle beat, or null. @type {number | null} */
@@ -1007,7 +1015,6 @@ export class HarmonyPanel {
         this._playback = [];
         this._playbackTotal = 0;
         this._nowBarIndex = -1;
-        this._displayBars = [];
         this._baseCycle = 0;
 
         if (this._harmony === null) {
@@ -1034,7 +1041,6 @@ export class HarmonyPanel {
             this._displayMode,
             h.timeSignature,
         );
-        this._displayBars = bars;
 
         if (bars.length === 0) {
             const hint = document.createElement("div");
@@ -1101,7 +1107,7 @@ export class HarmonyPanel {
         for (const old of chart.querySelectorAll(".harmony-phrase-line, .harmony-phrase-handle")) {
             old.remove();
         }
-        const segs = phraseSegments(this._displayBars, this._baseCycle, this._phrasesLocal);
+        const segs = phraseSegments(this._playback, this._baseCycle, this._phrasesLocal);
         for (const seg of segs) {
             const cell = chart.querySelector(
                 `.harmony-bar[data-bar-index="${seg.barIndex}"]`);
@@ -1139,7 +1145,7 @@ export class HarmonyPanel {
     _placeHandle(beat, edge) {
         const chart = this._chartEl;
         if (chart === null) return;
-        const loc = locateBeat(this._displayBars, this._baseCycle, beat, edge === "end");
+        const loc = locateBeat(this._playback, this._baseCycle, beat, edge === "end");
         if (loc === null) return;
         const cell = chart.querySelector(`.harmony-bar[data-bar-index="${loc.barIndex}"]`);
         if (cell === null) return;
@@ -1163,7 +1169,7 @@ export class HarmonyPanel {
     _placePending(beat) {
         const chart = this._chartEl;
         if (chart === null) return;
-        const loc = locateBeat(this._displayBars, this._baseCycle, beat, false);
+        const loc = locateBeat(this._playback, this._baseCycle, beat, false);
         if (loc === null) return;
         const cell = chart.querySelector(`.harmony-bar[data-bar-index="${loc.barIndex}"]`);
         if (cell === null) return;
@@ -1220,24 +1226,26 @@ export class HarmonyPanel {
             this._renderPhrases();
             return;
         }
-        const bar = this._barFromCell(/** @type {HTMLElement} */ (cell));
-        if (bar === null) return;
-        const beat = this._beatAtEvent(/** @type {HTMLElement} */ (cell), bar, e.clientX);
+        const beat = this._beatAtEvent(/** @type {HTMLElement} */ (cell), e.clientX);
+        if (beat === null) return;
         this._onPhraseClickBeat(beat);
     }
 
-    /** The displayed ChartBar for a bar cell, or null. */
-    _barFromCell(cell) {
-        const idx = Number(cell.dataset.barIndex);
-        const bar = this._displayBars.find((b) => b.index === idx);
-        return bar === undefined ? null : bar;
-    }
-
-    /** The snapped base-cycle beat at a client-x over a bar cell. */
-    _beatAtEvent(cell, bar, clientX) {
+    /**
+     * The snapped base-cycle beat at a client-x over a bar cell. Maps the bar
+     * to its (pass-one) playback-timeline segment, so the beat lands in the
+     * EXPANDED space the engine and the stored phrases use — not the bar's
+     * folded beatStart. Returns null when the bar isn't on the timeline.
+     * @param {HTMLElement} cell
+     * @param {number} clientX
+     * @returns {number | null}
+     */
+    _beatAtEvent(cell, clientX) {
+        const seg = segmentForBar(this._playback, Number(cell.dataset.barIndex));
+        if (seg === null) return null;
         const rect = cell.getBoundingClientRect();
         const frac = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
-        return beatAtFraction(bar, frac, this._baseCycle);
+        return beatAtSegmentFraction(seg, frac, this._baseCycle);
     }
 
     /**
@@ -1310,18 +1318,44 @@ export class HarmonyPanel {
         if (this._dragHandle === null) return;
         const cell = this._barCellAtPoint(e.clientX, e.clientY);
         if (cell === null) return;
-        const bar = this._barFromCell(cell);
-        if (bar === null) return;
-        const beat = this._beatAtEvent(cell, bar, e.clientX);
+        const beat = this._beatAtEvent(cell, e.clientX);
+        if (beat === null) return;
         const p = this._phrasesLocal[this._dragHandle.phraseIndex];
         if (p === undefined) return;
-        // Keep the span at least a beat wide; the moving edge can't cross the other.
+        // Clamp the moving edge: at least a beat wide, not across the span's own
+        // far edge, and STOPPING at the neighbouring span (no overlap, no push).
         if (this._dragHandle.edge === "start") {
-            if (beat <= p.end - 1) p.start = beat;
-        } else if (beat >= p.start + 1) {
-            p.end = beat;
+            const floor = this._neighbourBound("start", p);
+            p.start = Math.min(p.end - 1, Math.max(beat, floor));
+        } else {
+            const ceil = this._neighbourBound("end", p);
+            p.end = Math.max(p.start + 1, Math.min(beat, ceil));
         }
         this._renderPhrases();
+    }
+
+    /**
+     * The limit a dragged edge of phrase `p` may not cross: the START of the
+     * nearest span to its right (for the "end" edge) or the END of the nearest
+     * span to its left (for the "start" edge). Spans never overlap, so a right
+     * neighbour has start >= p.start and a left neighbour has end <= p.end.
+     * @param {"start" | "end"} edge
+     * @param {{ start: number, end: number }} p
+     * @returns {number}
+     */
+    _neighbourBound(edge, p) {
+        if (edge === "end") {
+            let bound = Infinity;
+            for (const o of this._phrasesLocal) {
+                if (o !== p && o.start >= p.start && o.start < bound) bound = o.start;
+            }
+            return bound;
+        }
+        let bound = -Infinity;
+        for (const o of this._phrasesLocal) {
+            if (o !== p && o.end <= p.end && o.end > bound) bound = o.end;
+        }
+        return bound;
     }
 
     /** Finish a handle drag and commit. */

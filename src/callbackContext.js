@@ -145,13 +145,24 @@ function chordStructurePcs(c) {
 export function nxtNote(drive, style, low, span) {
     if (current === null) return 60;
     const ctx = current;
-    const phrase = currentHarmony ? currentHarmony.phrase : null;
-    // Gap between phrases → silence. Returning 0 (which playNote treats as a
-    // rest) keeps the line's previous note untouched, so the phrase after the
-    // gap resumes its melodic memory rather than re-seeding.
-    if (phrase && phrase.inGap) return 0;
-
     const prof = style || STYLES.melody;
+    const breathes = prof.breathe !== false;
+    const phrase = currentHarmony ? currentHarmony.phrase : null;
+    // Phrase silence (return 0 — playNote treats it as a rest, leaving the
+    // line's previous note as the melodic memory): a GAP between phrases (every
+    // phrased voice rests). For BREATHING voices (melody/lead, breathe !== false)
+    // also the phrase's auto-breath tail; and they cap the current note so it
+    // releases just before the next phrase. A bass / accompaniment ignores the
+    // breath and plays through. The cap is read by the engine's note emitter via
+    // this firing context's _breathReleaseBeats.
+    delete ctx._breathReleaseBeats;
+    if (phrase) {
+        if (phrase.inGap) return 0;
+        if (breathes && typeof phrase.release === "number") {
+            if (phrase.release <= 0) return 0;          // in the breath tail → rest
+            ctx._breathReleaseBeats = phrase.release;   // else release just before it
+        }
+    }
     const key = (currentHarmony && currentHarmony.key)
         ? currentHarmony.key : { tonicPitchClass: 0, mode: "major" };
 
