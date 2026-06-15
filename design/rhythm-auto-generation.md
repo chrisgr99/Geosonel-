@@ -212,7 +212,9 @@ machinery — two features, two appropriate timings.
 spans) and the curve's RHYTHMIC phrase (the generated `Beats/Phrase` unit). Keep
 labels distinct ("Beats/Phrase" reads as the rhythmic unit; the harmony feature
 stays "phrasing"). If they still feel collidable, the rhythmic unit could be a
-"figure" or "cell".
+"figure" or "cell". The deeper question of making the two phrasings line up in
+time (and whether to rename this one) is its own design: see
+[phrase-sync.md](phrase-sync.md).
 
 ## Determinism summary
 

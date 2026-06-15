@@ -284,6 +284,14 @@ import { srgbByteToOKLab } from "./oklab.js";
 const SIM_DT = 1 / 240;
 
 /**
+ * Notes trimmed below this many seconds (by the phrase breath landing on a beat,
+ * or a degenerate trim) are suppressed — at ~5 ms they're an inaudible click,
+ * well under any real note (a fast 32nd is still ~40 ms), so resting them is
+ * safe and removes the artifact.
+ */
+const MIN_AUDIBLE_DURATION_SECONDS = 0.005;
+
+/**
  * Wrap a firing context in a READ-RECORDING Proxy for the
  * "callback firing flash" highlight. Every property read is
  * recorded into `paths` (the dotted chain after `this`, e.g.
@@ -1545,6 +1553,14 @@ export class Simulation {
             && typeof spec.duration === "number" && Number.isFinite(spec.duration)) {
             const releaseSec = (fctx._breathReleaseBeats * 60) / fctx.bpm;
             if (releaseSec < spec.duration) spec.duration = releaseSec;
+        }
+
+        // A note trimmed to essentially nothing — the phrase breath landing
+        // right on a beat, or a degenerate trim — is an inaudible click, not a
+        // note. Rest it instead of emitting a near-zero-duration voice.
+        if (typeof spec.duration === "number"
+            && spec.duration > 0 && spec.duration < MIN_AUDIBLE_DURATION_SECONDS) {
+            return false;
         }
 
         // (3) Suppress-new: prune expired notes, then count each scope.
