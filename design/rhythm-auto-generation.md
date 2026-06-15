@@ -110,12 +110,24 @@ independent variations, keep the index in pocket.
 
 ## Swing
 
-NOT encoded in the `x`/`.` grid (which is evenly spaced). Swing is uneven
-*timing*: a **Swing feel parameter** (continuous, straight → full triplet) that
-delays the off-beat subdivisions at playback by a deterministic timing offset in
-the scheduler, at the subdivision the beat interval implies (8th-swing,
-16th-swing). It rides alongside the pattern, preset by genre, adjustable as one
-knob.
+Represented in the GRID via a TRIPLET subdivision, not a separate timing
+parameter. The beat-interval table already carries triplet intervals — `Qtr Tr`
+is a triplet within a quarter (three slots per quarter beat), plus `8th Tr` /
+`Half Tr`. Choose a triplet interval and swing is just a pattern: a tick on
+slots 1 & 3 of each triplet (`x.x`) is a swing eighth; ticking all three (`xxx`)
+is a straight triplet. This is grid-native (no scheduler timing math), fully
+deterministic, and flexible — every triplet feel (swing, shuffle, straight
+triplets, 6/8 gallops) is one pattern over the same grid.
+
+Trade-off: the swing ratio is fixed at the triplet 2:1 — "close enough" for our
+purposes. Real swing is lighter/harder and tempo-dependent; a continuous
+timing-offset could be layered on later (not mutually exclusive — it could even
+nudge the triplet grid), but it's deferred.
+
+Auto needs no special swing logic: a swing/jazz GENRE is a triplet-grid preset
+(`Qtr Tr`) whose metric weighting favours the 1 & 3 triplet positions (the swing
+eighths) and leaves the middle slot weak — the generator then produces swing
+patterns naturally from subdivision + position weights.
 
 ## Calibration knobs (the creative surface)
 
@@ -150,7 +162,8 @@ a style, a popover is for AUTHORING one.
 - Row 1 (character): `Source: Auto` · `Style ▾` (with an "Edit… / New…"
   affordance) · `Genre ▾` (optional, neutral default)
 - Row 2 (grid & length): `Beat Interval ▾` · `Beats / Bar` · `Beats / Phrase` ·
-  `Repeats` (+ `Swing` lives here or on the style)
+  `Repeats`. (Swing is not a field — it's a triplet beat interval, e.g. `Qtr
+  Tr`; see Swing below.)
 - Result (read-only, Euclidean-style locked fields): `Active Beats` (locked) ·
   `Beat Strength` (locked) — show both, so you see the whole generated result.
 
