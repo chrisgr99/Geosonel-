@@ -23,9 +23,24 @@ function barsToProgression(symbols) {
     return out;
 }
 
-/** Build the harmony object autoPhrase consumes (4/4). */
+/** Build the harmony object autoPhrase consumes (4/4). One implicit section. */
 function harmonyOf(symbols) {
     return { progression: barsToProgression(symbols), timeSignature: [4, 4] };
+}
+
+/** Build a harmony with explicit SECTIONS: each inner array is one section's
+ *  bars (one chord per bar), labelled A, B, C… in order. */
+function sectionedHarmony(sections) {
+    const labels = "ABCDEFGH";
+    const progression = [];
+    sections.forEach((symbols, si) => {
+        progression.push({ type: "sectionOpen", label: labels[si] || "X" });
+        for (const sym of symbols) {
+            progression.push({ type: "chord", chord: parseChord(sym, KEY), raw: sym });
+            progression.push({ type: "bar" });
+        }
+    });
+    return { progression, timeSignature: [4, 4] };
 }
 
 test("autoPhrase: splits at V→I cadences (two 4-bar phrases)", () => {
@@ -41,38 +56,58 @@ test("autoPhrase: a 4-bar loop with no internal cadence is one phrase", () => {
     assert.deepEqual(phrases, [{ start: 0, end: 16 }]);
 });
 
-test("autoPhrase: with no cadence, breaks at the 4-bar target and caps the tail", () => {
-    // 10 cadence-free bars → 4 + 4 + 2.
-    const phrases = autoPhrase(harmonyOf(
-        ["C", "F", "C", "F", "C", "F", "C", "F", "C", "F"]));
-    assert.deepEqual(phrases, [
-        { start: 0, end: 16 },
-        { start: 16, end: 32 },
-        { start: 32, end: 40 },
-    ]);
+test("autoPhrase: a section opening is a hard phrase boundary", () => {
+    // Two cadence-free 4-bar sections. Without section awareness the 8 bars
+    // would read as one 8-bar phrase; the boundary forces one phrase each.
+    const phrases = autoPhrase(sectionedHarmony([
+        ["C", "F", "C", "F"], ["F", "C", "F", "C"],
+    ]));
+    assert.deepEqual(phrases, [{ start: 0, end: 16 }, { start: 16, end: 32 }]);
 });
 
-test("autoPhrase: runs PAST the target to reach a cadence (up to the cap)", () => {
-    // 9 bars, the only cadence ends bar 8 (V bar7 → I bar8). First phrase has no
-    // cadence in reach → breaks at 4; second runs 5 bars to the cadence.
-    const phrases = autoPhrase(harmonyOf(
-        ["C", "F", "C", "F", "C", "F", "C", "G7", "C"]));
-    assert.deepEqual(phrases, [{ start: 0, end: 16 }, { start: 16, end: 36 }]);
+test("autoPhrase: a cadence-free 8-bar section is one 8-bar phrase", () => {
+    // No internal cadence and no boundary → the whole section is one phrase
+    // (prefer 8), not 4 + 4.
+    const phrases = autoPhrase(sectionedHarmony([
+        ["C", "F", "C", "F", "C", "F", "C", "F"],
+    ]));
+    assert.deepEqual(phrases, [{ start: 0, end: 32 }]);
 });
 
-test("autoPhrase: a sub-minimum tail is folded into the previous phrase", () => {
-    // 9 cadence-free bars → 4 + 4 + 1; the lone 1-bar tail is too short to stand
-    // alone, so it merges into the previous phrase → 4 + 5 (no 1-bar remainder).
-    const phrases = autoPhrase(harmonyOf(
-        ["C", "F", "C", "F", "C", "F", "C", "F", "C"]));
-    assert.deepEqual(phrases, [{ start: 0, end: 16 }, { start: 16, end: 36 }]);
+test("autoPhrase: an off-grid cadence doesn't force an odd-length phrase", () => {
+    // The only cadence resolves on bar 3 (G7 bar2 → C bar3), off the 4-bar grid.
+    // The section stays one 8-bar phrase rather than a 3 + 5 split.
+    const phrases = autoPhrase(sectionedHarmony([
+        ["F", "G7", "C", "F", "C", "F", "C", "F"],
+    ]));
+    assert.deepEqual(phrases, [{ start: 0, end: 32 }]);
 });
 
-test("autoPhrase: never exceeds the 8-bar cap", () => {
-    // 16 cadence-free bars → four 4-bar phrases, none longer than 8.
-    const phrases = autoPhrase(harmonyOf(Array(16).fill("C")));
-    assert.equal(phrases.length, 4);
-    for (const p of phrases) assert.ok((p.end - p.start) / 4 <= 8);
+test("autoPhrase: a held tonic on the 4-bar mark isn't split mid-resolution", () => {
+    // G7→C resolves in the 4th bar (the 4-bar mark) and is HELD into the 5th.
+    // The held-tonic extension moves the cadence off the grid, so the section
+    // stays one 8-bar phrase instead of splitting 4 + 4 through the held tonic.
+    const phrases = autoPhrase(sectionedHarmony([
+        ["A-7", "F", "G7", "C", "C", "F", "C", "F"],
+    ]));
+    assert.deepEqual(phrases, [{ start: 0, end: 32 }]);
+});
+
+test("autoPhrase: a long section carves into 8-bar chunks", () => {
+    const phrases = autoPhrase(sectionedHarmony([
+        ["C", "F", "C", "F", "C", "F", "C", "F",
+            "C", "F", "C", "F", "C", "F", "C", "F"],
+    ]));
+    assert.deepEqual(phrases, [{ start: 0, end: 32 }, { start: 32, end: 64 }]);
+});
+
+test("autoPhrase: a one-bar tail folds back into its section", () => {
+    // 9 cadence-free bars → 8 + 1; the lone bar is too short to stand alone, so
+    // it folds into the section's phrase → one 9-bar phrase (no 1-bar remainder).
+    const phrases = autoPhrase(sectionedHarmony([
+        ["C", "F", "C", "F", "C", "F", "C", "F", "C"],
+    ]));
+    assert.deepEqual(phrases, [{ start: 0, end: 36 }]);
 });
 
 test("autoPhrase: phrases are contiguous and cover the whole cycle", () => {

@@ -8,14 +8,20 @@
  * scene.harmony.phrases (src/harmonyScene.js), where the engine reads them.
  *
  * The musical rules, from discussion with Chris:
- *   - Phrases run until a CADENCE. We detect the authentic cadence V→I: a
- *     dominant chord (scale degree 5) resolving to the tonic (degree 1). The
- *     phrase ends on the bar the tonic lands in, so the line cadences onto a
- *     resting tone (Phase-1 anchoring then leans the last note to the tonic).
- *   - Phrases are SHORT: a target of ~4 bars, and never longer than 8 (real
- *     phrases seldom exceed four bars, eight at the very most). When the next
- *     cadence is too far off, we break at the 4-bar target and carry on; when a
- *     cadence falls within reach we run to it (up to the 8-bar cap).
+ *   - SECTIONS come first. A section opening (a rehearsal-letter / double-bar
+ *     boundary, recovered from the expanded spans) is a HARD phrase boundary —
+ *     a phrase never straddles it. In lead-sheet music the section is the top
+ *     structural unit, so we phrase each section independently. This stops the
+ *     unmusical case of a cadence-run leaking across a boundary (or orphaning a
+ *     section's last bar into the next section's phrase).
+ *   - Within a section we prefer 4- and 8-bar phrases — the lengths real phrases
+ *     take, and the ones that map cleanly onto a beat-pattern phrase under
+ *     phrase-sync (design/phrase-sync.md). A cadence landing on the 4-bar grid
+ *     carves a 4-bar phrase; otherwise the section reads as 8-bar arcs. Off-grid
+ *     cadences are deliberately ignored in favour of the 4/8 shape. We still
+ *     detect the authentic cadence V→I (dominant degree 5 → tonic degree 1),
+ *     extending a cadence through a HELD tonic so a repeated/sustained cadence
+ *     bar isn't clipped (the iReal `Kcl` idiom).
  *   - The phrases are CONTIGUOUS — back to back, covering the whole base cycle —
  *     so auto-phrasing never introduces silence; it only shapes where phrases
  *     begin and end. Gaps (rests) are an opt-in the manual drawing tool adds.
@@ -38,11 +44,11 @@ import { expandProgression } from "./harmonyPlayer.js";
  * @typedef {{ start: number, end: number }} PhraseSpan
  */
 
-/** A phrase aims for this many bars… */
+/** The shorter preferred phrase length (a 4-bar unit / the grid we snap to). */
 const TARGET_BARS = 4;
-/** …and is never longer than this. */
+/** The longer preferred phrase length (and the chunk a long section carves into). */
 const MAX_BARS = 8;
-/** A cadence shorter than this many bars doesn't, on its own, end a phrase. */
+/** A phrase shorter than this folds into its neighbour (no lone-bar phrases). */
 const MIN_BARS = 2;
 
 /**
@@ -153,68 +159,106 @@ export function autoPhrase(harmony) {
         const cur = spans[i];
         if (cur.noChord || prev.noChord) continue;
         if (isDominant(prev.chord) && isTonic(cur.chord)) {
-            cadenceEnd.add(Math.floor(cur.startBeat / beatsPerBar));
+            // The phrase ends when the resolving tonic FINISHES sounding, not on
+            // its first bar. Extend through any bars where that tonic is HELD —
+            // a repeated or sustained tonic (e.g. an iReal `Kcl` repeat of the
+            // cadence bar) — so a cadence onto a held tonic isn't clipped a bar
+            // short. Use the last held bar's end, which also covers a tonic span
+            // that itself runs longer than one bar.
+            let j = i;
+            while (j + 1 < spans.length
+                && !spans[j + 1].noChord
+                && isTonic(spans[j + 1].chord)) {
+                j += 1;
+            }
+            cadenceEnd.add(Math.floor((spans[j].endBeat - 1) / beatsPerBar));
         }
     }
 
+    // Phrase each SECTION independently. A section opening (a rehearsal-letter
+    // boundary / double barline) is a HARD phrase boundary — a phrase never
+    // straddles it — because in lead-sheet music the section is the top
+    // structural unit and phrases sit inside it. Within a section we prefer 4-
+    // and 8-bar phrases (see phraseLen), which read musically and map cleanly
+    // onto a beat-pattern phrase under phrase-sync (design/phrase-sync.md).
+    const sectionStarts = sectionStartBars(spans, beatsPerBar, totalBars);
+
     /** @type {PhraseSpan[]} */
     const phrases = [];
-    let start = 0; // first bar of the current phrase (0-based)
-    while (start < totalBars) {
-        const endBar = chooseEndBar(start, totalBars, cadenceEnd);
-        phrases.push({
-            start: start * beatsPerBar,
-            end: Math.min((endBar + 1) * beatsPerBar, totalBeats),
-        });
-        start = endBar + 1;
-    }
+    for (let s = 0; s < sectionStarts.length; s += 1) {
+        const secStart = sectionStarts[s];
+        const secEnd = (s + 1 < sectionStarts.length) ? sectionStarts[s + 1] : totalBars;
+        if (secEnd <= secStart) continue;
 
-    // Avoid very short phrases. A sub-minimum span — typically a one-bar
-    // cadential remainder left at the tail — shouldn't stand on its own: fold it
-    // into a neighbour (the previous phrase, or the next when it's the very
-    // first). This keeps phrase lengths in a sane band, which also keeps the
-    // phrase-sync stretch ratios clean (see design/phrase-sync.md).
-    const minBeats = MIN_BARS * beatsPerBar;
-    for (let i = phrases.length - 1; i >= 0 && phrases.length > 1; i -= 1) {
-        if (phrases[i].end - phrases[i].start >= minBeats) continue;
-        if (i > 0) {
-            phrases[i - 1].end = phrases[i].end; // fold into the previous
-            phrases.splice(i, 1);
-        } else {
-            phrases[1].start = phrases[0].start; // first phrase: fold into the next
-            phrases.splice(0, 1);
+        // Carve the section into [startBar, endBar) pairs by the 4/8 preference.
+        /** @type {Array<[number, number]>} */
+        const pairs = [];
+        for (let start = secStart; start < secEnd;) {
+            const len = phraseLen(start, secEnd, cadenceEnd);
+            pairs.push([start, start + len]);
+            start += len;
+        }
+        // Fold a sub-minimum tail (a lone leftover bar in an odd-length section)
+        // back into its neighbour — WITHIN the section, never across the
+        // boundary — so a section can't strand a 1-bar phrase or leak it into
+        // the next section.
+        for (let i = pairs.length - 1; i >= 1; i -= 1) {
+            if (pairs[i][1] - pairs[i][0] >= MIN_BARS) continue;
+            pairs[i - 1][1] = pairs[i][1];
+            pairs.splice(i, 1);
+        }
+
+        for (const [a, b] of pairs) {
+            phrases.push({
+                start: a * beatsPerBar,
+                end: Math.min(b * beatsPerBar, totalBeats),
+            });
         }
     }
     return phrases;
 }
 
 /**
- * Pick the bar a phrase starting at `start` should end on. Preference:
- *   1. the FIRST cadence at or after the 4-bar target (run to the cadence,
- *      up to the 8-bar cap);
- *   2. else the LATEST cadence that is at least MIN_BARS long but shorter than
- *      the target (a genuine short cadential phrase);
- *   3. else the 4-bar target (no cadence in reach — break and carry on).
- * Always clamped to the piece end and the 8-bar cap.
- * @param {number} start
+ * The bar indices where a new SECTION opens (a rehearsal-letter / double-bar
+ * boundary), always including bar 0. expandProgression tags the first span of a
+ * section with its label, so we read those off and convert to bar indices.
+ * @param {any[]} spans       expanded chord spans (carry `.section` + `.startBeat`)
+ * @param {number} beatsPerBar
  * @param {number} totalBars
- * @param {Set<number>} cadenceEnd
- * @returns {number}
+ * @returns {number[]}  sorted, ascending, starting at 0
  */
-function chooseEndBar(start, totalBars, cadenceEnd) {
-    const lastBar = totalBars - 1;
-    const winMax = Math.min(lastBar, start + MAX_BARS - 1);
-    const targetBar = start + TARGET_BARS - 1;
+function sectionStartBars(spans, beatsPerBar, totalBars) {
+    /** @type {Set<number>} */
+    const starts = new Set([0]);
+    for (const sp of spans) {
+        if (typeof sp.section === "string" && sp.section !== "") {
+            const bar = Math.round(sp.startBeat / beatsPerBar);
+            if (bar > 0 && bar < totalBars) starts.add(bar);
+        }
+    }
+    return [...starts].sort((a, b) => a - b);
+}
 
-    // 1. First cadence at/after the target, within the cap.
-    for (let b = Math.min(targetBar, winMax); b <= winMax; b += 1) {
-        if (cadenceEnd.has(b)) return b;
-    }
-    // 2. Latest cadence shorter than the target but at least MIN_BARS.
-    const minBar = start + MIN_BARS - 1;
-    for (let b = Math.min(targetBar - 1, winMax); b >= minBar; b -= 1) {
-        if (cadenceEnd.has(b)) return b;
-    }
-    // 3. Default break at the target (clamped to the piece end / cap).
-    return Math.max(start, Math.min(targetBar, lastBar, winMax));
+/**
+ * How many bars the phrase starting at `start` (within its section, which ends
+ * at `secEnd`) should span — biased to 4 and 8 bars so phrases read musically
+ * and map cleanly onto a beat-pattern phrase. In order:
+ *   - 5 bars or fewer left → take the whole rest (no tiny tails);
+ *   - a cadence landing exactly on the 4-bar mark → a 4-bar phrase (a real
+ *     cadential 4-bar unit, even mid-section);
+ *   - 6–8 bars left → take the whole rest (one 6/7/8-bar phrase);
+ *   - more than 8 → carve an 8-bar chunk and continue.
+ * Off-grid cadences are deliberately IGNORED in favour of the 4/8 shape — a
+ * cadence at bar 6 doesn't force a 6-bar phrase.
+ * @param {number} start          first bar of the phrase (global bar index)
+ * @param {number} secEnd         one past the section's last bar
+ * @param {Set<number>} cadenceEnd cadence-end bars (global)
+ * @returns {number}  phrase length in bars (>= 1)
+ */
+function phraseLen(start, secEnd, cadenceEnd) {
+    const rem = secEnd - start;
+    if (rem <= TARGET_BARS + 1) return rem;
+    if (cadenceEnd.has(start + TARGET_BARS - 1)) return TARGET_BARS;
+    if (rem <= MAX_BARS) return rem;
+    return MAX_BARS;
 }
