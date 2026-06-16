@@ -514,7 +514,18 @@ export function colorSignalsFromHex(hex) {
     const rgb = rgbFromHex(hex);
     if (rgb === null) return colFromSignals(imageSignalsFromOKLCh(null));
     const lab = srgbByteToOKLab(rgb.r, rgb.g, rgb.b);
-    const oklch = { L: lab.L, C: Math.hypot(lab.a, lab.b), a: lab.a, b: lab.b };
+    // imageSignalsFromOKLCh expects its a/b/C already in [0, 1] (redness /
+    // yellowness / colourfulness). A single colour has no image distribution to
+    // percentile-normalise against (unlike this.col.*), so map its OKLab axes
+    // with a FIXED OKLab-magnitude scale N, centred so grey (a = 0) is 0.5.
+    const N = 0.3; // a generous OKLab a/b magnitude for sRGB colours
+    const unit = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+    const oklch = {
+        L: lab.L,
+        C: unit(Math.hypot(lab.a, lab.b) / N),
+        a: unit((lab.a / N + 1) / 2),
+        b: unit((lab.b / N + 1) / 2),
+    };
     return colFromSignals(imageSignalsFromOKLCh(oklch));
 }
 

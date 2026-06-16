@@ -394,8 +394,8 @@ export function onBeatInterval(...args) {
 
 /**
  * Bare reRange — re-map an already-0..1 value into the range [lo, hi],
- * clamped. The image colour channels (this.col.*) are already gain-stretched
- * to 0..1 per image, so this is the everyday tool for putting a colour read
+ * clamped. The image colour channels (this.col.*) are already percentile-
+ * stretched to 0..1 per image, so this is the everyday tool for putting a colour read
  * (or any 0..1 value — this.vel, a computed number) onto a useful output
  * band: `reRange(this.col.r, 0.3, 1)` for velocity, `reRange(this.col.b, 0.2,
  * 1.5)` for a note length. Pure (no firing context needed); defaults lo=0,

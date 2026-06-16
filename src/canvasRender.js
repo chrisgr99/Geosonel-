@@ -83,9 +83,9 @@ export const renderMethods = {
                 ? null
                 : buildOKLChBuffer(this._imagePixels);
             // Bake the per-pixel signal stretch (design/agc.md). The
-            // stretch params (L percentile + a/b gain-capped scale)
-            // are computed once from the raw buffer, then applied to
-            // produce the stretched buffer the signal sampler reads.
+            // stretch params (an independent 5–95 percentile band per
+            // L/a/b/C axis) are computed once from the raw buffer, then
+            // applied to produce the stretched buffer the sampler reads.
             // Keeping BOTH buffers: raw for any true-colour need,
             // stretched for the pre-stretched this.col.* signals. Null
             // whenever the raw buffer is null.

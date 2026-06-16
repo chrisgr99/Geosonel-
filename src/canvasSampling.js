@@ -71,9 +71,9 @@ export const samplingMethods = {
      *
      * Reads from the STRETCHED buffer (_imageOKLChStretched,
      * design/agc.md) so the ten this.col.* signals are
-     * pre-stretched — the L percentile and a/b gain-capped
-     * scale are baked at image-load time, so agc() is now just
-     * thin sugar mapping the already-0..1 signal to [lo, hi].
+     * pre-stretched — each of L, a, b, C is percentile-banded to
+     * [0, 1] at image-load time, so agc() is now just thin sugar
+     * mapping the already-0..1 signal to [lo, hi].
      * The raw buffer (_imageOKLCh) is retained on the canvas
      * for any future true-colour need; sample it through
      * sampleImageOKLChRaw if a consumer genuinely wants the

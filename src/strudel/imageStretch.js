@@ -1,68 +1,40 @@
 /**
  * Baked image signal stretching (design/agc.md).
  *
- * Instead of computing a gain at agc() call time, the colour signals
- * are stretched ONCE when an image loads: a per-pixel stretched OKLCh
- * buffer is computed from the raw buffer, and the ten this.col.*
- * signals derive from it via the same imageSignalsFromOKLCh path. A
- * script then reads this.col.r (already ~0..1) with no per-call gain.
+ * The colour signals are normalised ONCE when an image loads, not at read
+ * time: a per-pixel stretched buffer is computed from the raw OKLCh buffer, and
+ * the ten this.col.* signals derive from it via imageSignalsFromOKLCh. A script
+ * then reads this.col.r (already 0..1, continuous) with no per-call gain.
  *
- * Two stretches, both deterministic (a pure function of the buffer and
- * the module constants below — no Date, no Math.random — so every
- * rerun produces the identical buffer and the colour→note mapping is
- * frozen before the first note):
+ * Each of the four channels — L (lightness), a and b (the OKLab opponent axes),
+ * and C (chroma) — is stretched INDEPENDENTLY by a 5th–95th percentile band
+ * across the image, so the whole image's range of that property fills [0, 1]:
  *
- *  - L (lightness): linear percentile. The 5th–95th percentile
- *    [Llo, Lhi] of the subsample maps to [0, 1]; this always yields a
- *    lightness range, even on a grey image.
- *  - a, b (the OKLab opponent axes): independent, symmetric,
- *    gain-CAPPED. gainA = min(GAIN_CAP, N / p95(|a|)); a' = a·gainA,
- *    likewise for b. Scaling about 0 keeps the axis balanced (no
- *    whole-image hue shift); independent a/b gains deform the (a, b)
- *    cloud, which spreads hue as well as boosting chroma. GAIN_CAP is
- *    the chroma weighting: a colourful image has p95(|a|) ≈ N so the
- *    gain is ≈ 1 (no over-stretch); a near-grey image has tiny
- *    p95(|a|) which would call for a huge gain — the cap holds it down
- *    so grey stays grey rather than amplifying chroma noise.
+ *   chan' = clamp((chan − lo) / (hi − lo), 0, 1)
  *
- * chroma C' falls out of hypot(a', b') automatically; there is no
- * separate C stretch. a' and b' are deliberately NOT clamped here:
- * the signal layer (imageSignalsFromOKLCh) already clamps to ±N when
- * forming pxR.., so leaving the raw stretched value keeps chroma and
- * the diagonal hue intermediates mutually consistent.
+ * where [lo, hi] is the 5th/95th percentile of that channel over a deterministic
+ * subsample (outliers beyond the band saturate to 0 or 1). signals.js then reads
+ * a' as REDNESS (0 greenest … 0.5 grey … 1 reddest), b' as YELLOWNESS, C' as
+ * COLOURFULNESS, and derives greenness/blueness as the inverses and the hue
+ * diagonals (orange/cyan, lime/purple) as means of adjacent primaries — all
+ * continuous in [0, 1], never half-wave-rectified.
  *
- * This module is intentionally free of canvas / CDN / DOM
- * dependencies so it unit-tests under `node --test`
+ * Grey degrades cleanly: an axis whose percentile band is narrower than a
+ * flatness epsilon is treated as having no signal — a/b map to 0.5 (neutral, no
+ * hue bias), C maps to 0 (no colour), L to 0.5 — rather than amplifying noise
+ * into fake hue. The a/b/C flatness epsilon is a small OKLab-chroma threshold so
+ * a near-grey image stays neutral; L uses a tiny epsilon since lightness always
+ * carries range.
+ *
+ * Deterministic (a pure function of the buffer and the module constants — no
+ * Date, no Math.random), so every rerun produces the identical buffer and the
+ * colour→note mapping is frozen before the first note. Intentionally free of
+ * canvas / CDN / DOM dependencies so it unit-tests under `node --test`
  * (test/imageStretch.test.mjs). The canvas wires it in on setImage
- * (src/canvasRender.js); agc() is demoted to thin sugar over the
- * already-stretched 0..1 signal (src/simulation.js).
+ * (src/canvasRender.js).
  */
 
 // @ts-check
-
-/**
- * Primary normaliser for the OKLab a/b projections, mirrored from
- * src/strudel/signals.js (PRIMARY_NORMALIZER). The stretch targets the
- * a/b p95 at this value so a fully-stretched colourful axis lands the
- * signal layer's pxR.. near 1.0 — the two constants MUST agree, so the
- * dependency is documented here rather than re-derived. If signals.js
- * changes PRIMARY_NORMALIZER, change this to match (kept as a separate
- * literal because signals.js is not importable in the pure node --test
- * context — it pulls in firingContext/debugTap which touch window).
- */
-const PRIMARY_NORMALIZER = 0.3;
-
-/**
- * Per-axis chroma-weighting cap on the a/b stretch gain. A colourful
- * axis (p95(|a|) ≈ N) gets gain ≈ 1; a near-grey axis would call for a
- * huge gain that this cap holds down, so grey stays grey instead of
- * the stretch manufacturing hue out of low-chroma noise. 4.0 lets a
- * moderately muted image (p95 down to N/4 ≈ 0.075) reach the full
- * range while still capping a near-flat axis. You cannot manufacture
- * colour range from an image that has none; lightness still carries
- * range regardless.
- */
-const GAIN_CAP = 4.0;
 
 /** Subsample budget: at most this many pixels feed the percentiles. */
 const STRETCH_MAX_SAMPLES = 10000;
@@ -72,21 +44,26 @@ const AGC_LOW_PCT = 0.05;
 const AGC_HIGH_PCT = 0.95;
 
 /**
- * Flatness epsilon for the L span. A subsample whose [Llo, Lhi] is
- * narrower than this is treated as flat (a uniform-lightness image):
- * applyStretch maps every L to 0.5 rather than dividing by a near-zero
- * span.
+ * Flatness epsilon for the LIGHTNESS band. A subsample whose [Llo, Lhi] is
+ * narrower than this is treated as flat (a uniform-lightness image): applyStretch
+ * maps every L to 0.5 rather than dividing by a near-zero span.
  */
 const STRETCH_FLAT_EPSILON = 1e-6;
 
 /**
- * Compute the trimmed [min, max] of an array of values: sort ascending
- * and take the 5th and 95th percentile by index so a few outlier
- * pixels cannot blow the result out. Deterministic (a pure function of
- * the values). An empty / non-array input yields null.
- *
- * Moved here from simulation.js: the percentile is now used by the
- * image bake, not by the runtime agc() call.
+ * Flatness epsilon for the CHROMATIC bands (a, b, C), in OKLab chroma units. An
+ * axis whose 5–95 percentile band is narrower than this carries no real colour
+ * (a grey / near-grey image), so it is neutralised rather than stretched — which
+ * would amplify sensor/quantisation noise into vivid fake hue. 0.02 is a small
+ * fraction of a vivid sRGB chroma (~0.1–0.3), so a genuinely colourful axis is
+ * always stretched while a near-grey one stays put.
+ */
+const CHROMA_FLAT_EPSILON = 0.02;
+
+/**
+ * Compute the trimmed [min, max] of an array of values: sort ascending and take
+ * the 5th and 95th percentile by index so a few outlier pixels cannot blow the
+ * result out. Deterministic. An empty / non-array input yields null.
  *
  * @param {number[]} values
  * @returns {{min: number, max: number} | null}
@@ -102,144 +79,107 @@ export function agcPercentileRange(values) {
 
 /**
  * @typedef {Object} StretchParams
- * @property {number} Llo   5th-percentile lightness (maps to 0).
- * @property {number} Lhi   95th-percentile lightness (maps to 1).
- * @property {number} gainA Multiplier applied to the OKLab a axis.
- * @property {number} gainB Multiplier applied to the OKLab b axis.
+ * @property {number} Llo @property {number} Lhi   lightness band (→ pxLt)
+ * @property {number} aLo @property {number} aHi   a / redness band (→ pxR)
+ * @property {number} bLo @property {number} bHi   b / yellowness band (→ pxY)
+ * @property {number} cLo @property {number} cHi   chroma band (→ pxChr)
  */
 
+/** A percentile band {lo, hi} from sampled values, or a sensible default. */
+function bandOf(values, dlo, dhi) {
+    const r = agcPercentileRange(values);
+    return r !== null ? { lo: r.min, hi: r.max } : { lo: dlo, hi: dhi };
+}
+
 /**
- * Compute the per-image stretch parameters from a raw OKLCh buffer
- * (Float32Array, 4 channels/pixel: L, C, a, b, row-major — exactly
- * what buildOKLChBuffer produces).
- *
- * Deterministic: a fixed stride (derived from the buffer length, so at
- * most STRETCH_MAX_SAMPLES pixels) subsamples the buffer; no clock, no
- * randomness, so the same buffer always yields the same params.
- *
- *  - L: agcPercentileRange of the sampled L values → [Llo, Lhi].
- *  - a, b: pa = p95(|a|), pb = p95(|b|) over the subsample;
- *    gain = min(GAIN_CAP, N / p). A degenerate axis (p ≈ 0, i.e. the
- *    axis is entirely flat at zero) yields gain = GAIN_CAP — the same
- *    value a near-grey-but-nonzero axis approaches — so a flat axis
- *    behaves continuously with an almost-flat one and never produces a
- *    NaN/Inf gain. Since a flat axis has a ≡ 0, any finite gain leaves
- *    a' = 0, so the choice of GAIN_CAP vs 1 is immaterial to the
- *    output; GAIN_CAP is chosen for that continuity.
- *
- * An empty / non-array buffer yields identity-ish params (Llo 0, Lhi 1,
- * gains 1) so a missing image degrades cleanly rather than throwing.
+ * Compute the per-image stretch params from a raw OKLCh buffer (Float32Array,
+ * 4 channels/pixel: L, C, a, b, row-major — what buildOKLChBuffer produces).
+ * A deterministic fixed stride subsamples to at most STRETCH_MAX_SAMPLES pixels.
+ * An empty / non-array buffer yields identity-ish OKLab-magnitude defaults so a
+ * missing image degrades cleanly rather than throwing.
  *
  * @param {ArrayLike<number> | null | undefined} oklchBuffer
  * @returns {StretchParams}
  */
 export function computeStretchParams(oklchBuffer) {
     const len = (oklchBuffer && typeof oklchBuffer.length === "number")
-        ? oklchBuffer.length
-        : 0;
+        ? oklchBuffer.length : 0;
     const pixelCount = Math.floor(len / 4);
     if (!(pixelCount > 0)) {
-        return { Llo: 0, Lhi: 1, gainA: 1, gainB: 1 };
+        // Typical OKLab magnitudes: L in [0,1], a/b in ~[-0.3,0.3], C in [0,0.3].
+        return { Llo: 0, Lhi: 1, aLo: -0.3, aHi: 0.3, bLo: -0.3, bHi: 0.3, cLo: 0, cHi: 0.3 };
     }
-    // Deterministic fixed stride: every `stride`-th pixel, so at most
-    // ~STRETCH_MAX_SAMPLES samples regardless of image size.
     const stride = Math.max(1, Math.ceil(pixelCount / STRETCH_MAX_SAMPLES));
-    /** @type {number[]} */
-    const lVals = [];
-    /** @type {number[]} */
-    const absA = [];
-    /** @type {number[]} */
-    const absB = [];
+    /** @type {number[]} */ const lVals = [];
+    /** @type {number[]} */ const cVals = [];
+    /** @type {number[]} */ const aVals = [];
+    /** @type {number[]} */ const bVals = [];
     for (let p = 0; p < pixelCount; p += stride) {
         const idx = p * 4;
         const L = oklchBuffer[idx];
+        const C = oklchBuffer[idx + 1];
         const a = oklchBuffer[idx + 2];
         const b = oklchBuffer[idx + 3];
-        if (!Number.isFinite(L)) continue;
-        lVals.push(L);
-        if (Number.isFinite(a)) absA.push(Math.abs(a));
-        if (Number.isFinite(b)) absB.push(Math.abs(b));
+        if (Number.isFinite(L)) lVals.push(L);
+        if (Number.isFinite(C)) cVals.push(C);
+        if (Number.isFinite(a)) aVals.push(a);
+        if (Number.isFinite(b)) bVals.push(b);
     }
-    const lRange = agcPercentileRange(lVals);
-    const Llo = lRange !== null ? lRange.min : 0;
-    const Lhi = lRange !== null ? lRange.max : 1;
+    const L = bandOf(lVals, 0, 1);
+    const a = bandOf(aVals, -0.3, 0.3);
+    const b = bandOf(bVals, -0.3, 0.3);
+    const c = bandOf(cVals, 0, 0.3);
     return {
-        Llo,
-        Lhi,
-        gainA: gainFromAbs(absA),
-        gainB: gainFromAbs(absB),
+        Llo: L.lo, Lhi: L.hi,
+        aLo: a.lo, aHi: a.hi,
+        bLo: b.lo, bHi: b.hi,
+        cLo: c.lo, cHi: c.hi,
     };
 }
 
 /**
- * Gain for one chromatic axis from its sampled |value| array: the p95
- * is the axis's representative chroma magnitude, and the gain stretches
- * that toward N, capped at GAIN_CAP. A flat axis (p95 ≈ 0, or no usable
- * samples) returns GAIN_CAP — see computeStretchParams for why that is
- * the safe, continuous, NaN-free choice.
- * @param {number[]} absVals
+ * Stretch one value by a percentile band to [0, 1]. A band narrower than `eps`
+ * (a flat axis) returns `flat` instead of dividing by ~0.
+ * @param {number} v
+ * @param {number} lo @param {number} hi
+ * @param {number} eps @param {number} flat
  * @returns {number}
  */
-function gainFromAbs(absVals) {
-    const range = agcPercentileRange(absVals);
-    if (range === null) return GAIN_CAP;
-    const p95 = range.max;
-    if (!(p95 > STRETCH_FLAT_EPSILON)) return GAIN_CAP;
-    return Math.min(GAIN_CAP, PRIMARY_NORMALIZER / p95);
+function stretchBand(v, lo, hi, eps, flat) {
+    const span = hi - lo;
+    if (!(span > eps)) return flat;
+    const t = (v - lo) / span;
+    return t < 0 ? 0 : t > 1 ? 1 : t;
 }
 
 /**
- * Apply stretch params to a raw OKLCh buffer, returning a NEW
- * Float32Array of the same length and layout (L, C, a, b per pixel):
- *
- *   L' = clamp((L − Llo) / (Lhi − Llo), 0, 1)   (Lhi ≈ Llo → 0.5)
- *   a' = a · gainA
- *   b' = b · gainB
- *   C' = hypot(a', b')
- *
- * a' and b' are NOT clamped (the signal layer clamps to ±N when it
- * forms pxR.., so the raw stretched value keeps chroma and the
- * diagonals consistent). Pure: depends only on the input buffer and
- * the params, so identical inputs give an identical output.
+ * Apply stretch params to a raw OKLCh buffer, returning a NEW Float32Array of
+ * the same length and layout (L', C', a', b' per pixel), each channel
+ * percentile-stretched to [0, 1] (a flat axis → neutral). signals.js reads a' as
+ * redness, b' as yellowness, C' as colourfulness, L' as lightness.
  *
  * @param {Float32Array} oklchBuffer  Raw L,C,a,b buffer.
  * @param {StretchParams} params
- * @returns {Float32Array}  New stretched L,C,a,b buffer.
+ * @returns {Float32Array}  New stretched L',C',a',b' buffer, all in [0, 1].
  */
 export function applyStretch(oklchBuffer, params) {
     const out = new Float32Array(oklchBuffer.length);
-    const { Llo, gainA, gainB } = params;
-    const Lspan = params.Lhi - Llo;
-    const lFlat = !(Lspan > STRETCH_FLAT_EPSILON);
     const pixelCount = Math.floor(oklchBuffer.length / 4);
     for (let p = 0; p < pixelCount; p++) {
         const idx = p * 4;
-        const L = oklchBuffer[idx];
-        const a = oklchBuffer[idx + 2];
-        const b = oklchBuffer[idx + 3];
-        let Lp;
-        if (lFlat) {
-            Lp = 0.5;
-        } else {
-            Lp = (L - Llo) / Lspan;
-            if (Lp < 0) Lp = 0;
-            else if (Lp > 1) Lp = 1;
-        }
-        const ap = a * gainA;
-        const bp = b * gainB;
-        out[idx] = Lp;
-        out[idx + 1] = Math.hypot(ap, bp);
-        out[idx + 2] = ap;
-        out[idx + 3] = bp;
+        out[idx] = stretchBand(oklchBuffer[idx], params.Llo, params.Lhi, STRETCH_FLAT_EPSILON, 0.5);
+        out[idx + 1] = stretchBand(oklchBuffer[idx + 1], params.cLo, params.cHi, CHROMA_FLAT_EPSILON, 0);
+        out[idx + 2] = stretchBand(oklchBuffer[idx + 2], params.aLo, params.aHi, CHROMA_FLAT_EPSILON, 0.5);
+        out[idx + 3] = stretchBand(oklchBuffer[idx + 3], params.bLo, params.bHi, CHROMA_FLAT_EPSILON, 0.5);
     }
     return out;
 }
 
-// Exposed for tests / documentation of the chroma-weighting cap.
+// Exposed for tests / documentation.
 export const _STRETCH_CONSTANTS = {
-    PRIMARY_NORMALIZER,
-    GAIN_CAP,
     STRETCH_MAX_SAMPLES,
     AGC_LOW_PCT,
     AGC_HIGH_PCT,
+    STRETCH_FLAT_EPSILON,
+    CHROMA_FLAT_EPSILON,
 };

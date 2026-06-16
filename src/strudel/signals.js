@@ -24,22 +24,32 @@
  *     pxChr  perceptual chroma / saturation, the hypot of
  *            (a, b), normalised to [0, 1]
  *
- *   Four opponent-axis primaries, projecting onto OKLab's
- *   (a, b) axes and clamped to the named-positive direction
- *   (each is zero in the opposite-direction half of its
- *   axis, positive in its named half, normalised to [0, 1]):
- *     pxR    redness  (max(0, +a))
- *     pxG    greenness (max(0, -a))
- *     pxY    yellowness (max(0, +b))
- *     pxB    blueness  (max(0, -b))
+ *   Four opponent-axis primaries. Each is one of OKLab's a / b
+ *   axes PERCENTILE-STRETCHED across the image to [0, 1] at
+ *   load (imageStretch.js) — so the image's whole colour spread
+ *   fills the range — read CONTINUOUSLY, NOT half-wave
+ *   rectified. The value is "how far toward this colour", with
+ *   neutral grey at 0.5. Opposite directions are the two ends
+ *   of one axis, so opposite pairs are exact inverses
+ *   (pxG = 1 − pxR, pxB = 1 − pxY):
+ *     pxR    redness    (greenest pixel→0, grey→0.5, reddest→1)
+ *     pxG    greenness  (1 − pxR)
+ *     pxY    yellowness (the b axis, likewise)
+ *     pxB    blueness   (1 − pxY)
  *
- *   Four hue intermediates, projecting onto the 45-degree-
- *   rotated diagonals between adjacent primaries and clamped
- *   to the named direction:
- *     pxOr   orange (between pxR and pxY)
- *     pxLi   lime   (between pxG and pxY)
- *     pxCy   cyan   (between pxG and pxB)
- *     pxPu   purple (between pxR and pxB)
+ *   Four hue intermediates, the symmetric mean of the two
+ *   adjacent primaries (also inverse pairs, pxCy = 1 − pxOr,
+ *   pxPu = 1 − pxLi), all in [0, 1]:
+ *     pxOr   orange = (red + yellow)/2
+ *     pxLi   lime   = (green + yellow)/2
+ *     pxCy   cyan   (1 − pxOr)
+ *     pxPu   purple (1 − pxLi)
+ *
+ *   The continuous (un-rectified) mapping is deliberate: a
+ *   half-wave-clamped channel sits dead at zero across a whole
+ *   colour region — discontinuous and unpredictable as a
+ *   control input. Every channel here varies smoothly over the
+ *   image instead, always within [0, 1].
  *
  * Naming convention. The px prefix reads as "pixel" and
  * groups the signals together at autocomplete time. After
@@ -57,15 +67,19 @@
  * Normalisation. Strudel signal conventions land in either
  * [0, 1] (saw, square) or [-1, 1] (sine, perlin) so that
  * .range(lo, hi) maps cleanly to a composer-chosen output
- * range. OKLab's a and b axes have natural sRGB magnitudes
- * up to roughly 0.3, so the primaries and intermediates
- * are divided by a uniform PRIMARY_NORMALIZER of 0.3 and
- * clamped to [0, 1]. The constant is documented at its
- * definition; the choice is "a generous upper bound on
- * OKLab axis magnitudes for sRGB colours, picked uniform
- * across the primaries and intermediates so a single magic
- * number documents the entire scheme." pxLt is not
- * normalised: OKLab's L is already in [0, 1] by definition.
+ * range. All ten signals here are already in [0, 1]: the
+ * normalisation happens ONCE at image load, where each of
+ * OKLab's L, a, b, and C axes is percentile-stretched across
+ * the whole image to fill [0, 1] (src/strudel/imageStretch.js).
+ * imageSignalsFromOKLCh then reads the stretched a as redness,
+ * b as yellowness, C as colourfulness, derives greenness /
+ * blueness as their inverses, and the hue diagonals as means
+ * of adjacent primaries — no per-read divide or magic
+ * normaliser, just clamp01 against floating-point drift. A
+ * single authored colour (this.color.*) has no image to
+ * percentile against, so colorSignalsFromHex maps its raw
+ * OKLab axes to the same [0, 1] inputs with a fixed magnitude
+ * scale before calling in (see src/simulation.js).
  *
  * No-data default. Every signal returns 0 when no firing
  * context is active (the typical reason: a queryArc call
@@ -90,16 +104,17 @@
  * etc. on dynamic signal() Patterns are not yet verified
  * to compose cleanly (a follow-up commit can check).
  * Second, orange does not have one right formula (min,
- * product, 45-degree projection, hue-distance, vector
- * projection all give different curves), and picking the
- * formula for the composer is exactly what the standard
- * library is for. The chosen formula here is the 45-degree
- * projection (orthogonal in OKLab between the adjacent
- * primaries), which is geometrically symmetric across the
- * four intermediates and easy to reason about. Once
- * defineSignal lands and strudel algebra on dynamic
- * signals is verified, the intermediates may migrate from
- * the standard library to a curated recipe collection.
+ * product, projection, hue-distance all give different
+ * curves), and picking the formula for the composer is
+ * exactly what the standard library is for. The chosen
+ * formula here is the symmetric MEAN of the two adjacent
+ * primaries (orange = (redness + yellowness)/2, and so on),
+ * which keeps every intermediate continuously in [0, 1],
+ * makes the opposite pairs exact inverses (cyan = 1 −
+ * orange, purple = 1 − lime), and is trivial to reason
+ * about. Once defineSignal lands and strudel algebra on
+ * dynamic signals is verified, the intermediates may migrate
+ * from the standard library to a curated recipe collection.
  *
  * Strudel's signal(fn) factory takes a function of cycle
  * time and produces a Pattern that emits one Hap per query
@@ -125,43 +140,6 @@
 
 import { getFiringContext } from "./firingContext.js";
 import { installDebugTap } from "./debugTap.js";
-
-/**
- * Uniform normaliser applied to OKLab a and b projections
- * (the four primaries and the four hue intermediates) so
- * their values land in roughly [0, 1] for compatibility
- * with strudel's signal conventions and clean .range()
- * mapping. The clamp01 step at every read caps the rare
- * case (pure blue's -b reaches about 0.312 in sRGB,
- * slightly above the normaliser) at 1.0.
- *
- * Reference sRGB extremes for orientation:
- *   pure red    (#ff0000):   +a is about 0.226
- *   pure green  (#00ff00):   -a is about 0.234
- *   pure yellow (#ffff00):   +b is about 0.198
- *   pure blue   (#0000ff):   -b is about 0.312
- *   diagonal extremes:           about 0.25
- *
- * 0.3 lands the typical extreme near 1.0 across all four
- * primary directions; pure blue clamps to exactly 1.0; the
- * other primaries reach roughly 0.65 to 0.78 at their pure
- * forms. The asymmetry is small enough that composers
- * adjust their .range() endpoints by ear in practice, which
- * is the natural workflow anyway.
- *
- * Not used by pxLt: OKLab's L is already in [0, 1] by
- * definition.
- */
-const PRIMARY_NORMALIZER = 0.3;
-
-/**
- * Reciprocal of sqrt(2), used by the four hue
- * intermediates to project (a, b) onto a unit-magnitude
- * 45-degree-rotated direction. Computed once at module
- * load rather than inline so each per-event projection is
- * one multiply rather than a divide.
- */
-const INV_SQRT2 = 1 / Math.sqrt(2);
 
 /**
  * Clamp v to [0, 1]. Inlined-style helper used by every
@@ -229,23 +207,26 @@ export function imageSignalsFromOKLCh(o) {
             pxB: 0, pxOr: 0, pxLi: 0, pxCy: 0, pxPu: 0,
         };
     }
-    const a = o.a;
-    const b = o.b;
-    const orProj = (a + b) * INV_SQRT2;
-    const liProj = (-a + b) * INV_SQRT2;
-    const cyProj = (-a - b) * INV_SQRT2;
-    const puProj = (a - b) * INV_SQRT2;
+    // o.L / o.C / o.a / o.b arrive ALREADY percentile-stretched to [0, 1] at
+    // image load (src/strudel/imageStretch.js), each axis banded across the
+    // image so the full 0..1 range is used for any image: o.a is REDNESS
+    // (0 greenest … 0.5 grey … 1 reddest), o.b is YELLOWNESS, o.C is
+    // COLOURFULNESS, o.L lightness. A primary IS its stretched axis; a hue
+    // diagonal is the symmetric mean of its two adjacent primaries; opposite
+    // directions are exact inverses. Everything lands in [0, 1] by construction —
+    // continuous, never half-wave-clamped to a dead zero (a near-grey image just
+    // holds every hue channel near 0.5).
+    const r = clamp01(o.a);
+    const y = clamp01(o.b);
+    const or = clamp01((r + y) / 2);          // orange = red + yellow
+    const li = clamp01(((1 - r) + y) / 2);    // lime = green + yellow
     return {
-        pxLt: o.L,
-        pxChr: clamp01(o.C / PRIMARY_NORMALIZER),
-        pxR: a > 0 ? clamp01(a / PRIMARY_NORMALIZER) : 0,
-        pxG: a < 0 ? clamp01(-a / PRIMARY_NORMALIZER) : 0,
-        pxY: b > 0 ? clamp01(b / PRIMARY_NORMALIZER) : 0,
-        pxB: b < 0 ? clamp01(-b / PRIMARY_NORMALIZER) : 0,
-        pxOr: orProj > 0 ? clamp01(orProj / PRIMARY_NORMALIZER) : 0,
-        pxLi: liProj > 0 ? clamp01(liProj / PRIMARY_NORMALIZER) : 0,
-        pxCy: cyProj > 0 ? clamp01(cyProj / PRIMARY_NORMALIZER) : 0,
-        pxPu: puProj > 0 ? clamp01(puProj / PRIMARY_NORMALIZER) : 0,
+        pxLt: clamp01(o.L),
+        pxChr: clamp01(o.C),
+        pxR: r, pxG: 1 - r,
+        pxY: y, pxB: 1 - y,
+        pxOr: or, pxCy: 1 - or,
+        pxLi: li, pxPu: 1 - li,
     };
 }
 
@@ -261,28 +242,28 @@ function readPxLt() { return imageSignalsFromOKLCh(readImageOKLCh()).pxLt; }
 /** Perceptual chroma (OKLCh C, hypot of a and b), normalised. */
 function readPxChr() { return imageSignalsFromOKLCh(readImageOKLCh()).pxChr; }
 
-/** Redness: positive +a clamped to the red half-axis. */
+/** Redness: stretched a axis, continuous (grey 0.5, reddest 1). */
 function readPxR() { return imageSignalsFromOKLCh(readImageOKLCh()).pxR; }
 
-/** Greenness: positive -a clamped to the green half-axis. */
+/** Greenness: inverse of redness (1 − pxR). */
 function readPxG() { return imageSignalsFromOKLCh(readImageOKLCh()).pxG; }
 
-/** Yellowness: positive +b clamped to the yellow half-axis. */
+/** Yellowness: stretched b axis, continuous (grey 0.5, yellowest 1). */
 function readPxY() { return imageSignalsFromOKLCh(readImageOKLCh()).pxY; }
 
-/** Blueness: positive -b clamped to the blue half-axis. */
+/** Blueness: inverse of yellowness (1 − pxY). */
 function readPxB() { return imageSignalsFromOKLCh(readImageOKLCh()).pxB; }
 
-/** Orange: +45-degree (a, b) diagonal, named-positive half. */
+/** Orange: mean of redness and yellowness, in [0, 1]. */
 function readPxOr() { return imageSignalsFromOKLCh(readImageOKLCh()).pxOr; }
 
-/** Lime: +135-degree (a, b) diagonal, named-positive half. */
+/** Lime: mean of greenness and yellowness, in [0, 1]. */
 function readPxLi() { return imageSignalsFromOKLCh(readImageOKLCh()).pxLi; }
 
-/** Cyan: -135-degree (a, b) diagonal, named-positive half. */
+/** Cyan: inverse of orange (1 − pxOr). */
 function readPxCy() { return imageSignalsFromOKLCh(readImageOKLCh()).pxCy; }
 
-/** Purple: -45-degree (a, b) diagonal, named-positive half. */
+/** Purple: inverse of lime (1 − pxLi). */
 function readPxPu() { return imageSignalsFromOKLCh(readImageOKLCh()).pxPu; }
 
 /**

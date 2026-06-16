@@ -21,8 +21,10 @@ function assertColShape(c) {
 test("colorSignalsFromHex: pure red is red-dominant", () => {
     const c = colorSignalsFromHex("#ff0000");
     assertColShape(c);
-    assert.ok(c.r > 0, "redness positive");
-    assert.equal(c.g, 0, "no greenness on a pure red");
+    // Continuous, opposite-inverse model: redness sits well above the grey
+    // midpoint and greenness is its exact inverse (low, but NOT a dead zero).
+    assert.ok(c.r > 0.5, "redness above neutral");
+    assert.ok(Math.abs(c.g - (1 - c.r)) < 1e-9, "greenness is the inverse of redness");
     assert.ok(c.r > c.g && c.r > c.b, "red is the strongest hue channel");
     assert.ok(c.chr > 0, "saturated colour has chroma");
 });
@@ -30,8 +32,8 @@ test("colorSignalsFromHex: pure red is red-dominant", () => {
 test("colorSignalsFromHex: pure green is green-dominant", () => {
     const c = colorSignalsFromHex("#00ff00");
     assertColShape(c);
-    assert.ok(c.g > 0, "greenness positive");
-    assert.equal(c.r, 0, "no redness on a pure green");
+    assert.ok(c.g > 0.5, "greenness above neutral");
+    assert.ok(Math.abs(c.r - (1 - c.g)) < 1e-9, "redness is the inverse of greenness");
     assert.ok(c.g > c.r, "green beats red");
 });
 
