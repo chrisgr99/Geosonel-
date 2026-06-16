@@ -124,29 +124,27 @@ export const harmonyLines = {
 
         bundle.addTextFile(
             "script.js",
-            `// Each circle reads the image colour under its 16 beat points and
-// turns it into a melodic LINE that follows the chord progression. Every note
-// is shaped by the colour: PITCH from lightness (nxtNote, which favours
-// stepwise motion + chord tones), LOUDNESS from red, and LENGTH from blue
-// (reRange maps a 0-1 channel onto a useful range). Inner circle = bass,
-// outer = melody. Drop an image on the canvas to drive them; edit the changes
-// in the Harmony tab. Try styles.lead, or a custom { ...styles.melody, scale: "blues" }.
+            `// Each circle reads the image colour under its 16 beat points and turns it
+// into a melodic LINE that follows the chord progression. Each voice is a
+// NoteStyle: copy a built-in (styles.bass / .melody / .lead), set the instrument,
+// and nxtNote coordinates PITCH, VELOCITY and DURATION together — pitch from
+// lightness, velocity from the beat strength blended with red, duration from the
+// groove spacing shaped by blue and the phrase. Drop an image on the canvas;
+// edit the changes in the Harmony tab. Customise a voice one line at a time
+// (e.g. inner.velocityWeight = 0.8), or try styles.lead.
+
+// Two voices, configured once and reused (these persist across beats).
+const inner = styles.bass.copy();    // inner circle — low, root-locked
+inner.sound = "sawtooth";
+const outer = styles.melody.copy();  // outer circle — an upper-register line
+outer.sound = "piano";
 
 function bass() {
-  // Inner circle — low, root-locked, walking the changes.
-  const note = nxtNote(this.col.lt, styles.bass);  // pitch from lightness
-  const vel  = reRange(this.col.r, 0.4, 1);         // loudness from red
-  const dur  = reRange(this.col.b, 0.3, 1);         // length from blue
-  playNote("sawtooth", note, vel, dur);
+  playNote(nxtNote(inner));          // style in → coordinated note out → play
 }
 
 function melody() {
-  // Outer circle — larger radius, so it samples the image further out: an
-  // independent voice in the upper register.
-  const note = nxtNote(this.col.lt, styles.melody);
-  const vel  = reRange(this.col.r, 0.3, 1);
-  const dur  = reRange(this.col.b, 0.2, 1.5);
-  playNote("piano", note, vel, dur);
+  playNote(nxtNote(outer));
 }
 `,
         );

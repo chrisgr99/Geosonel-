@@ -94,7 +94,22 @@ export function buildNoteSpec(args, defaultVel) {
         sound = args[0];
         i = 1;
     }
-    const note = args[i++];
+    const noteArg = args[i++];
+    // A note OBJECT (from nxtNote) passed positionally — e.g. with a sound
+    // override: playNote("piano", nxtNote(style)). Unwrap its fields; an explicit
+    // leading sound still overrides the object's own sound.
+    if (isPlainObject(noteArg) && "note" in /** @type {any} */ (noteArg)) {
+        const o = /** @type {any} */ (noteArg);
+        return {
+            sound: sound !== null ? sound
+                : ((typeof o.sound === "string" && o.sound.length > 0) ? o.sound : null),
+            note: o.note,
+            velocity: pickVelocity(o.vel ?? o.velocity, defaultVel),
+            duration: numberOrUndefined(o.duration),
+            pan: numberOrUndefined(o.pan),
+        };
+    }
+    const note = noteArg;
     const velocity = pickVelocity(args[i++], defaultVel);
     const duration = numberOrUndefined(args[i++]);
     const pan = numberOrUndefined(args[i++]);

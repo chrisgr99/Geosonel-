@@ -29,6 +29,7 @@ import {
     expandProfile,
     styles as STYLES,
 } from "./harmonyMelody.js";
+import { resolveDrive, shapeVelocity, shapeDuration } from "./noteStyle.js";
 
 /**
  * Per-object melodic memory for nxtNote: object id → its last MIDI note. The
@@ -125,25 +126,54 @@ function chordStructurePcs(c) {
 }
 
 /**
- * Bare nxtNote — the next note of a melodic LINE for the firing object.
+ * Bare nxtNote — the next note of a melodic LINE for the firing object. Two
+ * calling forms, dispatched on the first argument:
  *
- *   nxtNote(drive, style, low?, span?)
+ *   nxtNote(drive, style, low?, span?)  → a bare MIDI note (legacy)
+ *   nxtNote(noteStyle)                  → { sound, note, velocity, duration, pan }
  *
- * `drive` is the signal you choose (the colour under the cursor, 0..1 — that's
- * the control you keep); `style` is a {@link styles} profile object (or a
- * spread-customised copy); `low`/`span` optionally override the output register
- * ([low, low+span]). The CURRENT chord, NEXT chord, beats-to-next, beat index,
- * key, and the object's previous note are all read from the ambient firing
- * context — nothing else to pass. Returns a MIDI note; 60 outside any callback.
+ * LEGACY (a number first): `drive` is the 0..1 signal you choose (e.g. the colour
+ * under the cursor); `style` is a {@link styles} profile; `low`/`span` override
+ * the register. Returns a MIDI note (0 = rest).
  *
- * @param {number} drive
+ * VOICE (a NoteStyle first): pitch, velocity, and duration are computed TOGETHER
+ * from the style's drivers + the ambient beat strength / colour / phrase, and
+ * returned as one coordinated note object for `playNote` (src/noteStyle.js).
+ *
+ * Either way the current chord, next chord, beats-to-next, beat index, key, and
+ * the object's previous note come from the ambient firing context. Outside a
+ * callback: 60 (number) / a default note object.
+ *
+ * @param {number | import("./noteStyle.js").NoteStyle} arg0
  * @param {import("./harmonyMelody.js").Style} [style]
  * @param {number} [low]
  * @param {number} [span]
+ * @returns {number | { sound: any, note: number, velocity: number, duration: number|undefined, pan: number|undefined }}
+ */
+export function nxtNote(arg0, style, low, span) {
+    if (current === null) {
+        // Outside a callback: keep the legacy number default; a style argument
+        // gets a benign default note object so a caller can't crash.
+        return (arg0 !== null && typeof arg0 === "object")
+            ? { sound: arg0.sound, note: 60, velocity: 0.8, duration: undefined, pan: undefined }
+            : 60;
+    }
+    // Dual-dispatch: a NoteStyle (any object) → the new COORDINATED note object
+    // { sound, note, velocity, duration, pan }; a number (or nothing) → the
+    // legacy bare-MIDI return. Existing scripts pass a number, so they are
+    // untouched.
+    if (arg0 !== null && typeof arg0 === "object") {
+        return nxtNoteFromStyle(arg0);
+    }
+    return nxtNoteLegacy(arg0, style, low, span);
+}
+
+/**
+ * Legacy nxtNote: a number `drive` + a style profile → a bare MIDI note (0 =
+ * rest). The original contract, kept verbatim for back-compat.
  * @returns {number}
  */
-export function nxtNote(drive, style, low, span) {
-    if (current === null) return 60;
+function nxtNoteLegacy(drive, style, low, span) {
     const ctx = current;
     const prof = style || STYLES.melody;
     const breathes = prof.breathe !== false;
@@ -163,9 +193,75 @@ export function nxtNote(drive, style, low, span) {
             ctx._breathReleaseBeats = phrase.release;   // else release just before it
         }
     }
+    const dice = (typeof drive === "number" && Number.isFinite(drive)) ? drive : 0;
+    return pickMelodicNote(ctx, prof, dice, low, span, phrase);
+}
+
+/**
+ * New nxtNote: a NoteStyle → one COORDINATED note object. Pitch, velocity, and
+ * duration are computed together — pitch from the style's `pitch` driver,
+ * velocity from the beat strength blended with the `velocity` driver, duration
+ * from the groove spacing shaped by `articulation`/phrase — so the line reads as
+ * intentional. `sound` rides through (unset = the object's own voice). A drawn
+ * gap rests (note 0). See src/noteStyle.js.
+ * @param {any} style  a NoteStyle (or style-shaped object)
+ * @returns {{ sound: any, note: number, velocity: number, duration: number|undefined, pan: number|undefined }}
+ */
+function nxtNoteFromStyle(style) {
+    const ctx = current;
+    const phrase = currentHarmony ? currentHarmony.phrase : null;
+    delete ctx._breathReleaseBeats; // the explicit duration replaces the old cap
+    if (phrase && phrase.inGap) {
+        return { sound: style.sound, note: 0, velocity: 0, duration: 0, pan: undefined };
+    }
+    let dice = resolveDrive(style.pitch, ctx);
+    dice = (typeof dice === "number" && Number.isFinite(dice))
+        ? Math.min(0.999999, Math.max(0, dice)) : 0;
+    const note = pickMelodicNote(ctx, style, dice, undefined, undefined, phrase);
+
+    const strength = (typeof ctx.vel === "number" && Number.isFinite(ctx.vel)) ? ctx.vel : 0.8;
+    const velocity = shapeVelocity({
+        beatStrength: strength,
+        image: resolveDrive(style.velocity, ctx),
+        weight: style.velocityWeight,
+        accentResponse: style.accentResponse,
+        phrase,
+        phraseDynamics: style.phraseDynamics,
+    });
+    const durBeats = shapeDuration({
+        beatsToNext: typeof ctx.beatsToNext === "number" ? ctx.beatsToNext : null,
+        image: resolveDrive(style.duration, ctx),
+        weight: style.durationWeight,
+        articulation: style.articulation,
+        beatStrength: strength,
+        phrase,
+        phraseDynamics: style.phraseDynamics,
+    });
+    const bpm = (typeof ctx.bpm === "number" && ctx.bpm > 0) ? ctx.bpm : 120;
+    return {
+        sound: style.sound,
+        note,
+        velocity,
+        duration: durBeats * 60 / bpm,        // beats → seconds (playNote's unit)
+        pan: resolveDrive(style.pan, ctx),
+    };
+}
+
+/**
+ * Pick the next MIDI note of the line for the firing object and update its
+ * per-object line memory (keyed by object id, so a rewind's clearMelodyState
+ * resets it deterministically). Shared by both nxtNote paths.
+ * @param {any} ctx     the firing context
+ * @param {any} prof    a style / NoteStyle (scale, range, smoothness, …)
+ * @param {number} dice the 0..1 pitch draw
+ * @param {number|undefined} low
+ * @param {number|undefined} span
+ * @param {any} phrase  ambient phrase state (for anchoring), or null
+ * @returns {number}
+ */
+function pickMelodicNote(ctx, prof, dice, low, span, phrase) {
     const key = (currentHarmony && currentHarmony.key)
         ? currentHarmony.key : { tonicPitchClass: 0, mode: "major" };
-
     const scalePcs = scalePitchClasses(key, prof.scale);
     const chordPcs = chordStructurePcs(ctx.chord);
     const rootPc = (ctx.chord && typeof ctx.chord.root === "number")
@@ -180,7 +276,6 @@ export function nxtNote(drive, style, low, span) {
 
     const id = typeof ctx.id === "string" ? ctx.id : "";
     const prev = melodyState.has(id) ? melodyState.get(id) : null;
-    const dice = (typeof drive === "number" && Number.isFinite(drive)) ? drive : 0;
     const beatsToNext = typeof ctx.beatsToNext === "number" ? ctx.beatsToNext : null;
     const beatIndex = typeof ctx.beatIndex === "number" ? ctx.beatIndex : 0;
 
