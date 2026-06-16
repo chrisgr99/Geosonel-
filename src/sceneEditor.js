@@ -2333,6 +2333,37 @@ export function setBeenTriggeredFunctionOnSelection(data, selection, value) {
     setStringFieldOnSelection(data, selection, "beenTriggeredFunction", String(value));
 }
 
+// --- Per-slot melodic STYLE (nxtNote NoteStyle name) across the selection.
+// A note callback's default voice-of-pitch; "" = the default melody style.
+// Distinct from the object's `voice` (its instrument). Not on onTick.
+
+/**
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value  a style name, or "" to clear
+ */
+export function setHasCollidedStyleOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "hasCollidedStyle", String(value));
+}
+
+/**
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setBeenTriggeredStyleOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "beenTriggeredStyle", String(value));
+}
+
+/**
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setOnActiveBeatStyleOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "onActiveBeatStyle", String(value));
+}
+
 /**
  * Set the canActiveBeat field (the onActiveBeat gate) across the
  * selection. Applies to curves and sprites; the inspector greys it
@@ -2457,7 +2488,20 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
     // `this` (reads are this.vel, this.r, …) and the emitters (playNote
     // / playSound / applyForce) are callable bare — so the stub takes
     // no parameter.
-    const stub = `function ${functionName}() {\n    \n}\n`;
+    //
+    // The three NOTE slots scaffold a working THREE-STAGE body so each step is
+    // exposed for editing: copy this slot's Style (set in the inspector dropdown)
+    // into a local `style` you can customise, build a `note` from it with
+    // nxtNote, then playNote it. Kept unwrapped (not playNote(nxtNote(...))) so
+    // the style and the note are easy to inspect and tweak. onTick isn't a note
+    // event, so it stays an empty stub.
+    const isNoteSlot = slotKey === "onActiveBeat"
+        || slotKey === "hasCollided" || slotKey === "beenTriggered";
+    const body = isNoteSlot
+        ? "    const style = this.style.copy();   // this slot's Style; customise, e.g. style.velocityWeight = 0.8\n"
+            + "    const note = nxtNote(style);\n    playNote(note);\n"
+        : "    \n";
+    const stub = `function ${functionName}() {\n${body}}\n`;
     const trimmed = content.replace(/\s+$/, "");
     const separator = trimmed.length === 0 ? "" : "\n\n";
     return { newContent: `${trimmed}${separator}${stub}`, alreadyExists: false };

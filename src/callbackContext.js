@@ -29,7 +29,7 @@ import {
     expandProfile,
     styles as STYLES,
 } from "./harmonyMelody.js";
-import { resolveDrive, shapeVelocity, shapeDuration } from "./noteStyle.js";
+import { resolveDrive, shapeVelocity, shapeDuration, Note } from "./noteStyle.js";
 
 /**
  * Per-object melodic memory for nxtNote: object id → its last MIDI note. The
@@ -148,20 +148,25 @@ function chordStructurePcs(c) {
  * @param {import("./harmonyMelody.js").Style} [style]
  * @param {number} [low]
  * @param {number} [span]
- * @returns {number | { sound: any, note: number, velocity: number, duration: number|undefined, pan: number|undefined }}
+ * @returns {number | import("./noteStyle.js").Note}
  */
 export function nxtNote(arg0, style, low, span) {
     if (current === null) {
         // Outside a callback: keep the legacy number default; a style argument
-        // gets a benign default note object so a caller can't crash.
+        // gets a benign default Note so a caller can't crash.
         return (arg0 !== null && typeof arg0 === "object")
-            ? { sound: arg0.sound, note: 60, velocity: 0.8, duration: undefined, pan: undefined }
+            ? new Note({ sound: arg0.sound, note: 60, velocity: 0.8 })
             : 60;
     }
-    // Dual-dispatch: a NoteStyle (any object) → the new COORDINATED note object
-    // { sound, note, velocity, duration, pan }; a number (or nothing) → the
-    // legacy bare-MIDI return. Existing scripts pass a number, so they are
-    // untouched.
+    // No argument → the callback slot's STYLE (`this.style`, set by the engine
+    // from the object's inspector-assigned style), or the default melody style
+    // when none is assigned. The zero-boilerplate `playNote(nxtNote())` path.
+    if (arg0 === undefined) {
+        return nxtNoteFromStyle(current.style || STYLES.melody);
+    }
+    // A NoteStyle (any object) → the COORDINATED note object { sound, note,
+    // velocity, duration, pan }. A number → the legacy bare-MIDI return, so
+    // existing scripts are untouched.
     if (arg0 !== null && typeof arg0 === "object") {
         return nxtNoteFromStyle(arg0);
     }
@@ -212,7 +217,7 @@ function nxtNoteFromStyle(style) {
     const phrase = currentHarmony ? currentHarmony.phrase : null;
     delete ctx._breathReleaseBeats; // the explicit duration replaces the old cap
     if (phrase && phrase.inGap) {
-        return { sound: style.sound, note: 0, velocity: 0, duration: 0, pan: undefined };
+        return new Note({ sound: style.sound, note: 0, velocity: 0, duration: 0 });
     }
     let dice = resolveDrive(style.pitch, ctx);
     dice = (typeof dice === "number" && Number.isFinite(dice))
@@ -238,13 +243,13 @@ function nxtNoteFromStyle(style) {
         phraseDynamics: style.phraseDynamics,
     });
     const bpm = (typeof ctx.bpm === "number" && ctx.bpm > 0) ? ctx.bpm : 120;
-    return {
+    return new Note({
         sound: style.sound,
         note,
         velocity,
         duration: durBeats * 60 / bpm,        // beats → seconds (playNote's unit)
         pan: resolveDrive(style.pan, ctx),
-    };
+    });
 }
 
 /**

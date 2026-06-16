@@ -63,8 +63,9 @@ const DEFAULTS = Object.freeze({
     sound: undefined,
 });
 
-/** The fields a NoteStyle carries (and copies). */
-const FIELDS = Object.keys(DEFAULTS);
+/** The fields a NoteStyle carries (and copies). Exported so the Script-tab
+ *  autocomplete can offer them after a `.` on a NoteStyle variable. */
+export const NOTE_STYLE_FIELDS = Object.keys(DEFAULTS);
 
 /**
  * A reusable, mutable voice. Build one from a base (another NoteStyle, or a
@@ -79,7 +80,7 @@ export class NoteStyle {
      */
     constructor(base) {
         const src = (base && typeof base === "object") ? base : DEFAULTS;
-        for (const k of FIELDS) {
+        for (const k of NOTE_STYLE_FIELDS) {
             const v = (k in src) ? src[k] : DEFAULTS[k];
             // Clone the range array so a copy can't mutate the source's; driver
             // functions are shared by reference (they're stateless).
@@ -95,6 +96,31 @@ export class NoteStyle {
      */
     copy() {
         return new NoteStyle(this);
+    }
+}
+
+/** The fields a Note carries — nxtNote's output, playNote's input. Exported so
+ *  the autocomplete can offer them after a `.` on a Note variable. */
+export const NOTE_FIELDS = ["sound", "note", "velocity", "duration", "pan"];
+
+/**
+ * One playable NOTE — the slim, coordinated output of `nxtNote`, consumed by
+ * `playNote`. A real class (parallel to {@link NoteStyle}) so its type is
+ * explicit and the autocomplete can recognise a variable built from `nxtNote`.
+ *   - `note`     — pitch (MIDI; 0 = rest);
+ *   - `velocity` — 0..1;
+ *   - `duration` — seconds;
+ *   - `sound`    — instrument, or undefined to use the object's own voice;
+ *   - `pan`      — -1..1, or undefined for centre.
+ */
+export class Note {
+    /** @param {{sound?: any, note?: number, velocity?: number, duration?: number, pan?: number}} [fields] */
+    constructor(fields = {}) {
+        this.sound = fields.sound;
+        this.note = fields.note;
+        this.velocity = fields.velocity;
+        this.duration = fields.duration;
+        this.pan = fields.pan;
     }
 }
 

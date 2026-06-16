@@ -46,11 +46,15 @@ export const W = {
     groupLabel: 44,
     group: 120,
 
-    // Band 3 callback function-name field. Sized so the callback
-    // row (leftLabel + checkbox + this field + Create/Go-to button)
-    // is no wider than the Initial Conditions row (X/Y/vX/vY), which
-    // is the inspector's widest line — we don't widen the pane past it.
-    callbackField: 224,
+    // Band 3 callback function-name field. Narrowed from 224 to make room for
+    // the per-slot Style dropdown that now sits between it and the Create/Go-to
+    // button; the proposed default names (slotKey_objectId) still fit, longer
+    // custom names scroll. The row stays no wider than the Initial Conditions
+    // row (X/Y/vX/vY), the inspector's widest line.
+    callbackField: 150,
+    // Band 3 per-slot Style dropdown (the nxtNote NoteStyle a no-arg nxtNote()
+    // uses). Note rows only; onTick leaves this column blank for alignment.
+    slotStyle: 84,
 
     // Band 2 Variability inline label, sitting to the right of
     // the Color field on the same row (GeoSonixV2). Fits the

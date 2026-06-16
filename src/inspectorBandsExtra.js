@@ -33,6 +33,19 @@ import {
 } from "./curveFieldValidation.js";
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 
+/**
+ * Options for a note slot's STYLE dropdown — the nxtNote NoteStyle a
+ * no-argument nxtNote() uses (distinct from the object's `voice` / instrument).
+ * "" = the default melody style. Built-in styles only for now; phase 3 widens
+ * this to the user style library.
+ */
+const SLOT_STYLE_OPTIONS = [
+    { value: "", label: "Default" },
+    { value: "melody", label: "Melody" },
+    { value: "bass", label: "Bass" },
+    { value: "lead", label: "Lead" },
+];
+
 export const bandExtraMethods = {
 
     /**
@@ -91,6 +104,10 @@ export const bandExtraMethods = {
         const beenTriggeredFunctionAgg = aggregateString(objs.all, "beenTriggeredFunction");
         const canActiveBeatAgg = aggregateBoolean(objs.all, "canActiveBeat");
         const onActiveBeatFunctionAgg = aggregateString(objs.all, "onActiveBeatFunction");
+        // Per-slot STYLE (nxtNote NoteStyle name) aggregates — note slots only.
+        const onActiveBeatStyleAgg = aggregateString(objs.all, "onActiveBeatStyle");
+        const hasCollidedStyleAgg = aggregateString(objs.all, "hasCollidedStyle");
+        const beenTriggeredStyleAgg = aggregateString(objs.all, "beenTriggeredStyle");
         const canTickAgg = aggregateBoolean(objs.all, "canTick");
         const onTickFunctionAgg = aggregateString(objs.all, "onTickFunction");
 
@@ -114,9 +131,9 @@ export const bandExtraMethods = {
          *   enabled?: boolean,
          * }>} */
         const slotRows = [
-            { label: "onActiveBeat", slotKey: "onActiveBeat", canEditKind: "setCanActiveBeat", canAgg: canActiveBeatAgg, funcEditKind: "setOnActiveBeatFunction", funcAgg: onActiveBeatFunctionAgg, enabled: activeBeatEnabled },
-            { label: "hasCollided", slotKey: "hasCollided", canEditKind: "setCanCollide", canAgg: canCollideAgg, funcEditKind: "setHasCollidedFunction", funcAgg: hasCollidedFunctionAgg },
-            { label: "beenTriggered", slotKey: "beenTriggered", canEditKind: "setCanBeTriggered", canAgg: canBeTriggeredAgg, funcEditKind: "setBeenTriggeredFunction", funcAgg: beenTriggeredFunctionAgg },
+            { label: "onActiveBeat", slotKey: "onActiveBeat", canEditKind: "setCanActiveBeat", canAgg: canActiveBeatAgg, funcEditKind: "setOnActiveBeatFunction", funcAgg: onActiveBeatFunctionAgg, styleEditKind: "setOnActiveBeatStyle", styleAgg: onActiveBeatStyleAgg, enabled: activeBeatEnabled },
+            { label: "hasCollided", slotKey: "hasCollided", canEditKind: "setCanCollide", canAgg: canCollideAgg, funcEditKind: "setHasCollidedFunction", funcAgg: hasCollidedFunctionAgg, styleEditKind: "setHasCollidedStyle", styleAgg: hasCollidedStyleAgg },
+            { label: "beenTriggered", slotKey: "beenTriggered", canEditKind: "setCanBeTriggered", canAgg: canBeTriggeredAgg, funcEditKind: "setBeenTriggeredFunction", funcAgg: beenTriggeredFunctionAgg, styleEditKind: "setBeenTriggeredStyle", styleAgg: beenTriggeredStyleAgg },
             { label: "onTick", slotKey: "onTick", canEditKind: "setCanTick", canAgg: canTickAgg, funcEditKind: "setOnTickFunction", funcAgg: onTickFunctionAgg },
         ];
         // Build one callback slot row: label + Can-X checkbox +
@@ -155,6 +172,21 @@ export const bandExtraMethods = {
                 editKind: row.funcEditKind,
             }));
             const canChecked = row.canAgg === true;
+            // The note slot's STYLE picker (the nxtNote voice a no-arg nxtNote()
+            // uses) sits between the function field and the Create/Go-to button.
+            // onTick has no note style, so it gets a blank spacer to keep the
+            // button column aligned straight down with the note rows.
+            if (row.styleEditKind) {
+                r.appendChild(this._buildDropdownField({
+                    options: SLOT_STYLE_OPTIONS,
+                    value: row.styleAgg === "varies" ? "" : row.styleAgg,
+                    width: W.slotStyle,
+                    editable: rowEnabled && canChecked,
+                    editKind: row.styleEditKind,
+                }));
+            } else {
+                r.appendChild(mkLabel("", { width: W.slotStyle }));
+            }
             const buttonEnabled = rowEnabled && canChecked && singleObj !== null && effectiveName.length > 0;
             const buttonLabel = functionExists ? "Go to" : "Create";
             r.appendChild(this._buildSlotButton({

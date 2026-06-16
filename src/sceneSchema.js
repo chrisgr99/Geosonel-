@@ -150,8 +150,14 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "repeats", label: "Beat Repeats", type: "integer", default: 1, min: 1 },
     { key: "canCollide", label: "Can Collide", type: "boolean", default: false },
     { key: "hasCollidedFunction", label: "Has Collided Function", type: "functionRef", default: "" },
+    // The melodic STYLE (nxtNote NoteStyle, by name) this note callback uses by
+    // default — distinct from `voice` (the object's instrument / sound bank). The
+    // engine binds a fresh copy as `this.style`, and a no-argument nxtNote() uses
+    // it. Empty = the default melody style. (Not on onTick — not a note event.)
+    { key: "hasCollidedStyle", label: "Has Collided Style", type: "string", default: "" },
     { key: "canBeTriggered", label: "Can Be Triggered", type: "boolean", default: false },
     { key: "beenTriggeredFunction", label: "Been Triggered Function", type: "functionRef", default: "" },
+    { key: "beenTriggeredStyle", label: "Been Triggered Style", type: "string", default: "" },
     // onActiveBeat (Band 3): fires when a cursor crosses one of this
     // object's active beat points. Curves and sprites only (the UI
     // greys it for triggers, which have no beat points). Its firing
@@ -159,6 +165,7 @@ const CALLBACK_SLOT_FIELDS = [
     // scaffolding for now.
     { key: "canActiveBeat", label: "Can Active Beat", type: "boolean", default: false },
     { key: "onActiveBeatFunction", label: "On Active Beat Function", type: "functionRef", default: "" },
+    { key: "onActiveBeatStyle", label: "On Active Beat Style", type: "string", default: "" },
     { key: "canTick", label: "Can Tick", type: "boolean", default: false },
     { key: "onTickFunction", label: "On Tick Function", type: "functionRef", default: "" },
 ];

@@ -168,10 +168,13 @@ import {
     setTriggerSyncToBeatOnSelection,
     setCanCollideOnSelection,
     setHasCollidedFunctionOnSelection,
+    setHasCollidedStyleOnSelection,
     setCanBeTriggeredOnSelection,
     setBeenTriggeredFunctionOnSelection,
+    setBeenTriggeredStyleOnSelection,
     setCanActiveBeatOnSelection,
     setOnActiveBeatFunctionOnSelection,
+    setOnActiveBeatStyleOnSelection,
     setCanTickOnSelection,
     setOnTickFunctionOnSelection,
     scaffoldCallbackSlotFunction,
@@ -4263,6 +4266,18 @@ async function main() {
             } else if (edit.kind === "setOnActiveBeatFunction") {
                 await applySceneEdit((data) =>
                     setOnActiveBeatFunctionOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setOnActiveBeatStyle") {
+                await applySceneEdit((data) =>
+                    setOnActiveBeatStyleOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setHasCollidedStyle") {
+                await applySceneEdit((data) =>
+                    setHasCollidedStyleOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setBeenTriggeredStyle") {
+                await applySceneEdit((data) =>
+                    setBeenTriggeredStyleOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setCanTick") {
                 await applySceneEdit((data) =>

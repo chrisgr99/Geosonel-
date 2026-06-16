@@ -765,13 +765,19 @@ export class Curve {
         this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
         this.hasCollidedFunction = opts.hasCollidedFunction ?? "";
+        /** @type {string} Per-slot melodic STYLE name (nxtNote); "" = default. */
+        this.hasCollidedStyle = opts.hasCollidedStyle ?? "";
 
         /** @type {boolean} */
         this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
         this.beenTriggeredFunction = opts.beenTriggeredFunction ?? "";
+        /** @type {string} */
+        this.beenTriggeredStyle = opts.beenTriggeredStyle ?? "";
         this.canActiveBeat = opts.canActiveBeat ?? false;
         this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
+        /** @type {string} */
+        this.onActiveBeatStyle = opts.onActiveBeatStyle ?? "";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
@@ -926,13 +932,19 @@ export class Trigger {
         this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
         this.hasCollidedFunction = opts.hasCollidedFunction ?? "";
+        /** @type {string} Per-slot melodic STYLE name (nxtNote); "" = default. */
+        this.hasCollidedStyle = opts.hasCollidedStyle ?? "";
 
         /** @type {boolean} */
         this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
         this.beenTriggeredFunction = opts.beenTriggeredFunction ?? "";
+        /** @type {string} */
+        this.beenTriggeredStyle = opts.beenTriggeredStyle ?? "";
         this.canActiveBeat = opts.canActiveBeat ?? false;
         this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
+        /** @type {string} */
+        this.onActiveBeatStyle = opts.onActiveBeatStyle ?? "";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;
@@ -1135,13 +1147,19 @@ export class Sprite {
         this.canCollide = opts.canCollide ?? false;
         /** @type {string} */
         this.hasCollidedFunction = opts.hasCollidedFunction ?? "";
+        /** @type {string} Per-slot melodic STYLE name (nxtNote); "" = default. */
+        this.hasCollidedStyle = opts.hasCollidedStyle ?? "";
 
         /** @type {boolean} */
         this.canBeTriggered = opts.canBeTriggered ?? false;
         /** @type {string} */
         this.beenTriggeredFunction = opts.beenTriggeredFunction ?? "";
+        /** @type {string} */
+        this.beenTriggeredStyle = opts.beenTriggeredStyle ?? "";
         this.canActiveBeat = opts.canActiveBeat ?? false;
         this.onActiveBeatFunction = opts.onActiveBeatFunction ?? "";
+        /** @type {string} */
+        this.onActiveBeatStyle = opts.onActiveBeatStyle ?? "";
 
         /** @type {boolean} */
         this.canTick = opts.canTick ?? false;

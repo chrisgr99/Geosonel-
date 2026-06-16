@@ -184,6 +184,19 @@ export const styles = Object.freeze({
 });
 
 /**
+ * Resolve a STYLE NAME to its (shared, frozen) NoteStyle TEMPLATE — the
+ * per-callback voice-of-pitch the engine binds as `this.style`. Callers `.copy()`
+ * it to customise (the scaffolded callback does); a no-argument nxtNote() reads
+ * it directly. An empty or unknown name yields the default melody style. (Phase 3
+ * widens this to the user style library; for now it's the built-in `styles`.)
+ * @param {string} name
+ * @returns {import("./noteStyle.js").NoteStyle}
+ */
+export function resolveStyleByName(name) {
+    return (typeof name === "string" && name !== "" && styles[name]) ? styles[name] : styles.melody;
+}
+
+/**
  * Expand a friendly {@link Style} (+ optional low/span register override) into
  * the raw weights {@link melodicStep} consumes. `smoothness` drives the leap
  * aversion and window; `chordLock` drives chord-tone pull vs passing-tone

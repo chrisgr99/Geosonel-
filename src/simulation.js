@@ -271,6 +271,7 @@ import { HarmonyPlayer, expandProgression } from "./harmonyPlayer.js";
 import { applyUnwind } from "./harmonyUnwind.js";
 import { phraseStateAt } from "./harmonyPhrasing.js";
 import { phraseSyncBeat } from "./phraseSync.js";
+import { resolveStyleByName } from "./harmonyMelody.js";
 import { chordStructure } from "./harmonyMap.js";
 import { EventTrace } from "./eventTrace.js";
 import { sampleCurve, shapeCenter } from "./curveGeometry.js";
@@ -629,6 +630,20 @@ function cycleDurationSeconds(bpm, beatsPerCycle, beatInterval) {
  * @param {any} obj
  * @returns {any} a number, or the original (possibly invalid) beatsPerCycle
  */
+/**
+ * Bind the per-slot melodic STYLE onto a firing context as `this.style` — the
+ * inspector-assigned NoteStyle TEMPLATE (frozen, shared). The scaffolded callback
+ * `.copy()`s it to customise; a no-argument `nxtNote()` reads it directly. An
+ * unassigned slot resolves to the default melody style, so `this.style` is always
+ * present on a note callback. No per-fire allocation (it's the template, not a
+ * copy). See src/noteStyle.js.
+ * @param {any} ctx
+ * @param {string|undefined} name
+ */
+function bindSlotStyle(ctx, name) {
+    ctx.style = resolveStyleByName(typeof name === "string" ? name : "");
+}
+
 function effectiveBeatsPerCycle(obj) {
     const base = obj ? obj.beatsPerCycle : undefined;
     if (typeof base !== "number" || !Number.isFinite(base) || base <= 0) return base;
@@ -2030,6 +2045,9 @@ export class Simulation {
         // Live harmony: this.chord / this.nextChord / this.beatsToNext and
         // the ambient current chord backing the bare `mapToHarmony` global.
         this._applyHarmonyToContext(ctx, beat);
+        // Per-slot melodic STYLE (this.style) for this collision/trigger note
+        // callback, from the object's hasCollidedStyle / beenTriggeredStyle.
+        bindSlotStyle(ctx, obj[slot + "Style"]);
         setCallbackContext(ctx);
         try {
             fn.call(recordingProxy);
@@ -2610,6 +2628,10 @@ export class Simulation {
         // Live harmony: this.chord / this.nextChord / this.beatsToNext and
         // the ambient current chord backing the bare `mapToHarmony` global.
         this._applyHarmonyToContext(ctx, beat);
+        // Per-slot melodic STYLE (this.style): the inspector-assigned voice a
+        // no-argument nxtNote() uses. A fresh copy per fire so per-beat tweaks
+        // don't accumulate (deterministic); only when one is assigned.
+        bindSlotStyle(ctx, curve.onActiveBeatStyle);
         setCallbackContext(ctx);
         try {
             fn.call(recordingProxy);
