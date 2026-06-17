@@ -8,7 +8,7 @@
  * IndexedDB, transparently). No new object store, no DB-version bump, no preload
  * bridge.
  *
- * The library is TYPE-AWARE — each record carries a `type` ("voice" | "rhythm")
+ * The library is TYPE-AWARE — each record carries a `type` ("melodic" | "rhythmic")
  * so the one store holds both libraries; only voice styles are populated until
  * the rStyle work lands.
  *
@@ -16,7 +16,7 @@
  * firing engine resolves a style per note and can't await IndexedDB. loadStyles()
  * hydrates the cache once at startup; every mutation updates the cache
  * synchronously and persists in the background (best-effort, never throws into
- * the caller). Voice records are also kept pre-materialised (VStyle instances)
+ * the caller). Voice records are also kept pre-materialised (MStyle instances)
  * keyed by name, so resolveStyleByName is a Map lookup, not a per-note re-parse.
  *
  * Pure record helpers (upsertRecord / removeRecord) are exported and unit-tested;
@@ -25,36 +25,36 @@
 
 // @ts-check
 
-import { materializeVStyle } from "./vStyle.js";
+import { materializeMStyle } from "./mStyle.js";
 import { getSetting, setSetting } from "./storage.js";
 
 /** The single settings key the whole library serialises under. */
 const STYLES_KEY = "styleLibrary";
 
 /**
- * @typedef {{ type: "voice" | "rhythm", name: string, def: any }} StyleRecord
- *   `def` is the serialized style (serializeVStyle output for a voice).
+ * @typedef {{ type: "melodic" | "rhythmic", name: string, def: any }} StyleRecord
+ *   `def` is the serialized style (serializeMStyle output for a voice).
  */
 
 /** The authoritative in-memory library. @type {StyleRecord[]} */
 let records = [];
 
-/** Pre-materialised voice styles by name (sync engine reads). @type {Map<string, import("./vStyle.js").VStyle>} */
-let voiceCache = new Map();
+/** Pre-materialised voice styles by name (sync engine reads). @type {Map<string, import("./mStyle.js").MStyle>} */
+let melodicCache = new Map();
 
 /** A record is well-formed enough to keep. @param {any} r */
 function isValidRecord(r) {
     return r !== null && typeof r === "object"
         && typeof r.name === "string" && r.name !== ""
-        && (r.type === "voice" || r.type === "rhythm")
+        && (r.type === "melodic" || r.type === "rhythmic")
         && r.def !== null && typeof r.def === "object";
 }
 
 /** Rebuild the materialised-voice map from the current records. */
-function rebuildVoiceCache() {
-    voiceCache = new Map();
+function rebuildMelodicCache() {
+    melodicCache = new Map();
     for (const r of records) {
-        if (r.type === "voice") voiceCache.set(r.name, materializeVStyle(r.def));
+        if (r.type === "melodic") melodicCache.set(r.name, materializeMStyle(r.def));
     }
 }
 
@@ -84,7 +84,7 @@ export function removeRecord(list, type, name) {
 
 /**
  * All records, or just those of `type`. A shallow copy so callers can't mutate
- * the cache. @param {"voice" | "rhythm"} [type] @returns {StyleRecord[]}
+ * the cache. @param {"melodic" | "rhythmic"} [type] @returns {StyleRecord[]}
  */
 export function listStyles(type) {
     return type ? records.filter((r) => r.type === type) : records.slice();
@@ -96,12 +96,12 @@ export function getStyleRecord(type, name) {
 }
 
 /**
- * The materialised VStyle for a user voice style of this name, or null. Sync —
+ * The materialised MStyle for a user voice style of this name, or null. Sync —
  * this is the engine's per-note path (resolveStyleByName).
- * @param {string} name @returns {import("./vStyle.js").VStyle | null}
+ * @param {string} name @returns {import("./mStyle.js").MStyle | null}
  */
-export function getMaterializedVoice(name) {
-    return voiceCache.get(name) || null;
+export function getMaterializedMelodic(name) {
+    return melodicCache.get(name) || null;
 }
 
 /**
@@ -111,17 +111,17 @@ export function getMaterializedVoice(name) {
  */
 export function saveStyle(rec) {
     records = upsertRecord(records, rec);
-    rebuildVoiceCache();
+    rebuildMelodicCache();
     return persist();
 }
 
 /**
  * Remove a record and persist (best-effort).
- * @param {"voice" | "rhythm"} type @param {string} name @returns {Promise<void>}
+ * @param {"melodic" | "rhythmic"} type @param {string} name @returns {Promise<void>}
  */
 export function removeStyle(type, name) {
     records = removeRecord(records, type, name);
-    rebuildVoiceCache();
+    rebuildMelodicCache();
     return persist();
 }
 
@@ -138,7 +138,7 @@ export async function loadStyles() {
     } catch (_err) {
         records = [];
     }
-    rebuildVoiceCache();
+    rebuildMelodicCache();
 }
 
 /** Persist the whole library under one settings key. Best-effort: a backend
@@ -154,5 +154,5 @@ async function persist() {
 /** Test seam: clear the in-memory library (no persistence). */
 export function _resetForTest() {
     records = [];
-    voiceCache = new Map();
+    melodicCache = new Map();
 }

@@ -1,16 +1,17 @@
 /**
- * VStyle — a reusable VOICE STYLE (a "vStyle"): the configurable inputs
+ * MStyle — a MELODIC voice style (an "mStyle"): one of the two subtypes under the
+ * vStyle umbrella (the other is the rhythmic rStyle). The configurable inputs
  * `nxtNote` combines with the ambient firing context to produce one coordinated
  * note (pitch + velocity + duration + pan, plus a reserved bend). It is the rich
- * INPUT half of the note pipeline; `nxtNote` turns a VStyle into a slim note
+ * INPUT half of the note pipeline; `nxtNote` turns an MStyle into a slim note
  * object `{ sound, note, velocity, duration, pan, bend }` that `playNote`
  * consumes.
  *
- * Named vStyle (class `VStyle`), NOT "voice": the object's INSTRUMENT/timbre is
- * already the `voice` / `sound` field elsewhere, whereas a vStyle is the
- * BEHAVIOUR — how colour and groove become a note. The "Style" half is
- * pitch-neutral on purpose, so a vStyle covers both pitched notes and percussive
- * hits (the `kind` field).
+ * An mStyle is the melodic BEHAVIOUR — how colour and groove become a pitched
+ * note — distinct from the object's INSTRUMENT/timbre (the `voice` / `sound`
+ * field elsewhere). It carries pitch behaviour, the four axis drivers, and (via
+ * the shared rhythm core) the knobs that generate its own beat pattern in Auto
+ * mode; an rStyle reuses that same rhythm core, once per drum lane.
  *
  * Each axis input — `pitch` / `velocity` / `duration` / `pan` — is a DRIVER:
  *   - a number       → a fixed value;
@@ -18,11 +19,11 @@
  *   - a function     → a formula of the ambient context, e.g. `(c) => c.col.r ** 2`.
  * `resolveDrive` collapses any of those to a 0..1 number. Velocity and duration
  * also carry a WEIGHT blending the beat strength against that image drive, plus
- * phrase-position shaping. Every field has a default, so a vStyle can be
+ * phrase-position shaping. Every field has a default, so an mStyle can be
  * assembled one property at a time.
  *
- * For the app-wide library a vStyle is stored as JSON, so it can't hold live
- * functions: {@link serializeVStyle} / {@link materializeVStyle} convert between
+ * For the app-wide library an mStyle is stored as JSON, so it can't hold live
+ * functions: {@link serializeMStyle} / {@link materializeMStyle} convert between
  * the runtime form (drivers as number | channel | function) and the stored form
  * (drivers tagged fixed | channel | formula, the formula a source STRING
  * compiled back to a function on load).
@@ -41,15 +42,14 @@ function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 function clampRange(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 /**
- * The default vStyle (melody-like). Mirrors the pitch behaviour of the built-in
- * melody style and adds neutral driver/shaping defaults. Frozen — a VStyle
- * copies values OUT of it, never references it.
+ * The default mStyle (a singable melodic line). Mirrors the pitch behaviour of
+ * the built-in melodic style and adds neutral driver/shaping defaults. Frozen —
+ * an MStyle copies values OUT of it, never references it.
  */
 const DEFAULTS = Object.freeze({
-    // What the vStyle GENERATES. "melodic" (the only kind built today) picks a
-    // pitched scale tone; reserved for "percussion"/"beatbox" (pick a drum
-    // sample) and "chordal" (return several notes) later. nxtNote dispatches off
-    // this; unknown kinds fall back to melodic.
+    // The melodic sub-kind. "melodic" is the only one built; "chordal" (return
+    // several notes) is reserved. Percussion lives in the rhythmic rStyle, not
+    // here. nxtNote dispatches off this; unknown kinds fall back to melodic.
     kind: "melodic",
     // --- pitch behaviour (read by harmonyMelody.expandProfile / melodicStep) ---
     scale: "key",
@@ -92,9 +92,9 @@ const DEFAULTS = Object.freeze({
     sound: undefined,
 });
 
-/** The fields a VStyle carries (and copies). Exported so the Script-tab
- *  autocomplete can offer them after a `.` on a VStyle variable. */
-export const VSTYLE_FIELDS = Object.keys(DEFAULTS);
+/** The fields a MStyle carries (and copies). Exported so the Script-tab
+ *  autocomplete can offer them after a `.` on a MStyle variable. */
+export const MSTYLE_FIELDS = Object.keys(DEFAULTS);
 
 /** The rhythm-core knob names (design/rhythm-auto-generation.md), in display
  *  order. A vStyle carries one core (`.rhythm`); an rStyle will reuse this shape
@@ -109,25 +109,25 @@ export function defaultRhythmCore() {
 
 /**
  * The driver axes whose STORED form is tagged (fixed | channel | formula); every
- * other VStyle field serialises as plain JSON. `bend` is NOT here — it is
+ * other MStyle field serialises as plain JSON. `bend` is NOT here — it is
  * reserved and stored as-is until bend playback lands.
  */
 export const DRIVER_FIELDS = ["pitch", "velocity", "duration", "pan"];
 
 /**
- * A reusable, mutable vStyle. Build one from a base (another VStyle, or a
+ * A reusable, mutable vStyle. Build one from a base (another MStyle, or a
  * plain style object like the built-in `styles.melodic`) or from nothing (all
  * defaults), then set whatever properties you like — one line at a time.
  */
-export class VStyle {
+export class MStyle {
     /**
-     * @param {object | VStyle} [base]  values to seed from; missing fields
-     *   fall back to the defaults (so `new VStyle(styles.melodic)` inherits its
+     * @param {object | MStyle} [base]  values to seed from; missing fields
+     *   fall back to the defaults (so `new MStyle(styles.melodic)` inherits its
      *   pitch behaviour and picks up the default drivers/weights).
      */
     constructor(base) {
         const src = (base && typeof base === "object") ? base : DEFAULTS;
-        for (const k of VSTYLE_FIELDS) {
+        for (const k of MSTYLE_FIELDS) {
             const v = (k in src) ? src[k] : DEFAULTS[k];
             if (k === "rhythm") {
                 // Merge over the defaults so a partial / missing core fills in,
@@ -145,10 +145,10 @@ export class VStyle {
      * A mutable copy — independent of this one (range cloned; driver functions
      * shared). This is how you take a library vStyle and customize it without
      * touching the shared template: `const lead = styles.lead.copy()`.
-     * @returns {VStyle}
+     * @returns {MStyle}
      */
     copy() {
-        return new VStyle(this);
+        return new MStyle(this);
     }
 }
 
@@ -158,7 +158,7 @@ export const NOTE_FIELDS = ["sound", "note", "velocity", "duration", "pan", "ben
 
 /**
  * One playable NOTE — the slim, coordinated output of `nxtNote`, consumed by
- * `playNote`. A real class (parallel to {@link VStyle}) so its type is
+ * `playNote`. A real class (parallel to {@link MStyle}) so its type is
  * explicit and the autocomplete can recognise a variable built from `nxtNote`.
  *   - `note`     — pitch (MIDI; 0 = rest);
  *   - `velocity` — 0..1;
@@ -270,17 +270,17 @@ export function driverFromStored(stored) {
 }
 
 /**
- * Serialise a runtime VStyle to a JSON-safe plain object for the app-wide
+ * Serialise a runtime MStyle to a JSON-safe plain object for the app-wide
  * library. Driver axes become tagged forms; every other field copies through
- * (range cloned, `bend` as-is). Inverse of {@link materializeVStyle}.
- * @param {VStyle | object} vStyle
+ * (range cloned, `bend` as-is). Inverse of {@link materializeMStyle}.
+ * @param {MStyle | object} vStyle
  * @returns {object}
  */
-export function serializeVStyle(vStyle) {
+export function serializeMStyle(vStyle) {
     const src = (vStyle && typeof vStyle === "object") ? vStyle : DEFAULTS;
     /** @type {Record<string, any>} */
     const out = {};
-    for (const k of VSTYLE_FIELDS) {
+    for (const k of MSTYLE_FIELDS) {
         const v = (k in src) ? /** @type {any} */ (src)[k] : DEFAULTS[k];
         if (DRIVER_FIELDS.includes(k)) {
             out[k] = driverToStored(v);
@@ -296,24 +296,24 @@ export function serializeVStyle(vStyle) {
 }
 
 /**
- * Build a runtime VStyle from a stored JSON object (the inverse of
- * {@link serializeVStyle}). Driver axes compile from their tagged form; every
+ * Build a runtime MStyle from a stored JSON object (the inverse of
+ * {@link serializeMStyle}). Driver axes compile from their tagged form; every
  * other field copies through, with a missing field falling back to the default.
  * @param {object | null | undefined} json
- * @returns {VStyle}
+ * @returns {MStyle}
  */
-export function materializeVStyle(json) {
+export function materializeMStyle(json) {
     const src = (json && typeof json === "object") ? /** @type {Record<string, any>} */ (json) : {};
     /** @type {Record<string, any>} */
     const seed = {};
-    for (const k of VSTYLE_FIELDS) {
+    for (const k of MSTYLE_FIELDS) {
         if (DRIVER_FIELDS.includes(k)) {
             seed[k] = (k in src) ? driverFromStored(src[k]) : DEFAULTS[k];
         } else {
             seed[k] = (k in src) ? src[k] : DEFAULTS[k];
         }
     }
-    return new VStyle(seed);
+    return new MStyle(seed);
 }
 
 /**

@@ -1,5 +1,5 @@
 // Unit tests for the vStyle voice-style foundation:
-//   src/vStyle.js — VStyle, Note, resolveDrive, shapeVelocity, shapeDuration,
+//   src/mStyle.js — MStyle, Note, resolveDrive, shapeVelocity, shapeDuration,
 //   and the app-wide serialize/materialize round-trip.
 //
 // A vStyle is the reusable INPUT half of the note pipeline (nxtNote turns it
@@ -12,16 +12,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-    VStyle, Note, resolveDrive, shapeVelocity, shapeDuration,
-    serializeVStyle, materializeVStyle,
+    MStyle, Note, resolveDrive, shapeVelocity, shapeDuration,
+    serializeMStyle, materializeMStyle,
     driverToStored, driverFromStored, compileFormula,
     RHYTHM_CORE_FIELDS, defaultRhythmCore,
-} from "../src/vStyle.js";
+} from "../src/mStyle.js";
 
-// ---- VStyle -------------------------------------------------------------
+// ---- MStyle -------------------------------------------------------------
 
-test("VStyle: a bare style has all defaults", () => {
-    const s = new VStyle();
+test("MStyle: a bare style has all defaults", () => {
+    const s = new MStyle();
     assert.equal(s.scale, "key");
     assert.deepEqual(s.range, [60, 84]);
     assert.equal(s.pitch, "lt");
@@ -30,8 +30,8 @@ test("VStyle: a bare style has all defaults", () => {
     assert.equal(s.velocityWeight, 0.5);
 });
 
-test("VStyle: copy() is independent — mutating it doesn't touch the source", () => {
-    const base = new VStyle();
+test("MStyle: copy() is independent — mutating it doesn't touch the source", () => {
+    const base = new MStyle();
     const lead = base.copy();
     lead.pitch = 0.7;
     lead.range[1] = 96;
@@ -40,9 +40,9 @@ test("VStyle: copy() is independent — mutating it doesn't touch the source", (
     assert.equal(lead.pitch, 0.7);
 });
 
-test("VStyle: built from a plain style object inherits its fields + default drivers", () => {
+test("MStyle: built from a plain style object inherits its fields + default drivers", () => {
     const plain = { scale: "minorPentatonic", range: [64, 88], smoothness: 0.5, chordLock: 0.4 };
-    const s = new VStyle(plain);
+    const s = new MStyle(plain);
     assert.equal(s.scale, "minorPentatonic"); // inherited
     assert.deepEqual(s.range, [64, 88]);
     assert.equal(s.chordLock, 0.4);
@@ -52,8 +52,8 @@ test("VStyle: built from a plain style object inherits its fields + default driv
 
 // ---- rhythm core --------------------------------------------------------
 
-test("VStyle: carries a rhythm core with the five knobs at their defaults", () => {
-    const s = new VStyle();
+test("MStyle: carries a rhythm core with the five knobs at their defaults", () => {
+    const s = new MStyle();
     assert.deepEqual(Object.keys(s.rhythm).sort(), [...RHYTHM_CORE_FIELDS].sort());
     assert.equal(s.rhythm.density, 0.5);
     assert.equal(s.rhythm.syncopation, 0.2);
@@ -62,26 +62,26 @@ test("VStyle: carries a rhythm core with the five knobs at their defaults", () =
     assert.equal(s.rhythm.ratchets, 0);
 });
 
-test("VStyle: copy()'s rhythm core is independent of the source", () => {
-    const base = new VStyle();
+test("MStyle: copy()'s rhythm core is independent of the source", () => {
+    const base = new MStyle();
     const c = base.copy();
     c.rhythm.density = 0.9;
     assert.equal(base.rhythm.density, 0.5);   // source untouched
     assert.equal(c.rhythm.density, 0.9);
 });
 
-test("VStyle: a partial rhythm core fills missing knobs from the defaults", () => {
-    const s = new VStyle({ rhythm: { density: 0.8 } });
+test("MStyle: a partial rhythm core fills missing knobs from the defaults", () => {
+    const s = new MStyle({ rhythm: { density: 0.8 } });
     assert.equal(s.rhythm.density, 0.8);       // provided wins
     assert.equal(s.rhythm.syncopation, 0.2);   // filled from default
     assert.equal(s.rhythm.ratchets, 0);
 });
 
 test("serialize/materialize: the rhythm core round-trips", () => {
-    const s = new VStyle();
+    const s = new MStyle();
     s.rhythm.syncopation = 0.6;
     s.rhythm.ratchets = 0.3;
-    const back = materializeVStyle(JSON.parse(JSON.stringify(serializeVStyle(s))));
+    const back = materializeMStyle(JSON.parse(JSON.stringify(serializeMStyle(s))));
     assert.equal(back.rhythm.syncopation, 0.6);
     assert.equal(back.rhythm.ratchets, 0.3);
     assert.equal(back.rhythm.density, 0.5);    // untouched knob keeps its default
@@ -95,8 +95,8 @@ test("defaultRhythmCore: a fresh, independent default core", () => {
     assert.deepEqual(Object.keys(a).sort(), [...RHYTHM_CORE_FIELDS].sort());
 });
 
-test("VStyle: bend defaults to Off (undefined); Note carries a bend field", () => {
-    assert.equal(new VStyle().bend, undefined);
+test("MStyle: bend defaults to Off (undefined); Note carries a bend field", () => {
+    assert.equal(new MStyle().bend, undefined);
     const n = new Note({ note: 60, bend: { type: "static", semis: 0.5 } });
     assert.deepEqual(n.bend, { type: "static", semis: 0.5 });
     assert.equal(new Note({ note: 60 }).bend, undefined);
@@ -116,11 +116,11 @@ test("driver tagged form: number / string / function ↔ stored", () => {
 });
 
 test("serialize: drivers tag, non-driver fields pass through, range is cloned", () => {
-    const s = new VStyle();
+    const s = new MStyle();
     s.pitch = 0.3;          // fixed
     s.velocity = "g";       // channel
     s.scale = "blues";
-    const json = serializeVStyle(s);
+    const json = serializeMStyle(s);
     assert.deepEqual(json.pitch, { src: "fixed", value: 0.3 });
     assert.deepEqual(json.velocity, { src: "channel", channel: "g" });
     assert.equal(json.scale, "blues");
@@ -130,9 +130,9 @@ test("serialize: drivers tag, non-driver fields pass through, range is cloned", 
 });
 
 test("materialize: a stored formula compiles to a working driver function", () => {
-    const json = serializeVStyle(new VStyle());
+    const json = serializeMStyle(new MStyle());
     json.velocity = { src: "formula", expr: "c.col.r ** 2" };
-    const vs = materializeVStyle(json);
+    const vs = materializeMStyle(json);
     assert.equal(typeof vs.velocity, "function");
     assert.equal(resolveDrive(vs.velocity, { col: { r: 0.5 } }), 0.25);
     // round-trips back to the same stored expr (carried on __src)
@@ -140,10 +140,10 @@ test("materialize: a stored formula compiles to a working driver function", () =
 });
 
 test("materialize: fixed + channel drivers survive a JSON.stringify round-trip", () => {
-    const s = new VStyle();
+    const s = new MStyle();
     s.pitch = 0.3;
     s.velocity = "g";
-    const back = materializeVStyle(JSON.parse(JSON.stringify(serializeVStyle(s))));
+    const back = materializeMStyle(JSON.parse(JSON.stringify(serializeMStyle(s))));
     assert.equal(back.pitch, 0.3);
     assert.equal(back.velocity, "g");
     assert.equal(back.duration, "b");   // untouched default driver
@@ -151,7 +151,7 @@ test("materialize: fixed + channel drivers survive a JSON.stringify round-trip",
 
 test("materialize: null / garbage → all defaults", () => {
     for (const bad of [null, undefined, 42, "x"]) {
-        const vs = materializeVStyle(bad);
+        const vs = materializeMStyle(bad);
         assert.equal(vs.pitch, "lt");
         assert.equal(vs.scale, "key");
         assert.deepEqual(vs.range, [60, 84]);

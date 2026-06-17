@@ -1,29 +1,35 @@
-# Styles: voice styles (vStyle) and rhythm styles (rStyle)
+# Styles: the vStyle umbrella — melodic (mStyle) and rhythmic (rStyle)
 
 Settled in discussion with Chris, June 2026. This is the STYLE-SYSTEM
-architecture — the two style types, their shared rhythm core, the app-wide
-library, and the Styles tab. The auto beat-pattern GENERATION mechanics (the
-constrained-weighted generator, image-as-dice, per-cycle regen, swing,
-calibration knobs) live in [rhythm-auto-generation.md](rhythm-auto-generation.md);
-this doc refines that one's structure where they differ (see "Divergences").
+architecture — the **vStyle** umbrella, its two subtypes, their shared rhythm
+core, the app-wide library, and the vStyles tab. The auto beat-pattern GENERATION
+mechanics (the constrained-weighted generator, image-as-dice, per-cycle regen,
+swing, calibration knobs) live in
+[rhythm-auto-generation.md](rhythm-auto-generation.md); this doc refines that
+one's structure where they differ (see "Divergences").
 
-## Two style types, one shared rhythm core
+## The vStyle umbrella and its two subtypes
 
-There are TWO kinds of style, defined separately:
+**vStyle** is the umbrella term (the tab "vStyles", the general concept). Under it
+sit TWO subtypes, defined separately and sharing a rhythm core:
 
-- **vStyle (voice style)** — class `VStyle` (built; `src/vStyle.js`). Pitch-forward:
-  the pitched-note behaviour — scale/range/chordLock/smoothness/etc., the four
-  axis drivers (pitch/velocity/duration/pan) + reserved `bend`. Character-named
-  (melodic, bass, lead). Carries ONE embedded rhythm core for when it generates
-  its own line's beats in Auto mode.
-- **rStyle (rhythm style)** — class `RStyle` (NOT built yet). Rhythm-forward,
+- **mStyle (melodic style)** — class `MStyle` (built; `src/mStyle.js`).
+  Pitch-forward: the pitched-note behaviour — scale/range/chordLock/smoothness/etc.,
+  the four axis drivers (pitch/velocity/duration/pan) + reserved `bend`.
+  Character-named (bass, lead, …). Carries ONE embedded rhythm core for when it
+  generates its own line's beats in Auto mode.
+- **rStyle (rhythmic style)** — class `RStyle` (NOT built yet). Rhythm-forward,
   percussion-capable: a **kit** (one superdough drum bank) + a list of **lanes**,
   each lane = a drum sound (bd/sd/hh/…) + ITS OWN rhythm core. Genre-named
   (Bossa, Samba, DnB, Salsa).
 
+The Melodic / Rhythmic radio at the top of the tab picks which subtype you author.
+The earlier "vStyle vs rStyle (with vStyle doubling as the melodic one)" naming is
+superseded: the melodic class is now `MStyle`, and `vStyle` is purely the umbrella.
+
 They **share a rhythm core** — the calibration knobs from
 [rhythm-auto-generation.md](rhythm-auto-generation.md): Density, Syncopation,
-Image Influence, Accent, Fills/Ratchets. A vStyle embeds one core; an rStyle has
+Image Influence, Accent, Fills/Ratchets. An mStyle embeds one core; an rStyle has
 one per lane. The sharing is NOT surfaced in the UI (no "shared core" label, no
 cross-links) — the two editors simply use the SAME property names for the same
 knobs, and the user recognises the kinship. That recognition is enough.
@@ -35,7 +41,7 @@ Why two types rather than one class with a melodic/percussion toggle:
 - The shapes barely overlap except in the rhythm core; a toggled single class
   would leave half the form dead in each mode.
 - The TYPE replaces the percussion/melodic flag for free — pick an rStyle for a
-  drum object, a vStyle for a pitched line. (So VStyle's reserved `kind` field
+  drum object, a vStyle for a pitched line. (So MStyle's reserved `kind` field
   becomes unnecessary.)
 - It leaves composition open: a *lead voice over a Bossa groove* (pick both)
   later. A toggled class can't combine two of itself.
@@ -77,19 +83,20 @@ Consequences (off-grid part deferred):
 - In the Styles TAB the rhythm section is always editable (you author a complete
   style in the abstract); the gating lives only in the object inspector.
 
-## The Styles tab
+## The vStyles tab
 
-Sidebar tab labelled **"Styles"** (not "Voices" — it holds both kinds). Three
-zones, top to bottom:
+Sidebar tab labelled **"vStyles"** (vStyle is the umbrella; it holds both
+subtypes). Three zones, top to bottom:
 
-1. **A Voice | Rhythm segmented control** at the top — picks which kind the rest
-   of the tab edits; flipping it swaps both the list and the editor below.
-2. **The named list** for that kind (New / Duplicate / Rename / Delete); built-in
-   presets + the user's. Selecting one loads the editor.
-3. **The editor** for the selected style — kind-specific:
-   - **Voice editor:** Identity (name, instrument) · Pitch behaviour · Drivers
-     (pitch/velocity/duration/pan + reserved Bend) · Rhythm (the core knobs).
-   - **Rhythm editor:** Identity (name) · Kit (bank) · Groove (shared:
+1. **A "Voice Style" label + a Melodic | Rhythmic radio pair** at the top — picks
+   which subtype the rest of the tab edits; switching swaps the chooser + editor.
+2. **A compact "Voice Name" chooser** for that subtype (a dropdown + New /
+   Duplicate / Delete on one row); built-in presets + the user's. Selecting one
+   loads the editor.
+3. **The editor** for the selected style — subtype-specific:
+   - **Melodic (mStyle) editor:** Identity (name, instrument) · Pitch behaviour ·
+     Drivers (pitch/velocity/duration/pan + reserved Bend) · Rhythm (the core knobs).
+   - **Rhythmic (rStyle) editor:** Identity (name) · Kit (bank) · Groove (shared:
      subdivision, phrase, Image Influence) · Lanes (per row: drum sound + the
      per-lane core knobs; add/remove).
 
@@ -194,9 +201,9 @@ the shared rhythm core's fields and the generation engine.
 
 ## Build phases (revised) — see also the note-voice memory
 
-1. **vStyle data model** — DONE (commit c1011b2): VStyle/Note rename, reserved
+1. **vStyle data model** — DONE (commit c1011b2): MStyle/Note rename, reserved
    bend, JSON serialize/materialize.
-1b. **Add the rhythm-core fields to VStyle** — once the field set is confirmed, so
+1b. **Add the rhythm-core fields to MStyle** — once the field set is confirmed, so
    the voice editor's Rhythm band and (later) Auto generation have them.
 2. **App-wide store + resolution wiring** — type-aware store, resolveStyleByName +
    beat-points/slot dropdown read the cache. (Voice library first.)

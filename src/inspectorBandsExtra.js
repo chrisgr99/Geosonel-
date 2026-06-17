@@ -34,7 +34,7 @@ import {
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 
 /**
- * Options for a note slot's STYLE dropdown — the nxtNote VStyle a
+ * Options for a note slot's STYLE dropdown — the nxtNote MStyle a
  * no-argument nxtNote() uses (distinct from the object's `voice` / instrument).
  * "" = the default melody style. Built-in styles only for now; phase 3 widens
  * this to the user style library.
@@ -103,7 +103,7 @@ export const bandExtraMethods = {
         const beenTriggeredFunctionAgg = aggregateString(objs.all, "beenTriggeredFunction");
         const canActiveBeatAgg = aggregateBoolean(objs.all, "canActiveBeat");
         const onActiveBeatFunctionAgg = aggregateString(objs.all, "onActiveBeatFunction");
-        // Per-slot STYLE (nxtNote VStyle name) aggregates — note slots only.
+        // Per-slot STYLE (nxtNote MStyle name) aggregates — note slots only.
         const onActiveBeatStyleAgg = aggregateString(objs.all, "onActiveBeatStyle");
         const hasCollidedStyleAgg = aggregateString(objs.all, "hasCollidedStyle");
         const beenTriggeredStyleAgg = aggregateString(objs.all, "beenTriggeredStyle");

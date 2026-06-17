@@ -37,7 +37,7 @@ const KINDS = [
  * implicit default for the category, reached by leaving a slot's style on
  * Default). So only the specific built-ins (bass, lead) are named here.
  */
-const BUILTIN_VOICE_NAMES = Object.keys(BUILTIN_STYLES).filter((n) => n !== "melodic");
+const BUILTIN_MELODIC_NAMES = Object.keys(BUILTIN_STYLES).filter((n) => n !== "melodic");
 
 export class StylesPanel {
     /**
@@ -206,10 +206,10 @@ export class StylesPanel {
 
         const builtinGroup = document.createElement("optgroup");
         builtinGroup.label = "Built-in";
-        for (const name of BUILTIN_VOICE_NAMES) builtinGroup.appendChild(this._option(name));
+        for (const name of BUILTIN_MELODIC_NAMES) builtinGroup.appendChild(this._option(name));
         select.appendChild(builtinGroup);
 
-        const userRecords = listStyles("voice");
+        const userRecords = listStyles("melodic");
         if (userRecords.length > 0) {
             const userGroup = document.createElement("optgroup");
             userGroup.label = "Custom";
@@ -217,7 +217,7 @@ export class StylesPanel {
             select.appendChild(userGroup);
         }
 
-        if (this._selected === null) this._selected = BUILTIN_VOICE_NAMES[0] || null;
+        if (this._selected === null) this._selected = BUILTIN_MELODIC_NAMES[0] || null;
         if (this._selected !== null) select.value = this._selected;
 
         const isUser = userRecords.some((r) => r.name === this._selected);
@@ -264,8 +264,8 @@ export class StylesPanel {
 
     /** @param {string} name */
     _onDelete(name) {
-        if (BUILTIN_VOICE_NAMES.includes(name)) return;   // built-ins aren't deletable
-        if (this._onDeleteStyle !== null) this._onDeleteStyle("voice", name);
+        if (BUILTIN_MELODIC_NAMES.includes(name)) return;   // built-ins aren't deletable
+        if (this._onDeleteStyle !== null) this._onDeleteStyle("melodic", name);
         if (this._selected === name) this._selected = null;
         this._syncChooser();
         this._renderEditor();
