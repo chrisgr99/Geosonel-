@@ -76,6 +76,18 @@ const DEFAULTS = Object.freeze({
     articulation: 0.8,     // 0 = staccato, 1 = legato (fill the slot)
     accentResponse: 1,     // > 1 = punchier beat-strength → velocity contrast
     phraseDynamics: 0.5,   // how much phrase position shapes velocity / duration
+    // --- rhythm core: the Auto beat-pattern generation knobs (design/styles.md,
+    //     design/rhythm-auto-generation.md). Used when this voice generates its
+    //     own line's beats in Auto beat-points mode; an rStyle reuses this exact
+    //     shape per drum LANE. Plain 0..1 scalars (not drivers). Grid resolution
+    //     (subdivision) is the OBJECT's beat grid, not a knob here. ---
+    rhythm: Object.freeze({
+        density: 0.5,        // sparse ↔ busy (target onset fraction)
+        syncopation: 0.2,    // straight ↔ off-beat (weight shifted off strong beats)
+        imageInfluence: 0.5, // archetype-locked ↔ image-driven (colour-dice deviation)
+        accent: 0.5,         // even ↔ punchy (spread of the beat-strength values)
+        ratchets: 0.0,       // none ↔ busy (the Fills/Ratchets knob: ratchet likelihood)
+    }),
     // --- output instrument ---
     sound: undefined,
 });
@@ -83,6 +95,17 @@ const DEFAULTS = Object.freeze({
 /** The fields a VStyle carries (and copies). Exported so the Script-tab
  *  autocomplete can offer them after a `.` on a VStyle variable. */
 export const VSTYLE_FIELDS = Object.keys(DEFAULTS);
+
+/** The rhythm-core knob names (design/rhythm-auto-generation.md), in display
+ *  order. A vStyle carries one core (`.rhythm`); an rStyle will reuse this shape
+ *  per drum lane. Exported so the Styles-tab editor and rStyle can iterate. */
+export const RHYTHM_CORE_FIELDS = Object.keys(DEFAULTS.rhythm);
+
+/** A fresh, mutable rhythm core seeded with the defaults (for rStyle lanes and
+ *  the editor's "add lane" / "reset" affordances). */
+export function defaultRhythmCore() {
+    return { ...DEFAULTS.rhythm };
+}
 
 /**
  * The driver axes whose STORED form is tagged (fixed | channel | formula); every
@@ -106,9 +129,15 @@ export class VStyle {
         const src = (base && typeof base === "object") ? base : DEFAULTS;
         for (const k of VSTYLE_FIELDS) {
             const v = (k in src) ? src[k] : DEFAULTS[k];
-            // Clone the range array so a copy can't mutate the source's; driver
-            // functions are shared by reference (they're stateless).
-            this[k] = (k === "range" && Array.isArray(v)) ? v.slice() : v;
+            if (k === "rhythm") {
+                // Merge over the defaults so a partial / missing core fills in,
+                // and so a copy owns an independent core (not the source's ref).
+                this.rhythm = { ...DEFAULTS.rhythm, ...(v && typeof v === "object" ? v : {}) };
+            } else {
+                // Clone the range array so a copy can't mutate the source's;
+                // driver functions are shared by reference (they're stateless).
+                this[k] = (k === "range" && Array.isArray(v)) ? v.slice() : v;
+            }
         }
     }
 
@@ -255,6 +284,8 @@ export function serializeVStyle(vStyle) {
         const v = (k in src) ? /** @type {any} */ (src)[k] : DEFAULTS[k];
         if (DRIVER_FIELDS.includes(k)) {
             out[k] = driverToStored(v);
+        } else if (k === "rhythm") {
+            out[k] = { ...DEFAULTS.rhythm, ...(v && typeof v === "object" ? v : {}) };
         } else if (k === "range" && Array.isArray(v)) {
             out[k] = v.slice();
         } else {

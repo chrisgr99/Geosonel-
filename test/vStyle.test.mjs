@@ -15,6 +15,7 @@ import {
     VStyle, Note, resolveDrive, shapeVelocity, shapeDuration,
     serializeVStyle, materializeVStyle,
     driverToStored, driverFromStored, compileFormula,
+    RHYTHM_CORE_FIELDS, defaultRhythmCore,
 } from "../src/vStyle.js";
 
 // ---- VStyle -------------------------------------------------------------
@@ -47,6 +48,51 @@ test("VStyle: built from a plain style object inherits its fields + default driv
     assert.equal(s.chordLock, 0.4);
     assert.equal(s.pitch, "lt");              // default driver filled in
     assert.equal(s.articulation, 0.8);
+});
+
+// ---- rhythm core --------------------------------------------------------
+
+test("VStyle: carries a rhythm core with the five knobs at their defaults", () => {
+    const s = new VStyle();
+    assert.deepEqual(Object.keys(s.rhythm).sort(), [...RHYTHM_CORE_FIELDS].sort());
+    assert.equal(s.rhythm.density, 0.5);
+    assert.equal(s.rhythm.syncopation, 0.2);
+    assert.equal(s.rhythm.imageInfluence, 0.5);
+    assert.equal(s.rhythm.accent, 0.5);
+    assert.equal(s.rhythm.ratchets, 0);
+});
+
+test("VStyle: copy()'s rhythm core is independent of the source", () => {
+    const base = new VStyle();
+    const c = base.copy();
+    c.rhythm.density = 0.9;
+    assert.equal(base.rhythm.density, 0.5);   // source untouched
+    assert.equal(c.rhythm.density, 0.9);
+});
+
+test("VStyle: a partial rhythm core fills missing knobs from the defaults", () => {
+    const s = new VStyle({ rhythm: { density: 0.8 } });
+    assert.equal(s.rhythm.density, 0.8);       // provided wins
+    assert.equal(s.rhythm.syncopation, 0.2);   // filled from default
+    assert.equal(s.rhythm.ratchets, 0);
+});
+
+test("serialize/materialize: the rhythm core round-trips", () => {
+    const s = new VStyle();
+    s.rhythm.syncopation = 0.6;
+    s.rhythm.ratchets = 0.3;
+    const back = materializeVStyle(JSON.parse(JSON.stringify(serializeVStyle(s))));
+    assert.equal(back.rhythm.syncopation, 0.6);
+    assert.equal(back.rhythm.ratchets, 0.3);
+    assert.equal(back.rhythm.density, 0.5);    // untouched knob keeps its default
+});
+
+test("defaultRhythmCore: a fresh, independent default core", () => {
+    const a = defaultRhythmCore();
+    const b = defaultRhythmCore();
+    a.density = 0.1;
+    assert.equal(b.density, 0.5);
+    assert.deepEqual(Object.keys(a).sort(), [...RHYTHM_CORE_FIELDS].sort());
 });
 
 test("VStyle: bend defaults to Off (undefined); Note carries a bend field", () => {

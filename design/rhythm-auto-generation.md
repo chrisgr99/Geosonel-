@@ -6,6 +6,14 @@ the arc isn't lost. This is the near-term, concrete feature; the broader
 [variations-and-repeats.md](variations-and-repeats.md) and shares concepts
 (styles, the Mutability vocabulary, image-as-dice).
 
+> **Update (June 2026):** the STYLE-SYSTEM structure here is superseded by
+> [styles.md](styles.md) — styles split into two types (vStyle voice / rStyle
+> rhythm) sharing a rhythm core, edited in a Styles tab (not a popover), and
+> percussion gains a kit + multi-lane voicing model. The generation MECHANICS
+> below (constrained-weighted generator, image-as-dice, per-cycle regen,
+> Repeats-as-spatial-variation, swing-from-onset-placement, and the five
+> calibration knobs) all still stand; the knobs ARE the shared rhythm core.
+
 ## The problem
 
 A curve's rhythm — which beat points sound, how strongly, and where ratchets
