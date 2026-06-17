@@ -38,7 +38,7 @@ test("nxtNote: returns 0 (a rest) when the beat is in a phrase gap", () => {
         phrase: { inGap: true, atStart: false, atEnd: false },
     });
     // Any drive value rests in the gap — for a bass too (a gap is real silence).
-    assert.equal(nxtNote(0.5, styles.melody), 0);
+    assert.equal(nxtNote(0.5, styles.melodic), 0);
     assert.equal(nxtNote(0.0, styles.bass), 0);
     clearCallbackHarmony();
     clearCallbackContext();
@@ -50,7 +50,7 @@ test("nxtNote: in a phrase breath tail, a breathing voice rests but the bass pla
     clearMelodyState();
     setCallbackContext(fctx("M"));
     setCallbackHarmony({ chord: {}, key: C_MAJOR, phrase: tail });
-    assert.equal(nxtNote(0.5, styles.melody), 0); // melody breathes → rests
+    assert.equal(nxtNote(0.5, styles.melodic), 0); // melody breathes → rests
     clearCallbackHarmony();
     clearCallbackContext();
     clearMelodyState();
@@ -72,7 +72,7 @@ test("nxtNote: a breathing voice stamps the note's breath-release; a bass doesn'
         phrase: { inGap: false, release: 0.5, atStart: false, atEnd: true },
     });
     clearMelodyState();
-    nxtNote(0.5, styles.melody);
+    nxtNote(0.5, styles.melodic);
     assert.equal(ctx._breathReleaseBeats, 0.5); // melody caps its release
     clearMelodyState();
     nxtNote(0.5, styles.bass);
@@ -85,9 +85,9 @@ test("nxtNote: with no phrase grid, plays a real note (continuous line)", () => 
     clearMelodyState();
     setCallbackContext(fctx("B"));
     setCallbackHarmony({ chord: {}, key: C_MAJOR }); // no phrase field
-    const n = nxtNote(0.5, styles.melody);
+    const n = nxtNote(0.5, styles.melodic);
     assert.ok(Number.isFinite(n) && n > 0, `expected a real note, got ${n}`);
-    const [lo, hi] = styles.melody.range;
+    const [lo, hi] = styles.melodic.range;
     assert.ok(n >= lo && n <= hi, `note ${n} should sit in [${lo}, ${hi}]`);
     clearCallbackHarmony();
     clearCallbackContext();
@@ -101,7 +101,7 @@ test("nxtNote: a phrase start leans on a primary tone (the tonic)", () => {
         const N = 60;
         for (let i = 0; i < N; i++) {
             setCallbackHarmony({ chord: {}, key: C_MAJOR, phrase });
-            const n = nxtNote(i / N, styles.melody);
+            const n = nxtNote(i / N, styles.melodic);
             if (((n % 12) + 12) % 12 === 0) tonics++;
         }
         clearCallbackHarmony();

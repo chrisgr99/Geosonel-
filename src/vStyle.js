@@ -116,13 +116,13 @@ export const DRIVER_FIELDS = ["pitch", "velocity", "duration", "pan"];
 
 /**
  * A reusable, mutable vStyle. Build one from a base (another VStyle, or a
- * plain style object like the built-in `styles.melody`) or from nothing (all
+ * plain style object like the built-in `styles.melodic`) or from nothing (all
  * defaults), then set whatever properties you like — one line at a time.
  */
 export class VStyle {
     /**
      * @param {object | VStyle} [base]  values to seed from; missing fields
-     *   fall back to the defaults (so `new VStyle(styles.melody)` inherits its
+     *   fall back to the defaults (so `new VStyle(styles.melodic)` inherits its
      *   pitch behaviour and picks up the default drivers/weights).
      */
     constructor(base) {

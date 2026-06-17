@@ -162,7 +162,7 @@ export function nxtNote(arg0, style, low, span) {
     // from the object's inspector-assigned style), or the default melody style
     // when none is assigned. The zero-boilerplate `playNote(nxtNote())` path.
     if (arg0 === undefined) {
-        return nxtNoteFromStyle(current.style || STYLES.melody);
+        return nxtNoteFromStyle(current.style || STYLES.melodic);
     }
     // A VStyle (any object) → the COORDINATED note object { sound, note,
     // velocity, duration, pan }. A number → the legacy bare-MIDI return, so
@@ -180,7 +180,7 @@ export function nxtNote(arg0, style, low, span) {
  */
 function nxtNoteLegacy(drive, style, low, span) {
     const ctx = current;
-    const prof = style || STYLES.melody;
+    const prof = style || STYLES.melodic;
     const breathes = prof.breathe !== false;
     const phrase = currentHarmony ? currentHarmony.phrase : null;
     // Phrase silence (return 0 — playNote treats it as a rest, leaving the

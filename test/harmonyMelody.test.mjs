@@ -49,7 +49,7 @@ test("scalePitchClasses: named scale overrides the key mode", () => {
 });
 
 test("styles: melody/bass/lead are frozen with the friendly knobs", () => {
-    for (const name of ["melody", "bass", "lead"]) {
+    for (const name of ["melodic", "bass", "lead"]) {
         const s = styles[name];
         assert.ok(s, `styles.${name} exists`);
         assert.ok(Object.isFrozen(s), `styles.${name} frozen`);
@@ -61,20 +61,20 @@ test("styles: melody/bass/lead are frozen with the friendly knobs", () => {
 });
 
 test("expandProfile: friendly knobs → raw weights, low/span override the register", () => {
-    const raw = expandProfile(styles.melody, 60, 24);
+    const raw = expandProfile(styles.melodic, 60, 24);
     assert.equal(raw.rangeLow, 60);
     assert.equal(raw.rangeHigh, 84);
     // Smoother profile → higher leap aversion than a leapier one.
-    assert.ok(expandProfile(styles.melody).leapAversion
+    assert.ok(expandProfile(styles.melodic).leapAversion
         > expandProfile(styles.lead).leapAversion);
     // Higher chordLock (bass) → stronger chord pull than melody.
     assert.ok(expandProfile(styles.bass).chordPull
-        > expandProfile(styles.melody).chordPull);
+        > expandProfile(styles.melodic).chordPull);
 });
 
 test("expandProfile drives melodicStep end to end (in range, scale tones)", () => {
-    const raw = expandProfile(styles.melody, 60, 24);
-    const scale = new Set(scalePitchClasses(C_MAJOR, styles.melody.scale));
+    const raw = expandProfile(styles.melodic, 60, 24);
+    const scale = new Set(scalePitchClasses(C_MAJOR, styles.melodic.scale));
     for (let i = 0; i < 24; i++) {
         const n = melodicStep(67, [...scale], CMAJ7, 0, [], null, 0, i / 24, raw);
         assert.ok(n >= 60 && n <= 84, `in range: ${n}`);

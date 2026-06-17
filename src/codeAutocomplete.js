@@ -162,8 +162,8 @@ const API_DOCS = {
         info: "Next note of a melodic line — stepwise, chord-aware. drive is a 0–1 signal you choose (e.g. this.col.lt); style is a styles.* profile; low/span optionally override the register.",
     },
     styles: {
-        detail: "melody / bass / lead",
-        info: "Built-in nxtNote style profiles. Customise by spreading: { ...styles.melody, scale: \"blues\" }.",
+        detail: "melodic / bass / lead",
+        info: "Built-in nxtNote style profiles. Customise by spreading: { ...styles.melodic, scale: \"blues\" }.",
     },
     score: {
         detail: "kinematics / poly / groupPoly",
@@ -191,7 +191,7 @@ const SNIPPET_FAMILIES = {
         ["constant", "const dur = ${1};"],
     ],
     note: [
-        ["melody", "const note = nxtNote(this.col.lt, styles.melody);"],
+        ["melodic", "const note = nxtNote(this.col.lt, styles.melodic);"],
         ["bass", "const note = nxtNote(this.col.lt, styles.bass);"],
         ["harmony", "const note = mapToHarmony(this.col.lt, 0, 1, ${48}, ${72});"],
     ],

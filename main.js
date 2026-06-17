@@ -72,6 +72,7 @@ import { StrudelRuntime } from "./src/strudel/runtime.js";
 import { MIDISender } from "./src/strudel/midiSender.js";
 import { PatternFiringEngine } from "./src/strudel/firingEngine.js";
 import { installImageSignals } from "./src/strudel/signals.js";
+import { loadStyles } from "./src/styleStore.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
 import { MessageArea } from "./src/messages.js";
@@ -240,6 +241,11 @@ async function main() {
     // them. Idempotent after the first call.
     await migrateCurrentScoreSettingToPath();
     await migrateRecentScoresToPaths(composeScorePathFromName);
+
+    // Hydrate the app-wide style library (vStyles) into its in-memory cache
+    // before any scene loads, so resolveStyleByName resolves user voice styles
+    // on the first run. Best-effort — a backend hiccup just yields the built-ins.
+    await loadStyles();
 
     // --- Persisted Focus Canvas state ---
     //

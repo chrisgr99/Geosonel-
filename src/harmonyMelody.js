@@ -28,6 +28,7 @@
 // @ts-check
 
 import { VStyle } from "./vStyle.js";
+import { getMaterializedVoice } from "./styleStore.js";
 
 /** Diatonic scale intervals (semitones from the tonic). */
 export const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
@@ -157,12 +158,12 @@ function clamp01(v) {
 
 /**
  * Built-in styles. Frozen — customise by SPREADING into a new object
- * (`{ ...styles.melody, scale: "blues" }`), never by mutating these.
- * @type {Record<"melody" | "bass" | "lead", Style>}
+ * (`{ ...styles.melodic, scale: "blues" }`), never by mutating these.
+ * @type {Record<"melodic" | "bass" | "lead", Style>}
  */
 export const styles = Object.freeze({
     // Singable mid-register line: mostly steps, chord tones on strong beats.
-    melody: Object.freeze(new VStyle({
+    melodic: Object.freeze(new VStyle({
         scale: "key", range: [60, 84], smoothness: 0.75, chordLock: 0.55,
         descendBias: 1.1, lead: 1.8, gravity: 0.4, breathe: true,
     })),
@@ -187,13 +188,19 @@ export const styles = Object.freeze({
  * Resolve a STYLE NAME to its (shared, frozen) VStyle TEMPLATE — the
  * per-callback voice-of-pitch the engine binds as `this.style`. Callers `.copy()`
  * it to customise (the scaffolded callback does); a no-argument nxtNote() reads
- * it directly. An empty or unknown name yields the default melody style. (Phase 3
- * widens this to the user style library; for now it's the built-in `styles`.)
+ * it directly. Resolution order: the app-wide user library (styleStore) first,
+ * then the built-in `styles`, then the default melodic style. An empty or unknown
+ * name yields the default. A user voice style shadows a built-in of the same name.
  * @param {string} name
  * @returns {import("./vStyle.js").VStyle}
  */
 export function resolveStyleByName(name) {
-    return (typeof name === "string" && name !== "" && styles[name]) ? styles[name] : styles.melody;
+    if (typeof name === "string" && name !== "") {
+        const user = getMaterializedVoice(name);
+        if (user !== null) return user;
+        if (styles[name]) return styles[name];
+    }
+    return styles.melodic;
 }
 
 /**
@@ -207,7 +214,7 @@ export function resolveStyleByName(name) {
  * @returns {MelodyProfile}
  */
 export function expandProfile(style, low, span) {
-    const s = style || styles.melody;
+    const s = style || styles.melodic;
     const sm = clamp01(typeof s.smoothness === "number" ? s.smoothness : 0.7);
     const cl = clamp01(typeof s.chordLock === "number" ? s.chordLock : 0.5);
     const range = Array.isArray(s.range) ? s.range : [60, 84];

@@ -136,7 +136,7 @@ export const harmonyLines = {
 // Two voices, configured once and reused (these persist across beats).
 const inner = styles.bass.copy();    // inner circle — low, root-locked
 inner.sound = "sawtooth";
-const outer = styles.melody.copy();  // outer circle — an upper-register line
+const outer = styles.melodic.copy();  // outer circle — an upper-register line
 outer.sound = "piano";
 
 function bass() {
