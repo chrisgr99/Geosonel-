@@ -31,6 +31,7 @@ import * as acorn from "https://esm.sh/acorn@8";
 import { Inspector } from "./inspector.js";
 import { CanvasInspector } from "./canvasInspector.js";
 import { HarmonyPanel } from "./harmonyPanel.js";
+import { StylesPanel } from "./stylesPanel.js";
 import { customDarkTheme } from "./cmTheme.js";
 import { patternHighlightExtension, setSelectedObjectIdsEffect, setKnownObjectIdsEffect, setMutedObjectIdsEffect } from "./patternHighlight.js";
 import { activeBeatHighlightExtension, setActiveBeatsEffect, recomputeTokensEffect } from "./activeBeatHighlight.js";
@@ -76,6 +77,14 @@ const VIRTUAL_TAB_CANVAS = "__canvas__";
  * until the iReal Pro chart picker/view lands.
  */
 const VIRTUAL_TAB_HARMONY = "__harmony__";
+
+/**
+ * Sentinel name for the virtual Styles tab. Like the other virtual tabs, it is
+ * selection-independent chrome backing onto no bundle file. Selecting it shows
+ * the styles area (the app-wide voice / rhythm style libraries) and hides the
+ * other areas.
+ */
+const VIRTUAL_TAB_STYLES = "__styles__";
 
 /**
  * CodeMirror linter that runs the source through Acorn's
@@ -521,12 +530,13 @@ export class TabbedEditor {
      * @param {Bundle} bundle
      * @param {EditorCallbacks} [callbacks]
      */
-    constructor(tabBarElement, editorAreaElement, inspectorAreaElement, canvasInspectorAreaElement, harmonyAreaElement, bundle, callbacks = {}) {
+    constructor(tabBarElement, editorAreaElement, inspectorAreaElement, canvasInspectorAreaElement, harmonyAreaElement, stylesAreaElement, bundle, callbacks = {}) {
         this.tabBar = tabBarElement;
         this.editorArea = editorAreaElement;
         this.inspectorArea = inspectorAreaElement;
         this.canvasInspectorArea = canvasInspectorAreaElement;
         this.harmonyArea = harmonyAreaElement;
+        this.stylesArea = stylesAreaElement ?? null;
         this.bundle = bundle;
         this.onDirtyChange = callbacks.onDirtyChange ?? (() => {});
         this.onSaved = callbacks.onSaved ?? (() => {});
@@ -640,6 +650,7 @@ export class TabbedEditor {
         this._mountInspector();
         this._mountCanvasInspector();
         this._mountHarmony();
+        this._mountStyles();
         this._renderTabs();
         this._subscribeBundleDirty();
         this._subscribeStrudelPreferences();
@@ -862,7 +873,8 @@ export class TabbedEditor {
         const isVirtual =
             this.activeName === VIRTUAL_TAB_INSPECTOR ||
             this.activeName === VIRTUAL_TAB_CANVAS ||
-            this.activeName === VIRTUAL_TAB_HARMONY;
+            this.activeName === VIRTUAL_TAB_HARMONY ||
+            this.activeName === VIRTUAL_TAB_STYLES;
         const stillExists = this.activeName !== null &&
             !isVirtual &&
             this.bundle.getFile(this.activeName) !== null;
@@ -880,6 +892,9 @@ export class TabbedEditor {
             // Same treatment for the Harmony tab: reselect
             // keeps it active and the harmony area visible.
             this.selectTab(VIRTUAL_TAB_HARMONY);
+        } else if (this.activeName === VIRTUAL_TAB_STYLES) {
+            // Same treatment for the Styles tab.
+            this.selectTab(VIRTUAL_TAB_STYLES);
         } else if (stillExists) {
             this.selectTab(/** @type {string} */ (this.activeName));
         } else if (this.bundle.textFiles.length > 0) {
@@ -1909,13 +1924,24 @@ export class TabbedEditor {
     }
 
     /**
+     * Mount the Styles panel into the styles area. Like the Harmony panel, it
+     * owns its own DOM subtree; the editor shows/hides the area on tab change
+     * and calls refresh() on activation so a style created elsewhere appears.
+     * main.js reaches this.stylesPanel after construction to wire its callbacks.
+     */
+    _mountStyles() {
+        if (this.stylesArea === null) return;
+        this.stylesPanel = new StylesPanel(this.stylesArea);
+    }
+
+    /**
      * Show exactly one of the four editor-pane areas:
      * the CodeMirror editor area, the Properties
      * inspector area, the Canvas inspector area, or the
      * Harmony area. All four occupy the same flex slot
      * under the tab bar; the .hidden class controls which
      * one paints.
-     * @param {"editor" | "inspector" | "canvas-inspector" | "harmony"} which
+     * @param {"editor" | "inspector" | "canvas-inspector" | "harmony" | "styles"} which
      */
     _showArea(which) {
         this.editorArea.classList.toggle("hidden", which !== "editor");
@@ -1927,6 +1953,9 @@ export class TabbedEditor {
         }
         if (this.harmonyArea !== null) {
             this.harmonyArea.classList.toggle("hidden", which !== "harmony");
+        }
+        if (this.stylesArea !== null) {
+            this.stylesArea.classList.toggle("hidden", which !== "styles");
         }
     }
 
@@ -1968,6 +1997,18 @@ export class TabbedEditor {
             // imported via the File menu shows up without an
             // app restart.
             if (this.harmonyPanel) this.harmonyPanel.refresh();
+            this._reconfigureStrudelCompartment();
+            this._renderTabs();
+            this._emitCursorTargetIds();
+            return;
+        }
+
+        // Virtual Styles tab. Same pattern: show the styles area, no CodeMirror
+        // swap. Refresh on activation so a style created elsewhere appears.
+        if (name === VIRTUAL_TAB_STYLES) {
+            this.activeName = name;
+            this._showArea("styles");
+            if (this.stylesPanel) this.stylesPanel.refresh();
             this._reconfigureStrudelCompartment();
             this._renderTabs();
             this._emitCursorTargetIds();
@@ -2724,6 +2765,16 @@ export class TabbedEditor {
             this._renderVirtualTab(
                 VIRTUAL_TAB_HARMONY,
                 "Harmony",
+                /* dirtyBackingFile */ null,
+            ),
+        );
+
+        // Virtual Styles tab. After Harmony. The app-wide voice / rhythm style
+        // libraries; no dirty dot, no backing file.
+        this.tabBar.appendChild(
+            this._renderVirtualTab(
+                VIRTUAL_TAB_STYLES,
+                "vStyles",
                 /* dirtyBackingFile */ null,
             ),
         );

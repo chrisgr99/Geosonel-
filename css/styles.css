@@ -1,0 +1,113 @@
+/*
+ * Styles tab (src/stylesPanel.js, design/styles.md).
+ *
+ * The app-wide voice / rhythm style libraries. Scaffold styling — matches the
+ * dark editor surface (#141414 / #c0c0c0, #3a3a3a selection, #FFCC00 accent).
+ * The flex slot + show/hide live in css/layout.css; this file styles the panel
+ * contents. Refined as the editor form lands.
+ */
+
+#styles-area {
+    background-color: #141414;
+    color: #c0c0c0;
+    overflow-y: auto;
+    padding: 10px 12px;
+    box-sizing: border-box;
+    font-size: 12px;
+}
+
+/* --- "Voice Style" label + Melodic | Rhythmic radio pair --- */
+
+.styles-kindrow {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 12px;
+}
+
+.styles-kindrow-label {
+    font-weight: 600;
+    color: #d8d8d8;
+}
+
+.styles-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #c0c0c0;
+    cursor: pointer;
+    user-select: none;
+}
+
+.styles-radio input {
+    cursor: pointer;
+    margin: 0;
+}
+
+/* --- Compact style chooser (dropdown + actions, one row) --- */
+
+.styles-chooser {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.styles-chooser-label {
+    color: #d8d8d8;
+    white-space: nowrap;
+}
+
+.styles-chooser-select {
+    flex: 1 1 auto;
+    min-width: 0;
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+.styles-chooser-btn {
+    appearance: none;
+    border: 1px solid #4a4a4a;
+    background-color: #262626;
+    color: #d0d0d0;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.styles-chooser-btn:hover:not(:disabled) {
+    background-color: #333333;
+    border-color: #5a5a5a;
+}
+
+.styles-chooser-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.styles-chooser-btn.danger:hover:not(:disabled) {
+    background-color: #5a2222;
+    border-color: #7a3030;
+    color: #ffd0d0;
+}
+
+/* --- Editor pane (placeholder this slice) --- */
+
+.styles-editor {
+    border-top: 1px solid #2a2a2a;
+    padding-top: 10px;
+}
+
+.styles-editor-empty,
+.styles-editor-placeholder,
+.styles-placeholder-hint {
+    color: #7a7a7a;
+    font-style: italic;
+    padding: 8px 2px;
+}

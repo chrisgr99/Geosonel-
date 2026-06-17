@@ -113,7 +113,8 @@
 #editor-area,
 #inspector-area,
 #canvas-inspector-area,
-#harmony-area {
+#harmony-area,
+#styles-area {
     flex: 1 1 auto;
     overflow: hidden;
     min-height: 0;
@@ -123,7 +124,8 @@
 #editor-area.hidden,
 #inspector-area.hidden,
 #canvas-inspector-area.hidden,
-#harmony-area.hidden {
+#harmony-area.hidden,
+#styles-area.hidden {
     display: none;
 }
 

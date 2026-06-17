@@ -96,6 +96,57 @@ zones, top to bottom:
 The kinship is visible WITHOUT being labelled: the voice editor's Rhythm band and
 each rhythm lane carry identical field names.
 
+### Knob controls
+
+The 0..1 knobs (rhythm core, shaping) render as a SLIDER plus an adjacent
+editable number field — the slider for visual feedback (you see the value move),
+the number for an exact readout and precise typed entry; the two stay in sync.
+Space permitting in the panel; a too-tight row may fall back to the number alone.
+
+### Editing model — a sandbox buffer, both modes
+
+Editing ALWAYS happens in a sandbox (a working copy), never on the stored record.
+The two modes differ only in what the sandbox is wired to and how it persists:
+
+- **Library editing (Mode A, the Styles tab):** the sandbox applies NOWHERE live;
+  it reaches the library only on an explicit **Save**. Save under the same name
+  prompts "Replace existing style?"; a new name creates a new style. Built-ins are
+  never overwritten in place — saving an edited built-in writes a user style (the
+  replace-prompt fires only if a user style of that name already exists).
+- **Live editing (Mode B, from a callback):** the sandbox values apply
+  IMMEDIATELY to that object's note/beat generation, so you hear them as you dial.
+  Unsaved tweaks persist per-score (as object overrides); **Save as new style**
+  promotes them to the library.
+
+The moment the sandbox diverges from the named style it started from, the NAME is
+marked as having an edited sandbox — an `*` after it (e.g. `myLead*`) or similar —
+until the user Saves or reverts.
+
+### Entry points & the live/library chooser
+
+Live editing is the dominant workflow (you tune a voice by ear while it plays), so
+reaching a live style is front-and-centre. Both entry points land in the same
+Styles-tab editor:
+
+1. **From the Styles tab chooser.** The "Voice Name" dropdown surfaces the
+   **in-use styles at the TOP**, one entry per object currently playing a style
+   of the selected category, labelled **`styleName (objectID)`** — e.g.
+   `bass (CRV5)`, `Calypso (CRV3)`. Selecting one enters LIVE editing (Mode B) of
+   THAT object's style: the sandbox applies immediately to its note/beat
+   generation, with the LIVE banner. Below the in-use group sit the **Built-in**
+   and **Custom** library entries; selecting one is library editing (Mode A) —
+   sandbox, no live apply, Save to commit. The same base style can appear once
+   per using-object (live) and once in the library (the shared template).
+   In-use entries are filtered by the current Melodic / Rhythmic category.
+2. **From the Script tab.** Right-click a style reference in the code → a
+   context-menu **"Edit Style"** item → switches to the Styles tab with that
+   style loaded. This is the in-context shortcut to the same live entry; no
+   embedded editor, no auto-switching — a deliberate jump.
+
+So a user never has to detour through code to tune a live voice: open the Styles
+tab, pick `Calypso (CRV5)`, dial by ear. The LIVE banner (object · callback ·
+based-on · `*`) keeps live editing unmistakable from library editing.
+
 Style names must be valid JS identifiers (so the `styles.theName` code path
 autocompletes; references are dot-access, never quoted strings). The app-wide
 library feeds BOTH the runtime `styles` namespace and the Script-tab autocomplete.

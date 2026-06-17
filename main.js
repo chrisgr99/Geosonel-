@@ -72,7 +72,7 @@ import { StrudelRuntime } from "./src/strudel/runtime.js";
 import { MIDISender } from "./src/strudel/midiSender.js";
 import { PatternFiringEngine } from "./src/strudel/firingEngine.js";
 import { installImageSignals } from "./src/strudel/signals.js";
-import { loadStyles } from "./src/styleStore.js";
+import { loadStyles, removeStyle } from "./src/styleStore.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
 import { MessageArea } from "./src/messages.js";
@@ -430,11 +430,13 @@ async function main() {
     const inspectorAreaEl = document.getElementById("inspector-area");
     const canvasInspectorAreaEl = document.getElementById("canvas-inspector-area");
     const harmonyAreaEl = document.getElementById("harmony-area");
+    const stylesAreaEl = document.getElementById("styles-area");
     if (!(tabBarEl instanceof HTMLElement) ||
         !(editorAreaEl instanceof HTMLElement) ||
         !(inspectorAreaEl instanceof HTMLElement) ||
         !(canvasInspectorAreaEl instanceof HTMLElement) ||
-        !(harmonyAreaEl instanceof HTMLElement)) {
+        !(harmonyAreaEl instanceof HTMLElement) ||
+        !(stylesAreaEl instanceof HTMLElement)) {
         console.error("GXW: editor mount points missing.");
         return;
     }
@@ -465,7 +467,7 @@ async function main() {
      */
     let currentScene = null;
 
-    const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, harmonyAreaEl, bundle, {
+    const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, harmonyAreaEl, stylesAreaEl, bundle, {
         onDirtyChange: (dirty) => {
             updateTitleBar(dirty);
             // Push to the native menu so Revert to Saved's
@@ -2028,6 +2030,16 @@ async function main() {
             await applySceneEdit((data) => {
                 setSceneMasterObjectId(data, objectId);
             });
+        });
+    }
+
+    // Styles tab: persist library edits and re-run so objects using a changed
+    // style re-resolve. Delete is wired now; Save / rename arrive with the
+    // voice-editor slice.
+    if (editor.stylesPanel) {
+        editor.stylesPanel.onDeleteStyle((type, name) => {
+            removeStyle(type, name);
+            void runScene();
         });
     }
 

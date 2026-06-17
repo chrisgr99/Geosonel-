@@ -41,7 +41,6 @@ import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
  */
 const SLOT_STYLE_OPTIONS = [
     { value: "", label: "Default" },
-    { value: "melodic", label: "Melodic" },
     { value: "bass", label: "Bass" },
     { value: "lead", label: "Lead" },
 ];
