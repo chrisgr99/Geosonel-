@@ -52,7 +52,7 @@ export const W = {
     // custom names scroll. The row stays no wider than the Initial Conditions
     // row (X/Y/vX/vY), the inspector's widest line.
     callbackField: 150,
-    // Band 3 per-slot Style dropdown (the nxtNote NoteStyle a no-arg nxtNote()
+    // Band 3 per-slot Style dropdown (the nxtNote VStyle a no-arg nxtNote()
     // uses). Note rows only; onTick leaves this column blank for alignment.
     slotStyle: 84,
 

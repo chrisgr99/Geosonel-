@@ -1,22 +1,26 @@
-// Unit tests for the NoteStyle voice foundation:
-//   src/noteStyle.js — NoteStyle, resolveDrive, shapeVelocity, shapeDuration
+// Unit tests for the vStyle voice-style foundation:
+//   src/vStyle.js — VStyle, Note, resolveDrive, shapeVelocity, shapeDuration,
+//   and the app-wide serialize/materialize round-trip.
 //
-// NoteStyle is the reusable INPUT half of the note pipeline (nxtNote turns it
-// into a slim note). Each axis driver is a value | colour-channel | function;
+// A vStyle is the reusable INPUT half of the note pipeline (nxtNote turns it
+// into a slim Note). Each axis driver is a value | colour-channel | function;
 // velocity/duration blend beat strength against an image drive and are shaped by
-// phrase position. Pure logic — runs under `node --test`.
+// phrase position. For the app-wide library a vStyle round-trips through JSON
+// (drivers tagged fixed | channel | formula). Pure logic — runs under `node --test`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-    NoteStyle, resolveDrive, shapeVelocity, shapeDuration,
-} from "../src/noteStyle.js";
+    VStyle, Note, resolveDrive, shapeVelocity, shapeDuration,
+    serializeVStyle, materializeVStyle,
+    driverToStored, driverFromStored, compileFormula,
+} from "../src/vStyle.js";
 
-// ---- NoteStyle ----------------------------------------------------------
+// ---- VStyle -------------------------------------------------------------
 
-test("NoteStyle: a bare style has all defaults", () => {
-    const s = new NoteStyle();
+test("VStyle: a bare style has all defaults", () => {
+    const s = new VStyle();
     assert.equal(s.scale, "key");
     assert.deepEqual(s.range, [60, 84]);
     assert.equal(s.pitch, "lt");
@@ -25,8 +29,8 @@ test("NoteStyle: a bare style has all defaults", () => {
     assert.equal(s.velocityWeight, 0.5);
 });
 
-test("NoteStyle: copy() is independent — mutating it doesn't touch the source", () => {
-    const base = new NoteStyle();
+test("VStyle: copy() is independent — mutating it doesn't touch the source", () => {
+    const base = new VStyle();
     const lead = base.copy();
     lead.pitch = 0.7;
     lead.range[1] = 96;
@@ -35,14 +39,83 @@ test("NoteStyle: copy() is independent — mutating it doesn't touch the source"
     assert.equal(lead.pitch, 0.7);
 });
 
-test("NoteStyle: built from a plain style object inherits its fields + default drivers", () => {
+test("VStyle: built from a plain style object inherits its fields + default drivers", () => {
     const plain = { scale: "minorPentatonic", range: [64, 88], smoothness: 0.5, chordLock: 0.4 };
-    const s = new NoteStyle(plain);
+    const s = new VStyle(plain);
     assert.equal(s.scale, "minorPentatonic"); // inherited
     assert.deepEqual(s.range, [64, 88]);
     assert.equal(s.chordLock, 0.4);
     assert.equal(s.pitch, "lt");              // default driver filled in
     assert.equal(s.articulation, 0.8);
+});
+
+test("VStyle: bend defaults to Off (undefined); Note carries a bend field", () => {
+    assert.equal(new VStyle().bend, undefined);
+    const n = new Note({ note: 60, bend: { type: "static", semis: 0.5 } });
+    assert.deepEqual(n.bend, { type: "static", semis: 0.5 });
+    assert.equal(new Note({ note: 60 }).bend, undefined);
+});
+
+// ---- serialize / materialize (app-wide library round-trip) --------------
+
+test("driver tagged form: number / string / function ↔ stored", () => {
+    assert.deepEqual(driverToStored(0.5), { src: "fixed", value: 0.5 });
+    assert.deepEqual(driverToStored("y"), { src: "channel", channel: "y" });
+    assert.deepEqual(driverToStored(undefined), { src: "off" });
+    assert.equal(driverFromStored({ src: "fixed", value: 0.5 }), 0.5);
+    assert.equal(driverFromStored({ src: "channel", channel: "y" }), "y");
+    assert.equal(driverFromStored({ src: "off" }), undefined);
+    assert.equal(driverFromStored(0.7), 0.7);     // tolerant of a bare value
+    assert.equal(driverFromStored("r"), "r");
+});
+
+test("serialize: drivers tag, non-driver fields pass through, range is cloned", () => {
+    const s = new VStyle();
+    s.pitch = 0.3;          // fixed
+    s.velocity = "g";       // channel
+    s.scale = "blues";
+    const json = serializeVStyle(s);
+    assert.deepEqual(json.pitch, { src: "fixed", value: 0.3 });
+    assert.deepEqual(json.velocity, { src: "channel", channel: "g" });
+    assert.equal(json.scale, "blues");
+    assert.deepEqual(json.range, [60, 84]);
+    json.range[0] = 0;            // mutate the serialized copy
+    assert.equal(s.range[0], 60); // source untouched
+});
+
+test("materialize: a stored formula compiles to a working driver function", () => {
+    const json = serializeVStyle(new VStyle());
+    json.velocity = { src: "formula", expr: "c.col.r ** 2" };
+    const vs = materializeVStyle(json);
+    assert.equal(typeof vs.velocity, "function");
+    assert.equal(resolveDrive(vs.velocity, { col: { r: 0.5 } }), 0.25);
+    // round-trips back to the same stored expr (carried on __src)
+    assert.deepEqual(driverToStored(vs.velocity), { src: "formula", expr: "c.col.r ** 2" });
+});
+
+test("materialize: fixed + channel drivers survive a JSON.stringify round-trip", () => {
+    const s = new VStyle();
+    s.pitch = 0.3;
+    s.velocity = "g";
+    const back = materializeVStyle(JSON.parse(JSON.stringify(serializeVStyle(s))));
+    assert.equal(back.pitch, 0.3);
+    assert.equal(back.velocity, "g");
+    assert.equal(back.duration, "b");   // untouched default driver
+});
+
+test("materialize: null / garbage → all defaults", () => {
+    for (const bad of [null, undefined, 42, "x"]) {
+        const vs = materializeVStyle(bad);
+        assert.equal(vs.pitch, "lt");
+        assert.equal(vs.scale, "key");
+        assert.deepEqual(vs.range, [60, 84]);
+    }
+});
+
+test("compileFormula: a bad expression → undefined (the engine can't crash)", () => {
+    assert.equal(compileFormula("this is ) not js"), undefined);
+    assert.equal(compileFormula(""), undefined);
+    assert.equal(compileFormula(null), undefined);
 });
 
 // ---- resolveDrive -------------------------------------------------------

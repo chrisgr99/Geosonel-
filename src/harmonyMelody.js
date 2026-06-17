@@ -27,7 +27,7 @@
 
 // @ts-check
 
-import { NoteStyle } from "./noteStyle.js";
+import { VStyle } from "./vStyle.js";
 
 /** Diatonic scale intervals (semitones from the tonic). */
 export const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
@@ -162,21 +162,21 @@ function clamp01(v) {
  */
 export const styles = Object.freeze({
     // Singable mid-register line: mostly steps, chord tones on strong beats.
-    melody: Object.freeze(new NoteStyle({
+    melody: Object.freeze(new VStyle({
         scale: "key", range: [60, 84], smoothness: 0.75, chordLock: 0.55,
         descendBias: 1.1, lead: 1.8, gravity: 0.4, breathe: true,
     })),
     // Low, narrow, root on the change, walks to the next root. A foundation
     // voice: it plays THROUGH phrase ends (no breath). Sustained and
     // groove-driven by default.
-    bass: Object.freeze(new NoteStyle({
+    bass: Object.freeze(new VStyle({
         scale: "key", range: [36, 55], smoothness: 0.55, chordLock: 0.85,
         rootPull: 4, descendBias: 1.0, lead: 2.5, gravity: 0.5, breathe: false,
         articulation: 0.95, velocityWeight: 0.7,
     })),
     // Lead-guitar feel: high, minor-pentatonic, leapier and looser on the chord.
     // A touch more separated and punchy.
-    lead: Object.freeze(new NoteStyle({
+    lead: Object.freeze(new VStyle({
         scale: "minorPentatonic", range: [64, 88], smoothness: 0.5, chordLock: 0.4,
         descendBias: 1.0, lead: 1.4, gravity: 0.3, breathe: true,
         articulation: 0.65, accentResponse: 1.3,
@@ -184,13 +184,13 @@ export const styles = Object.freeze({
 });
 
 /**
- * Resolve a STYLE NAME to its (shared, frozen) NoteStyle TEMPLATE — the
+ * Resolve a STYLE NAME to its (shared, frozen) VStyle TEMPLATE — the
  * per-callback voice-of-pitch the engine binds as `this.style`. Callers `.copy()`
  * it to customise (the scaffolded callback does); a no-argument nxtNote() reads
  * it directly. An empty or unknown name yields the default melody style. (Phase 3
  * widens this to the user style library; for now it's the built-in `styles`.)
  * @param {string} name
- * @returns {import("./noteStyle.js").NoteStyle}
+ * @returns {import("./vStyle.js").VStyle}
  */
 export function resolveStyleByName(name) {
     return (typeof name === "string" && name !== "" && styles[name]) ? styles[name] : styles.melody;

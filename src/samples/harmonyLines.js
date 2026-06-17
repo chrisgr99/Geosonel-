@@ -126,7 +126,7 @@ export const harmonyLines = {
             "script.js",
             `// Each circle reads the image colour under its 16 beat points and turns it
 // into a melodic LINE that follows the chord progression. Each voice is a
-// NoteStyle: copy a built-in (styles.bass / .melody / .lead), set the instrument,
+// VStyle: copy a built-in (styles.bass / .melody / .lead), set the instrument,
 // and nxtNote coordinates PITCH, VELOCITY and DURATION together — pitch from
 // lightness, velocity from the beat strength blended with red, duration from the
 // groove spacing shaped by blue and the phrase. Drop an image on the canvas;

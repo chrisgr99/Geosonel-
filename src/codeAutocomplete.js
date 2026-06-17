@@ -36,7 +36,7 @@ import {
 } from "https://esm.sh/@codemirror/autocomplete@6?deps=@codemirror/state@6.5.2";
 import { DEFAULT_KINEMATICS } from "./scene.js";
 import { styles as STYLE_DEFS } from "./harmonyMelody.js";
-import { NOTE_FIELDS, NOTE_STYLE_FIELDS } from "./noteStyle.js";
+import { NOTE_FIELDS, VSTYLE_FIELDS } from "./vStyle.js";
 
 /**
  * Firing-context members offered after `this.` — the reads and
@@ -48,7 +48,7 @@ const THIS_MEMBERS = [
     "flipX", "flipY", "cyclePhase", "cycleCount", "beat", "time", "bpm",
     "id", "kind", "beatIndex", "beatCount", "otherId", "otherKind",
     "hitSpeed", "poly", "playNote", "playSound", "ownColor",
-    // The per-slot melodic STYLE (a NoteStyle): the inspector-assigned voice a
+    // The per-slot melodic STYLE (a VStyle): the inspector-assigned voice a
     // no-argument nxtNote() uses; copy it (this.style.copy()) to customise.
     "style",
     // Live harmony under the playhead (commit 4): the current/next chord as
@@ -78,8 +78,8 @@ const KINEMATICS_MEMBERS = Object.keys(DEFAULT_KINEMATICS);
 /** Built-in melodic styles offered after `styles.` (nxtNote profiles). */
 const STYLE_MEMBERS = Object.keys(STYLE_DEFS);
 
-/** NoteStyle fields offered after a `.` on a NoteStyle variable (or this.style). */
-const NOTE_STYLE_MEMBERS = NOTE_STYLE_FIELDS;
+/** VStyle fields offered after a `.` on a VStyle variable (or this.style). */
+const NOTE_STYLE_MEMBERS = VSTYLE_FIELDS;
 /** Note fields offered after a `.` on a Note variable (built from nxtNote). */
 const NOTE_MEMBERS = NOTE_FIELDS;
 
@@ -89,12 +89,12 @@ const NOTE_MEMBERS = NOTE_FIELDS;
  * before the cursor for the variable's last `const/let/var NAME = …` and
  * classifies the right-hand side:
  *   - `nxtNote(…)`                                   → "Note"
- *   - `….copy()` / `this.style…` / `styles.NAME` / `new NoteStyle(…)` → "NoteStyle"
+ *   - `….copy()` / `this.style…` / `styles.NAME` / `new VStyle(…)` → "VStyle"
  * Returns null when it can't tell.
  * @param {any} state    CodeMirror EditorState
  * @param {number} pos   cursor position (start of the word being completed)
  * @param {string} ident the receiver variable name
- * @returns {"Note" | "NoteStyle" | null}
+ * @returns {"Note" | "VStyle" | null}
  */
 function inferVarType(state, pos, ident) {
     const doc = state.sliceDoc(0, pos);
@@ -109,8 +109,8 @@ function inferVarType(state, pos, ident) {
     if (/\.copy\s*\(\s*\)\s*$/.test(rhs)
         || /^this\.style\b/.test(rhs)
         || /^styles\.[A-Za-z_$][\w$]*\s*$/.test(rhs)
-        || /\bnew\s+NoteStyle\b/.test(rhs)) {
-        return "NoteStyle";
+        || /\bnew\s+VStyle\b/.test(rhs)) {
+        return "VStyle";
     }
     return null;
 }
@@ -282,12 +282,12 @@ function scriptCompletionSource(context) {
     if (/styles\.$/.test(before)) {
         return { from: word.from, options: opts(STYLE_MEMBERS, "property"), validFor: /^[\w$]*$/ };
     }
-    // The per-slot style is a NoteStyle, so `this.style.` offers its fields.
+    // The per-slot style is a VStyle, so `this.style.` offers its fields.
     if (/this\.style\.$/.test(before)) {
         return { from: word.from, options: opts(NOTE_STYLE_MEMBERS, "property"), validFor: /^[\w$]*$/ };
     }
     // A direct factory chain (no variable): nxtNote(…). → Note fields,
-    // ….copy(). → NoteStyle fields.
+    // ….copy(). → VStyle fields.
     if (/\bnxtNote\s*\([^()]*\)\.$/.test(before)) {
         return { from: word.from, options: opts(NOTE_MEMBERS, "property"), validFor: /^[\w$]*$/ };
     }
@@ -297,14 +297,14 @@ function scriptCompletionSource(context) {
     // A member access on a LOCAL VARIABLE: infer its type from how it was
     // created (not its name) and offer that type's fields. `const note =
     // nxtNote(style)` → note.<Note fields>; `const v = this.style.copy()` →
-    // v.<NoteStyle fields>. Robust to renaming.
+    // v.<VStyle fields>. Robust to renaming.
     const dotVar = /(^|[^\w$.])([A-Za-z_$][\w$]*)\.$/.exec(before);
     if (dotVar) {
         const t = inferVarType(context.state, word.from - 1, dotVar[2]);
         if (t === "Note") {
             return { from: word.from, options: opts(NOTE_MEMBERS, "property"), validFor: /^[\w$]*$/ };
         }
-        if (t === "NoteStyle") {
+        if (t === "VStyle") {
             return { from: word.from, options: opts(NOTE_STYLE_MEMBERS, "property"), validFor: /^[\w$]*$/ };
         }
     }

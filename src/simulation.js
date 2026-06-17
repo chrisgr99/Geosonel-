@@ -632,11 +632,11 @@ function cycleDurationSeconds(bpm, beatsPerCycle, beatInterval) {
  */
 /**
  * Bind the per-slot melodic STYLE onto a firing context as `this.style` — the
- * inspector-assigned NoteStyle TEMPLATE (frozen, shared). The scaffolded callback
+ * inspector-assigned VStyle TEMPLATE (frozen, shared). The scaffolded callback
  * `.copy()`s it to customise; a no-argument `nxtNote()` reads it directly. An
  * unassigned slot resolves to the default melody style, so `this.style` is always
  * present on a note callback. No per-fire allocation (it's the template, not a
- * copy). See src/noteStyle.js.
+ * copy). See src/vStyle.js.
  * @param {any} ctx
  * @param {string|undefined} name
  */

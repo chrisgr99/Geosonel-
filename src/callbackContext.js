@@ -29,7 +29,7 @@ import {
     expandProfile,
     styles as STYLES,
 } from "./harmonyMelody.js";
-import { resolveDrive, shapeVelocity, shapeDuration, Note } from "./noteStyle.js";
+import { resolveDrive, shapeVelocity, shapeDuration, Note } from "./vStyle.js";
 
 /**
  * Per-object melodic memory for nxtNote: object id → its last MIDI note. The
@@ -136,19 +136,19 @@ function chordStructurePcs(c) {
  * under the cursor); `style` is a {@link styles} profile; `low`/`span` override
  * the register. Returns a MIDI note (0 = rest).
  *
- * VOICE (a NoteStyle first): pitch, velocity, and duration are computed TOGETHER
+ * VOICE (a VStyle first): pitch, velocity, and duration are computed TOGETHER
  * from the style's drivers + the ambient beat strength / colour / phrase, and
- * returned as one coordinated note object for `playNote` (src/noteStyle.js).
+ * returned as one coordinated note object for `playNote` (src/vStyle.js).
  *
  * Either way the current chord, next chord, beats-to-next, beat index, key, and
  * the object's previous note come from the ambient firing context. Outside a
  * callback: 60 (number) / a default note object.
  *
- * @param {number | import("./noteStyle.js").NoteStyle} arg0
+ * @param {number | import("./vStyle.js").VStyle} arg0
  * @param {import("./harmonyMelody.js").Style} [style]
  * @param {number} [low]
  * @param {number} [span]
- * @returns {number | import("./noteStyle.js").Note}
+ * @returns {number | import("./vStyle.js").Note}
  */
 export function nxtNote(arg0, style, low, span) {
     if (current === null) {
@@ -164,7 +164,7 @@ export function nxtNote(arg0, style, low, span) {
     if (arg0 === undefined) {
         return nxtNoteFromStyle(current.style || STYLES.melody);
     }
-    // A NoteStyle (any object) → the COORDINATED note object { sound, note,
+    // A VStyle (any object) → the COORDINATED note object { sound, note,
     // velocity, duration, pan }. A number → the legacy bare-MIDI return, so
     // existing scripts are untouched.
     if (arg0 !== null && typeof arg0 === "object") {
@@ -203,13 +203,13 @@ function nxtNoteLegacy(drive, style, low, span) {
 }
 
 /**
- * New nxtNote: a NoteStyle → one COORDINATED note object. Pitch, velocity, and
+ * New nxtNote: a VStyle → one COORDINATED note object. Pitch, velocity, and
  * duration are computed together — pitch from the style's `pitch` driver,
  * velocity from the beat strength blended with the `velocity` driver, duration
  * from the groove spacing shaped by `articulation`/phrase — so the line reads as
  * intentional. `sound` rides through (unset = the object's own voice). A drawn
- * gap rests (note 0). See src/noteStyle.js.
- * @param {any} style  a NoteStyle (or style-shaped object)
+ * gap rests (note 0). See src/vStyle.js.
+ * @param {any} style  a VStyle (or style-shaped object)
  * @returns {{ sound: any, note: number, velocity: number, duration: number|undefined, pan: number|undefined }}
  */
 function nxtNoteFromStyle(style) {
@@ -257,7 +257,7 @@ function nxtNoteFromStyle(style) {
  * per-object line memory (keyed by object id, so a rewind's clearMelodyState
  * resets it deterministically). Shared by both nxtNote paths.
  * @param {any} ctx     the firing context
- * @param {any} prof    a style / NoteStyle (scale, range, smoothness, …)
+ * @param {any} prof    a style / VStyle (scale, range, smoothness, …)
  * @param {number} dice the 0..1 pitch draw
  * @param {number|undefined} low
  * @param {number|undefined} span

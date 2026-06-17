@@ -2333,7 +2333,7 @@ export function setBeenTriggeredFunctionOnSelection(data, selection, value) {
     setStringFieldOnSelection(data, selection, "beenTriggeredFunction", String(value));
 }
 
-// --- Per-slot melodic STYLE (nxtNote NoteStyle name) across the selection.
+// --- Per-slot melodic STYLE (nxtNote VStyle name) across the selection.
 // A note callback's default voice-of-pitch; "" = the default melody style.
 // Distinct from the object's `voice` (its instrument). Not on onTick.
 
