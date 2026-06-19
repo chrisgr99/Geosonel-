@@ -1,5 +1,5 @@
 /**
- * App-wide style library (vStyles now; rStyles later).
+ * App-wide style library (Note styles and Groove styles).
  *
  * Styles are defined once and used across every score — the same pattern as the
  * image gallery, but because a style is tiny JSON (not an image blob) it needs
@@ -8,9 +8,9 @@
  * IndexedDB, transparently). No new object store, no DB-version bump, no preload
  * bridge.
  *
- * The library is TYPE-AWARE — each record carries a `type` ("melodic" | "rhythmic")
- * so the one store holds both libraries; only voice styles are populated until
- * the rStyle work lands.
+ * The library is TYPE-AWARE — each record carries a `type` ("note" | "groove")
+ * so the one store holds both libraries (Note styles and Groove styles); only
+ * Note styles feed the per-note engine cache.
  *
  * A synchronous in-memory CACHE is the source of truth for reads, because the
  * firing engine resolves a style per note and can't await IndexedDB. loadStyles()
@@ -32,29 +32,29 @@ import { getSetting, setSetting } from "./storage.js";
 const STYLES_KEY = "styleLibrary";
 
 /**
- * @typedef {{ type: "melodic" | "rhythmic", name: string, def: any }} StyleRecord
- *   `def` is the serialized style (serializeMStyle output for a voice).
+ * @typedef {{ type: "note" | "groove", name: string, def: any }} StyleRecord
+ *   `def` is the serialized style (serializeMStyle output for a Note style).
  */
 
 /** The authoritative in-memory library. @type {StyleRecord[]} */
 let records = [];
 
-/** Pre-materialised voice styles by name (sync engine reads). @type {Map<string, import("./mStyle.js").MStyle>} */
-let melodicCache = new Map();
+/** Pre-materialised Note styles by name (sync engine reads). @type {Map<string, import("./mStyle.js").MStyle>} */
+let noteCache = new Map();
 
 /** A record is well-formed enough to keep. @param {any} r */
 function isValidRecord(r) {
     return r !== null && typeof r === "object"
         && typeof r.name === "string" && r.name !== ""
-        && (r.type === "melodic" || r.type === "rhythmic")
+        && (r.type === "note" || r.type === "groove")
         && r.def !== null && typeof r.def === "object";
 }
 
-/** Rebuild the materialised-voice map from the current records. */
-function rebuildMelodicCache() {
-    melodicCache = new Map();
+/** Rebuild the materialised Note-style map from the current records. */
+function rebuildNoteCache() {
+    noteCache = new Map();
     for (const r of records) {
-        if (r.type === "melodic") melodicCache.set(r.name, materializeMStyle(r.def));
+        if (r.type === "note") noteCache.set(r.name, materializeMStyle(r.def));
     }
 }
 
@@ -84,7 +84,7 @@ export function removeRecord(list, type, name) {
 
 /**
  * All records, or just those of `type`. A shallow copy so callers can't mutate
- * the cache. @param {"melodic" | "rhythmic"} [type] @returns {StyleRecord[]}
+ * the cache. @param {"note" | "groove"} [type] @returns {StyleRecord[]}
  */
 export function listStyles(type) {
     return type ? records.filter((r) => r.type === type) : records.slice();
@@ -96,12 +96,12 @@ export function getStyleRecord(type, name) {
 }
 
 /**
- * The materialised MStyle for a user voice style of this name, or null. Sync —
+ * The materialised MStyle for a user Note style of this name, or null. Sync —
  * this is the engine's per-note path (resolveStyleByName).
  * @param {string} name @returns {import("./mStyle.js").MStyle | null}
  */
-export function getMaterializedMelodic(name) {
-    return melodicCache.get(name) || null;
+export function getMaterializedNote(name) {
+    return noteCache.get(name) || null;
 }
 
 /**
@@ -111,17 +111,17 @@ export function getMaterializedMelodic(name) {
  */
 export function saveStyle(rec) {
     records = upsertRecord(records, rec);
-    rebuildMelodicCache();
+    rebuildNoteCache();
     return persist();
 }
 
 /**
  * Remove a record and persist (best-effort).
- * @param {"melodic" | "rhythmic"} type @param {string} name @returns {Promise<void>}
+ * @param {"note" | "groove"} type @param {string} name @returns {Promise<void>}
  */
 export function removeStyle(type, name) {
     records = removeRecord(records, type, name);
-    rebuildMelodicCache();
+    rebuildNoteCache();
     return persist();
 }
 
@@ -138,7 +138,7 @@ export async function loadStyles() {
     } catch (_err) {
         records = [];
     }
-    rebuildMelodicCache();
+    rebuildNoteCache();
 }
 
 /** Persist the whole library under one settings key. Best-effort: a backend
@@ -154,5 +154,5 @@ async function persist() {
 /** Test seam: clear the in-memory library (no persistence). */
 export function _resetForTest() {
     records = [];
-    melodicCache = new Map();
+    noteCache = new Map();
 }

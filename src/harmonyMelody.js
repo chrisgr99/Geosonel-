@@ -28,7 +28,7 @@
 // @ts-check
 
 import { MStyle } from "./mStyle.js";
-import { getMaterializedMelodic } from "./styleStore.js";
+import { getMaterializedNote } from "./styleStore.js";
 
 /** Diatonic scale intervals (semitones from the tonic). */
 export const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
@@ -196,7 +196,7 @@ export const styles = Object.freeze({
  */
 export function resolveStyleByName(name) {
     if (typeof name === "string" && name !== "") {
-        const user = getMaterializedMelodic(name);
+        const user = getMaterializedNote(name);
         if (user !== null) return user;
         if (styles[name]) return styles[name];
     }

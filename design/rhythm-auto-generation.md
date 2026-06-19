@@ -141,28 +141,50 @@ concern, exactly as Manual and Euclidean already work.
 ## Controls (the creative surface)
 
 Rather than ship one "correct" calibration, expose it. A GrooveStyle's controls
-are organised around its three per-slot OUTPUTS; the colour-as-dice draw enters
-each image-driven output through a per-output **image mix** — an `A ◀──▶ B` slider
-(A = the structural template, B = the image) whose handle position is that
-output's image influence.
+are organised into four sections:
 
-- **Onset** (does the beat play) — image-driven. Its template (A) is set by
-  **Density** (sparse ↔ busy: onset threshold / target hits-per-bar) and
-  **Syncopation** (straight ↔ off-beat: weight shifted off the strong beats).
-- **Beat Strength** (how strong) — a **structural** knob (even ↔ punchy),
-  meter-shaped and NOT image-driven; it becomes the Velocity band's "A" input, so
-  the image reaches loudness only via the Velocity band's B.
-- **Ratchet** (fills / sub-hits) — image-driven. Its template (A) is set by
-  **Fills / Ratchets** (none ↔ busy: ratchet-likelihood + max count).
+- **Note Timing** — which beats play. **Density** (sparse ↔ busy: onset threshold /
+  target hits-per-bar) and **Syncopation** (straight ↔ off-beat: weight shifted off
+  the strong beats) set the onset template; **Image Influence on Timing** — a
+  `None ◀──▶ Strong` slider plus a colour channel — sets how much, and via which
+  channel, the image bends those onsets.
+- **Accents** — how strong. A **structural** knob (none ↔ punchy: how pronounced
+  the metric accents are), meter-shaped and **NOT image-driven**. It becomes the
+  Velocity band's "A" input, so the image reaches loudness only via the Velocity
+  band's B (no double-count).
+- **Fills** — phrase-level flourishes. **Frequency** (how often a fill fires —
+  every phrase / every Nth) + **Intensity** (how big: a density surge above the
+  steady groove, with faster subdivision and a dynamic push into the downbeat).
+- **Ratchets** — single-slot buzzes/rolls. **Frequency** (how often a hit becomes a
+  ratchet) + **Intensity** (how big the burst — sub-hit count / density).
 
-Each image-driven output picks which colour channel drives its B side — a pixel is
-not one scalar but ten channels (lt, chr, r, g, y, b, …), so the outputs draw
-independently. Convention across all style bands: **A = structural/designed,
-B = image.**
+### Realising a Frequency: the per-slot die
 
-Style sets the base positions, Genre tilts them, the user has the final say. A
-possible extra, Phrase Contour (flat ↔ building), is left out to keep the panel
-lean.
+A Density / Frequency is a *probability*; turning it into concrete placements needs
+a deterministic **0–1 die per slot**. The die source is per output:
+
+- **Onsets** draw on the **image** — the per-slot value of the colour channel
+  chosen in Image Influence on Timing. (A pixel is ten channels — lt, chr, r, g, y,
+  b, … — so different outputs can draw on different channels.)
+- **Accents** need no die — they're structural (meter-shaped).
+- **Fills / Ratchets** draw on a **seed hash**, NOT the image directly:
+  `die(slot) = hash(styleSalt, firstBeatColourOfRepeat, slotIndex)`.
+  - Seeded by the colour under the **first beat of each pattern repeat**: each
+    repeat sits at a different path position, so each gets a different seed →
+    per-repeat variation falls out from position, with no repeat-index and no
+    temporal state. Reproduces on rewind; reshapes when the object moves. (Sample
+    the first *slot* position even if it's a rest — every slot is sampled anyway.)
+  - `styleSalt` is a per-style constant: it distinguishes styles that sit on the
+    same colour, and doubles as a **Variation** re-roll (bump it for a different
+    fixed sprinkle at the same position).
+  - Flat-colour regions → similar seeds → more repetitive fills. Correct, not a bug
+    — the same "flat image = less variation" behaviour as image-as-dice elsewhere.
+
+Any output's die is **swappable** (a colour channel ⇄ a seed hash), so bringing
+image influence back for fills/ratchets later is just a die swap — no structural
+change. Style sets the base knob positions, Genre tilts them, the user has the
+final say. A possible extra, Phrase Contour (flat ↔ building), is left out to keep
+the panel lean.
 
 ## UI: band vs editor
 

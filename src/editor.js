@@ -2774,7 +2774,7 @@ export class TabbedEditor {
         this.tabBar.appendChild(
             this._renderVirtualTab(
                 VIRTUAL_TAB_STYLES,
-                "vStyles",
+                "Styles",
                 /* dirtyBackingFile */ null,
             ),
         );

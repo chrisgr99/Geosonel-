@@ -117,6 +117,13 @@
     flex: 0 0 50px;
 }
 
+/* The Percussion-only flag sits inline on the Style Type row, a little space to
+ * the right of the Type dropdown. */
+.styles-percussion-flag {
+    margin-left: 14px;
+    white-space: nowrap;
+}
+
 /* The A:/B: legend rows under the slider — indented from the left so they read as
  * notes explaining the slider's two ends. */
 .styles-mix-legend {
@@ -226,18 +233,32 @@
     margin-left: 6px;
 }
 
-/* Second-field label slot in the Motion / Anchoring rows — a fixed (capped) width
- * so its value field lands in the right-hand influence column, under Pull to Scale
- * / Pull to Chord. Width = scale(130) + gap(6) + pull-label(92) − first-field(64)
- * − gap(6) = 158px. Capped so a long label (Strong Beats on Chord Root) can't push
- * the field out of the column. */
+/* Second-field label slot in the Motion / Anchoring rows — a fixed width so its
+ * value field lands in a consistent right-hand column. Narrow enough to keep the
+ * row tight: long labels (Chord Root on Strong Beats) wrap to two lines via <br>
+ * rather than widening the row. */
 .styles-influence-label {
-    flex: 0 0 168px;
-    width: 168px;
+    flex: 0 0 108px;
+    width: 108px;
     text-align: right;          /* hug the value field on the right of the slot */
     color: #ffffff;
     font-size: 10pt;
-    white-space: nowrap;
+    white-space: nowrap;        /* explicit <br> still wraps a long label */
+}
+
+/* A sub-heading inside a band (e.g. "Pitch Drivers") — left-aligned, slightly
+ * stronger than a field label. */
+.styles-subhead {
+    color: #ffffff;
+    font-size: 11pt;
+    font-weight: 600;
+    margin: 2px 0 5px 0;
+}
+
+/* The indented group of pitch tendencies under the Pitch Drivers sub-heading, so
+ * they read as one set and the Pitch Chooser below reads as separate. */
+.styles-pitch-group {
+    padding-left: 18px;
 }
 
 /* The small "to" word between the low- and high-note dropdowns in Note Range,

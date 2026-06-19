@@ -6,7 +6,8 @@ kinds**, split along the axis of *response vs generation*:
 - **`NoteStyle`** — the per-note RESPONSE: *what each note is* (pitch / velocity /
   sustain). Computed inside `nxtNote`, active in **every** beat mode.
 - **`GrooveStyle`** — the per-phrase GENERATOR: *which beats fall and the rhythmic
-  shape*. Holds the rhythm core + Onset / Beat Strength / Ratchet drivers. Active
+  shape*. Holds the rhythm-generation controls (Note Timing, Accents, Fills,
+  Ratchets). Active
   in **Auto** beat mode only. Generation mechanics live in
   [rhythm-auto-generation.md](rhythm-auto-generation.md).
 
@@ -44,27 +45,36 @@ strength / phrase itself:
 
 ## GrooveStyle — the rhythm generator
 
-Three per-slot outputs, authored in the Styles-tab editor:
+Authored in the Styles-tab editor; generation mechanics in
+[rhythm-auto-generation.md](rhythm-auto-generation.md). Four sections:
 
-- **Onset** (does the beat play) — image-driven, an **A ◀──▶ B** mix slider
-  (A = metric/pattern template, B = image) whose handle *is* the image-influence
-  amount; **Density** + **Syncopation** parameterise A.
-- **Beat Strength** (how strong) — **structural, not image-driven**: a knob shaped
-  by the meter. It becomes the **Velocity band's "A"** input, so the image reaches
-  loudness only once, through the Velocity band's B (canvas).
-- **Ratchet** (fills / sub-hits) — image-driven, its own A ◀──▶ B slider;
-  **Fills/Ratchets** parameterises A.
+- **Note Timing** — which beats play. **Density** + **Syncopation** knobs set the
+  onset template; **Image Influence on Timing** (a None ◀▶ Strong slider + a colour
+  channel) sets how much, and via which channel, the image bends those onsets.
+- **Accents** — how strong. A **structural** knob (none ↔ punchy), NOT
+  image-driven. It becomes the **Velocity band's "A"** input, so the image reaches
+  loudness only once, via the Velocity band's B (canvas).
+- **Fills** — **Frequency** (how often, phrase-level) + **Intensity** (how big: a
+  density surge with faster subdivision and a dynamic push into the downbeat).
+- **Ratchets** — **Frequency** (how often a hit becomes a buzz/roll) + **Intensity**
+  (how big the burst — sub-hit count / density).
 
-Convention across **all** style bands: **A = structural/designed, B = image.**
-Per-driver image sliders replace any single global "Image Influence" knob.
+A Frequency is a probability; it becomes concrete placements via a deterministic
+0–1 **die per slot**. Onsets draw on the image (the chosen colour channel);
+fills/ratchets draw on a **seed hash** — `hash(styleSalt, firstBeatColourOfRepeat,
+slotIndex)` — seeded by the colour under each repeat's first beat, so each repeat
+(at a different path position) varies, deterministically and reproducibly, with no
+temporal state. `styleSalt` distinguishes styles and doubles as a **Variation**
+re-roll. Any output's die is swappable (colour channel ⇄ seed hash), so
+image-driving fills/ratchets later is just a die swap.
 
 ### Percussion: kit + lanes
 
 A drum pattern is several instruments (kick, snare, hat) that must interlock, so
 ONE GrooveStyle owns them: a list of **lanes** generated together on a shared
 grid/phrase so they lock by construction. Shared (style-level): grid, phrase
-shaping. Per-lane: the drum sound + its own Density / Syncopation / Beat Strength /
-Fills. **Open:** exactly how a multi-lane GrooveStyle, the kit, and NoteStyle
+shaping. Per-lane: the drum sound + its own Note Timing / Accents / Fills /
+Ratchets. **Open:** exactly how a multi-lane GrooveStyle, the kit, and NoteStyle
 compose for a drum object (sounds vs pattern) is not yet settled.
 
 ## Choosing a style on an object (inspector)
@@ -97,8 +107,8 @@ rhythmic Type and swaps the library + editor — a name chooser for that kind
 
 - **Note style:** a melodic/percussion flag (off collapses the Pitch band), then
   Pitch (melodic only) · Velocity · Sustain · phrasing.
-- **Groove style:** the Onset / Beat Strength / Ratchet band + (for percussion)
-  lanes.
+- **Groove style:** the Note Timing / Accents / Fills / Ratchets band + (for
+  percussion) lanes.
 
 **Knob controls:** 0..1 knobs render as a slider + an adjacent editable number
 (slider for feedback, number for exact entry), kept in sync; a too-tight row falls

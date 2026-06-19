@@ -1,23 +1,19 @@
 /**
- * Styles panel — the "vStyles" tab (design/styles.md).
+ * Styles panel — the "Styles" tab (design/styles.md).
  *
- * Under the vStyle umbrella, two subtypes share one tab: melodic (mStyle) and
- * rhythmic (rStyle). A "Voice Style" label + Melodic | Rhythmic radio pair picks
- * the subtype; below it a compact "Voice Name" chooser, and below that the
- * editor for the selected style.
- *
- * THIS SLICE: the Mode A (library) melodic editor — Identity / Pitch / Drivers /
- * Dynamics / Rhythm bands, numeric spinner fields, the driver-row control, a
- * sandbox buffer with a Save / Revert footer, and per-band Advanced expanders.
- * Field colours match the Properties inspector exactly (#646464 fields / #789678
- * border / #3e3e3e panel).
- * Mode B live editing (the LIVE banner, immediate apply, in-use chooser entries)
- * and the rhythmic (rStyle) editor are later slices.
+ * Two style kinds share one tab, picked by the Type dropdown: NOTE styles (the
+ * per-note voice — Pitch / Velocity / Sustain, with a melodic/percussion flag)
+ * and GROOVE styles (the rhythm generator — the Rhythm band). A compact "Style
+ * Name" chooser is filtered to the chosen kind; below it the editor.
  *
  * Editing is sandboxed: selecting a style loads a deep copy of its SERIALISED
  * form (serializeMStyle JSON), the form edits that copy, and nothing reaches the
  * library until Save. Built-ins are never overwritten in place — saving an edited
  * built-in writes a user style.
+ *
+ * For this slice both kinds are backed by MStyle (a groove uses only its rhythm
+ * core); the dedicated GrooveStyle class + the Onset/Beat-Strength/Ratchet
+ * generator land later. Field colours match the Properties inspector.
  *
  * DOM-only at render time plus pure-library imports, so it's node --checkable.
  */
@@ -29,48 +25,41 @@ import { styles as BUILTIN_STYLES, SCALES } from "./harmonyMelody.js";
 import { MStyle, serializeMStyle, materializeMStyle } from "./mStyle.js";
 
 /**
- * Built-in melodic style names offered in the chooser. "melodic" is excluded —
- * it's now the top-level CATEGORY, not a named style (its line is the engine's
- * implicit default, reached by leaving a slot's style on Default). So only the
- * specific built-ins (bass, lead) are named here.
+ * Built-in NOTE style names offered in the chooser. "melodic" is excluded — it's
+ * the engine's implicit default line (reached by leaving a slot's style on
+ * Default), not a named library entry. So only the specific built-ins (bass,
+ * lead) are named here.
  */
-const BUILTIN_MELODIC_NAMES = Object.keys(BUILTIN_STYLES).filter((n) => n !== "melodic");
+const BUILTIN_NOTE_NAMES = Object.keys(BUILTIN_STYLES).filter((n) => n !== "melodic");
 
 /**
- * Seed built-in RHYTHMIC styles for the chooser. They reuse the MStyle field set
- * (there is NO separate rStyle class) — the editor simply omits the pitch fields.
- * A couple of simple voices so the Rhythmic dropdown isn't empty.
+ * Seed built-in GROOVE styles for the chooser. For this slice a groove is an
+ * MStyle whose rhythm core is what matters (the dedicated GrooveStyle class and
+ * the Onset/Beat-Strength/Ratchet generator land later); the editor shows only
+ * its Rhythm band. A couple of simple grooves so the Groove dropdown isn't empty.
  */
-const BUILTIN_RHYTHMIC = {
-    kick: new MStyle({
-        role: "foundation", articulation: 0.3, accentResponse: 1.3,
-        rhythm: { density: 0.35, syncopation: 0.05, imageInfluence: 0.4, accent: 0.7, ratchets: 0.0 },
+const BUILTIN_GROOVE = {
+    straight: new MStyle({
+        rhythm: {
+            density: 0.5, syncopation: 0.05, accents: 0.6,
+            imageTiming: { amount: 0.4, channel: "b" },
+        },
     }),
-    hat: new MStyle({
-        role: "pulse", articulation: 0.2, accentResponse: 1.0,
-        rhythm: { density: 0.8, syncopation: 0.15, imageInfluence: 0.5, accent: 0.4, ratchets: 0.1 },
+    syncopated: new MStyle({
+        rhythm: {
+            density: 0.6, syncopation: 0.4, accents: 0.5,
+            imageTiming: { amount: 0.5, channel: "b" },
+            ratchets: { frequency: 0.15, intensity: 0.5 },
+        },
     }),
 };
-const BUILTIN_RHYTHMIC_NAMES = Object.keys(BUILTIN_RHYTHMIC);
+const BUILTIN_GROOVE_NAMES = Object.keys(BUILTIN_GROOVE);
 
 /** The ten colour channels a "Colour" driver can read. */
 const CHANNELS = ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"];
 
 /** Scale options: "key" (follow the song mode) first, then the named scales. */
 const SCALE_OPTIONS = ["key", ...Object.keys(SCALES)];
-
-/** Musical-role options — the voice's function in the ensemble. Shared by both
- *  style kinds. "none" = a free voice with no declared role. */
-const ROLE_OPTIONS = [
-    { value: "none", label: "None / Free" },
-    { value: "foundation", label: "Foundation" },
-    { value: "pulse", label: "Pulse" },
-    { value: "accent", label: "Accent" },
-    { value: "lead", label: "Lead" },
-    { value: "pad", label: "Pad" },
-    { value: "fill", label: "Fill" },
-    { value: "counter", label: "Counter" },
-];
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 /** MIDI number → note name, e.g. 60 → "C4". */
@@ -104,10 +93,10 @@ export class StylesPanel {
         this._onDeleteStyle = null;
 
         // --- State ---
-        /** The Type (kind) being edited; the Name list is filtered to it.
-         *  @type {"melodic" | "rhythmic"} */
-        this._kind = "melodic";
-        /** True for the one re-render after a Type change, so the Pitch band slides
+        /** The style kind being edited; the Name list is filtered to it.
+         *  @type {"note" | "groove"} */
+        this._kind = "note";
+        /** True for the one re-render after a kind change, so the Pitch band slides
          *  instead of snapping. @type {boolean} */
         this._animatePitchNext = false;
         /** The currently-loaded saved style name, or null. @type {string | null} */
@@ -138,7 +127,7 @@ export class StylesPanel {
         /** @type {HTMLElement | null} */
         this._editorEl = null;
         /** The Pitch Tendencies band element, kept so the radio can slide it
-         *  open/closed in place (rhythmic = closed). @type {HTMLElement | null} */
+         *  open/closed in place (percussion = closed). @type {HTMLElement | null} */
         this._pitchBandEl = null;
         /** @type {HTMLButtonElement | null} */
         this._saveBtn = null;
@@ -191,28 +180,28 @@ export class StylesPanel {
         wrap.className = "styles-chooser-block";
 
         // Line 1: Style Type. Uses the editor's 80px right-aligned label column so
-        // its dropdown lines up with Voice Name (below) and Voice Role (in the
-        // editor) and the rest of the bands.
+        // its dropdown lines up with Style Name (below) and the rest of the bands.
         const typeRow = document.createElement("div");
         typeRow.className = "styles-row";
+        this._typeRowEl = typeRow;   // the Percussion flag (Note kind) is appended here
         typeRow.appendChild(this._fieldLabel("Style Type"));
         const typeSel = document.createElement("select");
         typeSel.className = "styles-select styles-type";
-        for (const [val, label] of [["melodic", "Melodic"], ["rhythmic", "Rhythmic"]]) {
+        for (const [val, label] of [["note", "Note"], ["groove", "Groove"]]) {
             const o = document.createElement("option");
             o.value = val; o.textContent = label;
             typeSel.appendChild(o);
         }
         typeSel.value = this._kind;
-        typeSel.title = "Melodic styles have a Pitch section; rhythmic styles don't.";
+        typeSel.title = "A Note style plays each note (pitch / velocity / sustain); a Groove style generates the rhythm.";
         typeSel.addEventListener("change", () => this._onChangeType(typeSel.value));
         typeRow.appendChild(typeSel);
         wrap.appendChild(typeRow);
 
-        // Line 2: Voice Name + the icon action buttons.
+        // Line 2: Style Name + the icon action buttons.
         const nameRow = document.createElement("div");
         nameRow.className = "styles-row styles-namerow";
-        nameRow.appendChild(this._fieldLabel("Voice Name"));
+        nameRow.appendChild(this._fieldLabel("Style Name"));
         this._selectEl = null;
         if (this._isNew) {
             // A new / duplicated style: the name is TYPED here.
@@ -268,11 +257,10 @@ export class StylesPanel {
      *  style, and slide the Pitch band open/closed. @param {string} kind */
     _onChangeType(kind) {
         if (kind === this._kind) return;
-        this._kind = /** @type {"melodic" | "rhythmic"} */ (kind);
+        this._kind = /** @type {"note" | "groove"} */ (kind);
         this._selected = null;
         this._sandbox = null;
         this._isNew = false;
-        this._animatePitchNext = true;   // slide the Pitch band during the re-render
         this._render();
     }
 
@@ -315,12 +303,12 @@ export class StylesPanel {
 
     /** Built-in style names for the current kind. @returns {string[]} */
     _builtinNames() {
-        return this._kind === "rhythmic" ? BUILTIN_RHYTHMIC_NAMES : BUILTIN_MELODIC_NAMES;
+        return this._kind === "groove" ? BUILTIN_GROOVE_NAMES : BUILTIN_NOTE_NAMES;
     }
 
     /** The built-in MStyle for `name` in the current kind (or undefined). */
     _builtinStyle(name) {
-        return this._kind === "rhythmic" ? BUILTIN_RHYTHMIC[name] : BUILTIN_STYLES[name];
+        return this._kind === "groove" ? BUILTIN_GROOVE[name] : BUILTIN_STYLES[name];
     }
 
     // --- Sandbox lifecycle ---------------------------------------------------
@@ -380,29 +368,53 @@ export class StylesPanel {
         if (this._sandbox === null) {
             const hint = document.createElement("div");
             hint.className = "styles-editor-empty";
-            hint.textContent = "Select a voice style to edit, or create one with New.";
+            hint.textContent = "Select a style to edit, or create one with New.";
             el.appendChild(hint);
             return;
         }
         const s = this._sandbox;
-        this._buildRoleBand(el, s);
-        const divider = document.createElement("div");
-        divider.className = "styles-divider";
-        el.appendChild(divider);
-        // One form for both kinds: the Pitch band always renders; it's collapsed
-        // (hidden) for a rhythmic style so the bands below move up under the Sound
-        // section. The slide animates only on a radio toggle (below), not here.
-        this._buildPitchBand(el, s);
-        this._buildVelocityBand(el, s);
-        this._buildSustainBand(el, s);
-        this._buildRhythmBand(el, s);
-        this._setPitchCollapsed(this._kind === "rhythmic", this._animatePitchNext === true);
+        if (this._kind === "groove") {
+            // A Groove style generates the rhythm — its Rhythm band only.
+            this._buildRhythmBand(el, s);
+        } else {
+            // A Note style: the melodic/percussion flag (on the Style Type row),
+            // then Pitch (hidden for percussion) / Velocity / Sustain. The Pitch
+            // band always renders so the flag can slide it; it snaps to state here,
+            // animates on toggle.
+            this._buildPercussionFlag(s);
+            this._buildPitchBand(el, s);
+            this._buildVelocityBand(el, s);
+            this._buildSustainBand(el, s);
+            // Snap on a full render; the melodic/percussion toggle animates itself.
+            this._setPitchCollapsed(s.pitched === false, false);
+        }
         this._updateChooserDirtyMarker();
+    }
+
+    /** The melodic/percussion flag for a Note style — an inline checkbox on the
+     *  Style Type row that toggles `pitched` and slides the Pitch band shut
+     *  (percussion) or open (melodic). @param {any} s */
+    _buildPercussionFlag(s) {
+        const row = this._typeRowEl;
+        if (row === null || row === undefined) return;
+        const wrap = document.createElement("label");
+        wrap.className = "styles-check styles-percussion-flag";
+        const inp = document.createElement("input");
+        inp.type = "checkbox";
+        inp.checked = s.pitched === false;
+        inp.addEventListener("change", () => {
+            s.pitched = !inp.checked;
+            this._markDirty();
+            this._setPitchCollapsed(inp.checked, true);
+        });
+        wrap.appendChild(inp);
+        wrap.appendChild(document.createTextNode(" Percussion only"));
+        row.appendChild(wrap);
     }
 
     /**
      * Show/hide the Pitch band by sliding its height (and margin/opacity) — closed
-     * for a rhythmic style, open for melodic. The bands below reflow up or down to
+     * for a percussion style, open for melodic. The bands below reflow up or down to
      * follow. `animate` false snaps to the state (initial render); true plays the
      * ~200ms slide (a radio toggle).
      * @param {boolean} collapsed @param {boolean} animate
@@ -446,31 +458,6 @@ export class StylesPanel {
         }
     }
 
-    /** @param {HTMLElement} el @param {any} s */
-    _buildRoleBand(el, s) {
-        // Musical Role — the voice's function in the ensemble. (The Sound field was
-        // removed: a style no longer carries an instrument; the object's own voice
-        // is always used.)
-        const roleRow = document.createElement("div");
-        roleRow.className = "styles-row";
-        const rLab = document.createElement("span");
-        rLab.className = "styles-field-label";
-        rLab.textContent = "Voice Role";
-        roleRow.appendChild(rLab);
-        const roleSel = document.createElement("select");
-        roleSel.className = "styles-select styles-role";
-        for (const o of ROLE_OPTIONS) {
-            const opt = document.createElement("option");
-            opt.value = o.value; opt.textContent = o.label;
-            roleSel.appendChild(opt);
-        }
-        roleSel.value = (typeof s.role === "string" && s.role) ? s.role : "none";
-        roleSel.title = "The voice's function in the ensemble (its musical role).";
-        roleSel.addEventListener("change", () => { s.role = roleSel.value; this._markDirty(); });
-        roleRow.appendChild(roleSel);
-        el.appendChild(roleRow);
-    }
-
     /** A short label that hugs its field (content-sized). @param {string} text @returns {HTMLElement} */
     _inlineLabel(text) {
         const l = document.createElement("span");
@@ -481,7 +468,17 @@ export class StylesPanel {
 
     /** @param {HTMLElement} el @param {any} s */
     _buildPitchBand(el, s) {
-        const band = this._band("Pitch Influencers");
+        const band = this._band("Note Pitch");
+
+        // "Pitch Drivers" sub-heading + an indented group holding the pitch
+        // tendencies (Scale … Voice Leading) so they read as one set; the Pitch
+        // Chooser then sits flush-left below the group.
+        const driversHead = document.createElement("div");
+        driversHead.className = "styles-subhead";
+        driversHead.textContent = "Pitch Drivers";
+        band.appendChild(driversHead);
+        const group = document.createElement("div");
+        group.className = "styles-pitch-group";
 
         // Scale row: scale dropdown on the left, the "Pull to Scale" strength
         // (0..1) on its right (single-line label — it fits).
@@ -508,7 +505,7 @@ export class StylesPanel {
         const pull = this._numInput(s.scalePull, (v) => { s.scalePull = v; this._markDirty(); }, {});
         pull.title = "Pull to scale (0–1): how strongly notes are drawn to the scale.";
         scaleRow.appendChild(pull);
-        band.appendChild(scaleRow);
+        group.appendChild(scaleRow);
 
         // Pull to Chord — its own row, nothing else on it, the field aligned
         // directly under Pull to Scale (an empty label slot + a scale-width spacer
@@ -522,7 +519,7 @@ export class StylesPanel {
         pcLab.textContent = "Pull to Chord";
         chordRow.appendChild(pcLab);
         chordRow.appendChild(this._numInput(s.chordLock, (v) => { s.chordLock = v; this._markDirty(); }, {}));
-        band.appendChild(chordRow);
+        group.appendChild(chordRow);
 
         // Note Range: lowest note "to" highest note — two note-name dropdowns that
         // constrain each other so the high note is never below the low note.
@@ -569,7 +566,7 @@ export class StylesPanel {
         toLab.textContent = "to";
         rangeRow.appendChild(toLab);
         rangeRow.appendChild(highSel);
-        band.appendChild(rangeRow);
+        group.appendChild(rangeRow);
 
         // Motion row: Smoothness (left) + Downward Pull (right). The Downward Pull
         // label sits in a fixed-width slot so its value lands in the right-hand
@@ -583,7 +580,7 @@ export class StylesPanel {
         dpLab.textContent = "Downward Pull";
         motionRow.appendChild(dpLab);
         motionRow.appendChild(this._numInput(this._multToDial(s.descendBias, 2, 0.5), (v) => { s.descendBias = this._dialToMult(v, 2, 0.5); this._markDirty(); }, { min: -1, max: 1, step: 0.05, fallback: 0 }));
-        band.appendChild(motionRow);
+        group.appendChild(motionRow);
         // Anchoring row: Avoid Note Extremes (gravity, left) + Strong Beats on Chord
         // Root (root, right). The Strong-Beats label uses the same influence slot, so
         // its value aligns with Downward Pull / Pull to Chord / Pull to Scale.
@@ -597,20 +594,28 @@ export class StylesPanel {
         anchorRow.appendChild(gLab);
         anchorRow.appendChild(this._numInput(s.gravity, (v) => { s.gravity = v; this._markDirty(); }, {}));
         const rtLab = document.createElement("span");
-        rtLab.className = "styles-influence-label";
-        rtLab.textContent = "Strong Beats on Chord Root";
+        rtLab.className = "styles-influence-label styles-wrap";
+        rtLab.appendChild(document.createTextNode("Chord Root on"));
+        rtLab.appendChild(document.createElement("br"));
+        rtLab.appendChild(document.createTextNode("Strong Beats"));
         anchorRow.appendChild(rtLab);
         anchorRow.appendChild(this._numInput(this._multToDial(s.rootPull, 4, 0), (v) => { s.rootPull = this._dialToMult(v, 4, 0); this._markDirty(); }, { min: -1, max: 1, step: 0.05, fallback: 0 }));
-        band.appendChild(anchorRow);
-        // Voice Leading. (Phrase End Breath moved to the Rhythm band — it's a
-        // phrasing field, not pitch-specific.)
-        this._knob(band, "Voice Leading", this._multToDial(s.lead, 3, 0), (v) => { s.lead = this._dialToMult(v, 3, 0); this._markDirty(); }, { min: -1, max: 1, step: 0.05, fallback: 0 });
-        // Pitch driver (the Pitch Arbitrator) at the foot of the pitch band. The
-        // reserved Bend row is removed for now (may return later).
-        this._driverRow(band, "Pitch Dice", "pitch", {
-            defaultChannel: "lt",
-            help: "A canvas value (colour, position, etc.) that selects the pitch from the candidates the tendencies above have weighted. It navigates within the scale/chord/smoothness shaping — it never overrides it.",
-        });
+        group.appendChild(anchorRow);
+        // Voice Leading — last of the tendencies, inside the indented group.
+        this._knob(group, "Voice Leading", this._multToDial(s.lead, 3, 0), (v) => { s.lead = this._dialToMult(v, 3, 0); this._markDirty(); }, { min: -1, max: 1, step: 0.05, fallback: 0 });
+        band.appendChild(group);
+
+        // Pitch Chooser — the pitch driver, flush-left under the group (it picks
+        // from the candidates the tendencies above have weighted). Its label sits
+        // at the left margin, like the Pitch Drivers heading.
+        const chooserRow = document.createElement("div");
+        chooserRow.className = "styles-row";
+        const chooserLab = this._inlineLabel("Pitch Chooser");
+        chooserLab.title = "A canvas value (colour, position, etc.) that selects the pitch from the candidates the tendencies above have weighted. It navigates within the scale/chord/smoothness shaping — it never overrides it.";
+        chooserRow.appendChild(chooserLab);
+        this._driverSourceValue(chooserRow, "pitch", { defaultChannel: "lt" });
+        band.appendChild(chooserRow);
+
         this._pitchBandEl = band;
         el.appendChild(band);
     }
@@ -722,29 +727,32 @@ export class StylesPanel {
         this._driverSourceValue(bRow, "velocity", { defaultChannel: "r" });
         band.appendChild(bRow);
 
-        // Row 4: the two shaping knobs, indented 80px.
-        this._groupRow(band, [
-            ["Dynamic Range", s.accentResponse, (v) => { s.accentResponse = v; this._markDirty(); }, { min: 0, max: 3, step: 0.1, fallback: 1 }],
-            ["Shape to Phrases", s.phraseDynamics, (v) => { s.phraseDynamics = v; this._markDirty(); }, {}],
-        ], "styles-mix-knobs");
+        // Row 4: the two shaping knobs, flush-left with natural-width labels.
+        const shapeRow = document.createElement("div");
+        shapeRow.className = "styles-row";
+        shapeRow.appendChild(this._inlineLabel("Dynamic Range"));
+        shapeRow.appendChild(this._numInput(s.accentResponse, (v) => { s.accentResponse = v; this._markDirty(); }, { min: 0, max: 3, step: 0.1, fallback: 1 }));
+        shapeRow.appendChild(this._inlineLabel("Shape to Phrases"));
+        shapeRow.appendChild(this._numInput(s.phraseDynamics, (v) => { s.phraseDynamics = v; this._markDirty(); }, {}));
+        band.appendChild(shapeRow);
         el.appendChild(band);
     }
 
     /** @param {HTMLElement} el @param {any} s */
     _buildRhythmBand(el, s) {
         const band = this._band("Rhythm");
-        const r = s.rhythm || (s.rhythm = {});
-        // Density + Phrase End Breath share the top row (breath on the right). Breath
-        // is a phrasing amount (0..1; 0 = play through), so it lives in this
-        // always-active band rather than the pitch-only one.
-        this._groupRow(band, [
-            ["Density", r.density, (v) => { r.density = v; this._markDirty(); }, {}],
-            ["Phrase End Breath", typeof s.breathe === "number" ? s.breathe : (s.breathe ? 1 : 0), (v) => { s.breathe = v; this._markDirty(); }, {}],
-        ]);
+        const r = s.rhythm;
+        // Phase 1: plain knobs over the new Groove field model. The sectioned
+        // layout (Note Timing / Accents / Fills / Ratchets, image sliders +
+        // channel pickers) arrives in the next phase.
+        this._knob(band, "Density", r.density, (v) => { r.density = v; this._markDirty(); });
         this._knob(band, "Syncopation", r.syncopation, (v) => { r.syncopation = v; this._markDirty(); });
-        this._knob(band, "Image Influence", r.imageInfluence, (v) => { r.imageInfluence = v; this._markDirty(); });
-        this._knob(band, "Accent", r.accent, (v) => { r.accent = v; this._markDirty(); });
-        this._knob(band, "Fills / Ratchets", r.ratchets, (v) => { r.ratchets = v; this._markDirty(); });
+        this._knob(band, "Image on Timing", r.imageTiming.amount, (v) => { r.imageTiming.amount = v; this._markDirty(); });
+        this._knob(band, "Accents", r.accents, (v) => { r.accents = v; this._markDirty(); });
+        this._knob(band, "Fill Frequency", r.fills.frequency, (v) => { r.fills.frequency = v; this._markDirty(); });
+        this._knob(band, "Fill Intensity", r.fills.intensity, (v) => { r.fills.intensity = v; this._markDirty(); });
+        this._knob(band, "Ratchet Frequency", r.ratchets.frequency, (v) => { r.ratchets.frequency = v; this._markDirty(); });
+        this._knob(band, "Ratchet Intensity", r.ratchets.intensity, (v) => { r.ratchets.intensity = v; this._markDirty(); });
         el.appendChild(band);
     }
 
@@ -805,16 +813,24 @@ export class StylesPanel {
         this._driverSourceValue(bRow, "duration", { defaultChannel: "b" });
         band.appendChild(bRow);
 
-        // Row 4: clip-at-next-note (the overlap param), indented like velocity's knobs.
+        // Row 4: clip-at-next-note (the overlap param), flush-left.
         const clipRow = document.createElement("div");
-        clipRow.className = "styles-row styles-mix-knobs";
-        const clipLab = document.createElement("span");
-        clipLab.textContent = "Clip at next note";
-        clipRow.appendChild(clipLab);
+        clipRow.className = "styles-row";
+        clipRow.appendChild(this._inlineLabel("Clip at next note"));
         const clipNum = this._numInput(s.overlap, (v) => { s.overlap = v; this._markDirty(); }, { min: -0.5, max: 0.5, step: 0.05, fallback: 0 });
         clipNum.title = "When there IS a next note, where the note ends relative to that onset (beats): + rings past it (legato overlap), − stops short of it (a gap). Ignored when there's no next note.";
         clipRow.appendChild(clipNum);
         band.appendChild(clipRow);
+
+        // Breathe at Phrase Ends — always-on phrasing, so it lives with the voice
+        // (not the Auto-only Groove). 0 = play through phrase ends, 1 = full breath.
+        const breRow = document.createElement("div");
+        breRow.className = "styles-row";
+        breRow.appendChild(this._inlineLabel("Breathe at Phrase Ends"));
+        breRow.appendChild(this._numInput(
+            typeof s.breathe === "number" ? s.breathe : (s.breathe ? 1 : 0),
+            (v) => { s.breathe = v; this._markDirty(); }, { fallback: 1 }));
+        band.appendChild(breRow);
 
         el.appendChild(band);
     }

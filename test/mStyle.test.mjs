@@ -52,46 +52,60 @@ test("MStyle: built from a plain style object inherits its fields + default driv
 
 // ---- rhythm core --------------------------------------------------------
 
-test("MStyle: carries a rhythm core with the five knobs at their defaults", () => {
+test("MStyle: carries a rhythm core with the Groove controls at their defaults", () => {
     const s = new MStyle();
     assert.deepEqual(Object.keys(s.rhythm).sort(), [...RHYTHM_CORE_FIELDS].sort());
     assert.equal(s.rhythm.density, 0.5);
     assert.equal(s.rhythm.syncopation, 0.2);
-    assert.equal(s.rhythm.imageInfluence, 0.5);
-    assert.equal(s.rhythm.accent, 0.5);
-    assert.equal(s.rhythm.ratchets, 0);
+    assert.equal(s.rhythm.imageTiming.amount, 0.5);
+    assert.equal(s.rhythm.imageTiming.channel, "b");
+    assert.equal(s.rhythm.accents, 0.5);
+    assert.equal(s.rhythm.fills.frequency, 0);
+    assert.equal(s.rhythm.fills.intensity, 0.5);
+    assert.equal(s.rhythm.ratchets.frequency, 0);
+    assert.equal(s.rhythm.ratchets.intensity, 0.5);
+    assert.equal(s.rhythm.salt, 0);
 });
 
-test("MStyle: copy()'s rhythm core is independent of the source", () => {
+test("MStyle: copy()'s rhythm core is independent — nested groups included", () => {
     const base = new MStyle();
     const c = base.copy();
     c.rhythm.density = 0.9;
-    assert.equal(base.rhythm.density, 0.5);   // source untouched
-    assert.equal(c.rhythm.density, 0.9);
+    c.rhythm.fills.frequency = 0.7;            // mutate a nested group
+    assert.equal(base.rhythm.density, 0.5);    // source untouched
+    assert.equal(base.rhythm.fills.frequency, 0); // source's nested group untouched
+    assert.equal(c.rhythm.fills.frequency, 0.7);
 });
 
-test("MStyle: a partial rhythm core fills missing knobs from the defaults", () => {
-    const s = new MStyle({ rhythm: { density: 0.8 } });
-    assert.equal(s.rhythm.density, 0.8);       // provided wins
-    assert.equal(s.rhythm.syncopation, 0.2);   // filled from default
-    assert.equal(s.rhythm.ratchets, 0);
+test("MStyle: a partial rhythm core fills missing controls from the defaults", () => {
+    const s = new MStyle({ rhythm: { density: 0.8, fills: { frequency: 0.4 } } });
+    assert.equal(s.rhythm.density, 0.8);          // provided wins
+    assert.equal(s.rhythm.syncopation, 0.2);      // filled from default
+    assert.equal(s.rhythm.fills.frequency, 0.4);  // provided (nested)
+    assert.equal(s.rhythm.fills.intensity, 0.5);  // filled (nested)
+    assert.equal(s.rhythm.ratchets.frequency, 0); // whole nested group absent → defaults
 });
 
-test("serialize/materialize: the rhythm core round-trips", () => {
+test("serialize/materialize: the rhythm core round-trips (nested groups too)", () => {
     const s = new MStyle();
     s.rhythm.syncopation = 0.6;
-    s.rhythm.ratchets = 0.3;
+    s.rhythm.ratchets.frequency = 0.3;
+    s.rhythm.imageTiming.channel = "lt";
     const back = materializeMStyle(JSON.parse(JSON.stringify(serializeMStyle(s))));
     assert.equal(back.rhythm.syncopation, 0.6);
-    assert.equal(back.rhythm.ratchets, 0.3);
-    assert.equal(back.rhythm.density, 0.5);    // untouched knob keeps its default
+    assert.equal(back.rhythm.ratchets.frequency, 0.3);
+    assert.equal(back.rhythm.imageTiming.channel, "lt");
+    assert.equal(back.rhythm.density, 0.5);          // untouched scalar keeps its default
+    assert.equal(back.rhythm.fills.intensity, 0.5);  // untouched nested keeps its default
 });
 
-test("defaultRhythmCore: a fresh, independent default core", () => {
+test("defaultRhythmCore: a fresh, deeply-independent default core", () => {
     const a = defaultRhythmCore();
     const b = defaultRhythmCore();
     a.density = 0.1;
+    a.ratchets.frequency = 0.9;                // nested independence
     assert.equal(b.density, 0.5);
+    assert.equal(b.ratchets.frequency, 0);
     assert.deepEqual(Object.keys(a).sort(), [...RHYTHM_CORE_FIELDS].sort());
 });
 

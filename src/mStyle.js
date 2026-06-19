@@ -48,9 +48,13 @@ function clampRange(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
  */
 const DEFAULTS = Object.freeze({
     // The melodic sub-kind. "melodic" is the only one built; "chordal" (return
-    // several notes) is reserved. Percussion lives in the rhythmic rStyle, not
-    // here. nxtNote dispatches off this; unknown kinds fall back to melodic.
+    // several notes) is reserved. nxtNote dispatches off this; unknown kinds fall
+    // back to melodic.
     kind: "melodic",
+    // Whether this note style picks a pitch. true = melodic; false = percussion
+    // (no pitch — the sound comes from the object's voice). Toggled by the Note
+    // editor's melodic/percussion flag; when false the Pitch band is hidden.
+    pitched: true,
     // --- pitch behaviour (read by harmonyMelody.expandProfile / melodicStep) ---
     scale: "key",
     // How strongly notes are pulled to the scale (0 = chromatic-free, 1 = locked
@@ -84,17 +88,28 @@ const DEFAULTS = Object.freeze({
     overlap: 0,            // beats past (+) / short of (−) the next onset — legato overlap / gap
     accentResponse: 1,     // > 1 = punchier beat-strength → velocity contrast
     phraseDynamics: 0.5,   // how much phrase position shapes velocity / duration
-    // --- rhythm core: the Auto beat-pattern generation knobs (design/styles.md,
-    //     design/rhythm-auto-generation.md). Used when this voice generates its
-    //     own line's beats in Auto beat-points mode; an rStyle reuses this exact
-    //     shape per drum LANE. Plain 0..1 scalars (not drivers). Grid resolution
+    // --- rhythm core: the Auto beat-pattern generation controls (design/styles.md,
+    //     design/rhythm-auto-generation.md). Used when this voice generates its own
+    //     beats in Auto beat-points mode (and, later, once per GrooveStyle drum
+    //     lane). Plain data — scalars + small nested groups. Grid resolution
     //     (subdivision) is the OBJECT's beat grid, not a knob here. ---
     rhythm: Object.freeze({
-        density: 0.5,        // sparse ↔ busy (target onset fraction)
-        syncopation: 0.2,    // straight ↔ off-beat (weight shifted off strong beats)
-        imageInfluence: 0.5, // archetype-locked ↔ image-driven (colour-dice deviation)
-        accent: 0.5,         // even ↔ punchy (spread of the beat-strength values)
-        ratchets: 0.0,       // none ↔ busy (the Fills/Ratchets knob: ratchet likelihood)
+        density: 0.5,        // Note Timing: sparse ↔ busy (target onset fraction)
+        syncopation: 0.2,    // Note Timing: straight ↔ off-beat (weight off strong beats)
+        imageTiming: Object.freeze({   // Image Influence on Timing
+            amount: 0.5,     // None ↔ Strong: how much the image bends the onsets
+            channel: "b",    // which colour channel drives the bend
+        }),
+        accents: 0.5,        // structural accent strength (even ↔ punchy) → Velocity "A"
+        fills: Object.freeze({
+            frequency: 0.0,  // how often a fill fires (phrase-level)
+            intensity: 0.5,  // how big the fill (density surge + subdivision + push)
+        }),
+        ratchets: Object.freeze({
+            frequency: 0.0,  // how often a hit becomes a buzz/roll
+            intensity: 0.5,  // how big the burst (sub-hit count / density)
+        }),
+        salt: 0,             // per-style variation seed (the Variation re-roll)
     }),
     // (No `sound` field: a style never carries an instrument — the firing object's
     //  own voice is always used. The style is purely musical behaviour.)
@@ -108,15 +123,49 @@ const DEFAULTS = Object.freeze({
  *  autocomplete can offer them after a `.` on a MStyle variable. */
 export const MSTYLE_FIELDS = Object.keys(DEFAULTS);
 
-/** The rhythm-core knob names (design/rhythm-auto-generation.md), in display
- *  order. A vStyle carries one core (`.rhythm`); an rStyle will reuse this shape
- *  per drum lane. Exported so the Styles-tab editor and rStyle can iterate. */
+/** The rhythm-core (Groove) field names (design/rhythm-auto-generation.md) — a
+ *  heterogeneous set: scalars (density, syncopation, accents, salt) plus the
+ *  nested groups imageTiming / fills / ratchets. A NoteStyle carries one core
+ *  (`.rhythm`); a GrooveStyle reuses this shape (later, once per drum lane). */
 export const RHYTHM_CORE_FIELDS = Object.keys(DEFAULTS.rhythm);
 
-/** A fresh, mutable rhythm core seeded with the defaults (for rStyle lanes and
- *  the editor's "add lane" / "reset" affordances). */
+/** A fresh, mutable rhythm core seeded with the defaults — deep, so the nested
+ *  groups (imageTiming / fills / ratchets) are independent copies. For GrooveStyle
+ *  lanes and the editor's "reset" affordance. */
 export function defaultRhythmCore() {
-    return { ...DEFAULTS.rhythm };
+    return mergeRhythmCore(null);
+}
+
+/**
+ * Deep-merge a partial / stored rhythm core onto a fresh default core. Plain data
+ * (no drivers): scalars overlay by value, the nested groups merge field-by-field —
+ * so a partial or older core fills its defaults, and the result owns independent
+ * nested objects (a copy never shares the source's groups).
+ * @param {any} v @returns {object}
+ */
+function mergeRhythmCore(v) {
+    const d = DEFAULTS.rhythm;
+    const src = (v && typeof v === "object") ? v : {};
+    const num = (x, fb) => (typeof x === "number" && Number.isFinite(x)) ? x : fb;
+    const grp = (key, scalarFields) => {
+        const o = (src[key] && typeof src[key] === "object") ? src[key] : {};
+        const out = {};
+        for (const f of Object.keys(d[key])) {
+            out[f] = scalarFields.includes(f)
+                ? num(o[f], d[key][f])
+                : (typeof o[f] === "string" ? o[f] : d[key][f]);   // channel (string)
+        }
+        return out;
+    };
+    return {
+        density: num(src.density, d.density),
+        syncopation: num(src.syncopation, d.syncopation),
+        imageTiming: grp("imageTiming", ["amount"]),
+        accents: num(src.accents, d.accents),
+        fills: grp("fills", ["frequency", "intensity"]),
+        ratchets: grp("ratchets", ["frequency", "intensity"]),
+        salt: num(src.salt, d.salt),
+    };
 }
 
 /**
@@ -142,9 +191,9 @@ export class MStyle {
         for (const k of MSTYLE_FIELDS) {
             const v = (k in src) ? src[k] : DEFAULTS[k];
             if (k === "rhythm") {
-                // Merge over the defaults so a partial / missing core fills in,
-                // and so a copy owns an independent core (not the source's ref).
-                this.rhythm = { ...DEFAULTS.rhythm, ...(v && typeof v === "object" ? v : {}) };
+                // Deep-merge over the defaults so a partial / missing core fills in,
+                // and so a copy owns an independent core (nested groups and all).
+                this.rhythm = mergeRhythmCore(v);
             } else {
                 // Clone the range array so a copy can't mutate the source's;
                 // driver functions are shared by reference (they're stateless).
@@ -297,7 +346,7 @@ export function serializeMStyle(vStyle) {
         if (DRIVER_FIELDS.includes(k)) {
             out[k] = driverToStored(v);
         } else if (k === "rhythm") {
-            out[k] = { ...DEFAULTS.rhythm, ...(v && typeof v === "object" ? v : {}) };
+            out[k] = mergeRhythmCore(v);
         } else if (k === "range" && Array.isArray(v)) {
             out[k] = v.slice();
         } else {
