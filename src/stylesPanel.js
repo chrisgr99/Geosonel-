@@ -735,10 +735,11 @@ export class StylesPanel {
         this._driverSourceValue(bRow, "velocity", { defaultChannel: "r" });
         band.appendChild(bRow);
 
-        // Row 4: the two shaping knobs, flush-left with natural-width labels.
+        // Row 4: the two shaping knobs. "Dynamic Range" sits in the field-label
+        // column so it lines up with the Velocity Mix label above it.
         const shapeRow = document.createElement("div");
         shapeRow.className = "styles-row";
-        shapeRow.appendChild(this._inlineLabel("Dynamic Range"));
+        shapeRow.appendChild(this._fieldLabel("Dynamic Range"));
         shapeRow.appendChild(this._numInput(s.accentResponse, (v) => { s.accentResponse = v; this._markDirty(); }, { min: 0, max: 3, step: 0.1, fallback: 1 }));
         shapeRow.appendChild(this._inlineLabel("Shape to Phrases"));
         shapeRow.appendChild(this._numInput(s.phraseDynamics, (v) => { s.phraseDynamics = v; this._markDirty(); }, {}));
