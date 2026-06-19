@@ -179,23 +179,28 @@ export class StylesPanel {
         const wrap = document.createElement("div");
         wrap.className = "styles-chooser-block";
 
-        // Line 1: Style Type. Uses the editor's 80px right-aligned label column so
-        // its dropdown lines up with Style Name (below) and the rest of the bands.
+        // Line 1: Style Type — a Note | Groove radio pair, the label right-aligned
+        // in the label column so it lines up with Style Name / Percussion only below.
         const typeRow = document.createElement("div");
         typeRow.className = "styles-row";
-        this._typeRowEl = typeRow;   // the Percussion flag (Note kind) is appended here
         typeRow.appendChild(this._fieldLabel("Style Type"));
-        const typeSel = document.createElement("select");
-        typeSel.className = "styles-select styles-type";
+        const typeRadios = document.createElement("span");
+        typeRadios.className = "styles-type-radios";
+        typeRadios.title = "A Note style plays each note (pitch / velocity / sustain); a Groove style generates the rhythm.";
         for (const [val, label] of [["note", "Note"], ["groove", "Groove"]]) {
-            const o = document.createElement("option");
-            o.value = val; o.textContent = label;
-            typeSel.appendChild(o);
+            const lab = document.createElement("label");
+            lab.className = "styles-radio";
+            const inp = document.createElement("input");
+            inp.type = "radio";
+            inp.name = "styles-kind";
+            inp.value = val;
+            inp.checked = (this._kind === val);
+            inp.addEventListener("change", () => { if (inp.checked) this._onChangeType(val); });
+            lab.appendChild(inp);
+            lab.appendChild(document.createTextNode(" " + label));
+            typeRadios.appendChild(lab);
         }
-        typeSel.value = this._kind;
-        typeSel.title = "A Note style plays each note (pitch / velocity / sustain); a Groove style generates the rhythm.";
-        typeSel.addEventListener("change", () => this._onChangeType(typeSel.value));
-        typeRow.appendChild(typeSel);
+        typeRow.appendChild(typeRadios);
         wrap.appendChild(typeRow);
 
         // Line 2: Style Name + the icon action buttons.
@@ -235,6 +240,7 @@ export class StylesPanel {
         this._delBtn.classList.add("danger");
         nameRow.appendChild(this._delBtn);
         wrap.appendChild(nameRow);
+        this._nameRowEl = nameRow;   // the Percussion-only row (Note kind) is inserted after this
 
         return wrap;
     }
@@ -391,14 +397,21 @@ export class StylesPanel {
         this._updateChooserDirtyMarker();
     }
 
-    /** The melodic/percussion flag for a Note style — an inline checkbox on the
-     *  Style Type row that toggles `pitched` and slides the Pitch band shut
-     *  (percussion) or open (melodic). @param {any} s */
+    /** The melodic/percussion flag for a Note style — a "Percussion only" row
+     *  inserted just below the Style Name row (label in the label column, checkbox
+     *  to its right). Toggling it slides the Pitch band shut (percussion) or open
+     *  (melodic). @param {any} s */
     _buildPercussionFlag(s) {
-        const row = this._typeRowEl;
-        if (row === null || row === undefined) return;
+        const nameRow = this._nameRowEl;
+        if (!nameRow || !nameRow.parentNode) return;
+        const row = document.createElement("div");
+        row.className = "styles-row";
+        const lab = document.createElement("span");
+        lab.className = "styles-field-label";
+        lab.textContent = "Percussion only";
+        row.appendChild(lab);
         const wrap = document.createElement("label");
-        wrap.className = "styles-check styles-percussion-flag";
+        wrap.className = "styles-check";
         const inp = document.createElement("input");
         inp.type = "checkbox";
         inp.checked = s.pitched === false;
@@ -408,8 +421,8 @@ export class StylesPanel {
             this._setPitchCollapsed(inp.checked, true);
         });
         wrap.appendChild(inp);
-        wrap.appendChild(document.createTextNode(" Percussion only"));
         row.appendChild(wrap);
+        nameRow.parentNode.insertBefore(row, nameRow.nextSibling);
     }
 
     /**
@@ -703,11 +716,6 @@ export class StylesPanel {
         bEnd.className = "styles-mix-end";
         bEnd.textContent = "B";
         mixRow.appendChild(bEnd);
-        // Trailing spacer: reserves 50px at the row's right edge so the slider
-        // (which fills the rest) is ~50px shorter, with B still hugging its end.
-        const trim = document.createElement("span");
-        trim.className = "styles-mix-trim";
-        mixRow.appendChild(trim);
         band.appendChild(mixRow);
 
         // Row 2: the A legend.
@@ -767,13 +775,13 @@ export class StylesPanel {
         band.appendChild(accRow);
 
         // Fills — phrase-level flourishes: how often × how big.
-        this._subhead(band, "Fills");
+        this._subhead(band, "Fills", true);
         const fills = this._subgroup(band);
         this._knob(fills, "Frequency", r.fills.frequency, (v) => { r.fills.frequency = v; this._markDirty(); });
         this._knob(fills, "Intensity", r.fills.intensity, (v) => { r.fills.intensity = v; this._markDirty(); });
 
         // Ratchets — single-slot buzzes / rolls: how often × how big.
-        this._subhead(band, "Ratchets");
+        this._subhead(band, "Ratchets", true);
         const ratchets = this._subgroup(band);
         this._knob(ratchets, "Frequency", r.ratchets.frequency, (v) => { r.ratchets.frequency = v; this._markDirty(); });
         this._knob(ratchets, "Intensity", r.ratchets.intensity, (v) => { r.ratchets.intensity = v; this._markDirty(); });
@@ -781,11 +789,12 @@ export class StylesPanel {
         el.appendChild(band);
     }
 
-    /** A left-aligned sub-heading inside a band (Note Timing, Fills, …).
-     *  @param {HTMLElement} parent @param {string} text */
-    _subhead(parent, text) {
+    /** A left-aligned sub-heading inside a band (Note Timing, Fills, …). `withBreak`
+     *  adds extra space above it, to separate it from the previous group.
+     *  @param {HTMLElement} parent @param {string} text @param {boolean} [withBreak] */
+    _subhead(parent, text, withBreak) {
         const h = document.createElement("div");
-        h.className = "styles-subhead";
+        h.className = "styles-subhead" + (withBreak ? " styles-subhead-break" : "");
         h.textContent = text;
         parent.appendChild(h);
     }
@@ -860,9 +869,6 @@ export class StylesPanel {
         bEnd.className = "styles-mix-end";
         bEnd.textContent = "B";
         mixRow.appendChild(bEnd);
-        const trim = document.createElement("span");
-        trim.className = "styles-mix-trim";
-        mixRow.appendChild(trim);
         band.appendChild(mixRow);
 
         // Row 2: the A legend — A is the fixed default sustain (editable, in beats).

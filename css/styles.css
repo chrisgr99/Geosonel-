@@ -96,10 +96,11 @@
     min-width: 0;
 }
 
-/* The velocity-mix slider (A = beat strength ◀──▶ B = canvas): fills the gap
- * between the A and B end-labels on its row. */
+/* The mix sliders (Velocity / Sustain / Image-on-Timing): a fixed ~120px so they
+ * don't balloon on a wide sidebar; can shrink on a narrow one. The end-label after
+ * the slider then sits right against its end. */
 .styles-weight-slider {
-    flex: 1 1 auto;
+    flex: 0 1 120px;
     min-width: 30px;
     accent-color: #789678;
     cursor: pointer;
@@ -112,16 +113,18 @@
     font-size: 10pt;
 }
 
-/* Reserves 50px at the right edge of the mix row, shortening the slider by 50px. */
-.styles-mix-trim {
-    flex: 0 0 50px;
+/* The Style Type radio pair (Note | Groove), a small space right of the label. */
+.styles-type-radios {
+    margin-left: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
 }
-
-/* The Percussion-only flag sits inline on the Style Type row, a little space to
- * the right of the Type dropdown. */
-.styles-percussion-flag {
-    margin-left: 14px;
+.styles-radio {
+    color: #ffffff;
+    font-size: 11pt;
     white-space: nowrap;
+    cursor: pointer;
 }
 
 /* The A:/B: legend rows under the slider — indented from the left so they read as
@@ -168,20 +171,6 @@
 .styles-scale {
     flex: 0 0 130px;
     width: 130px;
-}
-
-/* The Type dropdown hugs its content (just wide enough for "Rhythmic") with tight
- * padding around the word. Two-class selector so it wins the flex + padding
- * overrides regardless of rule order. */
-.styles-row .styles-type {
-    flex: 0 0 auto;
-    width: auto;
-    padding: 0 14px 0 4px;
-}
-
-.styles-role {
-    flex: 0 0 140px;
-    width: 140px;
 }
 
 /* Compact note-name pop-ups for the pitch range (Low – High). */
@@ -253,6 +242,12 @@
     font-size: 11pt;
     font-weight: 600;
     margin: 2px 0 5px 0;
+}
+
+/* A sub-heading that starts a new section (Fills, Ratchets) — extra space above
+ * to separate it from the previous group. */
+.styles-subhead-break {
+    margin-top: 14px;
 }
 
 /* An indented group of fields under a sub-heading, so they read as one set
