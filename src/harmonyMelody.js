@@ -165,21 +165,21 @@ export const styles = Object.freeze({
     // Singable mid-register line: mostly steps, chord tones on strong beats.
     melodic: Object.freeze(new MStyle({
         scale: "key", range: [60, 84], smoothness: 0.75, chordLock: 0.55,
-        descendBias: 1.1, lead: 1.8, gravity: 0.4, breathe: true,
+        descendBias: 1.1, lead: 1.8, gravity: 0.4, breathe: 1,
     })),
     // Low, narrow, root on the change, walks to the next root. A foundation
     // voice: it plays THROUGH phrase ends (no breath). Sustained and
     // groove-driven by default.
     bass: Object.freeze(new MStyle({
         scale: "key", range: [36, 55], smoothness: 0.55, chordLock: 0.85,
-        rootPull: 4, descendBias: 1.0, lead: 2.5, gravity: 0.5, breathe: false,
-        articulation: 0.95, velocityWeight: 0.7,
+        rootPull: 4, descendBias: 1.0, lead: 2.5, gravity: 0.5, breathe: 0,
+        articulation: 0.95, velocityWeight: 0.3,  // groove-driven: lean on beat strength, little image
     })),
     // Lead-guitar feel: high, minor-pentatonic, leapier and looser on the chord.
     // A touch more separated and punchy.
     lead: Object.freeze(new MStyle({
         scale: "minorPentatonic", range: [64, 88], smoothness: 0.5, chordLock: 0.4,
-        descendBias: 1.0, lead: 1.4, gravity: 0.3, breathe: true,
+        descendBias: 1.0, lead: 1.4, gravity: 0.3, breathe: 1,
         articulation: 0.65, accentResponse: 1.3,
     })),
 });

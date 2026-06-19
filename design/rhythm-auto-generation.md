@@ -1,18 +1,12 @@
 # Auto beat-pattern generation & rhythmic styles
 
-DEFERRED design, settled in discussion with Chris. Not yet built — captured so
-the arc isn't lost. This is the near-term, concrete feature; the broader
-"compose by phrases / repeat the scene" vision lives in
-[variations-and-repeats.md](variations-and-repeats.md) and shares concepts
-(styles, the Mutability vocabulary, image-as-dice).
-
-> **Update (June 2026):** the STYLE-SYSTEM structure here is superseded by
-> [styles.md](styles.md) — styles split into two types (vStyle voice / rStyle
-> rhythm) sharing a rhythm core, edited in a Styles tab (not a popover), and
-> percussion gains a kit + multi-lane voicing model. The generation MECHANICS
-> below (constrained-weighted generator, image-as-dice, per-cycle regen,
-> Repeats-as-spatial-variation, swing-from-onset-placement, and the five
-> calibration knobs) all still stand; the knobs ARE the shared rhythm core.
+This is the **generation mechanics** for a `GrooveStyle` — the constrained-weighted
+generator, image-as-dice, per-repeat regeneration, swing, and the calibration
+knobs. The surrounding style-system structure (the Note/Groove split, the two
+libraries, the Styles tab) is in [styles.md](styles.md); the broader "compose by
+phrases / repeat the scene" vision is in
+[variations-and-repeats.md](variations-and-repeats.md), sharing concepts (styles,
+the Mutability vocabulary, image-as-dice). Not yet built.
 
 ## The problem
 
@@ -88,11 +82,15 @@ shifts; move it back → identical pixels → identical groove. No harmony invol
 so it works for a bare percussion curve and slots into the repeat-the-scene idea
 for free.
 
-Generation happens **per cycle** (the whole phrase at once, at cycle restart),
-NOT slot-by-slot on the fly — musical plausibility is a phrase-level property
-(density arc, anchored downbeats, ratchet pickups, sensible ending) that needs
-all N slots visible together. Per-cycle regen also lands live edits at phrase
-boundaries, not mid-bar.
+Generation happens **per phrase — i.e. per pattern repeat** (the whole phrase at
+once, when each repeat begins), NOT slot-by-slot on the fly: musical plausibility
+is a phrase-level property (density arc, anchored downbeats, ratchet pickups,
+sensible ending) that needs all of the phrase's slots visible together. The
+phrase, NOT the whole object cycle, is the regeneration unit — a cycle holds
+`Repeats` phrases (see "Repeats = spatial variation") and each is generated
+independently, so variation arrives repeat-by-repeat within a cycle instead of
+only once per cycle. Regen at phrase boundaries also lands live edits at a repeat
+boundary, not mid-bar.
 
 `Vary-per-cycle` (a temporal variation knob) was considered and DROPPED: with
 variation coming from the image and from Repeats (below), the generator stays
@@ -109,7 +107,8 @@ arc of the path, samples a different region of the image, and comes out
 different — but deterministically. One sweep of the cursor plays N related-but-
 distinct phrases; next cycle it's identical; move the curve and all N reshape.
 Spatial variation kills tiresome repetition WITHIN a cycle and stays
-reproducible.
+reproducible. Because each instance is generated on its own, the **repeat is the
+regeneration unit**: fresh variation lands every repeat, not once per cycle.
 
 Each instance is seeded from the colours under ALL its beat points (its whole
 arc), not just its start point. Optionally pass the instance index (1-of-N) so
@@ -139,28 +138,31 @@ For Auto, a swing/shuffle GENRE just groups onsets in threes and favours slots 1
 & 3 — the generator places onsets + strength, durations stay the script's
 concern, exactly as Manual and Euclidean already work.
 
-## Calibration knobs (the creative surface)
+## Controls (the creative surface)
 
-Rather than ship one "correct" calibration, expose it. A style is a PRESET of a
-few macro knobs (like `smoothness`/`chordLock` on the melody styles), and the
-user nudges from there — the one-tap path stays "pick a style," the knobs are
-optional refinement, and they're dictation-friendly named scalars.
+Rather than ship one "correct" calibration, expose it. A GrooveStyle's controls
+are organised around its three per-slot OUTPUTS; the colour-as-dice draw enters
+each image-driven output through a per-output **image mix** — an `A ◀──▶ B` slider
+(A = the structural template, B = the image) whose handle position is that
+output's image influence.
 
-Core three (change the feel most):
+- **Onset** (does the beat play) — image-driven. Its template (A) is set by
+  **Density** (sparse ↔ busy: onset threshold / target hits-per-bar) and
+  **Syncopation** (straight ↔ off-beat: weight shifted off the strong beats).
+- **Beat Strength** (how strong) — a **structural** knob (even ↔ punchy),
+  meter-shaped and NOT image-driven; it becomes the Velocity band's "A" input, so
+  the image reaches loudness only via the Velocity band's B.
+- **Ratchet** (fills / sub-hits) — image-driven. Its template (A) is set by
+  **Fills / Ratchets** (none ↔ busy: ratchet-likelihood + max count).
 
-- **Density** — sparse ↔ busy (onset threshold / target hits-per-bar).
-- **Syncopation** — straight ↔ off-beat (shifts weight off the strong beats).
-- **Image Influence** — archetype-locked ↔ image-driven (how far the colour-dice
-  may deviate from the template; tunes how much movement reshapes the groove).
+Each image-driven output picks which colour channel drives its B side — a pixel is
+not one scalar but ten channels (lt, chr, r, g, y, b, …), so the outputs draw
+independently. Convention across all style bands: **A = structural/designed,
+B = image.**
 
-Secondary two (refinement):
-
-- **Accent** — even ↔ punchy (spread of the strength values).
-- **Fills / Ratchets** — none ↔ busy (ratchet-likelihood + max count).
-
-Style sets the base positions, Genre tilts them, the user has the final say —
-one set of knobs, preset then adjustable. A possible sixth, Phrase Contour
-(flat ↔ building), is left out of the core to keep the panel lean.
+Style sets the base positions, Genre tilts them, the user has the final say. A
+possible extra, Phrase Contour (flat ↔ building), is left out to keep the panel
+lean.
 
 ## UI: band vs editor
 

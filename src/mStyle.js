@@ -53,6 +53,10 @@ const DEFAULTS = Object.freeze({
     kind: "melodic",
     // --- pitch behaviour (read by harmonyMelody.expandProfile / melodicStep) ---
     scale: "key",
+    // How strongly notes are pulled to the scale (0 = chromatic-free, 1 = locked
+    // to scale). Reserved: the generator still hard-filters to the scale until
+    // the soft-scale change lands; this field is the future Scale Pull strength.
+    scalePull: 0.85,
     range: [60, 84],
     smoothness: 0.75,
     chordLock: 0.55,
@@ -60,7 +64,10 @@ const DEFAULTS = Object.freeze({
     descendBias: 1.1,
     lead: 1.8,
     gravity: 0.4,
-    breathe: true,
+    // Phrase-end breath as a 0..1 amount (0 = play through, no breath; 1 = a full
+    // breath). The LENGTH it maps to is a later engine change; for now > 0 just
+    // means "breathe" (the current fixed length).
+    breathe: 1,
     // --- axis drivers: value | colour-channel name | function(ctx) ---
     pitch: "lt",        // the pitch "dice" — lightness picks the scale position
     velocity: "r",      // the image side of velocity
@@ -71,9 +78,10 @@ const DEFAULTS = Object.freeze({
     //     deferred); the field exists so the model is forward-compatible. ---
     bend: undefined,
     // --- shaping knobs ---
-    velocityWeight: 0.5,   // 0 = all image, 1 = all beat strength
-    durationWeight: 0.5,   // 0 = all articulation baseline, 1 = all image
-    articulation: 0.8,     // 0 = staccato, 1 = legato (fill the slot)
+    velocityWeight: 0.5,   // 0 = all beat strength, 1 = all image  (image amount, matches durationWeight)
+    durationWeight: 0.5,   // 0 = all default sustain, 1 = all image
+    articulation: 0.9,     // default SUSTAIN in beats — how long the note holds (absolute, ~0..2)
+    overlap: 0,            // beats past (+) / short of (−) the next onset — legato overlap / gap
     accentResponse: 1,     // > 1 = punchier beat-strength → velocity contrast
     phraseDynamics: 0.5,   // how much phrase position shapes velocity / duration
     // --- rhythm core: the Auto beat-pattern generation knobs (design/styles.md,
@@ -88,8 +96,12 @@ const DEFAULTS = Object.freeze({
         accent: 0.5,         // even ↔ punchy (spread of the beat-strength values)
         ratchets: 0.0,       // none ↔ busy (the Fills/Ratchets knob: ratchet likelihood)
     }),
-    // --- output instrument ---
-    sound: undefined,
+    // (No `sound` field: a style never carries an instrument — the firing object's
+    //  own voice is always used. The style is purely musical behaviour.)
+    // --- musical role: the voice's function in the ensemble (foundation, pulse,
+    //     accent, lead, pad, fill, counter), or "none" for a free voice. Shared by
+    //     melodic and rhythmic styles; role presets/biasing is a later step. ---
+    role: "none",
 });
 
 /** The fields a MStyle carries (and copies). Exported so the Script-tab
@@ -325,7 +337,7 @@ export function materializeMStyle(json) {
  * @param {object} p
  * @param {number} p.beatStrength             0..1 beat accent (the firing `vel`)
  * @param {number} [p.image]                  0..1 image drive, or undefined
- * @param {number} [p.weight]                 velocityWeight 0..1 (1 = all strength)
+ * @param {number} [p.weight]                 velocityWeight 0..1 (0 = all strength, 1 = all image)
  * @param {number} [p.accentResponse]         > 0; > 1 = punchier
  * @param {{atStart?:boolean,atEnd?:boolean}|null} [p.phrase]
  * @param {number} [p.phraseDynamics]         0..1
@@ -335,7 +347,7 @@ export function shapeVelocity({ beatStrength, image, weight, accentResponse, phr
     const s = clamp01(num(beatStrength, 0));
     const img = (typeof image === "number" && Number.isFinite(image)) ? clamp01(image) : null;
     const w = clamp01(num(weight, 0.5));
-    let v = (img === null) ? s : (w * s + (1 - w) * img);
+    let v = (img === null) ? s : (w * img + (1 - w) * s);
     const ar = num(accentResponse, 1);
     if (ar > 0 && ar !== 1) v = Math.pow(v, ar);
     const pd = clamp01(num(phraseDynamics, 0));
@@ -347,33 +359,41 @@ export function shapeVelocity({ beatStrength, image, weight, accentResponse, phr
 }
 
 /**
- * Coordinated note duration in BEATS: the groove spacing (`beatsToNext`, the
- * slot length) times an articulation fraction — the `articulation` baseline
- * stretched toward the image drive by `weight`, then shaped by phrase position
- * (sustain into a phrase end; clip a weak mid-phrase beat). The fraction may
- * exceed 1 slightly so a legato note can overlap into the next.
+ * Coordinated note SUSTAIN in BEATS — how long the note holds from its onset,
+ * ABSOLUTE (not a fraction of the slot), so it works for notes with no scheduled
+ * next note (collisions / triggers). `articulation` is the default sustain in beats
+ * (0..SUSTAIN_MAX); the image drive (0..1) scales to the same range and blends by
+ * `weight`. Shape to Phrases multiplies it (longer into a phrase end, clipped on a
+ * weak mid-phrase beat). Finally, IF a next note is known, the note ends at
+ * `min(sustain, beatsToNext + overlap)`: +overlap rings past the next onset, −overlap
+ * stops short of it. No next note → the absolute sustain stands.
  *
  * @param {object} p
- * @param {number|null} [p.beatsToNext]  beats to the next onset; null/invalid → 1
- * @param {number} [p.image]             0..1 image drive
+ * @param {number|null} [p.beatsToNext]  beats to the next onset, or null (no next note)
+ * @param {number} [p.image]             0..1 image drive (scales to the sustain range)
  * @param {number} [p.weight]            durationWeight 0..1
- * @param {number} [p.articulation]      0..1 (0 staccato, 1 legato)
+ * @param {number} [p.articulation]      default sustain in BEATS (~0..2)
+ * @param {number} [p.overlap]           beats past (+) / short of (−) the next onset
  * @param {number} [p.beatStrength]      0..1
  * @param {{atStart?:boolean,atEnd?:boolean}|null} [p.phrase]
  * @param {number} [p.phraseDynamics]    0..1
- * @returns {number} duration in beats (> 0)
+ * @returns {number} sustain in beats (> 0)
  */
-export function shapeDuration({ beatsToNext, image, weight, articulation, beatStrength, phrase, phraseDynamics }) {
-    const slot = (typeof beatsToNext === "number" && beatsToNext > 0) ? beatsToNext : 1;
-    const art = clamp01(num(articulation, 0.8));
-    const img = (typeof image === "number" && Number.isFinite(image)) ? clamp01(image) : null;
+export function shapeDuration({ beatsToNext, image, weight, articulation, overlap, beatStrength, phrase, phraseDynamics }) {
+    const SUSTAIN_MAX = 2;
+    const art = clampRange(num(articulation, 0.9), 0, SUSTAIN_MAX);
+    const img = (typeof image === "number" && Number.isFinite(image)) ? clamp01(image) * SUSTAIN_MAX : null;
     const w = clamp01(num(weight, 0.5));
-    let frac = (img === null) ? art : (w * img + (1 - w) * art);
+    let sustain = (img === null) ? art : (w * img + (1 - w) * art);   // beats
     const pd = clamp01(num(phraseDynamics, 0));
     if (pd > 0) {
-        if (phrase && phrase.atEnd) frac += 0.25 * pd;
-        else frac -= 0.15 * pd * (1 - clamp01(num(beatStrength, 0.5)));
+        if (phrase && phrase.atEnd) sustain *= 1 + 0.25 * pd;
+        else sustain *= 1 - 0.15 * pd * (1 - clamp01(num(beatStrength, 0.5)));
     }
-    frac = clampRange(frac, 0.05, 1.25);
-    return slot * frac;
+    sustain = Math.max(0.02, sustain);
+    if (typeof beatsToNext === "number" && beatsToNext > 0) {
+        const limit = Math.max(0.02, beatsToNext + num(overlap, 0));
+        return Math.min(sustain, limit);
+    }
+    return sustain;
 }

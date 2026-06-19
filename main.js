@@ -72,7 +72,7 @@ import { StrudelRuntime } from "./src/strudel/runtime.js";
 import { MIDISender } from "./src/strudel/midiSender.js";
 import { PatternFiringEngine } from "./src/strudel/firingEngine.js";
 import { installImageSignals } from "./src/strudel/signals.js";
-import { loadStyles, removeStyle } from "./src/styleStore.js";
+import { loadStyles, saveStyle, removeStyle } from "./src/styleStore.js";
 import { installDivider } from "./src/paneDivider.js";
 import { Canvas } from "./src/canvas.js";
 import { MessageArea } from "./src/messages.js";
@@ -2037,6 +2037,10 @@ async function main() {
     // style re-resolve. Delete is wired now; Save / rename arrive with the
     // voice-editor slice.
     if (editor.stylesPanel) {
+        editor.stylesPanel.onSaveStyle((record) => {
+            saveStyle(record);
+            void runScene();
+        });
         editor.stylesPanel.onDeleteStyle((type, name) => {
             removeStyle(type, name);
             void runScene();

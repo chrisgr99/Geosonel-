@@ -47,7 +47,7 @@ test("MStyle: built from a plain style object inherits its fields + default driv
     assert.deepEqual(s.range, [64, 88]);
     assert.equal(s.chordLock, 0.4);
     assert.equal(s.pitch, "lt");              // default driver filled in
-    assert.equal(s.articulation, 0.8);
+    assert.equal(s.articulation, 0.9);        // default sustain (beats)
 });
 
 // ---- rhythm core --------------------------------------------------------
@@ -190,9 +190,9 @@ test("resolveDrive: unusable drivers → undefined (caller defaults)", () => {
 
 // ---- shapeVelocity ------------------------------------------------------
 
-test("shapeVelocity: weight=1 is all beat strength, weight=0 is all image", () => {
-    assert.equal(shapeVelocity({ beatStrength: 0.8, image: 0.2, weight: 1 }), 0.8);
-    assert.equal(shapeVelocity({ beatStrength: 0.8, image: 0.2, weight: 0 }), 0.2);
+test("shapeVelocity: weight=1 is all image, weight=0 is all beat strength", () => {
+    assert.equal(shapeVelocity({ beatStrength: 0.8, image: 0.2, weight: 1 }), 0.2);
+    assert.equal(shapeVelocity({ beatStrength: 0.8, image: 0.2, weight: 0 }), 0.8);
     // halfway blends
     assert.ok(Math.abs(shapeVelocity({ beatStrength: 0.8, image: 0.2, weight: 0.5 }) - 0.5) < 1e-9);
 });
@@ -217,28 +217,36 @@ test("shapeVelocity: accentResponse > 1 sharpens contrast (lowers a mid value)",
 
 // ---- shapeDuration ------------------------------------------------------
 
-test("shapeDuration: scales the slot (beatsToNext) by the articulation fraction", () => {
-    // full legato, no image, no phrase shaping → ~articulation * slot
+test("shapeDuration: sustain is absolute (beats), clamped to the next onset by overlap 0", () => {
+    // sustain 1 beat, gap 2 → not clamped → 1.
     const d = shapeDuration({ beatsToNext: 2, articulation: 1, phraseDynamics: 0 });
-    assert.ok(Math.abs(d - 2) < 1e-9);
-    const staccato = shapeDuration({ beatsToNext: 2, articulation: 0.25, phraseDynamics: 0 });
-    assert.ok(Math.abs(staccato - 0.5) < 1e-9);
+    assert.ok(Math.abs(d - 1) < 1e-9);
+    // sustain 2 beats, gap 1, overlap 0 → ends at the next onset → 1.
+    const clamped = shapeDuration({ beatsToNext: 1, articulation: 2, phraseDynamics: 0 });
+    assert.ok(Math.abs(clamped - 1) < 1e-9);
 });
 
-test("shapeDuration: more articulation → longer note", () => {
-    const short = shapeDuration({ beatsToNext: 1, articulation: 0.3, phraseDynamics: 0 });
-    const long = shapeDuration({ beatsToNext: 1, articulation: 0.9, phraseDynamics: 0 });
+test("shapeDuration: positive overlap rings past the next onset, negative stops short", () => {
+    const over = shapeDuration({ beatsToNext: 1, articulation: 2, overlap: 0.5, phraseDynamics: 0 });
+    assert.ok(Math.abs(over - 1.5) < 1e-9);    // min(2, 1 + 0.5)
+    const gap = shapeDuration({ beatsToNext: 1, articulation: 2, overlap: -0.3, phraseDynamics: 0 });
+    assert.ok(Math.abs(gap - 0.7) < 1e-9);     // min(2, 1 - 0.3)
+});
+
+test("shapeDuration: no next note keeps the absolute sustain (collisions / triggers)", () => {
+    const d = shapeDuration({ beatsToNext: null, articulation: 1.3, phraseDynamics: 0 });
+    assert.ok(Math.abs(d - 1.3) < 1e-9);
+});
+
+test("shapeDuration: more sustain → longer note (unclamped)", () => {
+    const short = shapeDuration({ beatsToNext: null, articulation: 0.3, phraseDynamics: 0 });
+    const long = shapeDuration({ beatsToNext: null, articulation: 0.9, phraseDynamics: 0 });
     assert.ok(long > short);
 });
 
 test("shapeDuration: a phrase end sustains longer than a mid-phrase beat", () => {
-    const base = { beatsToNext: 1, articulation: 0.6, beatStrength: 0.5, phraseDynamics: 1 };
+    const base = { beatsToNext: null, articulation: 0.6, beatStrength: 0.5, phraseDynamics: 1 };
     const end = shapeDuration({ ...base, phrase: { atEnd: true } });
     const mid = shapeDuration({ ...base, phrase: null });
     assert.ok(end > mid);
-});
-
-test("shapeDuration: null/invalid beatsToNext falls back to a 1-beat slot", () => {
-    const d = shapeDuration({ beatsToNext: null, articulation: 1, phraseDynamics: 0 });
-    assert.ok(Math.abs(d - 1) < 1e-9);
 });

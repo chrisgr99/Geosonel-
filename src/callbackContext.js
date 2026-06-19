@@ -181,7 +181,12 @@ export function nxtNote(arg0, style, low, span) {
 function nxtNoteLegacy(drive, style, low, span) {
     const ctx = current;
     const prof = style || STYLES.melodic;
-    const breathes = prof.breathe !== false;
+    // `breathe` is now a 0..1 amount (0 = no breath; > 0 breathes). A legacy
+    // boolean still works (true breathes, false doesn't). The breath LENGTH (the
+    // magnitude) isn't honoured yet — that's a later engine change.
+    const breathes = typeof prof.breathe === "number"
+        ? prof.breathe > 0
+        : prof.breathe !== false;
     const phrase = currentHarmony ? currentHarmony.phrase : null;
     // Phrase silence (return 0 — playNote treats it as a rest, leaving the
     // line's previous note as the melodic memory): a GAP between phrases (every
@@ -217,7 +222,8 @@ function nxtNoteFromStyle(style) {
     const phrase = currentHarmony ? currentHarmony.phrase : null;
     delete ctx._breathReleaseBeats; // the explicit duration replaces the old cap
     if (phrase && phrase.inGap) {
-        return new Note({ sound: style.sound, note: 0, velocity: 0, duration: 0 });
+        // No `sound`: a style carries no instrument, so the object's own voice plays.
+        return new Note({ note: 0, velocity: 0, duration: 0 });
     }
     let dice = resolveDrive(style.pitch, ctx);
     dice = (typeof dice === "number" && Number.isFinite(dice))
@@ -238,13 +244,14 @@ function nxtNoteFromStyle(style) {
         image: resolveDrive(style.duration, ctx),
         weight: style.durationWeight,
         articulation: style.articulation,
+        overlap: style.overlap,
         beatStrength: strength,
         phrase,
         phraseDynamics: style.phraseDynamics,
     });
     const bpm = (typeof ctx.bpm === "number" && ctx.bpm > 0) ? ctx.bpm : 120;
     return new Note({
-        sound: style.sound,
+        // No `sound`: a style carries no instrument, so the object's own voice plays.
         note,
         velocity,
         duration: durBeats * 60 / bpm,        // beats → seconds (playNote's unit)

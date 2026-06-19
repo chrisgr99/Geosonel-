@@ -1,40 +1,41 @@
 /*
- * Styles tab (src/stylesPanel.js, design/styles.md).
+ * vStyles tab (src/stylesPanel.js, design/styles.md).
  *
- * The app-wide voice / rhythm style libraries. Scaffold styling — matches the
- * dark editor surface (#141414 / #c0c0c0, #3a3a3a selection, #FFCC00 accent).
- * The flex slot + show/hide live in css/layout.css; this file styles the panel
- * contents. Refined as the editor form lands.
+ * Colours match the Properties inspector EXACTLY so the form reads with the same
+ * grayscale contrast: panel background #3e3e3e, fields #646464 with a #789678
+ * green border and white text, white labels. (Mirrors css/inspector.css's
+ * .insp-field / .insp-dropdown / .insp-label.) The flex slot + show/hide live in
+ * css/layout.css.
  */
 
 #styles-area {
-    background-color: #141414;
-    color: #c0c0c0;
+    background-color: #3e3e3e;
+    color: #ffffff;
     overflow-y: auto;
     padding: 10px 12px;
     box-sizing: border-box;
-    font-size: 12px;
+    font-size: 11pt;
 }
 
-/* --- "Voice Style" label + Melodic | Rhythmic radio pair --- */
+/* --- Chooser block: Style Type (line 1) + Voice Name & action buttons (line 2).
+ *     Both rows use the editor's 80px label column (styles-row / styles-field-label)
+ *     so Style Type, Voice Name, and Voice Role all share a left edge. --- */
 
-.styles-kindrow {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    margin-bottom: 12px;
+.styles-chooser-block {
+    margin-bottom: 8px;
 }
 
-.styles-kindrow-label {
-    font-weight: 600;
-    color: #d8d8d8;
+/* The Voice Name row lets the icon buttons wrap below only if the sidebar is too
+ * narrow for the label + name + five buttons on one line. */
+.styles-namerow {
+    flex-wrap: wrap;
 }
 
 .styles-radio {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: #c0c0c0;
+    color: #ffffff;
     cursor: pointer;
     user-select: none;
 }
@@ -44,70 +45,402 @@
     margin: 0;
 }
 
-/* --- Compact style chooser (dropdown + actions, one row) --- */
+/* --- Name dropdown (in the top row) --- */
 
-.styles-chooser {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 10px;
+/* Fixed width so the Name field doesn't stretch. */
+.styles-chooser-select {
+    flex: 0 0 170px;
+    width: 170px;
 }
 
-.styles-chooser-label {
-    color: #d8d8d8;
+/* --- Shared field look (matches .insp-field / .insp-dropdown) --- */
+
+.styles-num,
+.styles-text,
+.styles-select,
+.styles-chooser-select,
+.styles-driver-src,
+.styles-driver-chan,
+.styles-driver-expr {
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    color: #ffffff;
+    height: 20px;
+    font-size: 11pt;
+    box-sizing: border-box;
+    padding: 0 6px;
+}
+
+.styles-num {
+    flex: 0 0 64px;
+    width: 64px;
+}
+
+.styles-text,
+.styles-select,
+.styles-driver-chan,
+.styles-driver-expr {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.styles-driver-src {
+    flex: 0 0 86px;
+    padding: 0 4px;
+}
+
+.styles-driver-val {
+    flex: 1 1 auto;
+    display: flex;
+    min-width: 0;
+}
+
+/* The velocity-mix slider (A = beat strength ◀──▶ B = canvas): fills the gap
+ * between the A and B end-labels on its row. */
+.styles-weight-slider {
+    flex: 1 1 auto;
+    min-width: 30px;
+    accent-color: #789678;
+    cursor: pointer;
+    margin: 0;
+}
+
+/* The "A" / "B" end-labels flanking the velocity-mix slider. */
+.styles-mix-end {
+    color: #ffffff;
+    font-size: 10pt;
+}
+
+/* Reserves 50px at the right edge of the mix row, shortening the slider by 50px. */
+.styles-mix-trim {
+    flex: 0 0 50px;
+}
+
+/* The A:/B: legend rows under the slider — indented from the left so they read as
+ * notes explaining the slider's two ends. */
+.styles-mix-legend {
+    padding-left: 24px;
+}
+
+/* The shaping-knobs row at the bottom of the velocity band, indented. */
+.styles-mix-knobs {
+    padding-left: 60px;
+}
+
+/* The colour-channel pop-up sizes to its content (e.g. "lt", "chr") rather than
+ * stretching to the band's right edge. */
+.styles-driver-chan {
+    flex: 0 0 auto;
+    width: auto;
+}
+
+.styles-text.invalid {
+    border-color: #d07070;
+}
+
+/* Inline labels that hug their field (used for side-by-side groups, e.g. the
+ * Identity band). The widths below override the shared flex:1 1 auto so the
+ * fields are sized to their data, not stretched to the band edge. */
+.styles-inline-label {
+    color: #ffffff;
+    font-size: 10pt;
     white-space: nowrap;
 }
 
-.styles-chooser-select {
-    flex: 1 1 auto;
-    min-width: 0;
-    background-color: #1e1e1e;
-    color: #e0e0e0;
-    border: 1px solid #4a4a4a;
-    border-radius: 4px;
-    padding: 4px 6px;
-    font-size: 12px;
+.styles-name {
+    flex: 0 0 170px;
+    width: 170px;
 }
 
-.styles-chooser-btn {
+.styles-instrument {
+    flex: 0 0 180px;
+    width: 180px;
+}
+
+.styles-scale {
+    flex: 0 0 130px;
+    width: 130px;
+}
+
+/* The Type dropdown hugs its content (just wide enough for "Rhythmic") with tight
+ * padding around the word. Two-class selector so it wins the flex + padding
+ * overrides regardless of rule order. */
+.styles-row .styles-type {
+    flex: 0 0 auto;
+    width: auto;
+    padding: 0 14px 0 4px;
+}
+
+.styles-role {
+    flex: 0 0 140px;
+    width: 140px;
+}
+
+/* Compact note-name pop-ups for the pitch range (Low – High). */
+.styles-midi {
+    flex: 0 0 60px;
+    width: 60px;
+    padding: 0 16px 0 4px;
+}
+
+.styles-range-dash {
+    color: #ffffff;
+    padding: 0 1px;
+}
+
+/* "Pull to Scale" / "Pull to Chord" labels — a fixed-width slot, RIGHT-aligned so
+ * each label hugs its value field (labels-against-fields); the slot width keeps the
+ * two number fields lined up vertically across the rows. */
+.styles-pull-label {
+    flex: 0 0 102px;
+    text-align: right;
+    color: #ffffff;
+    font-size: 10pt;
+    white-space: nowrap;
+}
+
+/* An empty spacer matching the Scale dropdown's width, used to push the Pull to
+ * Chord field under the Pull to Scale field. */
+.styles-scale-spacer {
+    flex: 0 0 130px;
+}
+
+/* A label broken into explicit lines (via <br>) — tight line spacing; the inline
+ * variant right-aligns so its lines hug the field beside it. */
+.styles-wrap {
+    line-height: 1.05;
+}
+
+/* A section divider (below the Sound row). */
+.styles-divider {
+    border-bottom: 1px solid #555555;
+    margin: 7px 0;
+}
+
+/* Small inline label for a grouped knob within a row. */
+.styles-mini-label {
+    color: #ffffff;
+    font-size: 10pt;
+    white-space: nowrap;
+    margin-left: 6px;
+}
+
+/* Second-field label slot in the Motion / Anchoring rows — a fixed (capped) width
+ * so its value field lands in the right-hand influence column, under Pull to Scale
+ * / Pull to Chord. Width = scale(130) + gap(6) + pull-label(92) − first-field(64)
+ * − gap(6) = 158px. Capped so a long label (Strong Beats on Chord Root) can't push
+ * the field out of the column. */
+.styles-influence-label {
+    flex: 0 0 168px;
+    width: 168px;
+    text-align: right;          /* hug the value field on the right of the slot */
+    color: #ffffff;
+    font-size: 10pt;
+    white-space: nowrap;
+}
+
+/* The small "to" word between the low- and high-note dropdowns in Note Range,
+ * so they read as one phrase ("C3 to G5"). The row gap spaces it on both sides. */
+.styles-range-to {
+    color: #ffffff;
+    font-size: 10pt;
+    white-space: nowrap;
+}
+
+/* Two-line inline label (e.g. "Pull to" / "Scale") — stays narrow so the field
+ * beside it isn't pushed far right. Right-aligned so it hugs that field. */
+.styles-mini-label-2 {
+    color: #ffffff;
+    font-size: 10pt;
+    line-height: 1.05;
+    text-align: right;
+    white-space: nowrap;
+    margin-left: 6px;
+}
+
+.styles-num:focus,
+.styles-text:focus,
+.styles-select:focus,
+.styles-chooser-select:focus,
+.styles-driver-src:focus,
+.styles-driver-chan:focus,
+.styles-driver-expr:focus {
+    outline: none;
+    border-color: #ffffff;
+}
+
+/* Custom green chevron on the selects, matching the inspector dropdown. */
+.styles-select,
+.styles-chooser-select,
+.styles-driver-src,
+.styles-driver-chan {
     appearance: none;
-    border: 1px solid #4a4a4a;
-    background-color: #262626;
-    color: #d0d0d0;
-    border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 12px;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    cursor: pointer;
+    padding-right: 20px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'><path fill='%23789678' d='M0 0h8L4 5z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    background-size: 8px 5px;
+}
+
+.styles-select option,
+.styles-chooser-select option,
+.styles-driver-src option,
+.styles-driver-chan option {
+    background-color: #2a2a2a;
+    color: #f0f0f0;
+}
+
+/* --- Buttons (chooser New/Duplicate/Delete + footer Save/Revert) --- */
+
+.styles-chooser-btn,
+.styles-save,
+.styles-revert {
+    appearance: none;
+    border: 2px solid #789678;
+    background-color: #4a4a4a;
+    color: #ffffff;
+    border-radius: 3px;
+    height: 22px;
+    padding: 0 12px;
+    font-size: 10pt;
     cursor: pointer;
     white-space: nowrap;
 }
 
-.styles-chooser-btn:hover:not(:disabled) {
-    background-color: #333333;
-    border-color: #5a5a5a;
+.styles-chooser-btn:hover:not(:disabled),
+.styles-save:hover:not(:disabled),
+.styles-revert:hover:not(:disabled) {
+    background-color: #585858;
 }
 
-.styles-chooser-btn:disabled {
+.styles-chooser-btn:disabled,
+.styles-save:disabled,
+.styles-revert:disabled {
     opacity: 0.4;
     cursor: default;
+    border-color: transparent;
 }
 
 .styles-chooser-btn.danger:hover:not(:disabled) {
-    background-color: #5a2222;
-    border-color: #7a3030;
-    color: #ffd0d0;
+    background-color: #6a3030;
 }
 
-/* --- Editor pane (placeholder this slice) --- */
+/* Compact square icon buttons (the action buttons in the top row): no text
+ * padding, the glyph centred and a touch larger. */
+.styles-icon-btn {
+    width: 26px;
+    padding: 0;
+    font-size: 13px;
+    text-align: center;
+}
 
-.styles-editor {
-    border-top: 1px solid #2a2a2a;
-    padding-top: 10px;
+/* --- Rows / labels / bands --- */
+
+.styles-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 0;
+    min-height: 20px;
+}
+
+.styles-field-label {
+    flex: 0 0 88px;
+    width: 88px;            /* hard width caps the auto-grow, so a long label (e.g.
+                              "Voice Leading") can't push its field right of the others */
+    text-align: right;
+    color: #ffffff;
+    font-size: 10pt;
+    white-space: nowrap;
+}
+
+/* A field label that hugs its text (content width) and so pushes its field to
+ * the right, instead of sitting in the fixed 80px column. For a standalone
+ * one-line label with no column to align to (e.g. Default Duration). */
+.styles-label-auto {
+    flex: 0 0 auto;
+}
+
+.styles-band {
+    margin-bottom: 10px;
+}
+
+.styles-band-header {
+    color: #ffffff;
+    font-weight: 600;
+    border-bottom: 1px solid #555555;
+    padding-bottom: 2px;
+    margin-bottom: 5px;
+}
+
+
+/* --- Range row, reserved row, expander, checkbox --- */
+
+.styles-range-tag,
+.styles-note {
+    color: #cccccc;
+    font-size: 10pt;
+}
+
+.styles-note {
+    flex: 0 0 auto;
+    min-width: 36px;
+}
+
+.styles-reserved-note {
+    color: #b6b6b6;
+    font-style: italic;
+}
+
+.styles-expander-head {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: #ffffff;
+    cursor: pointer;
+    padding: 3px 0;
+    font-size: 10pt;
+}
+
+.styles-expander-head:hover {
+    color: #cfe0a0;
+}
+
+.styles-expander-body {
+    padding-left: 8px;
+    border-left: 1px solid #555555;
+}
+
+.styles-expander-body.hidden {
+    display: none;
+}
+
+.styles-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #ffffff;
+    cursor: pointer;
+    font-size: 10pt;
+}
+
+/* --- Footer + hints --- */
+
+.styles-footer {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #555555;
 }
 
 .styles-editor-empty,
-.styles-editor-placeholder,
 .styles-placeholder-hint {
-    color: #7a7a7a;
+    color: #c8c8c8;
     font-style: italic;
     padding: 8px 2px;
 }

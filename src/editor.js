@@ -2779,12 +2779,11 @@ export class TabbedEditor {
             ),
         );
 
-        // The anonymous scene.json (JSON) tab sits at the far right
-        // where it doesn't draw the eye.
-        if (this.bundle.getFile("scene.json") !== null) {
-            this.tabBar.appendChild(this._renderFileTab("scene.json"));
-            renderedNames.add("scene.json");
-        }
+        // scene.json is NOT shown as a tab — the form inspector covers it and
+        // the raw JSON view is reached separately. Mark it rendered so the
+        // text-files loop below skips it (keeps the tab bar as narrow as the
+        // pane can go).
+        renderedNames.add("scene.json");
 
         // Any remaining text files (e.g. resources/foo.js) in
         // their natural bundle order, after the pinned tabs.
