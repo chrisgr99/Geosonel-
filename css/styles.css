@@ -113,18 +113,19 @@
     font-size: 10pt;
 }
 
-/* The Style Type radio pair (Note | Groove), a small space right of the label. */
-.styles-type-radios {
-    margin-left: 8px;
-    display: inline-flex;
-    align-items: center;
-    gap: 14px;
-}
+/* A Style Type radio (Note / Groove). The two stack on consecutive rows. */
 .styles-radio {
     color: #ffffff;
     font-size: 11pt;
     white-space: nowrap;
     cursor: pointer;
+}
+
+/* The Percussion-only checkbox sits beside the Groove radio, set off by a gap so
+ * the two rhythm ideas read as grouped but distinct. */
+.styles-percussion-flag {
+    margin-left: 20px;
+    white-space: nowrap;
 }
 
 /* The A:/B: legend rows under the slider — indented from the left so they read as

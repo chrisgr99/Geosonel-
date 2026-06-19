@@ -179,29 +179,21 @@ export class StylesPanel {
         const wrap = document.createElement("div");
         wrap.className = "styles-chooser-block";
 
-        // Line 1: Style Type — a Note | Groove radio pair, the label right-aligned
-        // in the label column so it lines up with Style Name / Percussion only below.
+        // Lines 1–2: Style Type — Note and Groove radios stacked (Groove directly
+        // under Note). The Percussion-only checkbox (Note kind) is appended to the
+        // Groove row so it sits beside Groove — the two "rhythm" ideas together.
         const typeRow = document.createElement("div");
         typeRow.className = "styles-row";
         typeRow.appendChild(this._fieldLabel("Style Type"));
-        const typeRadios = document.createElement("span");
-        typeRadios.className = "styles-type-radios";
-        typeRadios.title = "A Note style plays each note (pitch / velocity / sustain); a Groove style generates the rhythm.";
-        for (const [val, label] of [["note", "Note"], ["groove", "Groove"]]) {
-            const lab = document.createElement("label");
-            lab.className = "styles-radio";
-            const inp = document.createElement("input");
-            inp.type = "radio";
-            inp.name = "styles-kind";
-            inp.value = val;
-            inp.checked = (this._kind === val);
-            inp.addEventListener("change", () => { if (inp.checked) this._onChangeType(val); });
-            lab.appendChild(inp);
-            lab.appendChild(document.createTextNode(" " + label));
-            typeRadios.appendChild(lab);
-        }
-        typeRow.appendChild(typeRadios);
+        typeRow.appendChild(this._kindRadio("note", "Note"));
         wrap.appendChild(typeRow);
+
+        const grooveRow = document.createElement("div");
+        grooveRow.className = "styles-row";
+        grooveRow.appendChild(this._spacer("styles-field-label"));   // align Groove under Note
+        grooveRow.appendChild(this._kindRadio("groove", "Groove"));
+        this._grooveRowEl = grooveRow;
+        wrap.appendChild(grooveRow);
 
         // Line 2: Style Name + the icon action buttons.
         const nameRow = document.createElement("div");
@@ -240,9 +232,24 @@ export class StylesPanel {
         this._delBtn.classList.add("danger");
         nameRow.appendChild(this._delBtn);
         wrap.appendChild(nameRow);
-        this._nameRowEl = nameRow;   // the Percussion-only row (Note kind) is inserted after this
 
         return wrap;
+    }
+
+    /** A Style-Type radio (Note | Groove) bound to _onChangeType.
+     *  @param {string} val @param {string} label @returns {HTMLLabelElement} */
+    _kindRadio(val, label) {
+        const lab = document.createElement("label");
+        lab.className = "styles-radio";
+        const inp = document.createElement("input");
+        inp.type = "radio";
+        inp.name = "styles-kind";
+        inp.value = val;
+        inp.checked = (this._kind === val);
+        inp.addEventListener("change", () => { if (inp.checked) this._onChangeType(val); });
+        lab.appendChild(inp);
+        lab.appendChild(document.createTextNode(" " + label));
+        return lab;
     }
 
     /** A compact icon button (the action buttons in the top row). The glyph shows;
@@ -397,21 +404,15 @@ export class StylesPanel {
         this._updateChooserDirtyMarker();
     }
 
-    /** The melodic/percussion flag for a Note style — a "Percussion only" row
-     *  inserted just below the Style Name row (label in the label column, checkbox
-     *  to its right). Toggling it slides the Pitch band shut (percussion) or open
+    /** The melodic/percussion flag for a Note style — a "Percussion only" checkbox
+     *  appended to the Groove radio's row (beside Groove, the two rhythm ideas
+     *  together). Toggling it slides the Pitch band shut (percussion) or open
      *  (melodic). @param {any} s */
     _buildPercussionFlag(s) {
-        const nameRow = this._nameRowEl;
-        if (!nameRow || !nameRow.parentNode) return;
-        const row = document.createElement("div");
-        row.className = "styles-row";
-        const lab = document.createElement("span");
-        lab.className = "styles-field-label";
-        lab.textContent = "Percussion only";
-        row.appendChild(lab);
+        const row = this._grooveRowEl;
+        if (!row) return;
         const wrap = document.createElement("label");
-        wrap.className = "styles-check";
+        wrap.className = "styles-check styles-percussion-flag";
         const inp = document.createElement("input");
         inp.type = "checkbox";
         inp.checked = s.pitched === false;
@@ -421,8 +422,8 @@ export class StylesPanel {
             this._setPitchCollapsed(inp.checked, true);
         });
         wrap.appendChild(inp);
+        wrap.appendChild(document.createTextNode(" Percussion only"));
         row.appendChild(wrap);
-        nameRow.parentNode.insertBefore(row, nameRow.nextSibling);
     }
 
     /**
