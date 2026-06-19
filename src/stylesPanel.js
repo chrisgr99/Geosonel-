@@ -181,18 +181,18 @@ export class StylesPanel {
 
         // Lines 1–2: Style Type — Note and Groove radios stacked (Groove directly
         // under Note). The Percussion-only checkbox (Note kind) is appended to the
-        // Groove row so it sits beside Groove — the two "rhythm" ideas together.
+        // Note row, beside the Note radio (it's a Note-style property).
         const typeRow = document.createElement("div");
         typeRow.className = "styles-row";
         typeRow.appendChild(this._fieldLabel("Style Type"));
         typeRow.appendChild(this._kindRadio("note", "Note"));
+        this._noteRowEl = typeRow;
         wrap.appendChild(typeRow);
 
         const grooveRow = document.createElement("div");
         grooveRow.className = "styles-row";
         grooveRow.appendChild(this._spacer("styles-field-label"));   // align Groove under Note
         grooveRow.appendChild(this._kindRadio("groove", "Groove"));
-        this._grooveRowEl = grooveRow;
         wrap.appendChild(grooveRow);
 
         // Line 2: Style Name + the icon action buttons.
@@ -405,11 +405,10 @@ export class StylesPanel {
     }
 
     /** The melodic/percussion flag for a Note style — a "Percussion only" checkbox
-     *  appended to the Groove radio's row (beside Groove, the two rhythm ideas
-     *  together). Toggling it slides the Pitch band shut (percussion) or open
-     *  (melodic). @param {any} s */
+     *  appended to the Note radio's row (it's a Note-style property). Toggling it
+     *  slides the Pitch band shut (percussion) or open (melodic). @param {any} s */
     _buildPercussionFlag(s) {
-        const row = this._grooveRowEl;
+        const row = this._noteRowEl;
         if (!row) return;
         const wrap = document.createElement("label");
         wrap.className = "styles-check styles-percussion-flag";
