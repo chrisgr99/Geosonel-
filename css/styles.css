@@ -255,10 +255,16 @@
     margin: 2px 0 5px 0;
 }
 
-/* The indented group of pitch tendencies under the Pitch Drivers sub-heading, so
- * they read as one set and the Pitch Chooser below reads as separate. */
-.styles-pitch-group {
+/* An indented group of fields under a sub-heading, so they read as one set
+ * (Pitch Drivers' tendencies, the Groove band's Note Timing / Fills / Ratchets). */
+.styles-subgroup {
     padding-left: 18px;
+}
+
+/* A sub-heading used inline on a field row (e.g. Accents) — drop the block
+ * margins so it sits centred next to its control. */
+.styles-subhead-inline {
+    margin: 0;
 }
 
 /* The small "to" word between the low- and high-note dropdowns in Note Range,

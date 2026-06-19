@@ -478,7 +478,7 @@ export class StylesPanel {
         driversHead.textContent = "Pitch Drivers";
         band.appendChild(driversHead);
         const group = document.createElement("div");
-        group.className = "styles-pitch-group";
+        group.className = "styles-subgroup";
 
         // Scale row: scale dropdown on the left, the "Pull to Scale" strength
         // (0..1) on its right (single-line label — it fits).
@@ -742,18 +742,91 @@ export class StylesPanel {
     _buildRhythmBand(el, s) {
         const band = this._band("Rhythm");
         const r = s.rhythm;
-        // Phase 1: plain knobs over the new Groove field model. The sectioned
-        // layout (Note Timing / Accents / Fills / Ratchets, image sliders +
-        // channel pickers) arrives in the next phase.
-        this._knob(band, "Density", r.density, (v) => { r.density = v; this._markDirty(); });
-        this._knob(band, "Syncopation", r.syncopation, (v) => { r.syncopation = v; this._markDirty(); });
-        this._knob(band, "Image on Timing", r.imageTiming.amount, (v) => { r.imageTiming.amount = v; this._markDirty(); });
-        this._knob(band, "Accents", r.accents, (v) => { r.accents = v; this._markDirty(); });
-        this._knob(band, "Fill Frequency", r.fills.frequency, (v) => { r.fills.frequency = v; this._markDirty(); });
-        this._knob(band, "Fill Intensity", r.fills.intensity, (v) => { r.fills.intensity = v; this._markDirty(); });
-        this._knob(band, "Ratchet Frequency", r.ratchets.frequency, (v) => { r.ratchets.frequency = v; this._markDirty(); });
-        this._knob(band, "Ratchet Intensity", r.ratchets.intensity, (v) => { r.ratchets.intensity = v; this._markDirty(); });
+
+        // Note Timing — Density + Syncopation set the onset template (which beats
+        // play); Image Influence on Timing bends those onsets by the image.
+        this._subhead(band, "Note Timing");
+        const timing = this._subgroup(band);
+        this._knob(timing, "Density", r.density, (v) => { r.density = v; this._markDirty(); });
+        this._knob(timing, "Syncopation", r.syncopation, (v) => { r.syncopation = v; this._markDirty(); });
+
+        this._subhead(band, "Image Influence on Timing");
+        this._imageOnTimingRow(this._subgroup(band), r.imageTiming);
+
+        // Accents — structural (how punchy the metric accents are), NOT
+        // image-driven; this becomes the Velocity band's "A" input.
+        const accRow = document.createElement("div");
+        accRow.className = "styles-row";
+        const accLab = document.createElement("span");
+        accLab.className = "styles-subhead styles-subhead-inline";
+        accLab.textContent = "Accents";
+        accRow.appendChild(accLab);
+        const accNum = this._numInput(r.accents, (v) => { r.accents = v; this._markDirty(); }, {});
+        accNum.title = "How punchy the structural metric accents are. Feeds the Velocity band's A input — not image-driven.";
+        accRow.appendChild(accNum);
+        band.appendChild(accRow);
+
+        // Fills — phrase-level flourishes: how often × how big.
+        this._subhead(band, "Fills");
+        const fills = this._subgroup(band);
+        this._knob(fills, "Frequency", r.fills.frequency, (v) => { r.fills.frequency = v; this._markDirty(); });
+        this._knob(fills, "Intensity", r.fills.intensity, (v) => { r.fills.intensity = v; this._markDirty(); });
+
+        // Ratchets — single-slot buzzes / rolls: how often × how big.
+        this._subhead(band, "Ratchets");
+        const ratchets = this._subgroup(band);
+        this._knob(ratchets, "Frequency", r.ratchets.frequency, (v) => { r.ratchets.frequency = v; this._markDirty(); });
+        this._knob(ratchets, "Intensity", r.ratchets.intensity, (v) => { r.ratchets.intensity = v; this._markDirty(); });
+
         el.appendChild(band);
+    }
+
+    /** A left-aligned sub-heading inside a band (Note Timing, Fills, …).
+     *  @param {HTMLElement} parent @param {string} text */
+    _subhead(parent, text) {
+        const h = document.createElement("div");
+        h.className = "styles-subhead";
+        h.textContent = text;
+        parent.appendChild(h);
+    }
+
+    /** An indented group container for a sub-heading's fields.
+     *  @param {HTMLElement} parent @returns {HTMLElement} */
+    _subgroup(parent) {
+        const g = document.createElement("div");
+        g.className = "styles-subgroup";
+        parent.appendChild(g);
+        return g;
+    }
+
+    /** Image Influence on Timing: a None ◀▶ Strong amount slider + "based on" + a
+     *  colour-channel dropdown, editing the imageTiming {amount, channel} group.
+     *  @param {HTMLElement} parent @param {{amount:number, channel:string}} it */
+    _imageOnTimingRow(parent, it) {
+        const row = document.createElement("div");
+        row.className = "styles-row";
+        row.appendChild(this._inlineLabel("None"));
+        const slider = document.createElement("input");
+        slider.type = "range"; slider.min = "0"; slider.max = "1"; slider.step = "0.01";
+        slider.className = "styles-weight-slider";
+        slider.title = "How much the image bends the onset timing (None ◀▶ Strong).";
+        slider.value = String(clamp01(it.amount));
+        slider.addEventListener("input", () => { it.amount = clamp01(Number(slider.value)); this._markDirty(); });
+        row.appendChild(slider);
+        row.appendChild(this._inlineLabel("Strong"));
+        row.appendChild(this._mini("based on"));
+        const chanSel = document.createElement("select");
+        chanSel.className = "styles-driver-chan";
+        for (const ch of CHANNELS) {
+            const o = document.createElement("option");
+            o.value = ch; o.textContent = ch;
+            chanSel.appendChild(o);
+        }
+        chanSel.value = it.channel || "b";
+        chanSel.title = "Which colour channel under each beat drives the timing adjustment.";
+        chanSel.addEventListener("change", () => { it.channel = chanSel.value; this._markDirty(); });
+        row.appendChild(chanSel);
+        parent.appendChild(row);
     }
 
     /**
