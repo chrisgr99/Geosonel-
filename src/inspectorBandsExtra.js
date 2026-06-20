@@ -32,18 +32,41 @@ import {
     validateStopAtCycle,
 } from "./curveFieldValidation.js";
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
+import { listStyles } from "./styleStore.js";
+import { BUILTIN_GROOVE_NAMES } from "./grooveStyles.js";
 
-/**
- * Options for a note slot's STYLE dropdown — the nxtNote MStyle a
- * no-argument nxtNote() uses (distinct from the object's `voice` / instrument).
- * "" = the default melody style. Built-in styles only for now; phase 3 widens
- * this to the user style library.
- */
-const SLOT_STYLE_OPTIONS = [
-    { value: "", label: "Default" },
-    { value: "bass", label: "Bass" },
+/** Voice Role options — the object's ensemble function (this.role). */
+const ROLE_OPTIONS = [
+    { value: "none", label: "None" },
+    { value: "foundation", label: "Foundation" },
+    { value: "pulse", label: "Pulse" },
+    { value: "accent", label: "Accent" },
     { value: "lead", label: "Lead" },
+    { value: "pad", label: "Pad" },
+    { value: "fill", label: "Fill" },
+    { value: "counter", label: "Counter" },
 ];
+
+/** Options for the Note Style dropdown (the nxtNote voice a no-arg nxtNote()
+ *  uses): Default + built-in note styles + the user's note library. */
+function noteStyleOptions() {
+    const opts = [
+        { value: "", label: "Default" },
+        { value: "bass", label: "Bass" },
+        { value: "lead", label: "Lead" },
+    ];
+    for (const rec of listStyles("note")) opts.push({ value: rec.name, label: rec.name });
+    return opts;
+}
+
+/** Options for the Auto-mode Groove Style dropdown: Default + built-in grooves +
+ *  the user's groove library. */
+function grooveStyleOptions() {
+    const opts = [{ value: "", label: "Default" }];
+    for (const n of BUILTIN_GROOVE_NAMES) opts.push({ value: n, label: n });
+    for (const rec of listStyles("groove")) opts.push({ value: rec.name, label: rec.name });
+    return opts;
+}
 
 export const bandExtraMethods = {
 
@@ -105,6 +128,7 @@ export const bandExtraMethods = {
         const onActiveBeatFunctionAgg = aggregateString(objs.all, "onActiveBeatFunction");
         // Per-slot STYLE (nxtNote MStyle name) aggregates — note slots only.
         const onActiveBeatStyleAgg = aggregateString(objs.all, "onActiveBeatStyle");
+        const roleAgg = aggregateString(objs.all, "role");
         const hasCollidedStyleAgg = aggregateString(objs.all, "hasCollidedStyle");
         const beenTriggeredStyleAgg = aggregateString(objs.all, "beenTriggeredStyle");
         const canTickAgg = aggregateBoolean(objs.all, "canTick");
@@ -130,7 +154,7 @@ export const bandExtraMethods = {
          *   enabled?: boolean,
          * }>} */
         const slotRows = [
-            { label: "onActiveBeat", slotKey: "onActiveBeat", canEditKind: "setCanActiveBeat", canAgg: canActiveBeatAgg, funcEditKind: "setOnActiveBeatFunction", funcAgg: onActiveBeatFunctionAgg, styleEditKind: "setOnActiveBeatStyle", styleAgg: onActiveBeatStyleAgg, enabled: activeBeatEnabled },
+            { label: "onActiveBeat", slotKey: "onActiveBeat", canEditKind: "setCanActiveBeat", canAgg: canActiveBeatAgg, funcEditKind: "setOnActiveBeatFunction", funcAgg: onActiveBeatFunctionAgg, enabled: activeBeatEnabled },
             { label: "hasCollided", slotKey: "hasCollided", canEditKind: "setCanCollide", canAgg: canCollideAgg, funcEditKind: "setHasCollidedFunction", funcAgg: hasCollidedFunctionAgg, styleEditKind: "setHasCollidedStyle", styleAgg: hasCollidedStyleAgg },
             { label: "beenTriggered", slotKey: "beenTriggered", canEditKind: "setCanBeTriggered", canAgg: canBeTriggeredAgg, funcEditKind: "setBeenTriggeredFunction", funcAgg: beenTriggeredFunctionAgg, styleEditKind: "setBeenTriggeredStyle", styleAgg: beenTriggeredStyleAgg },
             { label: "onTick", slotKey: "onTick", canEditKind: "setCanTick", canAgg: canTickAgg, funcEditKind: "setOnTickFunction", funcAgg: onTickFunctionAgg },
@@ -177,7 +201,7 @@ export const bandExtraMethods = {
             // button column aligned straight down with the note rows.
             if (row.styleEditKind) {
                 r.appendChild(this._buildDropdownField({
-                    options: SLOT_STYLE_OPTIONS,
+                    options: noteStyleOptions(),
                     value: row.styleAgg === "varies" ? "" : row.styleAgg,
                     width: W.slotStyle,
                     editable: rowEnabled && canChecked,
@@ -200,6 +224,29 @@ export const bandExtraMethods = {
 
         // Render order: onActiveBeat, hasCollided, beenTriggered, onTick.
         band.appendChild(buildSlotRow(slotRows[0])); // onActiveBeat
+        // Note Style + Voice Role, on a row under onActiveBeat. Note Style is the
+        // onActiveBeat nxtNote voice; Voice Role is the object's ensemble function
+        // (this.role). Both ride the onActiveBeat gate (curves/sprites).
+        const styleRowEditable = activeBeatEnabled && (canActiveBeatAgg === true);
+        const nsRow = mkRow();
+        nsRow.appendChild(mkLabel("Style", { width: W.leftLabel, disabled: !styleRowEditable }));
+        nsRow.appendChild(mkLabel("", { width: 18 }));   // checkbox-column spacer → align under the onActiveBeat function field
+        nsRow.appendChild(this._buildDropdownField({
+            options: noteStyleOptions(),
+            value: onActiveBeatStyleAgg === "varies" ? "" : onActiveBeatStyleAgg,
+            width: W.callbackField,
+            editable: styleRowEditable,
+            editKind: "setOnActiveBeatStyle",
+        }));
+        nsRow.appendChild(mkLabel("Role", { width: W.beatStackLabel, disabled: !styleRowEditable }));
+        nsRow.appendChild(this._buildDropdownField({
+            options: ROLE_OPTIONS,
+            value: roleAgg === "varies" ? "" : roleAgg,
+            width: W.slotStyle,
+            editable: styleRowEditable,
+            editKind: "setRole",
+        }));
+        band.appendChild(nsRow);
         band.appendChild(buildSlotRow(slotRows[1])); // hasCollided
         band.appendChild(buildSlotRow(slotRows[2])); // beenTriggered
         band.appendChild(buildSlotRow(slotRows[3])); // onTick
@@ -362,15 +409,15 @@ export const bandExtraMethods = {
         // (shown below) update on change via the edit pipeline.
         if (mode === "auto") {
             const styleAgg = aggregateString(bpObjs, "autoStyle");
+            const grooveOpts = grooveStyleOptions();
+            // Show "Default" (value "") for an empty, "varies", or legacy/unknown
+            // value (e.g. the old "melody") — any value not in the groove list.
+            const grooveValue = grooveOpts.some((o) => o.value === styleAgg) ? styleAgg : "";
             const rStyle = mkRow();
             rStyle.appendChild(mkLabel("Style", { width: W.beatStackLabel, disabled: !active }));
             rStyle.appendChild(this._buildDropdownField({
-                options: [
-                    { value: "melody", label: "Tune" },
-                    { value: "lead", label: "Lead" },
-                    { value: "bass", label: "Bass" },
-                ],
-                value: styleAgg === "varies" ? "" : styleAgg,
+                options: grooveOpts,
+                value: grooveValue,
                 width: W.beatPointsMode,
                 editable: active,
                 editKind: "setAutoStyle",

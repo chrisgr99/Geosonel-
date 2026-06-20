@@ -2365,6 +2365,18 @@ export function setOnActiveBeatStyleOnSelection(data, selection, value) {
 }
 
 /**
+ * Set the Voice Role (the object's ensemble function — `this.role`, read by
+ * nxtNote) across the selection. Mutates `data`. No pattern regenerate: role
+ * shapes note generation, not the beat pattern.
+ * @param {any} data
+ * @param {{sprites?: Iterable<number>, triggers?: Iterable<number>, curves?: Iterable<number>}} selection
+ * @param {string} value
+ */
+export function setRoleOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "role", String(value));
+}
+
+/**
  * Set the canActiveBeat field (the onActiveBeat gate) across the
  * selection. Applies to curves and sprites; the inspector greys it
  * for triggers, but the field is shared so a stray write is harmless.

@@ -23,6 +23,7 @@
 import { listStyles, getStyleRecord } from "./styleStore.js";
 import { styles as BUILTIN_STYLES, SCALES } from "./harmonyMelody.js";
 import { MStyle, serializeMStyle, materializeMStyle } from "./mStyle.js";
+import { BUILTIN_GROOVE, BUILTIN_GROOVE_NAMES } from "./grooveStyles.js";
 
 /**
  * Built-in NOTE style names offered in the chooser. "melodic" is excluded — it's
@@ -32,28 +33,8 @@ import { MStyle, serializeMStyle, materializeMStyle } from "./mStyle.js";
  */
 const BUILTIN_NOTE_NAMES = Object.keys(BUILTIN_STYLES).filter((n) => n !== "melodic");
 
-/**
- * Seed built-in GROOVE styles for the chooser. For this slice a groove is an
- * MStyle whose rhythm core is what matters (the dedicated GrooveStyle class and
- * the Onset/Beat-Strength/Ratchet generator land later); the editor shows only
- * its Rhythm band. A couple of simple grooves so the Groove dropdown isn't empty.
- */
-const BUILTIN_GROOVE = {
-    straight: new MStyle({
-        rhythm: {
-            density: 0.5, syncopation: 0.05, accents: 0.6,
-            imageTiming: { amount: 0.4, channel: "b" },
-        },
-    }),
-    syncopated: new MStyle({
-        rhythm: {
-            density: 0.6, syncopation: 0.4, accents: 0.5,
-            imageTiming: { amount: 0.5, channel: "b" },
-            ratchets: { frequency: 0.15, intensity: 0.5 },
-        },
-    }),
-};
-const BUILTIN_GROOVE_NAMES = Object.keys(BUILTIN_GROOVE);
+// Built-in GROOVE styles for the chooser live in grooveStyles.js (shared with the
+// inspector's Auto-mode Style dropdown).
 
 /** The ten colour channels a "Colour" driver can read. */
 const CHANNELS = ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"];
@@ -738,7 +719,7 @@ export class StylesPanel {
         // Row 4: the two shaping knobs. "Dynamic Range" sits in the field-label
         // column so it lines up with the Velocity Mix label above it.
         const shapeRow = document.createElement("div");
-        shapeRow.className = "styles-row";
+        shapeRow.className = "styles-row styles-field-nudge";
         shapeRow.appendChild(this._fieldLabel("Dynamic Range"));
         shapeRow.appendChild(this._numInput(s.accentResponse, (v) => { s.accentResponse = v; this._markDirty(); }, { min: 0, max: 3, step: 0.1, fallback: 1 }));
         shapeRow.appendChild(this._inlineLabel("Shape to Phrases"));
@@ -775,18 +756,28 @@ export class StylesPanel {
         accRow.appendChild(accNum);
         band.appendChild(accRow);
 
-        // Fills — phrase-level flourishes: how often × how big.
-        this._subhead(band, "Fills", true);
-        const fills = this._subgroup(band);
+        // Fills & Ratchets sit side by side (compact) — each a Frequency × Intensity
+        // pair. The break sits on the two-column block, so both sub-headings align.
+        const fr = document.createElement("div");
+        fr.className = "styles-two-col styles-subhead-break";
+
+        const fillsCol = document.createElement("div");
+        fillsCol.className = "styles-col";
+        this._subhead(fillsCol, "Fills");
+        const fills = this._subgroup(fillsCol);
         this._knob(fills, "Frequency", r.fills.frequency, (v) => { r.fills.frequency = v; this._markDirty(); });
         this._knob(fills, "Intensity", r.fills.intensity, (v) => { r.fills.intensity = v; this._markDirty(); });
+        fr.appendChild(fillsCol);
 
-        // Ratchets — single-slot buzzes / rolls: how often × how big.
-        this._subhead(band, "Ratchets", true);
-        const ratchets = this._subgroup(band);
+        const ratchetsCol = document.createElement("div");
+        ratchetsCol.className = "styles-col";
+        this._subhead(ratchetsCol, "Ratchets");
+        const ratchets = this._subgroup(ratchetsCol);
         this._knob(ratchets, "Frequency", r.ratchets.frequency, (v) => { r.ratchets.frequency = v; this._markDirty(); });
         this._knob(ratchets, "Intensity", r.ratchets.intensity, (v) => { r.ratchets.intensity = v; this._markDirty(); });
+        fr.appendChild(ratchetsCol);
 
+        band.appendChild(fr);
         el.appendChild(band);
     }
 
@@ -895,7 +886,7 @@ export class StylesPanel {
 
         // Row 4: clip-at-next-note (the overlap param), flush-left.
         const clipRow = document.createElement("div");
-        clipRow.className = "styles-row";
+        clipRow.className = "styles-row styles-field-nudge";
         clipRow.appendChild(this._inlineLabel("Clip at next note"));
         const clipNum = this._numInput(s.overlap, (v) => { s.overlap = v; this._markDirty(); }, { min: -0.5, max: 0.5, step: 0.05, fallback: 0 });
         clipNum.title = "When there IS a next note, where the note ends relative to that onset (beats): + rings past it (legato overlap), − stops short of it (a gap). Ignored when there's no next note.";
@@ -905,7 +896,7 @@ export class StylesPanel {
         // Breathe at Phrase Ends — always-on phrasing, so it lives with the voice
         // (not the Auto-only Groove). 0 = play through phrase ends, 1 = full breath.
         const breRow = document.createElement("div");
-        breRow.className = "styles-row";
+        breRow.className = "styles-row styles-field-nudge";
         breRow.appendChild(this._inlineLabel("Breathe at Phrase Ends"));
         breRow.appendChild(this._numInput(
             typeof s.breathe === "number" ? s.breathe : (s.breathe ? 1 : 0),

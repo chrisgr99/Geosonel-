@@ -122,9 +122,12 @@ const CALLBACK_SLOT_FIELDS = [
     // and Beat Strength digit string both loop. Stored lowercase
     // for mode to match validateBeatPointsMode.
     { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "none", enumValues: ["none", "normal", "euclidean", "auto", "strudel"] },
-    // Auto-mode rhythmic style: the generator (src/rhythmGenerator.js) reads
-    // this to weight the generated Active Beats / Beat Strength pattern.
-    { key: "autoStyle", label: "Auto Style", type: "enum", default: "melody", enumValues: ["melody", "lead", "bass"] },
+    // Auto-mode GROOVE style (by name): the generator reads this to weight the
+    // generated Active Beats / Beat Strength pattern. A groove-library name
+    // (built-in straight/syncopated or a user groove); "" = default. (Stored as a
+    // free string so the dynamic library can grow; the v0 generator falls back to
+    // its default profile for names it doesn't know.)
+    { key: "autoStyle", label: "Auto Style", type: "string", default: "" },
     { key: "activeBeats", label: "Active Beats", type: "string", default: "x" },
     { key: "strength", label: "Beat Strength", type: "string", default: "9" },
     // Strudel beat-points mode (beatPointsMode === "strudel"): a
@@ -166,6 +169,10 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "canActiveBeat", label: "Can Active Beat", type: "boolean", default: false },
     { key: "onActiveBeatFunction", label: "On Active Beat Function", type: "functionRef", default: "" },
     { key: "onActiveBeatStyle", label: "On Active Beat Style", type: "string", default: "" },
+    // Voice Role (Band 3, beside Note Style): the object's ensemble function,
+    // read by nxtNote (as this.role) to coordinate through the master object. An
+    // OBJECT property (not a style field) — the same voice can play any role.
+    { key: "role", label: "Voice Role", type: "enum", default: "none", enumValues: ["none", "foundation", "pulse", "accent", "lead", "pad", "fill", "counter"] },
     { key: "canTick", label: "Can Tick", type: "boolean", default: false },
     { key: "onTickFunction", label: "On Tick Function", type: "functionRef", default: "" },
 ];

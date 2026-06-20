@@ -176,6 +176,7 @@ import {
     setCanActiveBeatOnSelection,
     setOnActiveBeatFunctionOnSelection,
     setOnActiveBeatStyleOnSelection,
+    setRoleOnSelection,
     setCanTickOnSelection,
     setOnTickFunctionOnSelection,
     scaffoldCallbackSlotFunction,
@@ -4292,6 +4293,10 @@ async function main() {
             } else if (edit.kind === "setOnActiveBeatStyle") {
                 await applySceneEdit((data) =>
                     setOnActiveBeatStyleOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setRole") {
+                await applySceneEdit((data) =>
+                    setRoleOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setHasCollidedStyle") {
                 await applySceneEdit((data) =>

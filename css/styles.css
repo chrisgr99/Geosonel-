@@ -257,6 +257,16 @@
     padding-left: 18px;
 }
 
+/* Two sub-sections placed side by side (Fills | Ratchets) for compactness. */
+.styles-two-col {
+    display: flex;
+    gap: 28px;
+    align-items: flex-start;
+}
+.styles-col {
+    flex: 0 0 auto;
+}
+
 /* A sub-heading used inline on a field row (e.g. Accents) — drop the block
  * margins so it sits centred next to its control. */
 .styles-subhead-inline {
@@ -379,6 +389,12 @@
     color: #ffffff;
     font-size: 10pt;
     white-space: nowrap;
+}
+
+/* Nudge a row's field + (right-aligned) label 10px right, so a longer label's
+ * left edge lines up with the shorter Mix label above it. */
+.styles-field-nudge {
+    padding-left: 10px;
 }
 
 /* A field label that hugs its text (content width) and so pushes its field to
