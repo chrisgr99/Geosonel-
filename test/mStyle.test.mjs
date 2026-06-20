@@ -52,14 +52,14 @@ test("MStyle: built from a plain style object inherits its fields + default driv
 
 // ---- rhythm core --------------------------------------------------------
 
-test("MStyle: carries a rhythm core with the Groove controls at their defaults", () => {
+test("MStyle: carries a rhythm core with the Rhythm controls at their defaults", () => {
     const s = new MStyle();
     assert.deepEqual(Object.keys(s.rhythm).sort(), [...RHYTHM_CORE_FIELDS].sort());
     assert.equal(s.rhythm.density, 0.5);
     assert.equal(s.rhythm.syncopation, 0.2);
     assert.equal(s.rhythm.imageTiming.amount, 0.5);
     assert.equal(s.rhythm.imageTiming.channel, "b");
-    assert.equal(s.rhythm.accents, 0.5);
+    assert.equal(s.rhythm.dynamicRange, 0.5);
     assert.equal(s.rhythm.fills.frequency, 0);
     assert.equal(s.rhythm.fills.intensity, 0.5);
     assert.equal(s.rhythm.ratchets.frequency, 0);

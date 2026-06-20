@@ -3,7 +3,7 @@
  *
  * Two style kinds share one tab, picked by the Type dropdown: NOTE styles (the
  * per-note voice — Pitch / Velocity / Sustain, with a melodic/percussion flag)
- * and GROOVE styles (the rhythm generator — the Rhythm band). A compact "Style
+ * and RHYTHM styles (the rhythm generator — the Rhythm band). A compact "Style
  * Name" chooser is filtered to the chosen kind; below it the editor.
  *
  * Editing is sandboxed: selecting a style loads a deep copy of its SERIALISED
@@ -11,8 +11,8 @@
  * library until Save. Built-ins are never overwritten in place — saving an edited
  * built-in writes a user style.
  *
- * For this slice both kinds are backed by MStyle (a groove uses only its rhythm
- * core); the dedicated GrooveStyle class + the Onset/Beat-Strength/Ratchet
+ * For this slice both kinds are backed by MStyle (a rhythm style uses only its
+ * rhythm core); the dedicated RhythmStyle class + the Onset/Beat-Strength/Ratchet
  * generator land later. Field colours match the Properties inspector.
  *
  * DOM-only at render time plus pure-library imports, so it's node --checkable.
@@ -23,7 +23,7 @@
 import { listStyles, getStyleRecord } from "./styleStore.js";
 import { styles as BUILTIN_STYLES, SCALES } from "./harmonyMelody.js";
 import { MStyle, serializeMStyle, materializeMStyle } from "./mStyle.js";
-import { BUILTIN_GROOVE, BUILTIN_GROOVE_NAMES } from "./grooveStyles.js";
+import { BUILTIN_RHYTHM, BUILTIN_RHYTHM_NAMES } from "./rhythmStyles.js";
 
 /**
  * Built-in NOTE style names offered in the chooser. "melodic" is excluded — it's
@@ -33,7 +33,7 @@ import { BUILTIN_GROOVE, BUILTIN_GROOVE_NAMES } from "./grooveStyles.js";
  */
 const BUILTIN_NOTE_NAMES = Object.keys(BUILTIN_STYLES).filter((n) => n !== "melodic");
 
-// Built-in GROOVE styles for the chooser live in grooveStyles.js (shared with the
+// Built-in RHYTHM styles for the chooser live in rhythmStyles.js (shared with the
 // inspector's Auto-mode Style dropdown).
 
 /** The ten colour channels a "Colour" driver can read. */
@@ -75,7 +75,7 @@ export class StylesPanel {
 
         // --- State ---
         /** The style kind being edited; the Name list is filtered to it.
-         *  @type {"note" | "groove"} */
+         *  @type {"note" | "rhythm"} */
         this._kind = "note";
         /** True for the one re-render after a kind change, so the Pitch band slides
          *  instead of snapping. @type {boolean} */
@@ -160,7 +160,7 @@ export class StylesPanel {
         const wrap = document.createElement("div");
         wrap.className = "styles-chooser-block";
 
-        // Lines 1–2: Style Type — Note and Groove radios stacked (Groove directly
+        // Lines 1–2: Style Type — Note and Rhythm radios stacked (Rhythm directly
         // under Note). The Percussion-only checkbox (Note kind) is appended to the
         // Note row, beside the Note radio (it's a Note-style property).
         const typeRow = document.createElement("div");
@@ -170,11 +170,11 @@ export class StylesPanel {
         this._noteRowEl = typeRow;
         wrap.appendChild(typeRow);
 
-        const grooveRow = document.createElement("div");
-        grooveRow.className = "styles-row";
-        grooveRow.appendChild(this._spacer("styles-field-label"));   // align Groove under Note
-        grooveRow.appendChild(this._kindRadio("groove", "Groove"));
-        wrap.appendChild(grooveRow);
+        const rhythmRow = document.createElement("div");
+        rhythmRow.className = "styles-row";
+        rhythmRow.appendChild(this._spacer("styles-field-label"));   // align Rhythm under Note
+        rhythmRow.appendChild(this._kindRadio("rhythm", "Rhythm"));
+        wrap.appendChild(rhythmRow);
 
         // Line 2: Style Name + the icon action buttons.
         const nameRow = document.createElement("div");
@@ -217,7 +217,7 @@ export class StylesPanel {
         return wrap;
     }
 
-    /** A Style-Type radio (Note | Groove) bound to _onChangeType.
+    /** A Style-Type radio (Note | Rhythm) bound to _onChangeType.
      *  @param {string} val @param {string} label @returns {HTMLLabelElement} */
     _kindRadio(val, label) {
         const lab = document.createElement("label");
@@ -251,7 +251,7 @@ export class StylesPanel {
      *  style, and slide the Pitch band open/closed. @param {string} kind */
     _onChangeType(kind) {
         if (kind === this._kind) return;
-        this._kind = /** @type {"note" | "groove"} */ (kind);
+        this._kind = /** @type {"note" | "rhythm"} */ (kind);
         this._selected = null;
         this._sandbox = null;
         this._isNew = false;
@@ -297,12 +297,12 @@ export class StylesPanel {
 
     /** Built-in style names for the current kind. @returns {string[]} */
     _builtinNames() {
-        return this._kind === "groove" ? BUILTIN_GROOVE_NAMES : BUILTIN_NOTE_NAMES;
+        return this._kind === "rhythm" ? BUILTIN_RHYTHM_NAMES : BUILTIN_NOTE_NAMES;
     }
 
     /** The built-in MStyle for `name` in the current kind (or undefined). */
     _builtinStyle(name) {
-        return this._kind === "groove" ? BUILTIN_GROOVE[name] : BUILTIN_STYLES[name];
+        return this._kind === "rhythm" ? BUILTIN_RHYTHM[name] : BUILTIN_STYLES[name];
     }
 
     // --- Sandbox lifecycle ---------------------------------------------------
@@ -367,8 +367,8 @@ export class StylesPanel {
             return;
         }
         const s = this._sandbox;
-        if (this._kind === "groove") {
-            // A Groove style generates the rhythm — its Rhythm band only.
+        if (this._kind === "rhythm") {
+            // A Rhythm style generates the rhythm — its Rhythm band only.
             this._buildRhythmBand(el, s);
         } else {
             // A Note style: the melodic/percussion flag (on the Style Type row),
@@ -733,28 +733,27 @@ export class StylesPanel {
         const band = this._band("Rhythm");
         const r = s.rhythm;
 
-        // Note Timing — Density + Syncopation set the onset template (which beats
-        // play); Image Influence on Timing bends those onsets by the image.
-        this._subhead(band, "Note Timing");
-        const timing = this._subgroup(band);
-        this._knob(timing, "Density", r.density, (v) => { r.density = v; this._markDirty(); });
-        this._knob(timing, "Syncopation", r.syncopation, (v) => { r.syncopation = v; this._markDirty(); });
+        // No "Note Timing" sub-title — the band is Rhythm overall, and it covers
+        // more than timing, so Density + Syncopation sit directly under the header.
+        this._knob(band, "Density", r.density, (v) => { r.density = v; this._markDirty(); });
+        this._knob(band, "Syncopation", r.syncopation, (v) => { r.syncopation = v; this._markDirty(); });
 
         this._subhead(band, "Image Influence on Timing");
         this._imageOnTimingRow(this._subgroup(band), r.imageTiming);
 
-        // Accents — structural (how punchy the metric accents are), NOT
-        // image-driven; this becomes the Velocity band's "A" input.
-        const accRow = document.createElement("div");
-        accRow.className = "styles-row";
-        const accLab = document.createElement("span");
-        accLab.className = "styles-subhead styles-subhead-inline";
-        accLab.textContent = "Accents";
-        accRow.appendChild(accLab);
-        const accNum = this._numInput(r.accents, (v) => { r.accents = v; this._markDirty(); }, {});
-        accNum.title = "How punchy the structural metric accents are. Feeds the Velocity band's A input — not image-driven.";
-        accRow.appendChild(accNum);
-        band.appendChild(accRow);
+        // Dynamic Range — the spread of the generated beat-strength velocities
+        // (flat ↔ wide). For a drum voice (no Velocity band) it is the rhythm's
+        // only dynamics control.
+        const dynRow = document.createElement("div");
+        dynRow.className = "styles-row";
+        const dynLab = document.createElement("span");
+        dynLab.className = "styles-subhead styles-subhead-inline";
+        dynLab.textContent = "Dynamic Range";
+        dynRow.appendChild(dynLab);
+        const dynNum = this._numInput(r.dynamicRange, (v) => { r.dynamicRange = v; this._markDirty(); }, {});
+        dynNum.title = "How widely the generated beat strengths spread — 0 = every hit the same velocity, 1 = wide (loud strong beats, quiet weak ones).";
+        dynRow.appendChild(dynNum);
+        band.appendChild(dynRow);
 
         // Fills & Ratchets sit side by side (compact) — each a Frequency × Intensity
         // pair. The break sits on the two-column block, so both sub-headings align.
@@ -894,7 +893,7 @@ export class StylesPanel {
         band.appendChild(clipRow);
 
         // Breathe at Phrase Ends — always-on phrasing, so it lives with the voice
-        // (not the Auto-only Groove). 0 = play through phrase ends, 1 = full breath.
+        // (not the Auto-only Rhythm style). 0 = play through phrase ends, 1 = full breath.
         const breRow = document.createElement("div");
         breRow.className = "styles-row styles-field-nudge";
         breRow.appendChild(this._inlineLabel("Breathe at Phrase Ends"));

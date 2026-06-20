@@ -33,7 +33,7 @@ import {
 } from "./curveFieldValidation.js";
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 import { listStyles } from "./styleStore.js";
-import { BUILTIN_GROOVE_NAMES } from "./grooveStyles.js";
+import { BUILTIN_RHYTHM_NAMES } from "./rhythmStyles.js";
 
 /** Voice Role options — the object's ensemble function (this.role). */
 const ROLE_OPTIONS = [
@@ -59,12 +59,12 @@ function noteStyleOptions() {
     return opts;
 }
 
-/** Options for the Auto-mode Groove Style dropdown: Default + built-in grooves +
- *  the user's groove library. */
-function grooveStyleOptions() {
+/** Options for the Auto-mode Rhythm Style dropdown: Default + built-in rhythm
+ *  styles + the user's rhythm-style library. */
+function rhythmStyleOptions() {
     const opts = [{ value: "", label: "Default" }];
-    for (const n of BUILTIN_GROOVE_NAMES) opts.push({ value: n, label: n });
-    for (const rec of listStyles("groove")) opts.push({ value: rec.name, label: rec.name });
+    for (const n of BUILTIN_RHYTHM_NAMES) opts.push({ value: n, label: n });
+    for (const rec of listStyles("rhythm")) opts.push({ value: rec.name, label: rec.name });
     return opts;
 }
 
@@ -409,15 +409,15 @@ export const bandExtraMethods = {
         // (shown below) update on change via the edit pipeline.
         if (mode === "auto") {
             const styleAgg = aggregateString(bpObjs, "autoStyle");
-            const grooveOpts = grooveStyleOptions();
+            const rhythmOpts = rhythmStyleOptions();
             // Show "Default" (value "") for an empty, "varies", or legacy/unknown
-            // value (e.g. the old "melody") — any value not in the groove list.
-            const grooveValue = grooveOpts.some((o) => o.value === styleAgg) ? styleAgg : "";
+            // value (e.g. the old "melody") — any value not in the rhythm list.
+            const rhythmValue = rhythmOpts.some((o) => o.value === styleAgg) ? styleAgg : "";
             const rStyle = mkRow();
             rStyle.appendChild(mkLabel("Style", { width: W.beatStackLabel, disabled: !active }));
             rStyle.appendChild(this._buildDropdownField({
-                options: grooveOpts,
-                value: grooveValue,
+                options: rhythmOpts,
+                value: rhythmValue,
                 width: W.beatPointsMode,
                 editable: active,
                 editKind: "setAutoStyle",

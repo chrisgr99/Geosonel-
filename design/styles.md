@@ -1,19 +1,19 @@
-# Styles: Note styles and Groove styles
+# Styles: Note styles and Rhythm styles
 
 A **style** is a named, reusable, app-level musical behaviour. There are **two
 kinds**, split along the axis of *response vs generation*:
 
 - **`NoteStyle`** — the per-note RESPONSE: *what each note is* (pitch / velocity /
   sustain). Computed inside `nxtNote`, active in **every** beat mode.
-- **`GrooveStyle`** — the per-phrase GENERATOR: *which beats fall and the rhythmic
-  shape*. Holds the rhythm-generation controls (Note Timing, Accents, Fills,
-  Ratchets). Active
+- **`RhythmStyle`** — the per-phrase GENERATOR: *which beats fall and the rhythmic
+  shape*. Holds the rhythm-generation controls (Density, Syncopation, Dynamic
+  Range, Fills, Ratchets). Active
   in **Auto** beat mode only. Generation mechanics live in
   [rhythm-auto-generation.md](rhythm-auto-generation.md).
 
 Class names are full words — no `m/r/v/g` letter prefixes.
 
-## Why this is the split (Voice vs Groove, not melodic vs rhythmic)
+## Why this is the split (Voice vs Rhythm, not melodic vs rhythmic)
 
 Two axes are easy to tangle under "rhythm":
 - *Does the voice have pitch?* melodic vs percussion — just a **flag**.
@@ -21,16 +21,16 @@ Two axes are easy to tangle under "rhythm":
 
 A percussion voice playing a hand-typed Manual pattern uses no generator, and a
 melodic voice can use the Auto generator — so "percussion" and "rhythm
-generation" are independent. NoteStyle and GrooveStyle are therefore separate
+generation" are independent. NoteStyle and RhythmStyle are therefore separate
 classes with separate libraries, and **the rhythm core lives only in
-GrooveStyle**. Melodic vs percussion is a flag on NoteStyle, not a class.
+RhythmStyle**. Melodic vs percussion is a flag on NoteStyle, not a class.
 
 ## NoteStyle — the per-note voice
 
 Pitch behaviour (scale / range / chordLock / smoothness / …), the per-note drivers
 **pitch / velocity / sustain** (each a fixed value, a colour channel, or a
 formula), and **phrasing** (Phrase End Breath / `breathe`) — phrasing is always-on,
-so it lives here rather than in the Auto-only Groove. Melodic = pitch on; percussion
+so it lives here rather than in the Auto-only Rhythm style. Melodic = pitch on; percussion
 = pitch off (the sound always comes from the object's voice, never the style).
 **No rhythm core, and no role** — role is an object property, not a style field
 (see "Choosing a style on an object").
@@ -43,17 +43,19 @@ strength / phrase itself:
 - a custom pitch drive = a **formula** driver on the style; the legacy
   `nxtNote(drive, style)` number-first form is superseded.
 
-## GrooveStyle — the rhythm generator
+## RhythmStyle — the rhythm generator
 
-Authored in the Styles-tab editor; generation mechanics in
-[rhythm-auto-generation.md](rhythm-auto-generation.md). Four sections:
+Authored in the Styles-tab editor (one **Rhythm** band, no sub-title — the whole
+band is the rhythm). Generation mechanics in
+[rhythm-auto-generation.md](rhythm-auto-generation.md). The controls:
 
-- **Note Timing** — which beats play. **Density** + **Syncopation** knobs set the
-  onset template; **Image Influence on Timing** (a None ◀▶ Strong slider + a colour
-  channel) sets how much, and via which channel, the image bends those onsets.
-- **Accents** — how strong. A **structural** knob (none ↔ punchy), NOT
-  image-driven. It becomes the **Velocity band's "A"** input, so the image reaches
-  loudness only once, via the Velocity band's B (canvas).
+- **Density** + **Syncopation** — which beats play. They set the onset template;
+  **Image Influence on Timing** (a None ◀▶ Strong slider + a colour channel) sets
+  how much, and via which channel, the image bends those onsets.
+- **Dynamic Range** — the beat-strength spread (flat ↔ wide). A **structural**
+  knob, NOT image-driven; it becomes the **Velocity band's "A"** input, so the
+  image reaches loudness only once, via the Velocity band's B (canvas). For a
+  percussion voice (no Velocity band) it is the rhythm's only dynamics control.
 - **Fills** — **Frequency** (how often, phrase-level) + **Intensity** (how big: a
   density surge with faster subdivision and a dynamic push into the downbeat).
 - **Ratchets** — **Frequency** (how often a hit becomes a buzz/roll) + **Intensity**
@@ -71,10 +73,10 @@ image-driving fills/ratchets later is just a die swap.
 ### Percussion: kit + lanes
 
 A drum pattern is several instruments (kick, snare, hat) that must interlock, so
-ONE GrooveStyle owns them: a list of **lanes** generated together on a shared
+ONE RhythmStyle owns them: a list of **lanes** generated together on a shared
 grid/phrase so they lock by construction. Shared (style-level): grid, phrase
-shaping. Per-lane: the drum sound + its own Note Timing / Accents / Fills /
-Ratchets. **Open:** exactly how a multi-lane GrooveStyle, the kit, and NoteStyle
+shaping. Per-lane: the drum sound + its own Density / Syncopation / Dynamic Range
+/ Fills / Ratchets. **Open:** exactly how a multi-lane RhythmStyle, the kit, and NoteStyle
 compose for a drum object (sounds vs pattern) is not yet settled.
 
 ## Choosing a style on an object (inspector)
@@ -88,27 +90,27 @@ Each style is picked in the inspector band that **consumes** it:
   Counter / …). It is **not** a style field — the same voice can play different
   roles — but an object property `this.role`, which `nxtNote` reads to coordinate
   through the master object.
-- **Groove Style** → a picker in the **Rhythm** band, shown only when the beat
+- **Rhythm Style** → a picker in the **Rhythm** band, shown only when the beat
   source is **Auto** (hidden for Manual / Euclidean).
 
 `this.noteStyle` and `this.role` are **object** properties: they apply wherever
 `nxtNote` is called (including hasCollided / beenTriggered), and are merely
-surfaced on the `onActiveBeat` slot. The Auto/Groove controls are gated on an
+surfaced on the `onActiveBeat` slot. The Auto/Rhythm controls are gated on an
 `onActiveBeat` callback existing; an object using only hasCollided / beenTriggered
-has them disabled. What role and the groove fields mean for those off-grid events
+has them disabled. What role and the rhythm fields mean for those off-grid events
 is the same unsettled question.
 
 ## The Styles tab
 
 Where styles are **authored** (the inspector only *picks* a named one). Top to
-bottom: a **kind selector (Note / Groove)** — which replaces the old melodic/
+bottom: a **kind selector (Note / Rhythm)** — which replaces the old melodic/
 rhythmic Type and swaps the library + editor — a name chooser for that kind
 (dropdown + New / Duplicate / Delete), then the editor:
 
 - **Note style:** a melodic/percussion flag (off collapses the Pitch band), then
   Pitch (melodic only) · Velocity · Sustain · phrasing.
-- **Groove style:** the Note Timing / Accents / Fills / Ratchets band + (for
-  percussion) lanes.
+- **Rhythm style:** the Rhythm band (Density / Syncopation / Dynamic Range /
+  Fills / Ratchets) + (for percussion) lanes.
 
 **Knob controls:** 0..1 knobs render as a slider + an adjacent editable number
 (slider for feedback, number for exact entry), kept in sync; a too-tight row falls
@@ -134,7 +136,7 @@ Live editing (tune by ear while it plays) is the dominant workflow:
 1. **Styles-tab chooser** — surfaces **in-use styles at the top**, one per playing
    object, labelled `styleName (objectID)` (e.g. `bass (CRV5)`). Selecting one is
    LIVE editing of that object's style; below sit the Built-in and Custom library
-   entries (library editing). Filtered by the current Note / Groove kind.
+   entries (library editing). Filtered by the current Note / Rhythm kind.
 2. **Script tab** — right-click a style reference → **"Edit Style"** jumps to the
    tab with it loaded.
 
@@ -148,21 +150,21 @@ Styles are app-wide, like the image gallery — define once, use across scores. 
 store module mirrors `gallery.js` (list/get/save/remove + a synchronous in-memory
 cache the engine reads per-note). Web: an IndexedDB store. Electron: a `styles`
 array in settings.json via a preload bridge. The store is **type-aware** — it holds
-the Note-style and Groove-style libraries separately. Built-ins are code-level
+the Note-style and Rhythm-style libraries separately. Built-ins are code-level
 fallback templates; resolution reads the cache, then the built-ins.
 
 ## Open questions
 
-- How NoteStyle + kit + a multi-lane GrooveStyle compose for percussion.
+- How NoteStyle + kit + a multi-lane RhythmStyle compose for percussion.
 - Whether `density` is a true target dial or emergent per-slot probability.
-- What a GrooveStyle's fields mean off-grid (hasCollided / beenTriggered).
+- What a RhythmStyle's fields mean off-grid (hasCollided / beenTriggered).
 - The tonal multi-lane (ensemble) generalisation — bass + comp from one object.
 
 ## Build status
 
 - **NoteStyle data model** — built (currently class `MStyle` in `src/mStyle.js`;
   rename to `NoteStyle` pending), with the pitch/velocity/sustain drivers and JSON
-  serialize/materialize. The rhythm core embedded here **moves to GrooveStyle**.
+  serialize/materialize. The rhythm core embedded here **moves to RhythmStyle**.
 - **Next:** the app-wide type-aware store + name resolution; the Styles tab (Note
-  side first); then the Auto-rhythm engine (GrooveStyle generator, image-as-dice,
+  side first); then the Auto-rhythm engine (RhythmStyle generator, image-as-dice,
   per-repeat regen, onActiveBeat-sourced); then percussion (kit + lanes).

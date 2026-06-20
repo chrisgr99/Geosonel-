@@ -1,8 +1,8 @@
 # Auto beat-pattern generation & rhythmic styles
 
-This is the **generation mechanics** for a `GrooveStyle` — the constrained-weighted
+This is the **generation mechanics** for a `RhythmStyle` — the constrained-weighted
 generator, image-as-dice, per-repeat regeneration, swing, and the calibration
-knobs. The surrounding style-system structure (the Note/Groove split, the two
+knobs. The surrounding style-system structure (the Note/Rhythm split, the two
 libraries, the Styles tab) is in [styles.md](styles.md); the broader "compose by
 phrases / repeat the scene" vision is in
 [variations-and-repeats.md](variations-and-repeats.md), sharing concepts (styles,
@@ -15,9 +15,9 @@ each later milestone builds on the generator. The one swappable choice is M2 vs 
 (live-edit-first vs image-variation-first) — keep live editing no later than M3.
 
 1. **Structural onset generation.** Adapt the v0 `generatePhrase` to read a
-   GrooveStyle's rhythm core — `density`, `syncopation` (invert-blend), `accents`
-   → Beat Strength. Emergent density, structural die, NO per-repeat variation.
-   `resolveGroove(name)` in the caller; the generator stays pure; unit tests; heard
+   RhythmStyle's rhythm core — `density`, `syncopation` (invert-blend),
+   `dynamicRange` → Beat Strength. Emergent density, structural die, NO per-repeat variation.
+   `resolveRhythm(name)` in the caller; the generator stays pure; unit tests; heard
    via normal Auto playback on a percussion voice.
 2. **Live editing + non-tonal audition.** The Styles-tab editor regenerates
    immediately while the music plays (Mode B); a loop/audition toggle with a
@@ -36,9 +36,9 @@ each later milestone builds on the generator. The one swappable choice is M2 vs 
 6. **Genre overlay.** Swing / clave / backbeat accent masks tilting the style
    weights.
 7. **Polymeter (Beats/Bar).** Run a curve in 3/4 or 5/4 against the tune.
-8. **Percussion: kit + multi-lane GrooveStyle.** Interlocking drum lanes generated
-   together on a shared grid; and the GrooveStyle class split (grooves stop being
-   MStyle-backed). The biggest separate piece.
+8. **Percussion: kit + multi-lane RhythmStyle.** Interlocking drum lanes generated
+   together on a shared grid; and the RhythmStyle class split (rhythm styles stop
+   being MStyle-backed). The biggest separate piece.
 
 ## The problem
 
@@ -172,18 +172,19 @@ concern, exactly as Manual and Euclidean already work.
 
 ## Controls (the creative surface)
 
-Rather than ship one "correct" calibration, expose it. A GrooveStyle's controls
-are organised into four sections:
+Rather than ship one "correct" calibration, expose it. A RhythmStyle's controls
+sit in one **Rhythm** band (no sub-title — the whole band is the rhythm):
 
-- **Note Timing** — which beats play. **Density** (sparse ↔ busy: onset threshold /
-  target hits-per-bar) and **Syncopation** (straight ↔ off-beat: weight shifted off
-  the strong beats) set the onset template; **Image Influence on Timing** — a
+- **Density** (sparse ↔ busy: onset threshold / target hits-per-bar) and
+  **Syncopation** (straight ↔ off-beat: weight shifted off the strong beats) set
+  which beats play — the onset template; **Image Influence on Timing** — a
   `None ◀──▶ Strong` slider plus a colour channel — sets how much, and via which
   channel, the image bends those onsets.
-- **Accents** — how strong. A **structural** knob (none ↔ punchy: how pronounced
-  the metric accents are), meter-shaped and **NOT image-driven**. It becomes the
-  Velocity band's "A" input, so the image reaches loudness only via the Velocity
-  band's B (no double-count).
+- **Dynamic Range** — the beat-strength spread (flat ↔ wide: how pronounced the
+  metric accents are). A **structural** knob, meter-shaped and **NOT
+  image-driven**. It becomes the Velocity band's "A" input, so the image reaches
+  loudness only via the Velocity band's B (no double-count). For a percussion
+  voice (no Velocity band) it is the rhythm's only dynamics control.
 - **Fills** — phrase-level flourishes. **Frequency** (how often a fill fires —
   every phrase / every Nth) + **Intensity** (how big: a density surge above the
   steady groove, with faster subdivision and a dynamic push into the downbeat).
@@ -198,7 +199,7 @@ a deterministic **0–1 die per slot**. The die source is per output:
 - **Onsets** draw on the **image** — the per-slot value of the colour channel
   chosen in Image Influence on Timing. (A pixel is ten channels — lt, chr, r, g, y,
   b, … — so different outputs can draw on different channels.)
-- **Accents** need no die — they're structural (meter-shaped).
+- **Dynamic Range** needs no die — it's structural (meter-shaped).
 - **Fills / Ratchets** draw on a **seed hash**, NOT the image directly:
   `die(slot) = hash(styleSalt, firstBeatColourOfRepeat, slotIndex)`.
   - Seeded by the colour under the **first beat of each pattern repeat**: each

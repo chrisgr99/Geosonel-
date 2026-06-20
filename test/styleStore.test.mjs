@@ -27,7 +27,7 @@ function voiceRecord(name, vStyle) {
 test("upsertRecord: adds a new record, replaces a same type+name one", () => {
     const a = { type: "note", name: "x", def: { k: 1 } };
     const b = { type: "note", name: "x", def: { k: 2 } };
-    const c = { type: "groove", name: "x", def: { k: 3 } };
+    const c = { type: "rhythm", name: "x", def: { k: 3 } };
     let list = upsertRecord([], a);
     assert.equal(list.length, 1);
     list = upsertRecord(list, b);                 // same type+name → replace
@@ -40,11 +40,11 @@ test("upsertRecord: adds a new record, replaces a same type+name one", () => {
 test("removeRecord: drops only the matching type+name", () => {
     const list = [
         { type: "note", name: "x", def: {} },
-        { type: "groove", name: "x", def: {} },
+        { type: "rhythm", name: "x", def: {} },
     ];
     const out = removeRecord(list, "note", "x");
     assert.equal(out.length, 1);
-    assert.equal(out[0].type, "groove");
+    assert.equal(out[0].type, "rhythm");
 });
 
 // ---- stateful cache + materialisation -----------------------------------
@@ -76,11 +76,11 @@ test("removeStyle drops the voice from the cache", () => {
     _resetForTest();
 });
 
-test("getMaterializedNote ignores groove-typed records", () => {
+test("getMaterializedNote ignores rhythm-typed records", () => {
     _resetForTest();
-    saveStyle({ type: "groove", name: "bossa", def: { lanes: [] } });
+    saveStyle({ type: "rhythm", name: "bossa", def: { lanes: [] } });
     assert.equal(getMaterializedNote("bossa"), null);   // not a Note style
-    assert.equal(listStyles("groove").length, 1);
+    assert.equal(listStyles("rhythm").length, 1);
     _resetForTest();
 });
 

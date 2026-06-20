@@ -122,10 +122,10 @@ const CALLBACK_SLOT_FIELDS = [
     // and Beat Strength digit string both loop. Stored lowercase
     // for mode to match validateBeatPointsMode.
     { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "none", enumValues: ["none", "normal", "euclidean", "auto", "strudel"] },
-    // Auto-mode GROOVE style (by name): the generator reads this to weight the
-    // generated Active Beats / Beat Strength pattern. A groove-library name
-    // (built-in straight/syncopated or a user groove); "" = default. (Stored as a
-    // free string so the dynamic library can grow; the v0 generator falls back to
+    // Auto-mode RHYTHM style (by name): the generator reads this to weight the
+    // generated Active Beats / Beat Strength pattern. A rhythm-style-library name
+    // (built-in straight/syncopated or a user style); "" = default. (Stored as a
+    // free string so the dynamic library can grow; the generator falls back to
     // its default profile for names it doesn't know.)
     { key: "autoStyle", label: "Auto Style", type: "string", default: "" },
     { key: "activeBeats", label: "Active Beats", type: "string", default: "x" },

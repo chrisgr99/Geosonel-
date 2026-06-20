@@ -90,17 +90,17 @@ const DEFAULTS = Object.freeze({
     phraseDynamics: 0.5,   // how much phrase position shapes velocity / duration
     // --- rhythm core: the Auto beat-pattern generation controls (design/styles.md,
     //     design/rhythm-auto-generation.md). Used when this voice generates its own
-    //     beats in Auto beat-points mode (and, later, once per GrooveStyle drum
+    //     beats in Auto beat-points mode (and, later, once per RhythmStyle drum
     //     lane). Plain data — scalars + small nested groups. Grid resolution
     //     (subdivision) is the OBJECT's beat grid, not a knob here. ---
     rhythm: Object.freeze({
-        density: 0.5,        // Note Timing: sparse ↔ busy (target onset fraction)
-        syncopation: 0.2,    // Note Timing: straight ↔ off-beat (weight off strong beats)
+        density: 0.5,        // sparse ↔ busy (target onset fraction)
+        syncopation: 0.2,    // straight ↔ off-beat (weight off strong beats)
         imageTiming: Object.freeze({   // Image Influence on Timing
             amount: 0.5,     // None ↔ Strong: how much the image bends the onsets
             channel: "b",    // which colour channel drives the bend
         }),
-        accents: 0.5,        // structural accent strength (even ↔ punchy) → Velocity "A"
+        dynamicRange: 0.5,   // beat-strength spread (flat ↔ wide) → Velocity "A"
         fills: Object.freeze({
             frequency: 0.0,  // how often a fill fires (phrase-level)
             intensity: 0.5,  // how big the fill (density surge + subdivision + push)
@@ -123,14 +123,14 @@ const DEFAULTS = Object.freeze({
  *  autocomplete can offer them after a `.` on a MStyle variable. */
 export const MSTYLE_FIELDS = Object.keys(DEFAULTS);
 
-/** The rhythm-core (Groove) field names (design/rhythm-auto-generation.md) — a
- *  heterogeneous set: scalars (density, syncopation, accents, salt) plus the
+/** The rhythm-core (Rhythm style) field names (design/rhythm-auto-generation.md) —
+ *  a heterogeneous set: scalars (density, syncopation, dynamicRange, salt) plus the
  *  nested groups imageTiming / fills / ratchets. A NoteStyle carries one core
- *  (`.rhythm`); a GrooveStyle reuses this shape (later, once per drum lane). */
+ *  (`.rhythm`); a RhythmStyle reuses this shape (later, once per drum lane). */
 export const RHYTHM_CORE_FIELDS = Object.keys(DEFAULTS.rhythm);
 
 /** A fresh, mutable rhythm core seeded with the defaults — deep, so the nested
- *  groups (imageTiming / fills / ratchets) are independent copies. For GrooveStyle
+ *  groups (imageTiming / fills / ratchets) are independent copies. For RhythmStyle
  *  lanes and the editor's "reset" affordance. */
 export function defaultRhythmCore() {
     return mergeRhythmCore(null);
@@ -161,7 +161,7 @@ function mergeRhythmCore(v) {
         density: num(src.density, d.density),
         syncopation: num(src.syncopation, d.syncopation),
         imageTiming: grp("imageTiming", ["amount"]),
-        accents: num(src.accents, d.accents),
+        dynamicRange: num(src.dynamicRange, d.dynamicRange),
         fills: grp("fills", ["frequency", "intensity"]),
         ratchets: grp("ratchets", ["frequency", "intensity"]),
         salt: num(src.salt, d.salt),

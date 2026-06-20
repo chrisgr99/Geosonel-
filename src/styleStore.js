@@ -1,5 +1,5 @@
 /**
- * App-wide style library (Note styles and Groove styles).
+ * App-wide style library (Note styles and Rhythm styles).
  *
  * Styles are defined once and used across every score — the same pattern as the
  * image gallery, but because a style is tiny JSON (not an image blob) it needs
@@ -8,8 +8,8 @@
  * IndexedDB, transparently). No new object store, no DB-version bump, no preload
  * bridge.
  *
- * The library is TYPE-AWARE — each record carries a `type` ("note" | "groove")
- * so the one store holds both libraries (Note styles and Groove styles); only
+ * The library is TYPE-AWARE — each record carries a `type` ("note" | "rhythm")
+ * so the one store holds both libraries (Note styles and Rhythm styles); only
  * Note styles feed the per-note engine cache.
  *
  * A synchronous in-memory CACHE is the source of truth for reads, because the
@@ -32,7 +32,7 @@ import { getSetting, setSetting } from "./storage.js";
 const STYLES_KEY = "styleLibrary";
 
 /**
- * @typedef {{ type: "note" | "groove", name: string, def: any }} StyleRecord
+ * @typedef {{ type: "note" | "rhythm", name: string, def: any }} StyleRecord
  *   `def` is the serialized style (serializeMStyle output for a Note style).
  */
 
@@ -46,7 +46,7 @@ let noteCache = new Map();
 function isValidRecord(r) {
     return r !== null && typeof r === "object"
         && typeof r.name === "string" && r.name !== ""
-        && (r.type === "note" || r.type === "groove")
+        && (r.type === "note" || r.type === "rhythm")
         && r.def !== null && typeof r.def === "object";
 }
 
@@ -84,7 +84,7 @@ export function removeRecord(list, type, name) {
 
 /**
  * All records, or just those of `type`. A shallow copy so callers can't mutate
- * the cache. @param {"note" | "groove"} [type] @returns {StyleRecord[]}
+ * the cache. @param {"note" | "rhythm"} [type] @returns {StyleRecord[]}
  */
 export function listStyles(type) {
     return type ? records.filter((r) => r.type === type) : records.slice();
@@ -117,7 +117,7 @@ export function saveStyle(rec) {
 
 /**
  * Remove a record and persist (best-effort).
- * @param {"note" | "groove"} type @param {string} name @returns {Promise<void>}
+ * @param {"note" | "rhythm"} type @param {string} name @returns {Promise<void>}
  */
 export function removeStyle(type, name) {
     records = removeRecord(records, type, name);

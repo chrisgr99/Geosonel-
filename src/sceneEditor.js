@@ -36,6 +36,7 @@ import { sanitiseSceneHarmony, sanitisePhrases } from "./harmonyScene.js";
 import { autoPhrase } from "./harmonyPhrasing.js";
 import { generateEuclideanPattern } from "./euclidean.js";
 import { generatePhrase } from "./rhythmGenerator.js";
+import { resolveRhythm } from "./rhythmStyles.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
@@ -1944,7 +1945,9 @@ function applyBeatFieldFormatting(data, selection, regenerate) {
                 const gen = generatePhrase({
                     beatsPerBar: bar,
                     beatsPerPhrase: n,
-                    style: typeof entry.autoStyle === "string" ? entry.autoStyle : "melody",
+                    // Resolve the rhythm-style NAME to its rhythm core here (caller
+                    // side) so the generator stays pure. M1: structural die (dice null).
+                    core: resolveRhythm(typeof entry.autoStyle === "string" ? entry.autoStyle : "").rhythm,
                     dice: null,
                 });
                 entry.activeBeats = repipeWithBars(gen.activeBeats, bar);
