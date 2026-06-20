@@ -8,6 +8,38 @@ phrases / repeat the scene" vision is in
 [variations-and-repeats.md](variations-and-repeats.md), sharing concepts (styles,
 the Mutability vocabulary, image-as-dice). Not yet built.
 
+## Milestones (build sequence)
+
+The deferred work, sequenced so nothing rides on memory. M1 unblocks everything;
+each later milestone builds on the generator. The one swappable choice is M2 vs M3
+(live-edit-first vs image-variation-first) — keep live editing no later than M3.
+
+1. **Structural onset generation.** Adapt the v0 `generatePhrase` to read a
+   GrooveStyle's rhythm core — `density`, `syncopation` (invert-blend), `accents`
+   → Beat Strength. Emergent density, structural die, NO per-repeat variation.
+   `resolveGroove(name)` in the caller; the generator stays pure; unit tests; heard
+   via normal Auto playback on a percussion voice.
+2. **Live editing + non-tonal audition.** The Styles-tab editor regenerates
+   immediately while the music plays (Mode B); a loop/audition toggle with a
+   neutral click voice (strength → accent, ratchets → subdivisions). A real user
+   feature, and it makes calibrating M3–M6 fast by ear.
+3. **Image-as-dice + per-repeat variation.** Sample the chosen colour channel at
+   EVERY slot (incl. rests — the engine change); the onset die becomes the image;
+   the per-repeat seed is the colour under each repeat's first beat. Repeats vary,
+   and moving the object reshapes the groove.
+4. **Fills + Ratchets.** Generate Frequency × Intensity fills (phrase-level) and
+   ratchets (single-slot sub-hits), placed by the seeded die; ratchet digits / fill
+   bursts written into the pattern.
+5. **Phrase constraints + density target.** Anchor the downbeat, give the last bar
+   a cadential shape, place ratchets as pickups, suppress pathologies (five rests
+   in a row, ratchet clutter), and the optional target-density nudge.
+6. **Genre overlay.** Swing / clave / backbeat accent masks tilting the style
+   weights.
+7. **Polymeter (Beats/Bar).** Run a curve in 3/4 or 5/4 against the tune.
+8. **Percussion: kit + multi-lane GrooveStyle.** Interlocking drum lanes generated
+   together on a shared grid; and the GrooveStyle class split (grooves stop being
+   MStyle-backed). The biggest separate piece.
+
 ## The problem
 
 A curve's rhythm — which beat points sound, how strongly, and where ratchets
