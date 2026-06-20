@@ -103,8 +103,9 @@ is the same unsettled question.
 ## The Styles tab
 
 Where styles are **authored** (the inspector only *picks* a named one). Top to
-bottom: a **kind selector (Note / Rhythm)** — which replaces the old melodic/
-rhythmic Type and swaps the library + editor — a name chooser for that kind
+bottom: a **kind selector** whose two radios read **nxtNote(style)** (the per-note
+voice) and **Inspector Auto Rhythms** (the generator) — replacing the old melodic/
+rhythmic Type and swapping the library + editor — a name chooser for that kind
 (dropdown + New / Duplicate / Delete), then the editor:
 
 - **Note style:** a melodic/percussion flag (off collapses the Pitch band), then
@@ -136,7 +137,8 @@ Live editing (tune by ear while it plays) is the dominant workflow:
 1. **Styles-tab chooser** — surfaces **in-use styles at the top**, one per playing
    object, labelled `styleName (objectID)` (e.g. `bass (CRV5)`). Selecting one is
    LIVE editing of that object's style; below sit the Built-in and Custom library
-   entries (library editing). Filtered by the current Note / Rhythm kind.
+   entries (library editing). Filtered by the current kind (nxtNote(style) /
+   Inspector Auto Rhythms).
 2. **Script tab** — right-click a style reference → **"Edit Style"** jumps to the
    tab with it loaded.
 

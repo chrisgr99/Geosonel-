@@ -46,14 +46,15 @@ export const W = {
     groupLabel: 44,
     group: 120,
 
-    // Band 3 callback function-name field. Narrowed from 224 to make room for
-    // the per-slot Style dropdown that now sits between it and the Create/Go-to
-    // button; the proposed default names (slotKey_objectId) still fit, longer
-    // custom names scroll. The row stays no wider than the Initial Conditions
-    // row (X/Y/vX/vY), the inspector's widest line.
+    // Band 3 base column width — used for the onActiveBeat nxtNote-Style dropdown
+    // (on its own row) and as the base for the callback function-name field, which
+    // now spans this column + the 3px gap + the slotStyle column all the way to the
+    // Create/Go-to button (the collision/trigger Style dropdowns were removed). The
+    // row stays no wider than the Initial Conditions row (X/Y/vX/vY), the widest line.
     callbackField: 150,
-    // Band 3 per-slot Style dropdown (the nxtNote MStyle a no-arg nxtNote()
-    // uses). Note rows only; onTick leaves this column blank for alignment.
+    // Band 3 trailing column: the onActiveBeat row's nxtNote-Style picker reclaims
+    // this width for its function field; the nxtNote Style row below uses it for the
+    // Role dropdown.
     slotStyle: 84,
 
     // Band 2 Variability inline label, sitting to the right of

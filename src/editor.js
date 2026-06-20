@@ -2724,11 +2724,11 @@ export class TabbedEditor {
     _renderTabs() {
         this.tabBar.innerHTML = "";
 
-        // Virtual Properties tab (form inspector).
+        // Virtual Inspector tab (form inspector).
         this.tabBar.appendChild(
             this._renderVirtualTab(
                 VIRTUAL_TAB_INSPECTOR,
-                "Properties",
+                "Inspector",
                 /* dirtyBackingFile */ "scene.json",
             ),
         );

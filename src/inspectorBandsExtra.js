@@ -126,11 +126,12 @@ export const bandExtraMethods = {
         const beenTriggeredFunctionAgg = aggregateString(objs.all, "beenTriggeredFunction");
         const canActiveBeatAgg = aggregateBoolean(objs.all, "canActiveBeat");
         const onActiveBeatFunctionAgg = aggregateString(objs.all, "onActiveBeatFunction");
-        // Per-slot STYLE (nxtNote MStyle name) aggregates — note slots only.
+        // Per-slot STYLE aggregate — only onActiveBeat surfaces a nxtNote-style
+        // picker now. hasCollided / beenTriggered keep their stored *Style fields
+        // (resolving to Default) but no inspector control — the off-grid/async
+        // semantics are deferred to the async-callback work.
         const onActiveBeatStyleAgg = aggregateString(objs.all, "onActiveBeatStyle");
         const roleAgg = aggregateString(objs.all, "role");
-        const hasCollidedStyleAgg = aggregateString(objs.all, "hasCollidedStyle");
-        const beenTriggeredStyleAgg = aggregateString(objs.all, "beenTriggeredStyle");
         const canTickAgg = aggregateBoolean(objs.all, "canTick");
         const onTickFunctionAgg = aggregateString(objs.all, "onTickFunction");
 
@@ -155,8 +156,8 @@ export const bandExtraMethods = {
          * }>} */
         const slotRows = [
             { label: "onActiveBeat", slotKey: "onActiveBeat", canEditKind: "setCanActiveBeat", canAgg: canActiveBeatAgg, funcEditKind: "setOnActiveBeatFunction", funcAgg: onActiveBeatFunctionAgg, enabled: activeBeatEnabled },
-            { label: "hasCollided", slotKey: "hasCollided", canEditKind: "setCanCollide", canAgg: canCollideAgg, funcEditKind: "setHasCollidedFunction", funcAgg: hasCollidedFunctionAgg, styleEditKind: "setHasCollidedStyle", styleAgg: hasCollidedStyleAgg },
-            { label: "beenTriggered", slotKey: "beenTriggered", canEditKind: "setCanBeTriggered", canAgg: canBeTriggeredAgg, funcEditKind: "setBeenTriggeredFunction", funcAgg: beenTriggeredFunctionAgg, styleEditKind: "setBeenTriggeredStyle", styleAgg: beenTriggeredStyleAgg },
+            { label: "hasCollided", slotKey: "hasCollided", canEditKind: "setCanCollide", canAgg: canCollideAgg, funcEditKind: "setHasCollidedFunction", funcAgg: hasCollidedFunctionAgg },
+            { label: "beenTriggered", slotKey: "beenTriggered", canEditKind: "setCanBeTriggered", canAgg: canBeTriggeredAgg, funcEditKind: "setBeenTriggeredFunction", funcAgg: beenTriggeredFunctionAgg },
             { label: "onTick", slotKey: "onTick", canEditKind: "setCanTick", canAgg: canTickAgg, funcEditKind: "setOnTickFunction", funcAgg: onTickFunctionAgg },
         ];
         // Build one callback slot row: label + Can-X checkbox +
@@ -189,27 +190,15 @@ export const bandExtraMethods = {
             r.appendChild(this._buildSlotField({
                 value: fieldValue,
                 placeholder,
-                width: W.callbackField,
+                // The function-name field spans the full width up to the Create/Go-to
+                // button: its own column + the 6px row gap + the (now removed)
+                // style-picker column. Total row width is unchanged, so the button stays put.
+                width: W.callbackField + 6 + W.slotStyle,
                 editable: rowEnabled,
                 functionExists,
                 editKind: row.funcEditKind,
             }));
             const canChecked = row.canAgg === true;
-            // The note slot's STYLE picker (the nxtNote voice a no-arg nxtNote()
-            // uses) sits between the function field and the Create/Go-to button.
-            // onTick has no note style, so it gets a blank spacer to keep the
-            // button column aligned straight down with the note rows.
-            if (row.styleEditKind) {
-                r.appendChild(this._buildDropdownField({
-                    options: noteStyleOptions(),
-                    value: row.styleAgg === "varies" ? "" : row.styleAgg,
-                    width: W.slotStyle,
-                    editable: rowEnabled && canChecked,
-                    editKind: row.styleEditKind,
-                }));
-            } else {
-                r.appendChild(mkLabel("", { width: W.slotStyle }));
-            }
             const buttonEnabled = rowEnabled && canChecked && singleObj !== null && effectiveName.length > 0;
             const buttonLabel = functionExists ? "Go to" : "Create";
             r.appendChild(this._buildSlotButton({
@@ -229,8 +218,10 @@ export const bandExtraMethods = {
         // (this.role). Both ride the onActiveBeat gate (curves/sprites).
         const styleRowEditable = activeBeatEnabled && (canActiveBeatAgg === true);
         const nsRow = mkRow();
-        nsRow.appendChild(mkLabel("Style", { width: W.leftLabel, disabled: !styleRowEditable }));
-        nsRow.appendChild(mkLabel("", { width: 18 }));   // checkbox-column spacer → align under the onActiveBeat function field
+        // The label spans the leftLabel column + the 6px gap + the 18px checkbox
+        // column, so (right-aligned) it hugs its dropdown — which still lines up
+        // under the onActiveBeat function field above.
+        nsRow.appendChild(mkLabel("nxtNote Style", { width: W.leftLabel + 6 + 18, disabled: !styleRowEditable }));
         nsRow.appendChild(this._buildDropdownField({
             options: noteStyleOptions(),
             value: onActiveBeatStyleAgg === "varies" ? "" : onActiveBeatStyleAgg,
@@ -238,7 +229,9 @@ export const bandExtraMethods = {
             editable: styleRowEditable,
             editKind: "setOnActiveBeatStyle",
         }));
-        nsRow.appendChild(mkLabel("Role", { width: W.beatStackLabel, disabled: !styleRowEditable }));
+        // "Role" sizes to its text (no fixed column) so it sits right up against the
+        // nxtNote Style field, hugging the Role dropdown on its other side.
+        nsRow.appendChild(mkLabel("Role", { disabled: !styleRowEditable }));
         nsRow.appendChild(this._buildDropdownField({
             options: ROLE_OPTIONS,
             value: roleAgg === "varies" ? "" : roleAgg,

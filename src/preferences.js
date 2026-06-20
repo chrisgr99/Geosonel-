@@ -70,7 +70,7 @@ export const PREFERENCES = [
         key: "defaultTriggerScale",
         label: "Default Trigger Scale",
         description:
-            "Multiplier seeded into new scores' triggerScale field. Changing it here doesn't affect existing scores \u2014 they keep whatever scale they were saved with. Each score's own triggerScale can be edited later via the Properties tab.",
+            "Multiplier seeded into new scores' triggerScale field. Changing it here doesn't affect existing scores \u2014 they keep whatever scale they were saved with. Each score's own triggerScale can be edited later via the Inspector tab.",
         type: "number",
         default: 1.0,
         min: 0.5,

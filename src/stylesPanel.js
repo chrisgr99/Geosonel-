@@ -166,14 +166,14 @@ export class StylesPanel {
         const typeRow = document.createElement("div");
         typeRow.className = "styles-row";
         typeRow.appendChild(this._fieldLabel("Style Type"));
-        typeRow.appendChild(this._kindRadio("note", "Note"));
+        typeRow.appendChild(this._kindRadio("note", "nxtNote(style)"));
         this._noteRowEl = typeRow;
         wrap.appendChild(typeRow);
 
         const rhythmRow = document.createElement("div");
         rhythmRow.className = "styles-row";
         rhythmRow.appendChild(this._spacer("styles-field-label"));   // align Rhythm under Note
-        rhythmRow.appendChild(this._kindRadio("rhythm", "Rhythm"));
+        rhythmRow.appendChild(this._kindRadio("rhythm", "Inspector Auto Rhythms"));
         wrap.appendChild(rhythmRow);
 
         // Line 2: Style Name + the icon action buttons.
