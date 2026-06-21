@@ -159,6 +159,8 @@ import {
     setActiveBeatsCountOnSelection,
     setBeatShiftOnSelection,
     setRepeatsOnSelection,
+    setVaryOnSelection,
+    setVarySeedOnSelection,
     setVariabilityOnSelection,
     setMutatePositionOnSelection,
     setMutateSizeOnSelection,
@@ -196,6 +198,7 @@ import {
     setSceneObjectVoiceField,
 } from "./src/sceneEditor.js";
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
+import { variedCycleAt } from "./src/beatPoints.js";
 
 main();
 
@@ -467,6 +470,9 @@ async function main() {
      * @type {import("./src/scene.js").Scene | null}
      */
     let currentScene = null;
+    // The single selected beat-points CURVE whose Active Beats field gets the live
+    // variation preview (the cycle-under-the-cursor's varied pattern), or null.
+    let varyPreviewId = null;
 
     const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, harmonyAreaEl, stylesAreaEl, bundle, {
         onDirtyChange: (dirty) => {
@@ -2046,7 +2052,63 @@ async function main() {
             removeStyle(type, name);
             void runScene();
         });
+        // Rhythm-style audition: a self-contained loop in the Styles tab that plays
+        // the edited style through a click voice (with an optional metronome), so
+        // the user can dial knobs and hear the character. The host injects only the
+        // audio — the shared audio context (resumed on the Play gesture) and the
+        // firing engine's one-shot sound path; the panel owns the loop + controls.
+        editor.stylesPanel.setAuditionAudio({
+            ensureAudioContext: () => transport.ensureAudioContext(),
+            fire: (spec) => firingEngine.fireImmediateSound("styles-audition", spec),
+        });
     }
+
+    // Live variation preview: while playing, push the cycle-under-the-cursor's
+    // varied Active-Beats pattern to the inspector field for the single selected
+    // beat-points curve. The inspector freezes the field while it has focus (so the
+    // user can edit), and editing the frozen text commits a new base. Persistent
+    // rAF, but a no-op unless a vary>0 curve is selected and the transport is
+    // playing. Bars the pattern (| every Beats/Bar) to match the field's display.
+    const barPattern = (s, beatsPerBar) => {
+        const stripped = String(s).replace(/[|\s]/g, "");
+        const bar = Math.max(1, Math.round(Number(beatsPerBar)) || 1);
+        if (bar <= 1) return stripped;
+        let out = "";
+        for (let i = 0; i < stripped.length; i++) {
+            out += stripped[i];
+            if ((i + 1) % bar === 0 && i < stripped.length - 1) out += "|";
+        }
+        return out;
+    };
+    const tickVaryPreview = () => {
+        requestAnimationFrame(tickVaryPreview);
+        const insp = editor.inspector;
+        if (insp === null || insp === undefined) return;
+        if (varyPreviewId === null || currentScene === null) { insp.clearBeatHighlight(); return; }
+        const obj = currentScene.curves.find((c) => c.id === varyPreviewId);
+        if (obj === undefined) { insp.clearBeatHighlight(); return; }
+        const playing = transport.isPlaying;
+        const tRaw = simulation.getCurveCursorT(varyPreviewId);   // 0 when stopped / rewound
+        const t = (typeof tRaw === "number" && Number.isFinite(tRaw)) ? tRaw : 0;
+        const beatsPerCycle = Math.max(1, Math.round(Number(obj.beatsPerCycle ?? 16)) || 1);
+        const reps = Math.max(1, Math.round(Number(obj.repeats ?? 1)) || 1);
+        const n = beatsPerCycle * reps;
+        const pathIndex = Math.min(n - 1, Math.max(0, Math.floor(t * n)));
+        // Playing-beat highlight only while playing (no "current beat" at rest).
+        if (playing) insp.setBeatHighlight(varyPreviewId, pathIndex);
+        else insp.clearBeatHighlight();
+        // Variation preview value (vary > 0): show the cursor's cycle's mutation —
+        // PLAYING OR STOPPED — so a re-roll (the dice → new seed) is visibly reflected
+        // at rest too, not only while it animates. Frozen while the field has focus.
+        const flips = Math.max(0, Math.round(Number(obj.vary ?? 0)) || 0);
+        if (flips > 0) {
+            const cycle = Math.floor(pathIndex / beatsPerCycle);
+            const bpb = Math.max(1, Math.round(Number(obj.beatsPerBar ?? 1)) || 1);
+            const value = barPattern(variedCycleAt(obj.activeBeats, obj.beatsPerCycle, obj.vary, obj.varySeed, cycle), bpb);
+            insp.setActiveBeatsLive(varyPreviewId, value);
+        }
+    };
+    requestAnimationFrame(tickVaryPreview);
 
     // The Canvas inspector tab's W and H fields emit
     // edits with the same shape inspector and canvas edits
@@ -2661,6 +2723,18 @@ async function main() {
             }
         }
         editor.setSelectedObjectIds(ids);
+        // Live variation preview target: exactly one curve selected (no sprites /
+        // triggers), in a grid beat-points mode. getCurveCursorT is curve-only, so
+        // sprites don't get the field animation (their variation still plays).
+        varyPreviewId = null;
+        if (currentScene !== null
+            && selection.curves.length === 1
+            && selection.sprites.length === 0 && selection.triggers.length === 0) {
+            const c = currentScene.curves[selection.curves[0]];
+            if (c !== undefined && (c.beatPointsMode === "normal" || c.beatPointsMode === "euclidean" || c.beatPointsMode === "auto")) {
+                varyPreviewId = typeof c.id === "string" ? c.id : null;
+            }
+        }
         // Push the same id set into the firing engine's
         // play-selected gate so the Play Selected toolbar
         // toggle (when on) tracks the live selection. Has
@@ -4233,6 +4307,14 @@ async function main() {
             } else if (edit.kind === "setRepeats") {
                 await applySceneEdit((data) =>
                     setRepeatsOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setVary") {
+                await applySceneEdit((data) =>
+                    setVaryOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setVarySeed") {
+                await applySceneEdit((data) =>
+                    setVarySeedOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setVariability") {
                 await applySceneEdit((data) =>

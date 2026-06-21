@@ -205,7 +205,9 @@
  * input chrome and override the flex display .insp-field sets. */
 .insp-beat-field {
     display: inline-block;
-    font-family: inherit;
+    /* Monospace so each slot is a uniform cell — the live beat-highlight boxes one
+     * cell (1ch), and rhythm patterns read as an aligned grid. */
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
     appearance: none;
     -webkit-appearance: none;
     outline: none;
@@ -216,6 +218,25 @@
 
 .insp-beat-field:focus {
     outline: none;
+}
+
+/* Wraps a beat-string input so the playing-beat highlight can overlay it. */
+.insp-beat-wrap {
+    position: relative;
+    display: inline-block;
+}
+/* A translucent box over the slot currently under the cursor (one monospace cell).
+ * Pointer-transparent, behind the input's text (so the char shows through), hidden
+ * until positioned by setBeatHighlight. */
+.insp-beat-hl {
+    position: absolute;
+    top: 1px;
+    bottom: 1px;
+    width: 1ch;
+    background: rgba(125, 214, 138, 0.40);
+    border-radius: 2px;
+    pointer-events: none;
+    display: none;
 }
 
 /* Locked Active Beats field (Euclidean mode): read-only and

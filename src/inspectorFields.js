@@ -1059,12 +1059,29 @@ export const fieldMethods = {
             }
         });
 
+        // Commit only after an ACTUAL edit. `dirty` is reset on focus and set by the
+        // beforeinput handler; a plain focus+blur (no keystroke) never commits. This
+        // matters for the live variation preview, where the field may be showing a
+        // varied cycle that differs from the stored base — without this, merely
+        // clicking in and out would bake that variation. (Harmless elsewhere: a
+        // no-change commit was already a no-op.)
+        let dirty = false;
         let committed = false;
         const commit = () => {
-            if (committed) return;
+            if (committed || !dirty) return;
             committed = true;
             this._emitEdit({ kind: opts.editKind, value: input.value });
         };
+        input.addEventListener("focus", () => {
+            // Snap back to the editable BASE, dropping any live variation preview the
+            // per-frame loop wrote in — so edits go straight to the base and the
+            // mutation is never baked. (No-op for fields that aren't live-updated:
+            // their value already equals opts.value.)
+            input.value = opts.value ?? "";
+            dirty = false;
+            committed = false;
+        });
+        input.addEventListener("beforeinput", () => { dirty = true; });
         input.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 e.preventDefault();

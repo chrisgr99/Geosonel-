@@ -97,6 +97,16 @@ import { bandExtraMethods } from "./inspectorBandsExtra.js";
 const HOVER_HIDE_DELAY_MS = 1000;
 const PER_OBJECT_FADE_MS = 1000;
 
+/** Lazily-created shared canvas 2D context for measuring beat-field text widths
+ *  (the playing-beat highlight positions itself by measuring the input's text). */
+let _beatMeasureCtx = null;
+function beatMeasureCtx() {
+    if (_beatMeasureCtx === null) {
+        _beatMeasureCtx = document.createElement("canvas").getContext("2d");
+    }
+    return _beatMeasureCtx;
+}
+
 export class Inspector {
     /**
      * @param {HTMLElement} container
@@ -233,6 +243,76 @@ export class Inspector {
         if (typeof this._editCallback === "function") {
             this._editCallback({ ...edit, selection: this._selection });
         }
+    }
+
+    /**
+     * Live variation preview: while playing, main.js calls this each frame with the
+     * currently-playing cycle's varied Active-Beats pattern for the single selected
+     * beat-points object. Updates the field's text in place — UNLESS it has focus
+     * (the user is editing, so the field freezes) — and only for the matching
+     * object. The stored base activeBeats is untouched; editing the frozen text and
+     * committing is what changes the base (see _buildBeatStringField's dirty guard).
+     * @param {string} objectId @param {string} value
+     */
+    setActiveBeatsLive(objectId, value) {
+        const f = this._activeBeatsField;
+        if (!f || this._activeBeatsObjectId !== objectId) return;
+        if (document.activeElement === f) return;          // frozen while editing
+        if (f.value !== value) f.value = value;
+    }
+
+    /**
+     * Box the slot currently under the cursor in the Active Beats + Beat Strength
+     * fields, so what you see lines up with what you hear. main.js calls this each
+     * frame while playing with the GLOBAL beat index (0..beatsPerCycle*Repeats); each
+     * field maps it modulo its own looped length and accounts for bar `|` pipes.
+     * @param {string} objectId @param {number} pathIndex
+     */
+    setBeatHighlight(objectId, pathIndex) {
+        if (this._activeBeatsObjectId !== objectId) { this.clearBeatHighlight(); return; }
+        this._positionBeatHighlight(this._activeBeatsField, this._activeBeatsHighlight, pathIndex);
+        this._positionBeatHighlight(this._beatStrengthField, this._beatStrengthHighlight, pathIndex);
+    }
+
+    /** Hide both beat highlights (on stop / no target). */
+    clearBeatHighlight() {
+        if (this._activeBeatsHighlight) this._activeBeatsHighlight.style.display = "none";
+        if (this._beatStrengthHighlight) this._beatStrengthHighlight.style.display = "none";
+    }
+
+    /** Position one highlight box over the displayed cell for `pathIndex`, mapped
+     *  (wrapping) into this field's looped value, pipes skipped. The box's x-offset
+     *  and width are MEASURED from the input's own text (a shared canvas with the
+     *  input's font), so it lands exactly on the cell whatever the font / widths. */
+    _positionBeatHighlight(input, hl, pathIndex) {
+        if (!input || !hl) return;
+        const value = input.value;
+        // Count logical (non-pipe) cells, and find the displayed index of the
+        // (pathIndex mod logicalLen)-th one — so it WRAPS at the last character.
+        let logicalLen = 0;
+        for (let i = 0; i < value.length; i++) if (value[i] !== "|") logicalLen++;
+        if (logicalLen <= 0) { hl.style.display = "none"; return; }
+        const target = ((pathIndex % logicalLen) + logicalLen) % logicalLen;
+        let logical = 0;
+        let dispIndex = -1;
+        for (let i = 0; i < value.length; i++) {
+            if (value[i] === "|") continue;
+            if (logical === target) { dispIndex = i; break; }
+            logical++;
+        }
+        if (dispIndex < 0) { hl.style.display = "none"; return; }
+        const cs = getComputedStyle(input);
+        const ctx = beatMeasureCtx();
+        ctx.font = (cs.font && cs.font !== "") ? cs.font : `${cs.fontSize} ${cs.fontFamily}`;
+        const x = ctx.measureText(value.slice(0, dispIndex)).width;     // exact px to the cell
+        const w = ctx.measureText(value[dispIndex] || "x").width;       // the cell's own width
+        const start = (parseFloat(cs.marginLeft) || 0)
+            + (parseFloat(cs.borderLeftWidth) || 0)
+            + (parseFloat(cs.paddingLeft) || 0)
+            - input.scrollLeft;
+        hl.style.left = `${start + x}px`;
+        hl.style.width = `${w}px`;
+        hl.style.display = "block";
     }
 
     /**
@@ -377,6 +457,13 @@ export class Inspector {
         // editing survives a re-render.
         const focusKey = this._captureFieldFocus();
         this.container.innerHTML = "";
+        // The beat fields are rebuilt below; drop stale live-preview + highlight refs
+        // (the beat-points band re-captures them for a single beat-points object).
+        this._activeBeatsField = null;
+        this._activeBeatsObjectId = null;
+        this._activeBeatsHighlight = null;
+        this._beatStrengthField = null;
+        this._beatStrengthHighlight = null;
 
         // A rebuild destroys the Object ID picker's trigger (and orphans
         // any open popup), so clear any in-flight preview highlight it set

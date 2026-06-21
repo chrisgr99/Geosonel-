@@ -24,6 +24,7 @@ import { listStyles, getStyleRecord } from "./styleStore.js";
 import { styles as BUILTIN_STYLES, SCALES } from "./harmonyMelody.js";
 import { MStyle, serializeMStyle, materializeMStyle } from "./mStyle.js";
 import { BUILTIN_RHYTHM, BUILTIN_RHYTHM_NAMES } from "./rhythmStyles.js";
+import { RhythmAudition } from "./rhythmAudition.js";
 
 /**
  * Built-in NOTE style names offered in the chooser. "melodic" is excluded — it's
@@ -72,6 +73,16 @@ export class StylesPanel {
          * @type {((type: string, name: string) => void) | null}
          */
         this._onDeleteStyle = null;
+        /**
+         * Self-contained Rhythm-style audition (Play/metronome loop in the Rhythm
+         * band header). Created when the host wires the audio via setAuditionAudio;
+         * null in environments with no audio. @type {import("./rhythmAudition.js").RhythmAudition | null}
+         */
+        this._audition = null;
+        /** Audition transport state (kept across band re-renders). */
+        this._auditionTempo = 120;        // BPM
+        this._auditionBeatsPerBar = 4;    // time-signature numerator (over 4)
+        this._auditionMetronome = false;
 
         // --- State ---
         /** The style kind being edited; the Name list is filtered to it.
@@ -119,12 +130,42 @@ export class StylesPanel {
     }
 
     /** Wire the save-style edit callback (main.js owns persistence + re-run). */
+    /**
+     * Wire the audio for the Rhythm-style audition (the host owns the engine):
+     * `ensureAudioContext` resumes/returns the shared context, `fire` schedules one
+     * click. Creates the self-contained audition loop the Rhythm band drives.
+     * @param {{ ensureAudioContext: () => (AudioContext | null),
+     *           fire: (spec: { sample: string, bank: string, amplitude: number, audioTime: number }) => void }} deps
+     */
+    setAuditionAudio(deps) {
+        this._audition = new RhythmAudition({
+            ensureAudioContext: deps.ensureAudioContext,
+            fire: deps.fire,
+        });
+        this._audition.setCoreProvider(() => (this._sandbox !== null ? this._sandbox.rhythm : {}));
+    }
+
+    /** Push the current audition transport settings + live core onto the player. */
+    _pushAuditionParams() {
+        if (this._audition === null) return;
+        this._audition.setTempo(this._auditionTempo);
+        this._audition.setBeatsPerBar(this._auditionBeatsPerBar);
+        this._audition.setMetronome(this._auditionMetronome);
+        this._audition.setCoreProvider(() => (this._sandbox !== null ? this._sandbox.rhythm : {}));
+    }
+
+    /** Stop the audition if running (on style switch, kind change, etc.). */
+    _stopAudition() {
+        if (this._audition !== null && this._audition.isPlaying()) this._audition.stop();
+    }
+
     onSaveStyle(cb) { this._onSaveStyle = cb; }
     /** Wire the delete-style edit callback. */
     onDeleteStyle(cb) { this._onDeleteStyle = cb; }
 
     /** Re-read the library and rebuild. Called by the editor on tab activation. */
     refresh() { this._render(); }
+
 
     /** Full re-render from current state + library. */
     _render() {
@@ -160,21 +201,17 @@ export class StylesPanel {
         const wrap = document.createElement("div");
         wrap.className = "styles-chooser-block";
 
-        // Lines 1–2: Style Type — Note and Rhythm radios stacked (Rhythm directly
-        // under Note). The Percussion-only checkbox (Note kind) is appended to the
-        // Note row, beside the Note radio (it's a Note-style property).
+        // Identity row: the "nxtNote(style)" label + the Percussion-only checkbox
+        // (appended to this row by _buildPercussionFlag). The Note/Rhythm Style
+        // Type RADIOS are ON HOLD — the rhythm-styles feature is hidden from the UI
+        // pending a redesign, so the editor is nxtNote-only and the type selector
+        // is pointless. The _kindRadio/_buildRhythmBand/audition code stays; re-add
+        // the two radios here (a typeRow + a rhythmRow) to restore the chooser.
         const typeRow = document.createElement("div");
         typeRow.className = "styles-row";
-        typeRow.appendChild(this._fieldLabel("Style Type"));
-        typeRow.appendChild(this._kindRadio("note", "nxtNote(style)"));
+        typeRow.appendChild(this._fieldLabel("nxtNote(style)"));
         this._noteRowEl = typeRow;
         wrap.appendChild(typeRow);
-
-        const rhythmRow = document.createElement("div");
-        rhythmRow.className = "styles-row";
-        rhythmRow.appendChild(this._spacer("styles-field-label"));   // align Rhythm under Note
-        rhythmRow.appendChild(this._kindRadio("rhythm", "Inspector Auto Rhythms"));
-        wrap.appendChild(rhythmRow);
 
         // Line 2: Style Name + the icon action buttons.
         const nameRow = document.createElement("div");
@@ -251,6 +288,7 @@ export class StylesPanel {
      *  style, and slide the Pitch band open/closed. @param {string} kind */
     _onChangeType(kind) {
         if (kind === this._kind) return;
+        this._stopAudition();
         this._kind = /** @type {"note" | "rhythm"} */ (kind);
         this._selected = null;
         this._sandbox = null;
@@ -326,6 +364,7 @@ export class StylesPanel {
 
     /** @param {string} name  Select a style of the current kind and load it. */
     _selectStyle(name) {
+        this._stopAudition();
         this._loadSandbox(name);
         this._selected = name;
         this._render();
@@ -337,7 +376,9 @@ export class StylesPanel {
         return JSON.stringify(this._sandbox) !== this._baseSerialized;
     }
 
-    /** Called on every edit: refresh the footer + the chooser's dirty marker. */
+    /** Called on every edit: refresh the footer + the chooser's dirty marker. The
+     *  audition reads the live sandbox core and regenerates at each loop boundary,
+     *  so a knob change is heard at the next bar with nothing extra to do here. */
     _markDirty() {
         this._refreshFooter();
         this._updateChooserDirtyMarker();
@@ -730,7 +771,9 @@ export class StylesPanel {
 
     /** @param {HTMLElement} el @param {any} s */
     _buildRhythmBand(el, s) {
-        const band = this._band("Rhythm");
+        const band = document.createElement("div");
+        band.className = "styles-band";
+        band.appendChild(this._buildRhythmHeader());
         const r = s.rhythm;
 
         // No "Note Timing" sub-title — the band is Rhythm overall, and it covers
@@ -916,6 +959,106 @@ export class StylesPanel {
         h.textContent = title;
         band.appendChild(h);
         return band;
+    }
+
+    /** The Rhythm band header: the "Rhythm" title plus the self-contained audition
+     *  transport — Run/Stop, a metronome toggle, an audition tempo (BPM), and a
+     *  time-signature numerator (over 4) — left-aligned from the left edge. The
+     *  audition loops the style through a click voice so you can dial the knobs and
+     *  hear its character against a steady beat (design/rhythm-auto-generation.md M2). */
+    _buildRhythmHeader() {
+        const h = document.createElement("div");
+        h.className = "styles-band-header styles-rhythm-header";
+        h.style.display = "flex";
+        h.style.alignItems = "center";
+        h.style.gap = "8px";
+
+        const title = document.createElement("span");
+        title.textContent = "Rhythm";
+        h.appendChild(title);
+
+        const noAudio = this._audition === null;
+
+        // Run / Stop toggle.
+        const playBtn = document.createElement("button");
+        playBtn.type = "button";
+        playBtn.className = "styles-audition-btn";
+        playBtn.disabled = noAudio;
+        const syncPlay = () => {
+            const on = this._audition !== null && this._audition.isPlaying();
+            playBtn.textContent = on ? "■" : "▶";
+            playBtn.title = on ? "Stop the audition." : "Play the style on a loop to hear it.";
+            playBtn.style.background = on ? "#b14a4a" : "";
+        };
+        playBtn.addEventListener("click", () => {
+            if (this._audition === null) return;
+            if (this._audition.isPlaying()) {
+                this._audition.stop();
+            } else {
+                this._pushAuditionParams();
+                this._audition.start();
+            }
+            syncPlay();
+        });
+        syncPlay();
+        h.appendChild(playBtn);
+
+        // Metronome toggle — a steady beat to hear the style against.
+        const metroBtn = document.createElement("button");
+        metroBtn.type = "button";
+        metroBtn.className = "styles-audition-btn";
+        metroBtn.textContent = "♩";   // ♩ quarter-note — a steady-beat cue
+        metroBtn.title = "Metronome — a steady beat to hear the style against.";
+        metroBtn.disabled = noAudio;
+        metroBtn.style.background = this._auditionMetronome ? "#4a8a5a" : "";
+        metroBtn.addEventListener("click", () => {
+            this._auditionMetronome = !this._auditionMetronome;
+            if (this._audition !== null) this._audition.setMetronome(this._auditionMetronome);
+            metroBtn.style.background = this._auditionMetronome ? "#4a8a5a" : "";
+        });
+        h.appendChild(metroBtn);
+
+        // Audition tempo (BPM) — independent of the score's tempo.
+        const tempo = document.createElement("input");
+        tempo.type = "number";
+        tempo.className = "styles-audition-num";
+        tempo.min = "1"; tempo.max = "1000"; tempo.step = "1";
+        tempo.value = String(this._auditionTempo);
+        tempo.title = "Audition tempo (BPM). Does not affect the score.";
+        tempo.style.width = "48px";
+        tempo.addEventListener("change", () => {
+            const v = parseInt(tempo.value, 10);
+            if (Number.isFinite(v) && v > 0) {
+                this._auditionTempo = v;
+                if (this._audition !== null) this._audition.setTempo(v);
+            }
+        });
+        h.appendChild(tempo);
+        const bpmLab = document.createElement("span");
+        bpmLab.textContent = "bpm";
+        h.appendChild(bpmLab);
+
+        // Time signature — a numerator over a fixed /4.
+        const sig = document.createElement("input");
+        sig.type = "number";
+        sig.className = "styles-audition-num";
+        sig.min = "1"; sig.max = "16"; sig.step = "1";
+        sig.value = String(this._auditionBeatsPerBar);
+        sig.title = "Beats per bar (over 4): 3 → 3/4, 4 → 4/4, 5 → 5/4.";
+        sig.style.width = "36px";
+        sig.addEventListener("change", () => {
+            const v = parseInt(sig.value, 10);
+            if (Number.isFinite(v) && v >= 1) {
+                this._auditionBeatsPerBar = v;
+                if (this._audition !== null) this._audition.setBeatsPerBar(v);
+            }
+        });
+        h.appendChild(sig);
+        const slash = document.createElement("span");
+        slash.textContent = "/4";
+        h.appendChild(slash);
+
+        return h;
     }
 
     /**

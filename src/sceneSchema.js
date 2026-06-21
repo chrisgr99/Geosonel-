@@ -151,6 +151,13 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "activeBeatsCount", label: "Active Beats Count", type: "integer", default: 0, min: 0 },
     { key: "beatShift", label: "Beat Shift", type: "integer", default: 0 },
     { key: "repeats", label: "Beat Repeats", type: "integer", default: 1, min: 1 },
+    // Pattern variation: `vary` = the number of notes flipped per cycle (each cycle
+    // flips this many beats x<->., as a delta from the ORIGINAL activeBeats — never
+    // cumulative). Applied when beat points are derived, per repeat (cycle), seeded
+    // by varySeed + the cycle index, so each Repeat flips different slots and it's
+    // reproducible on rewind. 0 = off. The dice rolls a new varySeed. Manual + Euclidean.
+    { key: "vary", label: "Vary", type: "integer", default: 0, min: 0 },
+    { key: "varySeed", label: "Vary Seed", type: "integer", default: 0 },
     { key: "canCollide", label: "Can Collide", type: "boolean", default: false },
     { key: "hasCollidedFunction", label: "Has Collided Function", type: "functionRef", default: "" },
     // The melodic STYLE (nxtNote MStyle, by name) this note callback uses by

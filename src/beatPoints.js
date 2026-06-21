@@ -107,6 +107,75 @@ function beatCountForSlot(ch) {
 }
 
 /**
+ * Deterministic pseudo-random value in [0,1) from a (seed, cycle index, slot
+ * index) triple. No Math.random, so a given triple always yields the same draw —
+ * the variation is reproducible on rewind/reload, re-rolling is just a new seed,
+ * and each cycle (repeat) varies because the cycle index is mixed in.
+ * @param {number} seed @param {number} cycle @param {number} slot @returns {number}
+ */
+function roll(seed, cycle, slot) {
+    let h = ((seed | 0) ^ 0x9e3779b9) >>> 0;
+    h = Math.imul(h ^ ((cycle | 0) + 0x165667b1), 0x85ebca6b) >>> 0;
+    h = Math.imul(h ^ ((slot | 0) + 0xd3a2646c), 0xc2b2ae35) >>> 0;
+    h ^= h >>> 15; h = Math.imul(h, 0x735a2d97) >>> 0; h ^= h >>> 15;
+    return (h >>> 0) / 4294967296;
+}
+
+/**
+ * One cycle's variation: expand the ORIGINAL active-beats to `base` slots, then
+ * flip exactly `flips` of them (capped at `base`) — the top-rolling slots for this
+ * cycle. Symmetric — an active slot (incl. a ratchet, whose digit survives if
+ * unflipped) goes silent; a rest sounds once as "x". Always a delta from the
+ * original (never cumulative), deterministic per (seed, cycle index). Different
+ * cycles flip different slots because the cycle index is mixed into the roll.
+ * @param {string} original @param {number} base @param {number} flips
+ * @param {number} seed @param {number} cycle @returns {string}
+ */
+function variedCycle(original, base, flips, seed, cycle) {
+    const count = Math.min(Math.max(0, flips), base);
+    /** @type {Set<number>} */
+    let flipSet = new Set();
+    if (count > 0) {
+        const order = [];
+        for (let j = 0; j < base; j++) order.push(j);
+        order.sort((a, b) => roll(seed, cycle, b) - roll(seed, cycle, a));
+        flipSet = new Set(order.slice(0, count));
+    }
+    let out = "";
+    for (let j = 0; j < base; j++) {
+        const ch = original[j % original.length];
+        const wasActive = beatCountForSlot(ch) > 0;
+        const nowActive = flipSet.has(j) ? !wasActive : wasActive;
+        out += nowActive ? (wasActive ? ch : "x") : ".";
+    }
+    return out;
+}
+
+/**
+ * The varied active-beats string for ONE specific cycle (repeat) index — what the
+ * inspector shows live while playing (the cycle under the cursor). Exactly the
+ * flips the firing derivation applies to that cycle. `vary` 0 returns the base
+ * cycle (the original looped to beatsPerCycle, no flips).
+ * @param {unknown} activeBeats @param {unknown} beatsPerCycle
+ * @param {unknown} vary @param {unknown} varySeed @param {unknown} cycleIndex
+ * @returns {string}
+ */
+export function variedCycleAt(activeBeats, beatsPerCycle, vary, varySeed, cycleIndex) {
+    const original = bareString(activeBeats) || "x";
+    const bpc = Number(beatsPerCycle);
+    const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : original.length;
+    const flips = Math.max(0, Math.floor(Number(vary)) || 0);
+    if (flips <= 0) {
+        let s = "";
+        for (let j = 0; j < base; j++) s += original[j % original.length];
+        return s;
+    }
+    const seed = Number(varySeed) | 0;
+    const k = Math.max(0, Math.floor(Number(cycleIndex)) || 0);
+    return variedCycle(original, base, flips, seed, k);
+}
+
+/**
  * Derive positions + strengths for the looped beat-points path, where the
  * active-beats and strength strings LOOP to fill the cycle.
  *
@@ -132,17 +201,25 @@ function beatCountForSlot(ch) {
  * @param {unknown} repeats
  * @returns {BeatPoints}
  */
-function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats) {
-    const slots = bareString(activeBeats) || "x";
+function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats, vary, varySeed) {
+    const original = bareString(activeBeats) || "x";
     const strengths = bareString(strength) || String(DEFAULT_STRENGTH);
     const bpc = Number(beatsPerCycle);
-    const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : slots.length;
+    const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : original.length;
     // Repeats lays whole copies of the base pattern end-to-end around the path:
-    // N copies → N × beat points, the pattern tiling across all of them, the
-    // cursor sweeping them in one (proportionally longer) traversal.
+    // N copies → N × beat points, the cursor sweeping them in one traversal.
     const r = Number(repeats);
     const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
     const n = base * reps;
+    // Variation: `vary` = max notes flipped PER CYCLE. Each repeat (cycle) gets its
+    // OWN variation — a delta from the ORIGINAL (non-cumulative), seeded by the cycle
+    // index so cycles differ. The cursor returning to start replays the same
+    // sequence (reproducible). vary 0 → the original, looped, with no flips.
+    const maxFlips = Math.max(0, Math.floor(Number(vary)) || 0);
+    const seed = Number(varySeed) | 0;
+    const cycles = (maxFlips > 0)
+        ? Array.from({ length: reps }, (_, k) => variedCycle(original, base, maxFlips, seed, k))
+        : null;
     /** @type {number[]} */
     const positions = [];
     /** @type {number[]} */
@@ -150,7 +227,9 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats) {
     /** @type {number[]} */
     const inactivePositions = [];
     for (let i = 0; i < n; i++) {
-        const ch = slots[i % slots.length];
+        const ch = (cycles !== null)
+            ? cycles[Math.floor(i / base)][i % base]
+            : original[i % original.length];
         const count = beatCountForSlot(ch);
         if (count > 0) {
             const d = strengths[i % strengths.length];
@@ -305,7 +384,8 @@ export function deriveCurveBeatPoints(curve) {
         // activeBeats/strength through one looped derivation, with Repeats
         // multiplying the beat-point count.
         return deriveNormalLooped(
-            curve.activeBeats, curve.strength, curve.beatsPerCycle, curve.repeats);
+            curve.activeBeats, curve.strength, curve.beatsPerCycle, curve.repeats,
+            curve.vary, curve.varySeed);
     }
     if (mode === "strudel") {
         return deriveFromStrudel(curve.beatPattern);

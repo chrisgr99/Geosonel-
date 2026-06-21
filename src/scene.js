@@ -760,6 +760,10 @@ export class Curve {
         this.beatShift = opts.beatShift ?? 0;
         /** @type {number} Euclidean: internal repeat count. */
         this.repeats = opts.repeats ?? 1;
+        /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
+        this.vary = opts.vary ?? 0;
+        /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
+        this.varySeed = opts.varySeed ?? 0;
 
         /** @type {boolean} */
         this.canCollide = opts.canCollide ?? false;
@@ -927,6 +931,10 @@ export class Trigger {
         this.beatShift = opts.beatShift ?? 0;
         /** @type {number} Euclidean: internal repeat count. */
         this.repeats = opts.repeats ?? 1;
+        /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
+        this.vary = opts.vary ?? 0;
+        /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
+        this.varySeed = opts.varySeed ?? 0;
 
         /** @type {boolean} */
         this.canCollide = opts.canCollide ?? false;
@@ -1142,6 +1150,10 @@ export class Sprite {
         this.beatShift = opts.beatShift ?? 0;
         /** @type {number} Euclidean: internal repeat count. */
         this.repeats = opts.repeats ?? 1;
+        /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
+        this.vary = opts.vary ?? 0;
+        /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
+        this.varySeed = opts.varySeed ?? 0;
 
         /** @type {boolean} */
         this.canCollide = opts.canCollide ?? false;

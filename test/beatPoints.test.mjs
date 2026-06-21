@@ -223,3 +223,54 @@ test("strudel empty pattern yields no beat points", () => {
     assert.deepEqual(r.positions, []);
     assert.deepEqual(r.strengths, []);
 });
+
+// ---- Pattern variation (vary = max flips/cycle, varySeed, per-Repeat) ----
+
+const onsetCount = (r) => r.positions.length;
+
+test("vary 0 (or absent) leaves the pattern exactly as authored", () => {
+    const fields = { activeBeats: "x.x.x.x.", strength: "9", beatsPerCycle: 8 };
+    const off = deriveCurveBeatPoints(curve(fields));
+    const zero = deriveCurveBeatPoints(curve({ ...fields, vary: 0, varySeed: 99 }));
+    assert.equal(off.positions.length, 4);                 // 4 onsets
+    assert.deepEqual(zero.positions, off.positions);       // vary 0 == unchanged
+    assert.deepEqual(zero.strengths, off.strengths);
+});
+
+test("vary flips at most `vary` notes per cycle (a delta from the original)", () => {
+    // 8-slot pattern, 4 onsets. With vary up to 2, the onset count can move by at
+    // most 2 from the original (4) on a single cycle (reps 1).
+    const base = { activeBeats: "x.x.x.x.", strength: "9", beatsPerCycle: 8, repeats: 1 };
+    for (let seed = 0; seed < 25; seed++) {
+        const r = deriveCurveBeatPoints(curve({ ...base, vary: 2, varySeed: seed }));
+        assert.ok(Math.abs(onsetCount(r) - 4) <= 2, `seed ${seed}: ${onsetCount(r)} onsets`);
+    }
+});
+
+test("vary is deterministic per seed and varies across seeds", () => {
+    const fields = { activeBeats: "x.x.x.x.x.x.x.x.", strength: "9", beatsPerCycle: 16, vary: 3 };
+    const a1 = deriveCurveBeatPoints(curve({ ...fields, varySeed: 1 }));
+    const a2 = deriveCurveBeatPoints(curve({ ...fields, varySeed: 1 }));
+    const b = deriveCurveBeatPoints(curve({ ...fields, varySeed: 7 }));
+    assert.deepEqual(a1.positions, a2.positions);          // same seed → same pattern
+    assert.notDeepEqual(a1.positions, b.positions);        // different seed → different
+});
+
+test("each Repeat (cycle) is its own variation — the tiles differ", () => {
+    // 8-slot pattern, 3 repeats, vary 2. Split the 24 slots into 3 cycles; at least
+    // two of them should differ (independent per-cycle deltas, not one tiled cycle).
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x.x.x.x.", strength: "9", beatsPerCycle: 8, repeats: 3, vary: 2, varySeed: 4 }));
+    // Onsets land at i/24; bucket them by cycle (0..7, 8..15, 16..23).
+    const cyc = [new Set(), new Set(), new Set()];
+    for (const p of r.positions) { const i = Math.round(p * 24); cyc[Math.floor(i / 8)].add(i % 8); }
+    const keys = cyc.map((s) => [...s].sort((a, b) => a - b).join(","));
+    assert.ok(new Set(keys).size >= 2, `cycles should differ: ${keys.join(" | ")}`);
+});
+
+test("vary added onsets take the looped strength digit", () => {
+    // All rests, strength "5", 2-slot cycle: with vary 2 both slots can flip to
+    // onsets, and any onset uses strength 5.
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "..", strength: "5", beatsPerCycle: 2, vary: 2, varySeed: 3 }));
+    for (const s of r.strengths) assert.equal(s, 5);
+    assert.ok(r.positions.length >= 1);
+});

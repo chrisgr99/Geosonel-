@@ -6,7 +6,17 @@ knobs. The surrounding style-system structure (the Note/Rhythm split, the two
 libraries, the Styles tab) is in [styles.md](styles.md); the broader "compose by
 phrases / repeat the scene" vision is in
 [variations-and-repeats.md](variations-and-repeats.md), sharing concepts (styles,
-the Mutability vocabulary, image-as-dice). Not yet built.
+the Mutability vocabulary, image-as-dice).
+
+> **Status: UI on hold (pending redesign).** M1 (the generator) and M2 (the
+> self-contained audition) are **built and kept**, but the rhythm-styles feature
+> is **hidden from the UI** — it wasn't yet earning its complexity. Removed from
+> the UI: the inspector Rhythm band's Auto **Style picker** and the style editor's
+> **"Inspector Auto Rhythms"** radio. Still live: Auto beat mode itself (it
+> generates from the default style), plus all the code (`rhythmStyles.js`,
+> `rhythmAudition.js`, `rhythmGenerator.js`, the store's `"rhythm"` type, the
+> Styles-tab Rhythm band + audition). Re-rendering the two removed controls
+> restores the feature. Focus has moved to **note (`nxtNote`) styles**.
 
 ## Milestones (build sequence)
 
@@ -19,10 +29,21 @@ each later milestone builds on the generator. The one swappable choice is M2 vs 
    `dynamicRange` → Beat Strength. Emergent density, structural die, NO per-repeat variation.
    `resolveRhythm(name)` in the caller; the generator stays pure; unit tests; heard
    via normal Auto playback on a percussion voice.
-2. **Live editing + non-tonal audition.** The Styles-tab editor regenerates
-   immediately while the music plays (Mode B); a loop/audition toggle with a
-   neutral click voice (strength → accent, ratchets → subdivisions). A real user
-   feature, and it makes calibrating M3–M6 fast by ear.
+2. **Self-contained audition (Styles tab).** A loop player in the Rhythm band
+   *header* — **Run/Stop**, a **metronome** toggle, an audition **tempo** (BPM), and
+   a **time-signature** numerator (over 4) — that plays the style being edited
+   through a neutral percussion click, looped, so the editor has **no relation to
+   any canvas object**. The metronome supplies the steady beat to hear the style
+   against (an earlier attempt to live-edit a selected object *in the running scene*
+   was tried and dropped: isolating one voice's edit among the others was too
+   fiddly). The phrase regenerates from the live sandbox core at each loop boundary,
+   so a knob change is heard at the next bar (never mid-bar). Editing only drives
+   the audition — it never touches the saved style or the canvas; **Save** is the
+   only commit. Self-contained audio: `transport.ensureAudioContext()` (resumed on
+   the Play gesture) + `firingEngine.fireImmediateSound` scheduled on the audio
+   clock by a look-ahead scheduler (`src/rhythmAudition.js`); independent of the
+   score's transport/tempo. *Deferred:* an onset-strip **visualization** (pattern
+   dots + a moving playhead) in the band, and ratchets → audible subdivisions.
 3. **Image-as-dice + per-repeat variation.** Sample the chosen colour channel at
    EVERY slot (incl. rests — the engine change); the onset die becomes the image;
    the per-repeat seed is the colour under each repeat's first beat. Repeats vary,
@@ -239,17 +260,22 @@ tune — polymeter), defaults to the score/harmony time signature, overridable.
 `beatsPerCycle` is derived (= Beats/Phrase × Repeats), not separately editable —
 the three are locked by that identity, so author the two meaningful ones.
 
-**Style editor (a non-modal popover from the Style dropdown):** the style
-*library* (list: select / duplicate / rename / delete; built-in + user styles)
-and the calibration knobs. The only place the knobs are exposed. Live:
+**Style editor (the Styles tab):** the style *library* (select / duplicate /
+rename / delete; built-in + user styles) and the calibration knobs. The only place
+the knobs are exposed. Auditioning is **self-contained** (M2):
 
-- Knob changes regenerate immediately; per-cycle regen means you hear the new
-  groove next cycle. No "Regenerate" button.
-- A loop/audition toggle holds a phrase looping while you dial, played NON-TONAL
-  by default (neutral click; strength → accent, ratchets → subdivisions) so you
-  hear placement, with a toggle to the real colour-pitched voice for context.
+- The Rhythm band header carries a **Run/Stop** toggle, a **metronome** toggle, an
+  audition **tempo** (BPM), and a **time-signature** numerator (over 4). Run loops
+  the style through a percussion click; the metronome adds a steady beat to hear it
+  against. No "Regenerate" button — a knob change is picked up at the next loop.
+- The editor has **no relation to any canvas object** — the audition plays the
+  style alone, on its own clock, independent of the score's transport/tempo. (An
+  earlier "edit a selected object live in the running scene" attempt was dropped:
+  isolating one voice's edit among the others was too fiddly.)
 - Tweaking knobs changes the character in place (position-deterministic);
   different *realizations* come from moving the object or Repeats, not a re-roll.
+- *Deferred:* an onset-strip visualization (pattern dots + moving playhead) in the
+  band; ratchets → audible subdivisions.
 
 ## Style as a standalone, reusable object
 

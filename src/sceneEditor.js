@@ -2143,6 +2143,22 @@ export function setRepeatsOnSelection(data, selection, value) {
     regenerateAndRebarForSelection(data, selection);
 }
 
+/** Set the variation amount — the MAX notes flipped per cycle (a non-negative
+ *  integer). Does NOT regenerate or re-bar the stored pattern — the variation is
+ *  applied at beat-point DERIVATION time (per cycle), so the authored `activeBeats`
+ *  stays the original base. */
+export function setVaryOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (Number.isFinite(n)) setFieldOnSelection(data, selection, "vary", Math.max(0, Math.round(n)));
+}
+
+/** Set the variation SEED — the dice button rolls a fresh one for a new variation
+ *  OF THE ORIGINAL pattern (the derivation re-rolls from this seed). No re-bar. */
+export function setVarySeedOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (Number.isFinite(n)) setFieldOnSelection(data, selection, "varySeed", Math.round(n));
+}
+
 /**
  * Set the variability field across the whole selection. The
  * field is universal — curves, sprites, and triggers all carry
