@@ -301,6 +301,11 @@ export const bandExtraMethods = {
         // Auto is grid-based too (it generates onto this grid); its pattern
         // fields arrive with the generator in a later milestone.
         const gridMode = mode === "normal" || mode === "euclidean" || mode === "auto";
+        const isStrudel = mode === "strudel";
+        // Strudel shares the Beat Interval + Per Cycle row (its cycle length is also
+        // Per Cycle × Beat Interval), but authors with a mini-notation expression
+        // instead of the x/dot grid — no Per Bar, no variation row.
+        const beatGrid = gridMode || isStrudel;
 
         // Row 1: the mode dropdown, always present. For normal /
         // euclidean it is followed on the same row by Beat Interval
@@ -310,16 +315,15 @@ export const bandExtraMethods = {
         // description whether the pattern is defined by x/dot, the
         // Euclidean generator, or a Strudel mini-notation expression.
         r1.appendChild(mkLabel("Beat\nPattern", { width: W.beatStackLabel, disabled: !active, multiline: true }));
-        // Sources: None / Manual (stored as "normal") / Euclidean — the three real
-        // modes. Auto is no longer offered (the rhythm-styles feature is on hold); a
-        // stored "auto" is coerced to Manual above, so the menu never blanks. "strudel"
-        // is a legacy value (no longer offered) — a legacy strudel curve renders its
-        // own fields below.
+        // Sources: None / Manual (stored as "normal") / Euclidean / Strudel (a
+        // mini-notation expression). Auto is no longer offered (rhythm-styles on
+        // hold); a stored "auto" is coerced to Manual above so the menu never blanks.
         r1.appendChild(this._buildDropdownField({
             options: [
                 { value: "none", label: "None" },
                 { value: "normal", label: "Manual" },
                 { value: "euclidean", label: "Euclidean" },
+                { value: "strudel", label: "Strudel" },
             ],
             value: mode,
             width: W.beatPointsMode,
@@ -327,12 +331,9 @@ export const bandExtraMethods = {
             editKind: "setBeatPointsMode",
         }));
 
-        // Beat Interval — the note-duration of each beat, which with
-        // Beats/Cycle sets the cycle length (cycleDurationSeconds uses
-        // it in every mode). Shown for normal AND euclidean (both
-        // grid-based), placed right of the mode dropdown. Strudel has
-        // its own Cycle Length interval; None has no beats.
-        if (gridMode) {
+        // Beat Interval — the note-duration of each beat; with Per Cycle it sets the
+        // cycle length (cycleDurationSeconds), in grid modes AND Strudel. None has no beats.
+        if (beatGrid) {
             const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
             r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildDropdownField({
@@ -344,7 +345,7 @@ export const bandExtraMethods = {
             }));
         }
 
-        if (gridMode) {
+        if (beatGrid) {
             // Auto treats Beats/Cycle as the PHRASE length (Repeats lays
             // multiple phrase instances around the path).
             r1.appendChild(mkLabel(mode === "auto" ? "Per\nPhrase" : "Per\nCycle", { width: W.beatPerCycleLabel, disabled: !active, multiline: true }));
@@ -359,30 +360,21 @@ export const bandExtraMethods = {
                 selectOnFocus: false,
             }));
         }
-        // Strudel mode replaces Beats/Cycle + Beats/Bar with a single
-        // Cycle Length spec: a note-duration dropdown (the shared
-        // interval menu, minus "Off") times an integer count. The
-        // one-cycle mini-notation pattern maps across this span;
-        // cycle length = cycleInterval × cycleCount (§4).
-        if (mode === "strudel") {
-            const cycleIntervalAgg = aggregateString(bpObjs, "cycleInterval");
-            const cycleCountAgg = aggregateString(bpObjs, "cycleCount");
-            r1.appendChild(mkLabel("Cycle Length", { width: W.cycleLengthLabel, disabled: !active }));
-            r1.appendChild(this._buildDropdownField({
-                options: INTERVAL_OPTIONS.filter((o) => o.value !== "Off"),
-                value: cycleIntervalAgg === "varies" ? "" : cycleIntervalAgg,
-                width: W.beatInterval,
-                editable: active,
-                editKind: "setCycleInterval",
-            }));
-            r1.appendChild(mkInlineLetter("x", { disabled: !active }));
+        // Strudel: Sub-Cycles sits on row 1 (tiles the one-cycle mini-notation
+        // pattern N times around the path). Conceptually identical to Repeats in
+        // the grid modes, but Strudel users expect each tiled chunk to be called a
+        // "cycle", so the object's overall cycle subdivides into N sub-cycles. The
+        // two-line label keeps the field from pushing rightward.
+        if (isStrudel) {
+            const sRepeatsAgg = aggregateString(bpObjs, "repeats");
+            r1.appendChild(mkLabel("Sub\nCycles", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildEditableField({
-                value: cycleCountAgg === "varies" ? "" : cycleCountAgg,
+                value: sRepeatsAgg === "varies" ? "" : sRepeatsAgg,
                 numeric: true,
                 width: W.beatNum,
                 editable: active,
-                validator: (c) => validateNumber(c, { min: 1 }),
-                editKind: "setCycleCount",
+                validator: (c) => validateRepeats(c),
+                editKind: "setRepeats",
                 spinStep: 1,
                 selectOnFocus: false,
             }));
@@ -574,25 +566,30 @@ export const bandExtraMethods = {
             }
         }
 
-        // Strudel mode: a single mini-notation pattern field REPLACES
-        // the Active Beats x/dot string, and Beat Strength is hidden —
-        // strength is carried inline in the one pattern (digits 0–9,
-        // "~" rest, bare "x" default). It is a free-form text field
-        // (not the live x/dot input), parsed once per cycle by
-        // patternParse.js for positions and strengths (§4, §10).
-        if (mode === "strudel") {
+        // Strudel mode: a full-width, multi-line mini-notation field REPLACES the
+        // Active Beats x/dot string AND Beat Strength — both timing and strength live
+        // in one expression (digits 0–9 = strength, "~" rest, `?`/`|` etc. native).
+        // Two lines tall, growing as the pattern wraps past two lines.
+        if (isStrudel) {
             const patternAgg = aggregateString(bpObjs, "beatPattern");
-            const rP = mkRow();
-            rP.appendChild(mkLabel("Pattern", { width: W.beatStackLabel, disabled: !active }));
-            rP.appendChild(this._buildEditableField({
-                value: patternAgg === "varies" ? "" : patternAgg,
-                width: W.strudelPattern,
-                editable: active,
-                validator: (c) => ({ kind: "ok", value: c }),
-                editKind: "setBeatPattern",
-                selectOnFocus: false,
-            }));
-            band.appendChild(rP);
+            const rL = mkRow();
+            rL.appendChild(mkLabel("Pattern", { width: W.beatStackLabel, disabled: !active }));
+            band.appendChild(rL);
+            const ta = document.createElement("textarea");
+            ta.className = "insp-field insp-pattern-field";
+            ta.value = patternAgg === "varies" ? "" : patternAgg;
+            ta.rows = 2;
+            ta.spellcheck = false;
+            ta.placeholder = "9 5 ~ 7?0.3 [3|7]";
+            if (!active) { ta.disabled = true; ta.classList.add("disabled"); }
+            const grow = () => { ta.style.height = "auto"; ta.style.height = `${ta.scrollHeight}px`; };
+            ta.addEventListener("input", grow);
+            if (active) {
+                // Commit on blur (Enter just inserts whitespace in mini-notation).
+                ta.addEventListener("blur", () => { this._emitEdit({ kind: "setBeatPattern", value: ta.value }); });
+            }
+            band.appendChild(ta);
+            requestAnimationFrame(grow);   // size to initial content after layout
         }
 
         return band;

@@ -267,6 +267,47 @@ test("each Repeat (cycle) is its own variation — the tiles differ", () => {
     assert.ok(new Set(keys).size >= 2, `cycles should differ: ${keys.join(" | ")}`);
 });
 
+test("vary keeps the authored pattern length (loops, not expanded to beatsPerCycle)", () => {
+    // A 4-char pattern over an 8-beat cycle: the varied 4-cell pattern LOOPS to fill
+    // the cycle, so the two halves are identical — it is not expanded to 8 cells
+    // with the looped copies flipped independently.
+    const r = deriveCurveBeatPoints(curve({ activeBeats: "x.x.", strength: "9", beatsPerCycle: 8, vary: 1, varySeed: 5 }));
+    const beats = r.positions.map((p) => Math.round(p * 8));      // beat indices 0..7
+    const firstHalf = beats.filter((b) => b < 4);
+    const secondHalf = beats.filter((b) => b >= 4).map((b) => b - 4);
+    assert.deepEqual(firstHalf, secondHalf);                       // the 4-cell varied pattern tiles
+});
+
+test("vary protects the downbeat — slot 0 flips far less often than uniform", () => {
+    // All-active 8-cell pattern, vary 1: each cycle one cell flips to a rest. The
+    // downbeat (beat 0) should go silent far less than a uniform 1/8 would predict.
+    const trials = 400;
+    let downbeatLost = 0;
+    let anyLost = 0;
+    for (let s = 0; s < trials; s++) {
+        const r = deriveCurveBeatPoints(curve({ activeBeats: "xxxxxxxx", strength: "9", beatsPerCycle: 8, vary: 1, varySeed: s }));
+        const beats = new Set(r.positions.map((p) => Math.round(p * 8)));
+        if (!beats.has(0)) downbeatLost++;
+        if (beats.size < 8) anyLost++;
+    }
+    assert.ok(anyLost > trials * 0.5, "variation should usually flip a cell");   // feature is live
+    assert.ok(downbeatLost < trials / 16, `downbeat lost ${downbeatLost}/${trials} (uniform would be ~${trials / 8})`);
+});
+
+test("vary protects the first beat of EACH bar (uses the time signature)", () => {
+    // 8 cells, 4 beats/bar → bars start at 0 and 4; BOTH should be protected.
+    const trials = 400;
+    const lost = new Array(8).fill(0);
+    for (let s = 0; s < trials; s++) {
+        const r = deriveCurveBeatPoints(curve({ activeBeats: "xxxxxxxx", strength: "9", beatsPerCycle: 8, beatsPerBar: 4, vary: 1, varySeed: s }));
+        const on = new Set(r.positions.map((p) => Math.round(p * 8)));
+        for (let b = 0; b < 8; b++) if (!on.has(b)) lost[b]++;
+    }
+    const downbeats = (lost[0] + lost[4]) / 2;
+    const others = (lost[1] + lost[2] + lost[3] + lost[5] + lost[6] + lost[7]) / 6;
+    assert.ok(downbeats < others / 2, `bar downbeats lost ~${downbeats} avg vs others ~${others.toFixed(1)} avg`);
+});
+
 test("vary added onsets take the looped strength digit", () => {
     // All rests, strength "5", 2-slot cycle: with vary 2 both slots can flip to
     // onsets, and any onset uses strength 5.

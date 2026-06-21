@@ -121,29 +121,49 @@ function roll(seed, cycle, slot) {
     return (h >>> 0) / 4294967296;
 }
 
+/** The downbeat (slot 0) is a flip candidate only when its own per-cycle die clears
+ *  this bar — so it's eligible only ~(1 − DOWNBEAT_PROTECT) of cycles (and even then
+ *  must out-roll the others). Anchors the beat without making it strictly immovable;
+ *  raise toward 1 to protect harder, drop to 0 to flip it like any other slot. */
+const DOWNBEAT_PROTECT = 0.85;
+
 /**
- * One cycle's variation: expand the ORIGINAL active-beats to `base` slots, then
- * flip exactly `flips` of them (capped at `base`) — the top-rolling slots for this
- * cycle. Symmetric — an active slot (incl. a ratchet, whose digit survives if
- * unflipped) goes silent; a rest sounds once as "x". Always a delta from the
- * original (never cumulative), deterministic per (seed, cycle index). Different
- * cycles flip different slots because the cycle index is mixed into the roll.
- * @param {string} original @param {number} base @param {number} flips
- * @param {number} seed @param {number} cycle @returns {string}
+ * One cycle's variation, AT THE PATTERN'S OWN LENGTH: flip exactly `flips` of the
+ * original string's slots (capped at its length) — the top-rolling ones for this
+ * cycle — and return a string of the SAME length. It then loops to fill the cycle
+ * just as the unvaried pattern does, so an 8-char pattern stays 8 chars rather than
+ * being expanded to beatsPerCycle. Symmetric — an active slot (incl. a ratchet,
+ * whose digit survives if unflipped) goes silent; a rest sounds once as "x". A
+ * delta from the original (never cumulative), deterministic per (seed, cycle index).
+ * The first beat of EACH BAR (slot j where j % beatsPerBar === 0) is protected (see
+ * DOWNBEAT_PROTECT) so downbeats rarely flip, for any time signature.
+ * @param {string} original @param {number} flips @param {number} seed
+ * @param {number} cycle @param {unknown} beatsPerBar @returns {string}
  */
-function variedCycle(original, base, flips, seed, cycle) {
-    const count = Math.min(Math.max(0, flips), base);
+function variedCycle(original, flips, seed, cycle, beatsPerBar) {
+    const len = original.length;
+    const count = Math.min(Math.max(0, flips), len);
+    // Bar length: the time-signature beats/bar when set (>= 2), else the whole
+    // pattern (so only slot 0, the cycle's first beat, counts as a downbeat).
+    const bpb = Math.round(Number(beatsPerBar));
+    const bar = (Number.isFinite(bpb) && bpb >= 2) ? bpb : (len || 1);
     /** @type {Set<number>} */
     let flipSet = new Set();
     if (count > 0) {
         const order = [];
-        for (let j = 0; j < base; j++) order.push(j);
+        for (let j = 0; j < len; j++) {
+            // A bar-downbeat (j % bar === 0) joins the candidate pool only when its
+            // OWN per-cycle die clears DOWNBEAT_PROTECT — eligible only rarely, and
+            // even then it must out-roll the rest, so the beat stays anchored.
+            if (len > 1 && (j % bar === 0) && roll(seed, cycle, -1 - j) < DOWNBEAT_PROTECT) continue;
+            order.push(j);
+        }
         order.sort((a, b) => roll(seed, cycle, b) - roll(seed, cycle, a));
-        flipSet = new Set(order.slice(0, count));
+        flipSet = new Set(order.slice(0, Math.min(count, order.length)));
     }
     let out = "";
-    for (let j = 0; j < base; j++) {
-        const ch = original[j % original.length];
+    for (let j = 0; j < len; j++) {
+        const ch = original[j];
         const wasActive = beatCountForSlot(ch) > 0;
         const nowActive = flipSet.has(j) ? !wasActive : wasActive;
         out += nowActive ? (wasActive ? ch : "x") : ".";
@@ -153,26 +173,18 @@ function variedCycle(original, base, flips, seed, cycle) {
 
 /**
  * The varied active-beats string for ONE specific cycle (repeat) index — what the
- * inspector shows live while playing (the cycle under the cursor). Exactly the
- * flips the firing derivation applies to that cycle. `vary` 0 returns the base
- * cycle (the original looped to beatsPerCycle, no flips).
- * @param {unknown} activeBeats @param {unknown} beatsPerCycle
- * @param {unknown} vary @param {unknown} varySeed @param {unknown} cycleIndex
- * @returns {string}
+ * inspector shows live while playing. SAME length as the authored pattern (it loops
+ * to fill the cycle); `vary` 0 returns the original unchanged.
+ * @param {unknown} activeBeats @param {unknown} vary @param {unknown} varySeed
+ * @param {unknown} cycleIndex @param {unknown} beatsPerBar @returns {string}
  */
-export function variedCycleAt(activeBeats, beatsPerCycle, vary, varySeed, cycleIndex) {
+export function variedCycleAt(activeBeats, vary, varySeed, cycleIndex, beatsPerBar) {
     const original = bareString(activeBeats) || "x";
-    const bpc = Number(beatsPerCycle);
-    const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : original.length;
     const flips = Math.max(0, Math.floor(Number(vary)) || 0);
-    if (flips <= 0) {
-        let s = "";
-        for (let j = 0; j < base; j++) s += original[j % original.length];
-        return s;
-    }
+    if (flips <= 0) return original;
     const seed = Number(varySeed) | 0;
     const k = Math.max(0, Math.floor(Number(cycleIndex)) || 0);
-    return variedCycle(original, base, flips, seed, k);
+    return variedCycle(original, flips, seed, k, beatsPerBar);
 }
 
 /**
@@ -201,7 +213,7 @@ export function variedCycleAt(activeBeats, beatsPerCycle, vary, varySeed, cycleI
  * @param {unknown} repeats
  * @returns {BeatPoints}
  */
-function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats, vary, varySeed) {
+function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats, vary, varySeed, beatsPerBar) {
     const original = bareString(activeBeats) || "x";
     const strengths = bareString(strength) || String(DEFAULT_STRENGTH);
     const bpc = Number(beatsPerCycle);
@@ -212,13 +224,15 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats, vary,
     const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
     const n = base * reps;
     // Variation: `vary` = max notes flipped PER CYCLE. Each repeat (cycle) gets its
-    // OWN variation — a delta from the ORIGINAL (non-cumulative), seeded by the cycle
-    // index so cycles differ. The cursor returning to start replays the same
-    // sequence (reproducible). vary 0 → the original, looped, with no flips.
+    // OWN variation — a delta from the ORIGINAL at the PATTERN's length (non-
+    // cumulative), seeded by the cycle index so cycles differ; that varied pattern
+    // then LOOPS to fill the cycle exactly as the unvaried one does (so an 8-char
+    // pattern stays 8 chars, not expanded to beatsPerCycle). vary 0 → original.
     const maxFlips = Math.max(0, Math.floor(Number(vary)) || 0);
     const seed = Number(varySeed) | 0;
+    const patLen = original.length;
     const cycles = (maxFlips > 0)
-        ? Array.from({ length: reps }, (_, k) => variedCycle(original, base, maxFlips, seed, k))
+        ? Array.from({ length: reps }, (_, k) => variedCycle(original, maxFlips, seed, k, beatsPerBar))
         : null;
     /** @type {number[]} */
     const positions = [];
@@ -228,8 +242,8 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats, vary,
     const inactivePositions = [];
     for (let i = 0; i < n; i++) {
         const ch = (cycles !== null)
-            ? cycles[Math.floor(i / base)][i % base]
-            : original[i % original.length];
+            ? cycles[Math.floor(i / base)][(i % base) % patLen]
+            : original[i % patLen];
         const count = beatCountForSlot(ch);
         if (count > 0) {
             const d = strengths[i % strengths.length];
@@ -274,7 +288,7 @@ function strengthFromHapValue(value) {
  * a flat space-separated token sequence we can place natively
  * without the engine.
  */
-const STRUDEL_OPERATORS = /[[\]<>(){}*/!@,]/;
+const STRUDEL_OPERATORS = /[[\]<>(){}*/!@,?|]/;
 
 /**
  * A "simple" token is one whose position and strength we can read
@@ -324,48 +338,120 @@ function deriveFlatSequence(raw) {
 }
 
 /**
+ * Read a Hap's begin position. Strudel exposes the event extent in
+ * `whole` (the full span) and `part` (the portion within the queried
+ * arc); whole is preferred with part as a fallback — same precedence
+ * as patternParse's hapBoundary.
+ * @param {any} hap
+ * @returns {number}
+ */
+function hapBegin(hap) {
+    if (hap === null || typeof hap !== "object") return NaN;
+    if (hap.whole && typeof hap.whole === "object" && "begin" in hap.whole) {
+        return Number(hap.whole.begin);
+    }
+    if (hap.part && typeof hap.part === "object" && "begin" in hap.part) {
+        return Number(hap.part.begin);
+    }
+    return NaN;
+}
+
+/**
  * Derive positions + strengths from a Strudel mini-notation
- * beatPattern.
+ * beatPattern, tiled across `reps` SUB-CYCLES around the path.
+ *
+ * Each sub-cycle k samples the pattern at Strudel CYCLE k — not always
+ * cycle 0 — so cross-cycle modifiers evolve from one sub-cycle to the
+ * next instead of repeating a frozen first-cycle snapshot: `<a b>`
+ * alternates, `t/2` (slow) plays only every other sub-cycle, `t?`
+ * (degrade) re-rolls its drops. Sub-Cycles is therefore the period over
+ * which such patterns vary before the path loops; bump it to give the
+ * variation room (a `t/2` needs Sub-Cycles ≥ 2 to ever show its OFF
+ * cycle).
  *
  * A FLAT space-separated sequence (no mini-notation operators) is
- * placed natively by deriveFlatSequence — engine-free, so simple
- * patterns like "x x x x" or "0 3 ~ 9" work the instant they are
- * typed, regardless of whether the Strudel runtime has loaded.
+ * identical every cycle, so it is placed natively by deriveFlatSequence
+ * — engine-free, so simple patterns like "x x x x" or "0 3 ~ 9" work the
+ * instant they are typed — and tiled unchanged.
  *
- * A pattern using operators ([] grouping, * speed, <> alternation,
- * (k,n) euclidean, …) falls back to the real Strudel parser: the
- * raw mini-notation is wrapped in s("...") so arbitrary tokens
- * parse uniformly, and only the event BEGINS and their tokens are
- * read (the pattern is never played as samples). Rests ("~")
- * produce no hap and drop out. That path returns empty (with an
- * error string) when the engine is not loaded or the expression
- * fails to parse, so an unloaded engine simply shows no diamonds
- * for an operator pattern rather than throwing.
+ * An operator pattern ([] grouping, * speed, <> alternation, (k,n)
+ * euclidean, …) is parsed ONCE via the real Strudel parser (the raw
+ * mini-notation wrapped in s("...") so arbitrary tokens parse
+ * uniformly); each sub-cycle is then read with a fresh queryArc(k, k+1)
+ * against the compiled Pattern, and only the event BEGINS and their
+ * tokens are used (the pattern is never played as samples). Rests ("~")
+ * produce no hap and drop out. The parse returns empty (carrying the
+ * error string) when the engine is not loaded or the expression fails
+ * to parse, so an unloaded engine simply shows no diamonds for an
+ * operator pattern rather than throwing.
+ *
  * @param {unknown} beatPattern
+ * @param {unknown} reps  Sub-Cycles (coerced to an integer >= 1).
  * @returns {BeatPoints}
  */
-function deriveFromStrudel(beatPattern) {
+function deriveStrudelTiled(beatPattern, reps) {
     const raw = (typeof beatPattern === "string" ? beatPattern : "").trim();
+    const r = Number(reps);
+    const n = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
     if (raw === "") return { positions: [], strengths: [], inactivePositions: [] };
+
+    /** @type {number[]} */
+    const positions = [];
+    /** @type {number[]} */
+    const strengths = [];
+    /** @type {number[]} */
+    const inactivePositions = [];
+
+    // Flat sequence: no operators, so every cycle is identical. Place it
+    // natively once and tile that placement into each of the n slices.
     const flat = deriveFlatSequence(raw);
-    if (flat !== null) return flat;
+    if (flat !== null) {
+        for (let k = 0; k < n; k++) {
+            for (let i = 0; i < flat.positions.length; i++) {
+                positions.push((k + flat.positions[i]) / n);
+                strengths.push(flat.strengths[i]);
+            }
+            for (let i = 0; i < flat.inactivePositions.length; i++) {
+                inactivePositions.push((k + flat.inactivePositions[i]) / n);
+            }
+        }
+        return { positions, strengths, inactivePositions };
+    }
+
+    // Operator pattern: parse once, then sample each sub-cycle at its own
+    // Strudel cycle so cross-cycle modifiers advance across the slices.
     const expr = `s(${JSON.stringify(raw)})`;
     const result = parsePatternToPositions(expr);
     if (!result.ok) {
         return { positions: [], strengths: [], inactivePositions: [], error: result.error };
     }
-    /** @type {number[]} */
-    const positions = [];
-    /** @type {number[]} */
-    const strengths = [];
-    for (const hap of result.haps) {
-        if (!(hap.begin >= 0 && hap.begin < 1)) continue;
-        positions.push(hap.begin);
-        strengths.push(strengthFromHapValue(hap.value));
+    const pattern = result.pattern;
+    if (pattern === null || typeof pattern.queryArc !== "function") {
+        return { positions: [], strengths: [], inactivePositions: [] };
+    }
+    for (let k = 0; k < n; k++) {
+        let haps;
+        try {
+            haps = pattern.queryArc(k, k + 1);
+        } catch (err) {
+            return {
+                positions: [], strengths: [], inactivePositions: [],
+                error: err instanceof Error ? err.message : String(err),
+            };
+        }
+        if (!Array.isArray(haps)) continue;
+        for (const hap of haps) {
+            const begin = hapBegin(hap);
+            if (!Number.isFinite(begin)) continue;
+            const frac = begin - k;                  // position within cycle k, [0,1)
+            if (!(frac >= 0 && frac < 1)) continue;  // drop events spilling past the cycle
+            positions.push((k + frac) / n);
+            strengths.push(strengthFromHapValue(hap.value));
+        }
     }
     // Operator patterns expose only events, not rests, so there are
     // no inactive positions to draw.
-    return { positions, strengths, inactivePositions: [] };
+    return { positions, strengths, inactivePositions };
 }
 
 /**
@@ -385,10 +471,13 @@ export function deriveCurveBeatPoints(curve) {
         // multiplying the beat-point count.
         return deriveNormalLooped(
             curve.activeBeats, curve.strength, curve.beatsPerCycle, curve.repeats,
-            curve.vary, curve.varySeed);
+            curve.vary, curve.varySeed, curve.beatsPerBar);
     }
     if (mode === "strudel") {
-        return deriveFromStrudel(curve.beatPattern);
+        // Sub-Cycles (the curve's `repeats`) tiles the mini-notation N times
+        // around the path, sampling Strudel cycle k for slice k so cross-cycle
+        // operators evolve slice to slice rather than freezing on cycle 0.
+        return deriveStrudelTiled(curve.beatPattern, curve.repeats);
     }
     return { positions: [], strengths: [], inactivePositions: [] };
 }

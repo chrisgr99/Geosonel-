@@ -834,6 +834,10 @@ async function main() {
         firstPaneId: "editor-pane",
         containerId: "body",
         orientation: "vertical",
+        // The editor pane is laid out on the RIGHT (CSS order),
+        // so it sits AFTER the divider visually; measure its
+        // width from the container's right edge.
+        invertControl: true,
         minPanePx: inspectorFloor,
         persistKey: "gxw.layout.editorPaneWidth",
         onDrag: () => {
@@ -2104,7 +2108,7 @@ async function main() {
         if (flips > 0) {
             const cycle = Math.floor(pathIndex / beatsPerCycle);
             const bpb = Math.max(1, Math.round(Number(obj.beatsPerBar ?? 1)) || 1);
-            const value = barPattern(variedCycleAt(obj.activeBeats, obj.beatsPerCycle, obj.vary, obj.varySeed, cycle), bpb);
+            const value = barPattern(variedCycleAt(obj.activeBeats, obj.vary, obj.varySeed, cycle, obj.beatsPerBar), bpb);
             insp.setActiveBeatsLive(varyPreviewId, value);
         }
     };

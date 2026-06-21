@@ -360,6 +360,11 @@ html, body {
  * the pane still renders at its natural inspector width
  * rather than collapsing. The runtime value overrides this
  * the moment the divider is wired. */
+/* The editor pane (housing the inspector) is authored LAST
+ * in #body, so it sits on the RIGHT; the canvas pane and its
+ * toolbar are authored first and sit on the LEFT. The
+ * body-divider's drag uses invertControl so its math measures
+ * the editor pane's width from the container's RIGHT edge. */
 #editor-pane {
     display: flex;
     flex-direction: column;
@@ -3169,25 +3174,17 @@ body.electron-mode #app {
     grid-template-rows: 1fr;
 }
 
-/* Focus Canvas spacer.
+/* Focus Canvas spacer — no longer needed.
  *
- * When body.focus-canvas is active, the editor pane
- * collapses to zero width and the canvas pane (which
- * hosts the toolbar) expands to fill the body. Without
- * the compensation below, every toolbar item shifts
- * leftward by the editor pane's previous width, breaking
- * muscle memory for where each button lives on screen.
- * The padding-left here re-introduces exactly that width,
- * so the Focus Canvas button at the toolbar's far left
- * stays at its normal absolute screen position and every
- * downstream item follows. main.js keeps the
- * --editor-pane-width variable in sync with the divider's
- * onDrag and the initial-width restore, so the
- * compensation tracks the user's current pane size.
+ * The editor pane sits on the RIGHT now, so the canvas
+ * pane and its toolbar already start at the body's left
+ * edge. Collapsing the editor pane in Focus Canvas grows
+ * the canvas rightward and leaves the toolbar's far-left
+ * Focus Canvas button exactly where it was, so no
+ * left-padding compensation is required. (When the editor
+ * was on the left, the toolbar shifted left by the pane's
+ * width and this rule reintroduced it.)
  */
-body.focus-canvas #canvas-toolbar {
-    padding-left: var(--editor-pane-width);
-}
 
 /* --- AI batch confirm-to-apply dialog (Section 15 Phase 1B commit 4b) --- */
 

@@ -648,7 +648,7 @@ function effectiveBeatsPerCycle(obj) {
     const base = obj ? obj.beatsPerCycle : undefined;
     if (typeof base !== "number" || !Number.isFinite(base) || base <= 0) return base;
     const mode = obj.beatPointsMode;
-    if (mode !== "normal" && mode !== "euclidean" && mode !== "auto") return base;
+    if (mode !== "normal" && mode !== "euclidean" && mode !== "auto" && mode !== "strudel") return base;
     const r = Number(obj.repeats);
     const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
     return base * reps;

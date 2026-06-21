@@ -220,6 +220,32 @@
     outline: none;
 }
 
+/* Strudel mode: the full-width, auto-growing mini-notation field. Spans the
+ * sidebar, two lines tall to start, grows as the pattern wraps past two lines.
+ * Keeps the .insp-field frame/colours but overrides the flex/size layout. */
+.insp-pattern-field {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 2.6em;
+    margin-top: 2px;
+    padding: 3px 6px;
+    resize: none;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 10pt;
+    line-height: 1.25;
+    -webkit-appearance: none;
+    appearance: none;
+    outline: none;
+}
+.insp-pattern-field:focus {
+    border-color: #ffffff;
+    outline: none;
+}
+
 /* Wraps a beat-string input so the playing-beat highlight can overlay it. */
 .insp-beat-wrap {
     position: relative;

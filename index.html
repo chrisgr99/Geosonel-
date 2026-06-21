@@ -65,8 +65,38 @@
              Hidden alongside #top-row on Electron. -->
         <div id="top-divider" class="divider-horizontal" aria-hidden="true"></div>
 
-        <!-- Main body: editor left, canvas right, draggable divider between. -->
+        <!-- Main body: canvas left, editor right, draggable divider between.
+             The panes are authored in left-to-right order: canvas pane,
+             body divider, then the editor pane (housing the inspector). -->
         <main id="body">
+            <!-- Canvas pane splits vertically into canvas area on top
+                 and message area below, separated by a draggable
+                 horizontal divider. -->
+            <section id="canvas-pane" aria-label="Canvas">
+                <div id="canvas-toolbar" role="toolbar" aria-label="Object tools">
+                    <!-- Tool buttons rendered by src/toolbar.js. -->
+                </div>
+                <div id="canvas-area">
+                    <!-- HTML canvas element is created by src/canvas.js. -->
+                </div>
+
+                <div id="message-divider" class="divider-horizontal divider-draggable" role="separator" aria-orientation="horizontal" aria-label="Resize canvas and message area" tabindex="0"></div>
+
+                <div id="message-area">
+                    <div class="message-placeholder">(No messages)</div>
+                </div>
+            </section>
+
+            <!-- Draggable vertical divider between canvas and editor.
+                 The editor pane houses the property inspector, whose
+                 widest row sets a hard floor on how narrow the pane
+                 can go (any narrower would clip fields). The divider
+                 honours that floor while letting the user pull the
+                 inspector wider for breathing room; its position is
+                 persisted across sessions. Use View → Hide Inspector
+                 (or Cmd-\) to remove the inspector pane entirely. -->
+            <div id="body-divider" class="divider-vertical divider-draggable" role="separator" aria-orientation="vertical" aria-label="Resize editor and canvas panes" tabindex="0"></div>
+
             <section id="editor-pane" aria-label="Editor">
                 <div class="tab-bar" role="tablist">
                     <!-- Tabs are rendered dynamically from the bundle; see src/editor.js. -->
@@ -105,34 +135,6 @@
                          voice / rhythm style libraries. Hidden by
                          default; becomes visible when the user
                          selects the Styles tab. -->
-                </div>
-            </section>
-
-            <!-- Draggable vertical divider between editor and canvas.
-                 The editor pane houses the property inspector, whose
-                 widest row sets a hard floor on how narrow the pane
-                 can go (any narrower would clip fields). The divider
-                 honours that floor while letting the user pull the
-                 inspector wider for breathing room; its position is
-                 persisted across sessions. Use View → Hide Inspector
-                 (or Cmd-\) to remove the inspector pane entirely. -->
-            <div id="body-divider" class="divider-vertical divider-draggable" role="separator" aria-orientation="vertical" aria-label="Resize editor and canvas panes" tabindex="0"></div>
-
-            <!-- Canvas pane splits vertically into canvas area on top
-                 and message area below, separated by a draggable
-                 horizontal divider. -->
-            <section id="canvas-pane" aria-label="Canvas">
-                <div id="canvas-toolbar" role="toolbar" aria-label="Object tools">
-                    <!-- Tool buttons rendered by src/toolbar.js. -->
-                </div>
-                <div id="canvas-area">
-                    <!-- HTML canvas element is created by src/canvas.js. -->
-                </div>
-
-                <div id="message-divider" class="divider-horizontal divider-draggable" role="separator" aria-orientation="horizontal" aria-label="Resize canvas and message area" tabindex="0"></div>
-
-                <div id="message-area">
-                    <div class="message-placeholder">(No messages)</div>
                 </div>
             </section>
         </main>
