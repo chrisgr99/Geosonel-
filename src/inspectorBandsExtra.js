@@ -302,9 +302,11 @@ export const bandExtraMethods = {
         // fields arrive with the generator in a later milestone.
         const gridMode = mode === "normal" || mode === "euclidean" || mode === "auto";
         const isStrudel = mode === "strudel";
-        // Strudel shares the Beat Interval + Per Cycle row (its cycle length is also
-        // Per Cycle × Beat Interval), but authors with a mini-notation expression
-        // instead of the x/dot grid — no Per Bar, no variation row.
+        // Strudel authors with a mini-notation expression instead of the x/dot
+        // grid, and has no Beat Interval, no Per Bar, no variation row. Its count
+        // unit is FIXED to one master quarter note, so a cycle is just Counts per
+        // Cycle quarter notes long and the path is that × Repeats. Both grid modes
+        // and Strudel share the Counts/Cycle field (Per Cycle for the grid).
         const beatGrid = gridMode || isStrudel;
 
         // Row 1: the mode dropdown, always present. For normal /
@@ -332,8 +334,9 @@ export const bandExtraMethods = {
         }));
 
         // Beat Interval — the note-duration of each beat; with Per Cycle it sets the
-        // cycle length (cycleDurationSeconds), in grid modes AND Strudel. None has no beats.
-        if (beatGrid) {
+        // cycle length (cycleDurationSeconds). Grid modes only: Strudel's count unit
+        // is fixed to one master quarter note, so it carries no Beat Interval field.
+        if (gridMode) {
             const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
             r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildDropdownField({
@@ -347,9 +350,18 @@ export const bandExtraMethods = {
 
         if (beatGrid) {
             // Auto treats Beats/Cycle as the PHRASE length (Repeats lays
-            // multiple phrase instances around the path).
-            r1.appendChild(mkLabel(mode === "auto" ? "Per\nPhrase" : "Per\nCycle", { width: W.beatPerCycleLabel, disabled: !active, multiline: true }));
-            r1.appendChild(this._buildEditableField({
+            // multiple phrase instances around the path). Strudel measures the
+            // cycle's length in quarter notes (its count unit), so its label
+            // spells out "Qtr Notes / Cycle", wrapped before the slash; grid
+            // modes call it "Per Cycle".
+            const perCycleLabel = mode === "auto" ? "Per\nPhrase"
+                : isStrudel ? "Qtr Notes\n/Cycle"
+                : "Per\nCycle";
+            // The spelled-out Strudel label needs more room than the grid modes'
+            // terse stacked "Per / Cycle".
+            const perCycleLabelW = isStrudel ? 62 : W.beatPerCycleLabel;
+            r1.appendChild(mkLabel(perCycleLabel, { width: perCycleLabelW, disabled: !active, multiline: true }));
+            const perCycleField = this._buildEditableField({
                 value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
                 numeric: true,
                 width: W.beatNum,
@@ -358,16 +370,21 @@ export const bandExtraMethods = {
                 editKind: "setBeatsPerCycle",
                 spinStep: 1,
                 selectOnFocus: false,
-            }));
+            });
+            // Strudel's label hugs the field on the right; nudge the field over so
+            // the number doesn't crowd the "/Cycle" text. Grid modes keep the
+            // default row gap.
+            if (isStrudel) perCycleField.style.marginLeft = "8px";
+            r1.appendChild(perCycleField);
         }
-        // Strudel: Sub-Cycles sits on row 1 (tiles the one-cycle mini-notation
-        // pattern N times around the path). Conceptually identical to Repeats in
-        // the grid modes, but Strudel users expect each tiled chunk to be called a
-        // "cycle", so the object's overall cycle subdivides into N sub-cycles. The
-        // two-line label keeps the field from pushing rightward.
+        // Strudel: Repeats sits on row 1. The mini-notation cycle (Counts/Cycle
+        // quarter notes long) is laid end-to-end Repeats times around the path, so
+        // the total path length is Counts/Cycle × Repeats quarter notes. Slice k
+        // samples Strudel cycle k, so cross-cycle operators evolve across the
+        // repeats (see deriveStrudelTiled in beatPoints.js).
         if (isStrudel) {
             const sRepeatsAgg = aggregateString(bpObjs, "repeats");
-            r1.appendChild(mkLabel("Sub\nCycles", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            r1.appendChild(mkLabel("Repeats", { width: W.beatStackLabel, disabled: !active }));
             r1.appendChild(this._buildEditableField({
                 value: sRepeatsAgg === "varies" ? "" : sRepeatsAgg,
                 numeric: true,

@@ -385,14 +385,24 @@ function hapBegin(hap) {
  * to parse, so an unloaded engine simply shows no diamonds for an
  * operator pattern rather than throwing.
  *
+ * The `cycleOffset` is the Strudel cycle that slice 0 samples; slice k samples
+ * cycleOffset + k. At rest / scene-load it is 0 (the path shows cycles
+ * 0..reps-1). The firing path advances it over time — curve loop c passes
+ * cycleOffset = c × reps — so stochastic / cross-cycle operators keep evolving
+ * as the curve loops instead of replaying a frozen first window. A flat
+ * sequence is identical every cycle, so cycleOffset doesn't affect it.
+ *
  * @param {unknown} beatPattern
  * @param {unknown} reps  Sub-Cycles (coerced to an integer >= 1).
+ * @param {unknown} [cycleOffset]  Strudel cycle sampled by slice 0 (default 0).
  * @returns {BeatPoints}
  */
-function deriveStrudelTiled(beatPattern, reps) {
+function deriveStrudelTiled(beatPattern, reps, cycleOffset) {
     const raw = (typeof beatPattern === "string" ? beatPattern : "").trim();
     const r = Number(reps);
     const n = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
+    const o = Number(cycleOffset);
+    const off = Number.isFinite(o) ? Math.floor(o) : 0;
     if (raw === "") return { positions: [], strengths: [], inactivePositions: [] };
 
     /** @type {number[]} */
@@ -430,9 +440,10 @@ function deriveStrudelTiled(beatPattern, reps) {
         return { positions: [], strengths: [], inactivePositions: [] };
     }
     for (let k = 0; k < n; k++) {
+        const cyc = off + k;   // the Strudel cycle this slice samples
         let haps;
         try {
-            haps = pattern.queryArc(k, k + 1);
+            haps = pattern.queryArc(cyc, cyc + 1);
         } catch (err) {
             return {
                 positions: [], strengths: [], inactivePositions: [],
@@ -443,9 +454,9 @@ function deriveStrudelTiled(beatPattern, reps) {
         for (const hap of haps) {
             const begin = hapBegin(hap);
             if (!Number.isFinite(begin)) continue;
-            const frac = begin - k;                  // position within cycle k, [0,1)
+            const frac = begin - cyc;                // position within cycle cyc, [0,1)
             if (!(frac >= 0 && frac < 1)) continue;  // drop events spilling past the cycle
-            positions.push((k + frac) / n);
+            positions.push((k + frac) / n);          // map into spatial slice k
             strengths.push(strengthFromHapValue(hap.value));
         }
     }
@@ -458,10 +469,15 @@ function deriveStrudelTiled(beatPattern, reps) {
  * Derive the beat points of a curve from its Beat Points band
  * fields. The single entry point used by the canvas (drawing) and
  * the simulation (firing).
+ *
+ * `cycleOffset` only affects Strudel mode: it is the Strudel cycle that
+ * slice 0 samples (the firing/draw paths advance it as the curve loops so
+ * stochastic operators keep evolving; default 0 for the at-rest snapshot).
  * @param {any} curve
+ * @param {number} [cycleOffset]  Strudel base cycle (default 0).
  * @returns {BeatPoints}
  */
-export function deriveCurveBeatPoints(curve) {
+export function deriveCurveBeatPoints(curve, cycleOffset) {
     const mode = curve !== null && typeof curve.beatPointsMode === "string"
         ? curve.beatPointsMode
         : "none";
@@ -475,9 +491,10 @@ export function deriveCurveBeatPoints(curve) {
     }
     if (mode === "strudel") {
         // Sub-Cycles (the curve's `repeats`) tiles the mini-notation N times
-        // around the path, sampling Strudel cycle k for slice k so cross-cycle
-        // operators evolve slice to slice rather than freezing on cycle 0.
-        return deriveStrudelTiled(curve.beatPattern, curve.repeats);
+        // around the path; slice k samples Strudel cycle cycleOffset + k so
+        // cross-cycle operators evolve across the slices AND across curve loops
+        // (the firing/draw paths feed an advancing cycleOffset = loop × repeats).
+        return deriveStrudelTiled(curve.beatPattern, curve.repeats, cycleOffset);
     }
     return { positions: [], strengths: [], inactivePositions: [] };
 }

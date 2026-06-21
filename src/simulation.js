@@ -655,6 +655,20 @@ function effectiveBeatsPerCycle(obj) {
 }
 
 /**
+ * The beat-interval token to use for an object's CYCLE DURATION. Strudel mode
+ * has no Beat Interval field: its count unit is fixed to one master quarter
+ * note, so a Strudel cycle is exactly Counts-per-Cycle (its beatsPerCycle)
+ * quarter notes long. Every other mode uses its authored beatInterval token
+ * (cycleDurationSeconds resolves an absent/typo'd token to "Qtr" itself).
+ * @param {any} obj
+ * @returns {any} a beat-interval token string, or the object's raw beatInterval
+ */
+function effectiveBeatInterval(obj) {
+    if (obj && obj.beatPointsMode === "strudel") return DEFAULT_BEAT_INTERVAL;
+    return obj ? obj.beatInterval : undefined;
+}
+
+/**
  * Parse a cycleSpeeds string into an array of numbers.
  * Permissive runtime parser: any malformed input falls back
  * to [1] (the default single-positive-speed list) so a hand-
@@ -1048,6 +1062,12 @@ class CurveRuntimeState {
         this._lastBeatCycle = -1;
         /** @type {number} */
         this._beatNextIdx = 0;
+        // The cycle index _beatFractions were last derived for (Strudel mode
+        // only). Strudel re-derives per cycle so stochastic / cross-cycle
+        // operators advance over time; this guards against re-deriving more than
+        // once per cycle. -1 forces a derive on the first firing tick.
+        /** @type {number} */
+        this._beatDerivedCycle = -1;
     }
 }
 
@@ -2096,6 +2116,32 @@ export class Simulation {
         state._beatFractions = bp.positions;
         state._beatStrengths = bp.strengths;
         state._beatOrder = null;
+        // Force the firing path to re-derive for the live cycle on the next tick
+        // (Strudel advances its Strudel cycle as the curve loops). The offset-0
+        // derivation above is the correct at-rest / cycle-0 snapshot meanwhile.
+        state._beatDerivedCycle = -1;
+    }
+
+    /**
+     * Re-derive a Strudel curve's active beat points for the cycle it is
+     * currently on, so stochastic / cross-cycle operators (?, <a b>, t/2) keep
+     * evolving as the curve loops instead of replaying a frozen first window.
+     * Slice 0 samples Strudel cycle cycleCount × Repeats, so successive loops
+     * march through fresh, non-overlapping Strudel cycles. A no-op when the cycle
+     * hasn't changed since the last derivation, and for non-Strudel modes (whose
+     * beats are fixed at scene load). Cheap: a parse plus one queryArc per slice.
+     * @param {any} curve
+     * @param {CurveRuntimeState} state
+     */
+    _ensureStrudelBeatCycle(curve, state) {
+        if (curve.beatPointsMode !== "strudel") return;
+        if (state._beatDerivedCycle === state.cycleCount) return;
+        const r = Number(curve.repeats);
+        const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
+        const bp = deriveCurveBeatPoints(curve, state.cycleCount * reps);
+        state._beatFractions = bp.positions;
+        state._beatStrengths = bp.strengths;
+        state._beatDerivedCycle = state.cycleCount;
     }
 
     /**
@@ -2230,8 +2276,9 @@ export class Simulation {
         // × the beat interval's quarter-note length.
         const effBPC = effectiveBeatsPerCycle(master);
         if (typeof effBPC !== "number" || !(effBPC > 0)) return globalBeat;
-        const token = (typeof master.beatInterval === "string" && master.beatInterval !== "")
-            ? master.beatInterval : DEFAULT_BEAT_INTERVAL;
+        const mInterval = effectiveBeatInterval(master);
+        const token = (typeof mInterval === "string" && mInterval !== "")
+            ? mInterval : DEFAULT_BEAT_INTERVAL;
         const entry = getBeatIntervalEntry(token);
         const quarters = entry !== null ? entry.quarterNotes : 1;
         const dBeats = effBPC * quarters;
@@ -2302,8 +2349,9 @@ export class Simulation {
         if (mode === undefined || mode === "none") return null;
         const base = Number(master.beatsPerCycle);
         if (!Number.isFinite(base) || base <= 0) return null;
-        const token = (typeof master.beatInterval === "string" && master.beatInterval !== "")
-            ? master.beatInterval : DEFAULT_BEAT_INTERVAL;
+        const mInterval = effectiveBeatInterval(master);
+        const token = (typeof mInterval === "string" && mInterval !== "")
+            ? mInterval : DEFAULT_BEAT_INTERVAL;
         const entry = getBeatIntervalEntry(token);
         const quarters = entry !== null ? entry.quarterNotes : 1;
         const basePatternBeats = base * quarters; // one groove phrase, master-clock beats
@@ -2354,8 +2402,12 @@ export class Simulation {
      * @param {CurveRuntimeState} state
      */
     _detectActiveBeatCrossings(curve, state) {
-        const fractions = state._beatFractions;
-        if (fractions.length === 0) return;
+        // Strudel re-derives its beats per cycle (via _ensureStrudelBeatCycle
+        // below), so a curve whose last-derived cycle had no beats may still
+        // have them this cycle — it can't short-circuit on the stored count the
+        // way the fixed grid modes can.
+        const isStrudel = curve.beatPointsMode === "strudel";
+        if (!isStrudel && state._beatFractions.length === 0) return;
         if (this._scene === null) return;
         if (curve.state !== "active") return;
         if (curve.canActiveBeat !== true) return;
@@ -2368,9 +2420,12 @@ export class Simulation {
 
         const loopLen = cycleSpeedsLoopLength(state.speedList);
         const sign = (loopLen > 0 && state.speedList[state.cycleCount % loopLen] < 0) ? -1 : 1;
-        const total = fractions.length;
 
-        const buildOrder = (s) => fractions
+        // Read fractions/strengths from state at build time, not a captured
+        // snapshot: _ensureStrudelBeatCycle may replace them when the cycle
+        // advances. The beat COUNT can also change cycle to cycle (a degrade
+        // dropping a beat), so the per-fire `total` reads the order's length.
+        const buildOrder = (s) => state._beatFractions
             .map((f, i) => ({
                 g: s < 0 ? 1 - f : f,
                 f,
@@ -2393,6 +2448,7 @@ export class Simulation {
             // fresh for the current cycle with no flush (intermediate
             // cycles' beats are not reconstructed — only possible at
             // an unreachably fast tempo).
+            this._ensureStrudelBeatCycle(curve, state);
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
             state._lastBeatCycle = state.cycleCount;
@@ -2418,11 +2474,13 @@ export class Simulation {
             }
         } else if (state.cycleCount === state._lastBeatCycle + 1) {
             // Single wrap: flush the finishing cycle's pending beats
-            // (all reached by progress 1), then build the new cycle.
+            // (all reached by progress 1) from the OLD order, then
+            // re-derive (Strudel) and build the incoming cycle.
             while (state._beatNextIdx < state._beatOrder.length) {
                 const b = state._beatOrder[state._beatNextIdx++];
-                this._runOnActiveBeat(curve, state, fn, disableKey, b.index, total, b.strength, b.f);
+                this._runOnActiveBeat(curve, state, fn, disableKey, b.index, state._beatOrder.length, b.strength, b.f);
             }
+            this._ensureStrudelBeatCycle(curve, state);
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
             state._lastBeatCycle = state.cycleCount;
@@ -2444,7 +2502,7 @@ export class Simulation {
         const prog = state.cycleProgress;
         while (state._beatNextIdx < order.length && order[state._beatNextIdx].g <= prog) {
             const b = order[state._beatNextIdx++];
-            this._runOnActiveBeat(curve, state, fn, disableKey, b.index, total, b.strength, b.f);
+            this._runOnActiveBeat(curve, state, fn, disableKey, b.index, order.length, b.strength, b.f);
         }
     }
 
@@ -2532,7 +2590,7 @@ export class Simulation {
             const speed = loopLen > 0
                 ? state.speedList[state.cycleCount % loopLen] : 1;
             const baseCycle = cycleDurationSeconds(
-                bpmNum, effectiveBeatsPerCycle(curve), curve.beatInterval);
+                bpmNum, effectiveBeatsPerCycle(curve), effectiveBeatInterval(curve));
             const effectiveCycleTime = (Number.isFinite(speed) && Math.abs(speed) > 0)
                 ? baseCycle / Math.abs(speed) : 0;
             // The just-fired beat's own directional progress (the order is
@@ -2916,7 +2974,7 @@ export class Simulation {
                 const newState = new CurveRuntimeState(c);
                 this._snapNewStateToGrid(
                     newState,
-                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(c), c.beatInterval),
+                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(c), effectiveBeatInterval(c)),
                     true,
                 );
                 this._applyCurveBeatPoints(c, newState);
@@ -2980,7 +3038,7 @@ export class Simulation {
                 const newState = new TriggerRuntimeState();
                 this._snapNewStateToGrid(
                     newState,
-                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(t), t.beatInterval),
+                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(t), effectiveBeatInterval(t)),
                     false,
                 );
                 this._triggerState.set(t.id, newState);
@@ -3002,7 +3060,7 @@ export class Simulation {
                 const newState = new SpriteRuntimeState(s);
                 this._snapNewStateToGrid(
                     newState,
-                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(s), s.beatInterval),
+                    cycleDurationSeconds(bpm, effectiveBeatsPerCycle(s), effectiveBeatInterval(s)),
                     false,
                 );
                 // Scale the launch velocity by the speed entry
@@ -3225,7 +3283,7 @@ export class Simulation {
             const state = this._curveState.get(curve.id);
             if (state === undefined) continue;
             if (state.halted) continue;
-            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(curve), curve.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(curve), effectiveBeatInterval(curve));
             if (cd <= 0) continue;
             if (state._lastCycleDuration <= 0) continue;
             if (state._lastCycleDuration === cd) continue;
@@ -3242,7 +3300,7 @@ export class Simulation {
             if (trigger.state === "disabled") continue;
             const state = this._triggerState.get(trigger.id);
             if (state === undefined) continue;
-            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(trigger), trigger.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(trigger), effectiveBeatInterval(trigger));
             if (cd <= 0) continue;
             if (state._lastCycleDuration <= 0) continue;
             if (state._lastCycleDuration === cd) continue;
@@ -3258,7 +3316,7 @@ export class Simulation {
             if (sprite.state === "disabled") continue;
             const state = this._spriteState.get(sprite.id);
             if (state === undefined) continue;
-            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(sprite), sprite.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(sprite), effectiveBeatInterval(sprite));
             if (cd <= 0) continue;
             if (state._lastCycleDuration <= 0) continue;
             if (state._lastCycleDuration === cd) continue;
@@ -3669,7 +3727,7 @@ export class Simulation {
             if (runOnTick) {
                 this._runCurveOnTick(curve, state, ONTICK_DT, bpm);
             }
-            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(curve), curve.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(curve), effectiveBeatInterval(curve));
             this._stepCurve(curve, state, cd, dt);
         }
         for (const trigger of this._scene.triggers) {
@@ -3679,7 +3737,7 @@ export class Simulation {
             if (trigger.state === "disabled") continue;
             const state = this._triggerState.get(trigger.id);
             if (state === undefined) continue;
-            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(trigger), trigger.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(trigger), effectiveBeatInterval(trigger));
             this._stepTrigger(trigger, state, cd, dt);
         }
         // Sprite physics doesn't read BPM, but the cycle
@@ -5016,7 +5074,7 @@ export class Simulation {
             //    duration is 0 (missing/zero BPM, missing/zero
             //    beatsPerCycle) — physics still runs but the
             //    sprite never wraps.
-            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(sprite), sprite.beatInterval);
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(sprite), effectiveBeatInterval(sprite));
             if (cd <= 0) continue;
             // Timing-edit snap. Mirrors _stepCurve's snap
             // with the cursor and direction branches removed
