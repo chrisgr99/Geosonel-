@@ -276,6 +276,16 @@
     flex-shrink: 0;
     background-color: #6f8f6f;
 }
+/* Playing-token highlight — a translucent box over the currently sounding token
+ * (positioned per-frame by the inspector); the text reads through it. */
+.insp-measure-hl {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+    border-radius: 2px;
+    background-color: rgba(95, 200, 88, 0.40);
+    box-shadow: 0 0 0 1px rgba(95, 200, 88, 0.7);
+}
 
 /* Wraps a beat-string input so the playing-beat highlight can overlay it. */
 .insp-beat-wrap {

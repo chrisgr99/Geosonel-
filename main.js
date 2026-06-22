@@ -475,6 +475,9 @@ async function main() {
     // The single selected beat-points CURVE whose Active Beats field gets the live
     // variation preview (the cycle-under-the-cursor's varied pattern), or null.
     let varyPreviewId = null;
+    // The single selected STRUDEL curve whose measure boxes get the playing-token
+    // highlight, or null. Separate from varyPreviewId (which is grid-mode only).
+    let measureHighlightId = null;
 
     const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, harmonyAreaEl, stylesAreaEl, bundle, {
         onDirtyChange: (dirty) => {
@@ -2092,6 +2095,18 @@ async function main() {
         requestAnimationFrame(tickVaryPreview);
         const insp = editor.inspector;
         if (insp === null || insp === undefined) return;
+
+        // Strudel measure-token highlight (independent of the x/dot vary preview):
+        // light the playing token in its box while a single Strudel curve is
+        // selected and the transport plays. Forward sweep (cursor t).
+        if (measureHighlightId !== null && transport.isPlaying) {
+            const tRaw = simulation.getCurveCursorT(measureHighlightId);
+            const t = (typeof tRaw === "number" && Number.isFinite(tRaw)) ? tRaw : 0;
+            insp.setMeasureTokenHighlight(measureHighlightId, t);
+        } else {
+            insp.clearMeasureTokenHighlight();
+        }
+
         if (varyPreviewId === null || currentScene === null) { insp.clearBeatHighlight(); return; }
         const obj = currentScene.curves.find((c) => c.id === varyPreviewId);
         if (obj === undefined) { insp.clearBeatHighlight(); return; }
@@ -2735,12 +2750,16 @@ async function main() {
         // triggers), in a grid beat-points mode. getCurveCursorT is curve-only, so
         // sprites don't get the field animation (their variation still plays).
         varyPreviewId = null;
+        measureHighlightId = null;
         if (currentScene !== null
             && selection.curves.length === 1
             && selection.sprites.length === 0 && selection.triggers.length === 0) {
             const c = currentScene.curves[selection.curves[0]];
             if (c !== undefined && (c.beatPointsMode === "normal" || c.beatPointsMode === "euclidean" || c.beatPointsMode === "auto")) {
                 varyPreviewId = typeof c.id === "string" ? c.id : null;
+            }
+            if (c !== undefined && c.beatPointsMode === "strudel" && typeof c.id === "string") {
+                measureHighlightId = c.id;
             }
         }
         // Push the same id set into the firing engine's

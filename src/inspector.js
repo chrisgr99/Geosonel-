@@ -316,6 +316,67 @@ export class Inspector {
     }
 
     /**
+     * Light the currently-sounding TOKEN in its measure box (M3 token
+     * highlight). Driven per-frame from main.js with the curve's cursor phase
+     * t; finds the most recent beat (largest position <= t, forward sweep) and
+     * overlays its source span on the box that sources it. Clears when the
+     * object doesn't match the rendered one or no beat is current.
+     * @param {string} objectId
+     * @param {number} t  cursor cycle phase in [0, 1)
+     */
+    setMeasureTokenHighlight(objectId, t) {
+        if (objectId !== this._measureHighlightObjectId
+            || !Array.isArray(this._measurePositions)
+            || !Array.isArray(this._measureSources)
+            || !Array.isArray(this._measureBoxes)) {
+            this.clearMeasureTokenHighlight();
+            return;
+        }
+        const pos = this._measurePositions;
+        let idx = -1;
+        for (let i = 0; i < pos.length; i++) {
+            if (pos[i] <= t) idx = i; else break;
+        }
+        const src = idx >= 0 ? this._measureSources[idx] : null;
+        const box = (src && src.measure >= 0) ? this._measureBoxes[src.measure] : null;
+        if (!box) { this.clearMeasureTokenHighlight(); return; }
+        this._positionMeasureToken(box, src.start, src.end);
+    }
+
+    /** Hide the playing-token highlight. */
+    clearMeasureTokenHighlight() {
+        if (this._measureTokenHl) this._measureTokenHl.style.display = "none";
+    }
+
+    /** Overlay the token highlight on `input`'s chars [start, end), measured with
+     *  the input's own font; the overlay lives in the box's cell (position relative). */
+    _positionMeasureToken(input, start, end) {
+        const cell = input.parentElement;
+        if (!cell) { this.clearMeasureTokenHighlight(); return; }
+        let hl = this._measureTokenHl;
+        if (!hl) {
+            hl = document.createElement("div");
+            hl.className = "insp-measure-hl";
+            this._measureTokenHl = hl;
+        }
+        if (hl.parentElement !== cell) {
+            if (hl.parentElement) hl.parentElement.removeChild(hl);
+            cell.appendChild(hl);
+        }
+        const value = input.value;
+        const cs = getComputedStyle(input);
+        const ctx = beatMeasureCtx();
+        ctx.font = (cs.font && cs.font !== "") ? cs.font : `${cs.fontSize} ${cs.fontFamily}`;
+        const pre = ctx.measureText(value.slice(0, Math.max(0, start))).width;
+        const w = ctx.measureText(value.slice(Math.max(0, start), Math.min(end, value.length))).width;
+        hl.style.left = `${input.offsetLeft + pre}px`;
+        hl.style.top = `${input.offsetTop}px`;
+        hl.style.width = `${Math.max(2, w)}px`;
+        hl.style.height = `${input.offsetHeight}px`;
+        hl.style.display = "block";
+    }
+
+    /**
      * Update the inspector's reference to the runtime Scene.
      * Called by main.js after each successful scene reload.
      * Triggers a re-render so currently-displayed Band 1
@@ -474,6 +535,12 @@ export class Inspector {
         this._activeBeatsHighlight = null;
         this._beatStrengthField = null;
         this._beatStrengthHighlight = null;
+        // Strudel measure-box token highlight refs (re-captured by the Rhythm
+        // band for a single selected object); the overlay element is reused.
+        this._measureBoxes = null;
+        this._measurePositions = null;
+        this._measureSources = null;
+        this._measureHighlightObjectId = null;
 
         // A rebuild destroys the Object ID picker's trigger (and orphans
         // any open popup), so clear any in-flight preview highlight it set

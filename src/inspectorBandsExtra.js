@@ -32,7 +32,7 @@ import {
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 import { listStyles } from "./styleStore.js";
 import { getBankSoundNames } from "./drumMachineSounds.js";
-import { splitMeasures, resolveMeasures } from "./beatPoints.js";
+import { splitMeasures, resolveMeasures, deriveCurveBeatPoints } from "./beatPoints.js";
 
 /** Wrap a beat-string input in a positioned span carrying the playing-beat
  *  highlight overlay, so the box can sit over the cell under the cursor. */
@@ -627,6 +627,18 @@ export const bandExtraMethods = {
                 fieldEl.appendChild(cell);
             }
             band.appendChild(fieldEl);
+
+            // Playing-token highlight wiring (M3): for a SINGLE selected object,
+            // stash the boxes plus its derived beat positions + per-beat source
+            // spans, so the per-frame driver (main.js) can light the currently
+            // sounding token in its source box. Reset each render below.
+            this._measureBoxes = inputs;
+            if (active && bpObjs.length === 1 && typeof bpObjs[0].id === "string") {
+                const bp = deriveCurveBeatPoints(bpObjs[0]);
+                this._measurePositions = bp.positions;
+                this._measureSources = bp.sources || null;
+                this._measureHighlightObjectId = bpObjs[0].id;
+            }
         }
 
         return band;

@@ -62,6 +62,22 @@ test("a ~ measure is a silent bar (no beats placed in its slice)", () => {
     assert.ok(r.positions.every((p) => p < 1 / 3 || p >= 2 / 3));
 });
 
+test("token sources: each beat maps to its source box + char span", () => {
+    const r = deriveCurveBeatPoints(strudel("9 ~ 5 | 7 5", 2, 1));
+    assert.deepEqual(r.sources, [
+        { measure: 0, start: 0, end: 1 },   // "9"
+        { measure: 0, start: 4, end: 5 },   // "5" (the ~ at 2 is skipped)
+        { measure: 1, start: 0, end: 1 },   // "7"
+        { measure: 1, start: 2, end: 3 },   // "5"
+    ]);
+});
+
+test("token sources: an inherited bar sources the FILLED box it repeats", () => {
+    const r = deriveCurveBeatPoints(strudel("9 5 |", 2, 1));   // bar 2 inherits bar 1
+    assert.equal(r.sources.length, 4);
+    assert.ok(r.sources.every((s) => s && s.measure === 0));    // all light box 0
+});
+
 test("mode none yields no beat points", () => {
     const r = deriveCurveBeatPoints(curve({ beatPointsMode: "none", activeBeats: "x.x." }));
     assert.deepEqual(r.positions, []);

@@ -59,8 +59,13 @@ const DEFAULT_STRENGTH = 9;
  *   positions: number[],
  *   strengths: number[],
  *   inactivePositions: number[],
+ *   sources?: Array<{measure: number, start: number, end: number} | null>,
  *   error?: string,
  * }} BeatPoints
+ *
+ * `sources` (Strudel measure mode only) is index-aligned with `positions`: each
+ * is the source box index + character span within that box's pattern that
+ * produced the beat, for the playing-token highlight (null when unknown).
  *
  * `positions` / `strengths` are the ACTIVE beats (an "x" slot, or a
  * Strudel strength token), index-aligned; these fire onActiveBeat
@@ -401,13 +406,50 @@ export function resolveMeasures(segments, M) {
     return out;
 }
 
+/**
+ * The character span of each ACTIVE token in a flat pattern (whitespace-split,
+ * "~" rests skipped), index-aligned with deriveFlatSequence's positions — so a
+ * beat point can be mapped back to the token in its measure box that produced it.
+ * @param {string} raw  a trimmed flat pattern
+ * @returns {Array<{start: number, end: number}>}
+ */
+function flatActiveSpans(raw) {
+    /** @type {Array<{start: number, end: number}>} */
+    const spans = [];
+    const re = /\S+/g;
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+        if (m[0] === "~") continue;   // a rest is inactive, no active position
+        spans.push({ start: m.index, end: m.index + m[0].length });
+    }
+    return spans;
+}
+
+/**
+ * The source character span of a Strudel hap within its measure pattern, from
+ * the mini-notation location the parser attaches. Offsets come back relative to
+ * the QUOTED string (0 = the opening quote), so shift by -1 to land within the
+ * pattern. Null when the hap carries no location.
+ * @param {any} hap
+ * @returns {{start: number, end: number} | null}
+ */
+function hapLoc(hap) {
+    const locs = (hap && hap.context && Array.isArray(hap.context.locations))
+        ? hap.context.locations : null;
+    if (!locs || locs.length === 0 || locs[0] === null || typeof locs[0] !== "object") return null;
+    const start = Number(locs[0].start);
+    const end = Number(locs[0].end);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return { start: Math.max(0, start - 1), end: Math.max(0, end - 1) };
+}
+
 /** Compile one measure pattern to a reusable form (cached per distinct string).
- *  @param {string} p @returns {{kind:string, flat?:any, pattern?:any, error?:string}} */
+ *  @param {string} p @returns {{kind:string, flat?:any, spans?:any, pattern?:any, error?:string}} */
 function compileMeasure(p) {
     const t = p.trim();
     if (t === "") return { kind: "empty" };
     const flat = deriveFlatSequence(t);
-    if (flat !== null) return { kind: "flat", flat };
+    if (flat !== null) return { kind: "flat", flat, spans: flatActiveSpans(t) };
     const result = parsePatternToPositions(`s(${JSON.stringify(t)})`);
     if (!result.ok) return { kind: "error", error: result.error };
     if (result.pattern !== null && typeof result.pattern.queryArc === "function") {
@@ -443,7 +485,21 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
     const R = Number.isFinite(rR) && rR >= 1 ? Math.floor(rR) : 1;
     const slices = M * R;
 
-    const resolved = resolveMeasures(splitMeasures(raw), M);
+    // Resolve fill-down AND track which box index SOURCES each measure (the
+    // filled box a measure inherits from), so the playing-token highlight lights
+    // the source box during an inherited bar. -1 = a rest (nothing to source).
+    const segs = splitMeasures(raw);
+    /** @type {string[]} */ const resolved = [];
+    /** @type {number[]} */ const sourceBox = [];
+    let last = "";
+    let lastBox = -1;
+    for (let i = 0; i < M; i++) {
+        const seg = i < segs.length ? segs[i] : "";
+        if (seg !== "") { last = seg; lastBox = i; }
+        resolved.push(seg !== "" ? seg : last);
+        sourceBox.push(seg !== "" ? i : lastBox);
+    }
+
     /** @type {Map<string, any>} */
     const cache = new Map();
     const compile = (p) => {
@@ -454,16 +510,22 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
     /** @type {number[]} */ const positions = [];
     /** @type {number[]} */ const strengths = [];
     /** @type {number[]} */ const inactivePositions = [];
+    /** @type {Array<{measure: number, start: number, end: number} | null>} */
+    const sources = [];
     /** @type {string|undefined} */ let error;
 
     for (let s = 0; s < slices; s++) {
-        const c = compile(resolved[s % M]);
+        const mi = s % M;
+        const box = sourceBox[mi];   // source box index for this measure's pattern
+        const c = compile(resolved[mi]);
         const base = s / slices;
         const span = 1 / slices;
         if (c.kind === "flat") {
             for (let i = 0; i < c.flat.positions.length; i++) {
                 positions.push(base + c.flat.positions[i] * span);
                 strengths.push(c.flat.strengths[i]);
+                const sp = c.spans[i];
+                sources.push(sp ? { measure: box, start: sp.start, end: sp.end } : null);
             }
             for (let i = 0; i < c.flat.inactivePositions.length; i++) {
                 inactivePositions.push(base + c.flat.inactivePositions[i] * span);
@@ -484,6 +546,8 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
                 if (!(frac >= 0 && frac < 1)) continue;
                 positions.push(base + frac * span);
                 strengths.push(strengthFromHapValue(hap.value));
+                const loc = hapLoc(hap);
+                sources.push(loc ? { measure: box, start: loc.start, end: loc.end } : null);
             }
         } else if (c.kind === "error") {
             error = c.error;
@@ -491,7 +555,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
         // "empty" → a rest measure, nothing placed.
     }
     /** @type {BeatPoints} */
-    const out = { positions, strengths, inactivePositions };
+    const out = { positions, strengths, inactivePositions, sources };
     if (error !== undefined && positions.length === 0) out.error = error;
     return out;
 }
