@@ -356,145 +356,171 @@ function hapBegin(hap) {
     return NaN;
 }
 
+/** Opening/closing mini-notation grouping chars — `|` inside any of these is
+ *  a Strudel operator (random choice), NOT a measure divider. */
+const GROUP_OPEN = "[<({";
+const GROUP_CLOSE = "]>)}";
+
 /**
- * Derive positions + strengths from a Strudel mini-notation
- * beatPattern, tiled across `reps` SUB-CYCLES around the path.
+ * Split a beatPattern into its measure segments on the top-level `|` bar line,
+ * bracket-depth-aware so a `[a|b]` random-choice INSIDE a measure survives.
+ * Segments are trimmed; an empty segment is an empty (inheriting) measure.
+ * @param {string} raw
+ * @returns {string[]}
+ */
+export function splitMeasures(raw) {
+    const out = [];
+    let depth = 0;
+    let cur = "";
+    for (const ch of raw) {
+        if (GROUP_OPEN.includes(ch)) depth++;
+        else if (GROUP_CLOSE.includes(ch)) depth = Math.max(0, depth - 1);
+        if (ch === "|" && depth === 0) { out.push(cur.trim()); cur = ""; }
+        else cur += ch;
+    }
+    out.push(cur.trim());
+    return out;
+}
+
+/**
+ * Resolve the first `M` measures with FILL-DOWN: an empty measure inherits the
+ * nearest non-empty measure to its left; a leading empty (nothing to inherit)
+ * is a rest. Returns exactly M patterns ("" = rest).
+ * @param {string[]} segments
+ * @param {number} M
+ * @returns {string[]}
+ */
+export function resolveMeasures(segments, M) {
+    const out = [];
+    let last = "";
+    for (let i = 0; i < M; i++) {
+        const seg = i < segments.length ? segments[i] : "";
+        if (seg !== "") last = seg;
+        out.push(seg !== "" ? seg : last);
+    }
+    return out;
+}
+
+/** Compile one measure pattern to a reusable form (cached per distinct string).
+ *  @param {string} p @returns {{kind:string, flat?:any, pattern?:any, error?:string}} */
+function compileMeasure(p) {
+    const t = p.trim();
+    if (t === "") return { kind: "empty" };
+    const flat = deriveFlatSequence(t);
+    if (flat !== null) return { kind: "flat", flat };
+    const result = parsePatternToPositions(`s(${JSON.stringify(t)})`);
+    if (!result.ok) return { kind: "error", error: result.error };
+    if (result.pattern !== null && typeof result.pattern.queryArc === "function") {
+        return { kind: "pattern", pattern: result.pattern };
+    }
+    return { kind: "empty" };
+}
+
+/**
+ * Derive positions + strengths from a measure-based beatPattern.
  *
- * Each sub-cycle k samples the pattern at Strudel CYCLE k — not always
- * cycle 0 — so cross-cycle modifiers evolve from one sub-cycle to the
- * next instead of repeating a frozen first-cycle snapshot: `<a b>`
- * alternates, `t/2` (slow) plays only every other sub-cycle, `t?`
- * (degrade) re-rolls its drops. Sub-Cycles is therefore the period over
- * which such patterns vary before the path loops; bump it to give the
- * variation room (a `t/2` needs Sub-Cycles ≥ 2 to ever show its OFF
- * cycle).
+ * The pattern is `M` measures (split on the top-level `|`), each a short Strudel
+ * mini-notation cycle, laid `R` times (Repeats) around the path — so the path
+ * holds `M × R` slices. Slice `s` takes measure `s mod M` (the phrase tiles) and
+ * samples it at Strudel cycle `s`, so stochastic / alternating operators (`?`,
+ * `<a b>`, `t/2`) differ across the M·R slices of one trip around the path. The
+ * whole array is baked once and the cursor loops it, so the groove RESETS each
+ * loop (reproducible, rewind-safe). Empty measures fill down (see
+ * resolveMeasures); a flat (operator-free) measure places engine-free, an
+ * operator measure goes through the real Strudel parser (empty + error-bearing
+ * when the engine isn't loaded).
  *
- * A FLAT space-separated sequence (no mini-notation operators) is
- * identical every cycle, so it is placed natively by deriveFlatSequence
- * — engine-free, so simple patterns like "x x x x" or "0 3 ~ 9" work the
- * instant they are typed — and tiled unchanged.
- *
- * An operator pattern ([] grouping, * speed, <> alternation, (k,n)
- * euclidean, …) is parsed ONCE via the real Strudel parser (the raw
- * mini-notation wrapped in s("...") so arbitrary tokens parse
- * uniformly); each sub-cycle is then read with a fresh queryArc(k, k+1)
- * against the compiled Pattern, and only the event BEGINS and their
- * tokens are used (the pattern is never played as samples). Rests ("~")
- * produce no hap and drop out. The parse returns empty (carrying the
- * error string) when the engine is not loaded or the expression fails
- * to parse, so an unloaded engine simply shows no diamonds for an
- * operator pattern rather than throwing.
- *
- * The `cycleOffset` is the Strudel cycle that slice 0 samples; slice k samples
- * cycleOffset + k. At rest / scene-load it is 0 (the path shows cycles
- * 0..reps-1). The firing path advances it over time — curve loop c passes
- * cycleOffset = c × reps — so stochastic / cross-cycle operators keep evolving
- * as the curve loops instead of replaying a frozen first window. A flat
- * sequence is identical every cycle, so cycleOffset doesn't affect it.
- *
- * @param {unknown} beatPattern
- * @param {unknown} reps  Sub-Cycles (coerced to an integer >= 1).
- * @param {unknown} [cycleOffset]  Strudel cycle sampled by slice 0 (default 0).
+ * @param {unknown} beatPattern  the `|`-joined measure string.
+ * @param {unknown} measures     phrase length M (coerced to an integer >= 1).
+ * @param {unknown} repeats      phrase tilings R (coerced to an integer >= 1).
  * @returns {BeatPoints}
  */
-function deriveStrudelTiled(beatPattern, reps, cycleOffset) {
-    const raw = (typeof beatPattern === "string" ? beatPattern : "").trim();
-    const r = Number(reps);
-    const n = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
-    const o = Number(cycleOffset);
-    const off = Number.isFinite(o) ? Math.floor(o) : 0;
-    if (raw === "") return { positions: [], strengths: [], inactivePositions: [] };
+function deriveStrudelMeasures(beatPattern, measures, repeats) {
+    const raw = typeof beatPattern === "string" ? beatPattern : "";
+    const mM = Number(measures);
+    const M = Number.isFinite(mM) && mM >= 1 ? Math.floor(mM) : 1;
+    const rR = Number(repeats);
+    const R = Number.isFinite(rR) && rR >= 1 ? Math.floor(rR) : 1;
+    const slices = M * R;
 
-    /** @type {number[]} */
-    const positions = [];
-    /** @type {number[]} */
-    const strengths = [];
-    /** @type {number[]} */
-    const inactivePositions = [];
+    const resolved = resolveMeasures(splitMeasures(raw), M);
+    /** @type {Map<string, any>} */
+    const cache = new Map();
+    const compile = (p) => {
+        if (!cache.has(p)) cache.set(p, compileMeasure(p));
+        return cache.get(p);
+    };
 
-    // Flat sequence: no operators, so every cycle is identical. Place it
-    // natively once and tile that placement into each of the n slices.
-    const flat = deriveFlatSequence(raw);
-    if (flat !== null) {
-        for (let k = 0; k < n; k++) {
-            for (let i = 0; i < flat.positions.length; i++) {
-                positions.push((k + flat.positions[i]) / n);
-                strengths.push(flat.strengths[i]);
+    /** @type {number[]} */ const positions = [];
+    /** @type {number[]} */ const strengths = [];
+    /** @type {number[]} */ const inactivePositions = [];
+    /** @type {string|undefined} */ let error;
+
+    for (let s = 0; s < slices; s++) {
+        const c = compile(resolved[s % M]);
+        const base = s / slices;
+        const span = 1 / slices;
+        if (c.kind === "flat") {
+            for (let i = 0; i < c.flat.positions.length; i++) {
+                positions.push(base + c.flat.positions[i] * span);
+                strengths.push(c.flat.strengths[i]);
             }
-            for (let i = 0; i < flat.inactivePositions.length; i++) {
-                inactivePositions.push((k + flat.inactivePositions[i]) / n);
+            for (let i = 0; i < c.flat.inactivePositions.length; i++) {
+                inactivePositions.push(base + c.flat.inactivePositions[i] * span);
             }
+        } else if (c.kind === "pattern") {
+            let haps;
+            try {
+                haps = c.pattern.queryArc(s, s + 1);   // sample Strudel cycle s
+            } catch (err) {
+                error = err instanceof Error ? err.message : String(err);
+                continue;
+            }
+            if (!Array.isArray(haps)) continue;
+            for (const hap of haps) {
+                const begin = hapBegin(hap);
+                if (!Number.isFinite(begin)) continue;
+                const frac = begin - s;                  // within cycle s, [0,1)
+                if (!(frac >= 0 && frac < 1)) continue;
+                positions.push(base + frac * span);
+                strengths.push(strengthFromHapValue(hap.value));
+            }
+        } else if (c.kind === "error") {
+            error = c.error;
         }
-        return { positions, strengths, inactivePositions };
+        // "empty" → a rest measure, nothing placed.
     }
-
-    // Operator pattern: parse once, then sample each sub-cycle at its own
-    // Strudel cycle so cross-cycle modifiers advance across the slices.
-    const expr = `s(${JSON.stringify(raw)})`;
-    const result = parsePatternToPositions(expr);
-    if (!result.ok) {
-        return { positions: [], strengths: [], inactivePositions: [], error: result.error };
-    }
-    const pattern = result.pattern;
-    if (pattern === null || typeof pattern.queryArc !== "function") {
-        return { positions: [], strengths: [], inactivePositions: [] };
-    }
-    for (let k = 0; k < n; k++) {
-        const cyc = off + k;   // the Strudel cycle this slice samples
-        let haps;
-        try {
-            haps = pattern.queryArc(cyc, cyc + 1);
-        } catch (err) {
-            return {
-                positions: [], strengths: [], inactivePositions: [],
-                error: err instanceof Error ? err.message : String(err),
-            };
-        }
-        if (!Array.isArray(haps)) continue;
-        for (const hap of haps) {
-            const begin = hapBegin(hap);
-            if (!Number.isFinite(begin)) continue;
-            const frac = begin - cyc;                // position within cycle cyc, [0,1)
-            if (!(frac >= 0 && frac < 1)) continue;  // drop events spilling past the cycle
-            positions.push((k + frac) / n);          // map into spatial slice k
-            strengths.push(strengthFromHapValue(hap.value));
-        }
-    }
-    // Operator patterns expose only events, not rests, so there are
-    // no inactive positions to draw.
-    return { positions, strengths, inactivePositions };
+    /** @type {BeatPoints} */
+    const out = { positions, strengths, inactivePositions };
+    if (error !== undefined && positions.length === 0) out.error = error;
+    return out;
 }
 
 /**
  * Derive the beat points of a curve from its Beat Points band
  * fields. The single entry point used by the canvas (drawing) and
- * the simulation (firing).
- *
- * `cycleOffset` only affects Strudel mode: it is the Strudel cycle that
- * slice 0 samples (the firing/draw paths advance it as the curve loops so
- * stochastic operators keep evolving; default 0 for the at-rest snapshot).
+ * the simulation (firing). The result is fixed for the object — it bakes the
+ * whole `Measures × Repeats` phrase once and loops it (the groove resets each
+ * path loop), so no per-cycle re-derivation is needed.
  * @param {any} curve
- * @param {number} [cycleOffset]  Strudel base cycle (default 0).
  * @returns {BeatPoints}
  */
-export function deriveCurveBeatPoints(curve, cycleOffset) {
+export function deriveCurveBeatPoints(curve) {
     const mode = curve !== null && typeof curve.beatPointsMode === "string"
         ? curve.beatPointsMode
         : "none";
     if (mode === "normal" || mode === "auto" || mode === "euclidean") {
-        // Manual, Auto, and Euclidean all play their (possibly generated)
-        // activeBeats/strength through one looped derivation, with Repeats
-        // multiplying the beat-point count.
+        // Legacy grid modes (deprecated, no inspector UI): one looped derivation,
+        // with Repeats multiplying the beat-point count.
         return deriveNormalLooped(
             curve.activeBeats, curve.strength, curve.beatsPerCycle, curve.repeats,
             curve.vary, curve.varySeed, curve.beatsPerBar);
     }
     if (mode === "strudel") {
-        // Sub-Cycles (the curve's `repeats`) tiles the mini-notation N times
-        // around the path; slice k samples Strudel cycle cycleOffset + k so
-        // cross-cycle operators evolve across the slices AND across curve loops
-        // (the firing/draw paths feed an advancing cycleOffset = loop × repeats).
-        return deriveStrudelTiled(curve.beatPattern, curve.repeats, cycleOffset);
+        // Measure-based phrase: M measures × R repeats around the path; slice s
+        // takes measure (s mod M) sampled at Strudel cycle s (see
+        // deriveStrudelMeasures and design/measure-patterns.md).
+        return deriveStrudelMeasures(curve.beatPattern, curve.measures, curve.repeats);
     }
     return { positions: [], strengths: [], inactivePositions: [] };
 }

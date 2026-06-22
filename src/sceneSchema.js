@@ -138,6 +138,12 @@ const CALLBACK_SLOT_FIELDS = [
     // replacing the activeBeats / strength strings. Parsed for
     // positions at firing time (later stage); just stored here.
     { key: "beatPattern", label: "Beat Pattern", type: "string", default: "" },
+    // Measure-based phrase (beatPointsMode === "strudel"): the beatPattern is
+    // split on the top-level `|` into measures; `measures` is how many of those
+    // measures the phrase spans (the box count). Each measure is one master-meter
+    // bar; the cycle length is measures × master-beats × repeats quarter notes
+    // (so beatsPerCycle is derived, not authored). See design/measure-patterns.md.
+    { key: "measures", label: "Measures", type: "integer", default: 1, min: 1 },
     // Strudel cycle length (beatPointsMode === "strudel"): the span
     // the one-cycle mini-notation pattern maps across, given as a
     // note-duration token times an integer count

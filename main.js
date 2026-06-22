@@ -159,6 +159,7 @@ import {
     setActiveBeatsCountOnSelection,
     setBeatShiftOnSelection,
     setRepeatsOnSelection,
+    setMeasuresOnSelection,
     setVaryOnSelection,
     setVarySeedOnSelection,
     setVariabilityOnSelection,
@@ -4320,6 +4321,10 @@ async function main() {
             } else if (edit.kind === "setRepeats") {
                 await applySceneEdit((data) =>
                     setRepeatsOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setMeasures") {
+                await applySceneEdit((data) =>
+                    setMeasuresOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setVary") {
                 await applySceneEdit((data) =>

@@ -12,11 +12,55 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveCurveBeatPoints } from "../src/beatPoints.js";
+import { deriveCurveBeatPoints, splitMeasures, resolveMeasures } from "../src/beatPoints.js";
 
 function curve(fields) {
     return { id: "CRV1", beatPointsMode: "normal", activeBeats: "", strength: "", beatPattern: "", ...fields };
 }
+
+/** A strudel measure-pattern curve; flat patterns (digits/~) derive offline. */
+function strudel(beatPattern, measures, repeats) {
+    return { id: "CRV1", beatPointsMode: "strudel", beatPattern, measures, repeats };
+}
+
+test("splitMeasures: top-level | splits, bracket | survives", () => {
+    assert.deepEqual(splitMeasures("9 5 | 7 5"), ["9 5", "7 5"]);
+    assert.deepEqual(splitMeasures("9 [5|7] | 3 5"), ["9 [5|7]", "3 5"]);
+    assert.deepEqual(splitMeasures("9 5 ||~ 9|"), ["9 5", "", "~ 9", ""]);
+});
+
+test("resolveMeasures: empty box inherits the nearest filled box to its left", () => {
+    assert.deepEqual(resolveMeasures(splitMeasures("9 5 ||~ 9|"), 4), ["9 5", "9 5", "~ 9", "~ 9"]);
+    // A leading empty has nothing to inherit → a rest ("").
+    assert.deepEqual(resolveMeasures(splitMeasures("| 7 5"), 2), ["", "7 5"]);
+    // Fewer segments than M: the tail inherits the last filled.
+    assert.deepEqual(resolveMeasures(["9"], 3), ["9", "9", "9"]);
+});
+
+test("two measures: each fills its own half of the path", () => {
+    const r = deriveCurveBeatPoints(strudel("9 5 | 7 5", 2, 1));
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
+    assert.deepEqual(r.strengths, [9, 5, 7, 5]);
+});
+
+test("repeats tiles the whole phrase around the path", () => {
+    // 1-measure phrase × 2 repeats = the bar twice.
+    const r = deriveCurveBeatPoints(strudel("9 5", 1, 2));
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);
+    assert.deepEqual(r.strengths, [9, 5, 9, 5]);
+});
+
+test("fill-down: an empty measure repeats the previous bar", () => {
+    const r = deriveCurveBeatPoints(strudel("9 5 |", 2, 1));   // bar 2 empty → inherits bar 1
+    assert.deepEqual(r.strengths, [9, 5, 9, 5]);
+});
+
+test("a ~ measure is a silent bar (no beats placed in its slice)", () => {
+    const r = deriveCurveBeatPoints(strudel("9 5 | ~ | 7 5", 3, 1));
+    // bar 1 in [0, 1/3), bar 2 (~) silent, bar 3 in [2/3, 1).
+    assert.deepEqual(r.strengths, [9, 5, 7, 5]);
+    assert.ok(r.positions.every((p) => p < 1 / 3 || p >= 2 / 3));
+});
 
 test("mode none yields no beat points", () => {
     const r = deriveCurveBeatPoints(curve({ beatPointsMode: "none", activeBeats: "x.x." }));

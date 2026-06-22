@@ -327,20 +327,6 @@ export class Canvas {
         this._curveInactiveBeatPositions = new Map();
 
         /**
-         * The cycle index each Strudel curve's marker cache was last
-         * derived for, keyed by curve id. Strudel beat points advance
-         * their Strudel cycle as the curve loops (stochastic / cross-
-         * cycle operators keep evolving), so the draw path re-derives a
-         * Strudel curve's diamonds whenever its live cycleCount changes
-         * — this map guards that re-derivation to once per cycle rather
-         * than once per frame. Cleared on every _refreshCurveMarkerPositions
-         * so a scene reload re-derives against the live cycle. Non-Strudel
-         * curves never appear here (their markers are fixed at scene load).
-         * @type {Map<string, number>}
-         */
-        this._curveMarkerCycle = new Map();
-
-        /**
          * Transport reference. Used to subscribe to the
          * play and rewind events so the canvas can run a
          * continuous render loop during playback and

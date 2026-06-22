@@ -216,7 +216,6 @@ export const renderMethods = {
 
     _drawScene() {
         if (this._scene === null) return;
-        this._refreshStrudelMarkersForLiveCycle();
         this._drawCurves();
         this._drawTriggers();
         this._drawSprites();
@@ -463,10 +462,6 @@ export const renderMethods = {
         this._curveMarkerValues.clear();
         this._curveBeatStrengths.clear();
         this._curveInactiveBeatPositions.clear();
-        // Drop the per-cycle derivation guard so a Strudel curve re-derives
-        // against its live cycle on the next draw (a mid-playback reload may
-        // land on a cycle other than 0).
-        this._curveMarkerCycle.clear();
         if (this._scene === null) return;
         for (const curve of this._scene.curves) {
             if (typeof curve.id !== "string" || curve.id.length === 0) continue;
@@ -478,43 +473,6 @@ export const renderMethods = {
             if (inactivePositions.length > 0) {
                 this._curveInactiveBeatPositions.set(curve.id, inactivePositions);
             }
-        }
-    },
-
-    /**
-     * Advance each Strudel curve's marker cache to the cycle it is currently
-     * playing, so the on-curve diamonds blink in lockstep with what the firing
-     * path plays (degrade drops/keeps, alternation, slow). Slice 0 samples
-     * Strudel cycle cycleCount × Repeats — identical to the firing derivation
-     * (deterministic queryArc), so the diamonds and the audio agree. Runs once
-     * per cycle per curve (guarded by _curveMarkerCycle), not per frame; a no-op
-     * before the simulation is wired and for non-Strudel curves.
-     */
-    _refreshStrudelMarkersForLiveCycle() {
-        if (this._scene === null || this._simulation === null) return;
-        for (const curve of this._scene.curves) {
-            if (typeof curve.id !== "string" || curve.id.length === 0) continue;
-            if (curve.beatPointsMode !== "strudel") continue;
-            const cyc = this._simulation.getCurveCycleState(curve.id);
-            if (cyc === null) continue;
-            if (this._curveMarkerCycle.get(curve.id) === cyc.cycleCount) continue;
-            const r = Number(curve.repeats);
-            const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
-            const { positions, strengths, inactivePositions } =
-                deriveCurveBeatPoints(curve, cyc.cycleCount * reps);
-            if (positions.length > 0) {
-                this._curveMarkerPositions.set(curve.id, positions);
-                this._curveBeatStrengths.set(curve.id, strengths);
-            } else {
-                this._curveMarkerPositions.delete(curve.id);
-                this._curveBeatStrengths.delete(curve.id);
-            }
-            if (inactivePositions.length > 0) {
-                this._curveInactiveBeatPositions.set(curve.id, inactivePositions);
-            } else {
-                this._curveInactiveBeatPositions.delete(curve.id);
-            }
-            this._curveMarkerCycle.set(curve.id, cyc.cycleCount);
         }
     },
 

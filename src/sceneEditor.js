@@ -2148,6 +2148,16 @@ export function setRepeatsOnSelection(data, selection, value) {
     regenerateAndRebarForSelection(data, selection);
 }
 
+/** Set the Measures count (Strudel phrase length, Band 5) across the selection,
+ *  clamped to an integer >= 1. The number of measure-bars the beatPattern spans;
+ *  the cycle length derives from it (measures × master-beats × repeats). */
+export function setMeasuresOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (Number.isFinite(n)) {
+        setFieldOnSelection(data, selection, "measures", Math.max(1, Math.round(n)));
+    }
+}
+
 /** Set the variation amount — the MAX notes flipped per cycle (a non-negative
  *  integer). Does NOT regenerate or re-bar the stored pattern — the variation is
  *  applied at beat-point DERIVATION time (per cycle), so the authored `activeBeats`

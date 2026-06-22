@@ -662,6 +662,31 @@ function effectiveBeatsPerCycle(obj) {
 }
 
 /**
+ * Set each Strudel object's beatsPerCycle from the master meter:
+ * beatsPerCycle = measures × master-beats-per-measure. The cycle duration is
+ * then beatsPerCycle × repeats quarter notes (effectiveBeatsPerCycle), so a phrase
+ * is measures × repeats master-bars long. Called from setScene; the master beats
+ * is the scene time-signature numerator (default 4). Quarter-note beats only.
+ * @param {any} scene
+ */
+function deriveStrudelCycleLengths(scene) {
+    if (scene === null || typeof scene !== "object") return;
+    const ts = Array.isArray(scene.timeSignature) ? Number(scene.timeSignature[0]) : NaN;
+    const masterBeats = (Number.isFinite(ts) && ts >= 1) ? Math.floor(ts) : 4;
+    const groups = [scene.curves, scene.sprites, scene.triggers];
+    for (const group of groups) {
+        if (!Array.isArray(group)) continue;
+        for (const obj of group) {
+            if (obj && obj.beatPointsMode === "strudel") {
+                const m = Number(obj.measures);
+                const M = (Number.isFinite(m) && m >= 1) ? Math.floor(m) : 1;
+                obj.beatsPerCycle = M * masterBeats;
+            }
+        }
+    }
+}
+
+/**
  * The beat-interval token to use for an object's CYCLE DURATION. Strudel mode
  * has no Beat Interval field: its count unit is fixed to one master quarter
  * note, so a Strudel cycle is exactly Counts-per-Cycle (its beatsPerCycle)
@@ -1069,12 +1094,6 @@ class CurveRuntimeState {
         this._lastBeatCycle = -1;
         /** @type {number} */
         this._beatNextIdx = 0;
-        // The cycle index _beatFractions were last derived for (Strudel mode
-        // only). Strudel re-derives per cycle so stochastic / cross-cycle
-        // operators advance over time; this guards against re-deriving more than
-        // once per cycle. -1 forces a derive on the first firing tick.
-        /** @type {number} */
-        this._beatDerivedCycle = -1;
     }
 }
 
@@ -2169,32 +2188,6 @@ export class Simulation {
         state._beatFractions = bp.positions;
         state._beatStrengths = bp.strengths;
         state._beatOrder = null;
-        // Force the firing path to re-derive for the live cycle on the next tick
-        // (Strudel advances its Strudel cycle as the curve loops). The offset-0
-        // derivation above is the correct at-rest / cycle-0 snapshot meanwhile.
-        state._beatDerivedCycle = -1;
-    }
-
-    /**
-     * Re-derive a Strudel curve's active beat points for the cycle it is
-     * currently on, so stochastic / cross-cycle operators (?, <a b>, t/2) keep
-     * evolving as the curve loops instead of replaying a frozen first window.
-     * Slice 0 samples Strudel cycle cycleCount × Repeats, so successive loops
-     * march through fresh, non-overlapping Strudel cycles. A no-op when the cycle
-     * hasn't changed since the last derivation, and for non-Strudel modes (whose
-     * beats are fixed at scene load). Cheap: a parse plus one queryArc per slice.
-     * @param {any} curve
-     * @param {CurveRuntimeState} state
-     */
-    _ensureStrudelBeatCycle(curve, state) {
-        if (curve.beatPointsMode !== "strudel") return;
-        if (state._beatDerivedCycle === state.cycleCount) return;
-        const r = Number(curve.repeats);
-        const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
-        const bp = deriveCurveBeatPoints(curve, state.cycleCount * reps);
-        state._beatFractions = bp.positions;
-        state._beatStrengths = bp.strengths;
-        state._beatDerivedCycle = state.cycleCount;
     }
 
     /**
@@ -2455,12 +2448,7 @@ export class Simulation {
      * @param {CurveRuntimeState} state
      */
     _detectActiveBeatCrossings(curve, state) {
-        // Strudel re-derives its beats per cycle (via _ensureStrudelBeatCycle
-        // below), so a curve whose last-derived cycle had no beats may still
-        // have them this cycle — it can't short-circuit on the stored count the
-        // way the fixed grid modes can.
-        const isStrudel = curve.beatPointsMode === "strudel";
-        if (!isStrudel && state._beatFractions.length === 0) return;
+        if (state._beatFractions.length === 0) return;
         if (this._scene === null) return;
         if (curve.state !== "active") return;
         if (curve.canActiveBeat !== true) return;
@@ -2474,10 +2462,9 @@ export class Simulation {
         const loopLen = cycleSpeedsLoopLength(state.speedList);
         const sign = (loopLen > 0 && state.speedList[state.cycleCount % loopLen] < 0) ? -1 : 1;
 
-        // Read fractions/strengths from state at build time, not a captured
-        // snapshot: _ensureStrudelBeatCycle may replace them when the cycle
-        // advances. The beat COUNT can also change cycle to cycle (a degrade
-        // dropping a beat), so the per-fire `total` reads the order's length.
+        // The beat points are fixed for the object (the whole phrase is baked
+        // once and looped), so build the firing order from the stored fractions;
+        // `total` reads the order length.
         const buildOrder = (s) => state._beatFractions
             .map((f, i) => ({
                 g: s < 0 ? 1 - f : f,
@@ -2501,7 +2488,6 @@ export class Simulation {
             // fresh for the current cycle with no flush (intermediate
             // cycles' beats are not reconstructed — only possible at
             // an unreachably fast tempo).
-            this._ensureStrudelBeatCycle(curve, state);
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
             state._lastBeatCycle = state.cycleCount;
@@ -2527,13 +2513,11 @@ export class Simulation {
             }
         } else if (state.cycleCount === state._lastBeatCycle + 1) {
             // Single wrap: flush the finishing cycle's pending beats
-            // (all reached by progress 1) from the OLD order, then
-            // re-derive (Strudel) and build the incoming cycle.
+            // (all reached by progress 1), then build the incoming cycle.
             while (state._beatNextIdx < state._beatOrder.length) {
                 const b = state._beatOrder[state._beatNextIdx++];
                 this._runOnActiveBeat(curve, state, fn, disableKey, b.index, state._beatOrder.length, b.strength, b.f);
             }
-            this._ensureStrudelBeatCycle(curve, state);
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
             state._lastBeatCycle = state.cycleCount;
@@ -2959,6 +2943,11 @@ export class Simulation {
         this._voiceRegistry.clear();
         clearMelodyState(); // nxtNote per-object line memory restarts with the scene
         this._scene = scene;
+        // Derive each Strudel object's cycle length from the master meter:
+        // beatsPerCycle = measures × master-beats-per-measure (effectiveBeatsPerCycle
+        // then × repeats). Recomputed every scene run, so a time-signature or
+        // Measures change retimes the phrase. See design/measure-patterns.md.
+        deriveStrudelCycleLengths(scene);
         // Build (or clear) the harmony player from the scene's chosen
         // progression. Non-null scene.harmony → an expanded HarmonyPlayer;
         // null → no harmony, so mapToHarmony and this.chord degrade gracefully.

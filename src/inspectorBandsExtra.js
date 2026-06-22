@@ -327,18 +327,20 @@ export const bandExtraMethods = {
             }));
         }
 
-        // Quarter Notes per Cycle — the cycle length in master quarter notes
-        // (Strudel's fixed count unit); with Repeats it sets the path length.
-        // One-line label sized to its content, right-aligned hugging the field,
-        // leading the row now that the mode picker is gone.
-        r1.appendChild(mkLabel("Quarter Notes per Cycle", { disabled: !active }));
+        // Measures — the phrase length (number of measure-bars in the Beat
+        // Pattern field). Each measure is one master-meter bar; the cycle length
+        // is measures × master-beats × repeats quarter notes (beatsPerCycle is
+        // derived in the simulation). Interim M1 UI: a plain number; the
+        // measure-box pattern field arrives in M2. See design/measure-patterns.md.
+        const measuresAgg = aggregateString(bpObjs, "measures");
+        r1.appendChild(mkLabel("Measures", { disabled: !active }));
         r1.appendChild(this._buildEditableField({
-            value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
+            value: measuresAgg === "varies" ? "" : measuresAgg,
             numeric: true,
             width: W.beatNum,
             editable: active,
-            validator: (c) => validateNumber(c, { min: 1 }),
-            editKind: "setBeatsPerCycle",
+            validator: (c) => validateNumber(c, { min: 1, integer: true }),
+            editKind: "setMeasures",
             spinStep: 1,
             selectOnFocus: false,
         }));
