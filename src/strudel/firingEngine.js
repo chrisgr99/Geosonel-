@@ -538,6 +538,20 @@ export class PatternFiringEngine {
         this._playSelectedIds = new Set();
 
         /**
+         * One extra source id that may fire under Play Selected
+         * mode because the pointer is currently hovering it, in
+         * addition to _playSelectedIds. Set by main.js from the
+         * canvas hover handler (the committed hover target's id,
+         * or null when nothing is hovered) so that, while the
+         * toggle is on, hovering an object auditions it on top of
+         * the selected set. Transient: cleared (null) the moment
+         * the pointer leaves the object. Ignored when
+         * _playSelectedMode is false.
+         * @type {string | null}
+         */
+        this._playSelectedHoverId = null;
+
+        /**
          * Last-seen transport elapsedSeconds. Compared on
          * each tick to detect rewind — a backward jump
          * in transport time, the same signal simulation.js
@@ -822,9 +836,25 @@ export class PatternFiringEngine {
     }
 
     /**
+     * Set (or clear, with null) the single hovered source id that
+     * may also fire while Play Selected mode is on. Called by
+     * main.js whenever the canvas's committed hover target changes,
+     * so hovering an object auditions it in addition to the
+     * selected set; passing null on hover-leave drops it back out.
+     * No audible effect while the mode is off.
+     *
+     * @param {string | null} id
+     */
+    setPlaySelectedHoverId(id) {
+        this._playSelectedHoverId = typeof id === "string" ? id : null;
+    }
+
+    /**
      * Whether a source may sound under the current Play Selected
      * ("solo") state. True for every source when the mode is off;
-     * when on, true only for sources in the selected set. Used to
+     * when on, true only for sources in the selected set (plus the
+     * single hovered source, if any, so hovering auditions an object
+     * on top of the selection). Used to
      * gate the procedural audio sink (callback playNote / playSound)
      * so soloing silences non-selected objects while they keep
      * simulating — the GeoSonixV2 firing path is callbacks, not the
@@ -834,7 +864,8 @@ export class PatternFiringEngine {
      */
     playSelectedAllows(sourceId) {
         if (!this._playSelectedMode) return true;
-        return this._playSelectedIds.has(sourceId);
+        return this._playSelectedIds.has(sourceId)
+            || sourceId === this._playSelectedHoverId;
     }
 
     /**

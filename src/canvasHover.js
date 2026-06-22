@@ -128,11 +128,11 @@ export const hoverMethods = {
             this._hoverDebounceTimer = null;
         }
         // Restore the OS cursor to its base state when
-        // clearing a handle hover. Skip when a tool is
-        // armed: setActiveTool owns the cursor in that mode
-        // (crosshair) and our "default" here would stomp it.
-        if (hadHandle && this._activeTool === null) {
-            this.canvasEl.style.cursor = "default";
+        // clearing a handle hover (_baseCanvasCursor resolves
+        // crosshair for an armed tool, the Play Selected
+        // loudspeaker badge, or the plain arrow).
+        if (hadHandle) {
+            this.canvasEl.style.cursor = this._baseCanvasCursor();
         }
         if (hadHover || hadHandle) this.scheduleDraw();
         // The identification tooltip clears alongside the
@@ -245,7 +245,7 @@ export const hoverMethods = {
         // to the object hover-brighten path.
         if (this._hoverHandle !== null) {
             this._hoverHandle = null;
-            this.canvasEl.style.cursor = "default";
+            this.canvasEl.style.cursor = this._baseCanvasCursor();
             this.scheduleDraw();
         }
 

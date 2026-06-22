@@ -98,6 +98,30 @@ import {
   AUTO_ZOOM_MARGIN_PX, DEFAULT_HALF_HEIGHT, DEFAULT_HALF_WIDTH, DRAG_THRESHOLD_PX, FIRING_FLASH_DURATION_MS, FIRING_FLASH_MATCH_EPS, HANDLE_HIT_PADDING_PX, HANDLE_HOVER_SIZE_PX, HOVER_DEBOUNCE_MS, TOOLTIP_CURSOR_HIT_PX, TOOLTIP_DELAY_MS, TOOLTIP_MARKER_HIT_PX, applyShapeCoordsScale, applyShapeCoordsTranslation, curveBoundingBox, distanceToSegment, filterIndexSet, pixelPerpendicularUnit, snapshotShapeCoords, snapshotShapeForResize,
 } from "./canvasShared.js";
 
+/**
+ * The Play-Selected cursor: the normal arrow pointer with a small green
+ * loudspeaker badge at its lower-right, shown over the canvas while the
+ * Play Selected toggle is on so it is clear the system is in that mode
+ * (hovering an object auditions it). Built as an inline SVG data-URI so
+ * it rides the real OS pointer with no per-frame drawing; the hotspot is
+ * the arrow tip at (2,2) and `auto` is the fallback if the data-URI is
+ * rejected. The speaker is double-stroked (a thick white halo under the
+ * green) so it reads on both light and dark backgrounds / images.
+ */
+const PLAY_SELECTED_CURSOR_SVG =
+    "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'>"
+    + "<path d='M2 2 L2 20 L7 15 L10.5 22 L13 20.8 L9.6 14.3 L16 14.3 Z' fill='#000000' stroke='#ffffff' stroke-width='1.3' stroke-linejoin='round'/>"
+    + "<g fill='none' stroke-linejoin='round' stroke-linecap='round'>"
+    + "<path d='M16 21 L19 21 L23 18 L23 30 L19 27 L16 27 Z' stroke='#ffffff' stroke-width='3'/>"
+    + "<path d='M25 21 Q28 24 25 27' stroke='#ffffff' stroke-width='3'/>"
+    + "<path d='M27.5 19.5 Q31 24 27.5 28.5' stroke='#ffffff' stroke-width='3'/>"
+    + "<path d='M16 21 L19 21 L23 18 L23 30 L19 27 L16 27 Z' fill='#34c759' stroke='#34c759' stroke-width='1.2'/>"
+    + "<path d='M25 21 Q28 24 25 27' stroke='#34c759' stroke-width='1.6'/>"
+    + "<path d='M27.5 19.5 Q31 24 27.5 28.5' stroke='#34c759' stroke-width='1.6'/>"
+    + "</g></svg>";
+const PLAY_SELECTED_CURSOR =
+    `url("data:image/svg+xml,${encodeURIComponent(PLAY_SELECTED_CURSOR_SVG)}") 2 2, auto`;
+
 export class Canvas {
     /**
      * @param {HTMLElement} container  The element the canvas mounts into.
@@ -436,6 +460,15 @@ export class Canvas {
          */
         this._activeTool = null;
         this._activeToolLocked = false;
+        /**
+         * Whether the Play Selected toolbar toggle is on. Mirrored
+         * here (the firing engine owns the authoritative gate) purely
+         * to drive the base canvas cursor: while on, the pointer over
+         * the canvas shows the loudspeaker badge so the mode is
+         * visible. Set by main.js from the same toggle handler.
+         * @type {boolean}
+         */
+        this._playSelectedMode = false;
         /** @type {import("./toolbar.js").Toolbar | null} */
         this._toolbar = null;
         /** @type {((edit: any) => void) | null} */
@@ -1060,7 +1093,7 @@ export class Canvas {
     setActiveTool(toolName, locked) {
         this._activeTool = toolName;
         this._activeToolLocked = locked;
-        this.canvasEl.style.cursor = toolName === null ? "default" : "crosshair";
+        this.canvasEl.style.cursor = this._baseCanvasCursor();
         if (toolName === null &&
             this._gesture !== null &&
             (this._gesture.kind === "createEllipse" ||
@@ -1075,6 +1108,39 @@ export class Canvas {
         // be confusing visual noise.
         if (toolName !== null) {
             this._clearHover();
+        }
+    }
+
+    /**
+     * The base cursor for the canvas element — what it shows when no
+     * resize handle is under the pointer. Priority: an armed drawing
+     * tool's precision crosshair wins (placing objects needs the exact
+     * point); else the Play Selected loudspeaker badge while that mode
+     * is on; else the plain arrow. Handle-hover resize cursors are set
+     * directly in the hover path and override this while over a handle.
+     * @returns {string}
+     */
+    _baseCanvasCursor() {
+        if (this._activeTool !== null) return "crosshair";
+        if (this._playSelectedMode === true) return PLAY_SELECTED_CURSOR;
+        return "default";
+    }
+
+    /**
+     * Mirror the Play Selected toggle state so the base canvas cursor
+     * shows the loudspeaker badge while the mode is on. Called by
+     * main.js from the same toolbar handler that arms the firing
+     * engine's gate. Re-applies the base cursor immediately unless a
+     * resize handle is currently hovered (its cursor must stay; it is
+     * re-asserted on the next pointer move regardless).
+     * @param {boolean} active
+     */
+    setPlaySelectedMode(active) {
+        const next = active === true;
+        if (next === this._playSelectedMode) return;
+        this._playSelectedMode = next;
+        if (this._hoverHandle == null) {
+            this.canvasEl.style.cursor = this._baseCanvasCursor();
         }
     }
 

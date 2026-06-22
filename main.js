@@ -688,6 +688,27 @@ async function main() {
     // setHoverPreview.
     canvas.setHoverObjectHandler((selection) => {
         if (editor.inspector) editor.inspector.setHoverPreview(selection);
+        // Play Selected hover-play: fold the hovered object's id into the
+        // firing engine's play-selected allow-set so that, while the Play
+        // Selected toggle is on, hovering an object auditions it in addition
+        // to the selected set. Transient — the hover handler fires null when
+        // the pointer leaves the object, which drops it back out. No audible
+        // effect while the toggle is off. selection is index-based and holds
+        // at most one object (hover is single-target); resolve it to an id.
+        let hoverId = null;
+        if (selection !== null && currentScene !== null) {
+            const o = selection.curves.length === 1
+                ? currentScene.curves[selection.curves[0]]
+                : selection.sprites.length === 1
+                    ? currentScene.sprites[selection.sprites[0]]
+                    : selection.triggers.length === 1
+                        ? currentScene.triggers[selection.triggers[0]]
+                        : null;
+            if (o !== undefined && o !== null && typeof o.id === "string") {
+                hoverId = o.id;
+            }
+        }
+        firingEngine.setPlaySelectedHoverId(hoverId);
     });
     // Pointer-still-moving-over-empty-canvas tick: postpones the inspector's
     // hover-preview fade-out so the peeked fields only fade once the cursor
@@ -2571,6 +2592,10 @@ async function main() {
     // when the mode flips off.
     toolbar.onPlaySelectedToggle((active) => {
         firingEngine.setPlaySelectedMode(active);
+        // Show the loudspeaker-badge cursor over the canvas while the
+        // mode is on, so it is visibly in Play Selected mode (and that
+        // hovering an object will audition it).
+        canvas.setPlaySelectedMode(active);
     });
 
     toolbar.onSelectionFilterToggle((kind, enabled) => {
@@ -4849,9 +4874,15 @@ async function main() {
     // level means it works regardless of whether the canvas,
     // editor, or empty body has focus.
     window.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && toolbar.getState().tool !== null) {
+        if (e.key !== "Escape") return;
+        if (toolbar.getState().tool !== null) {
             toolbar.setActive(null, false);
         }
+        // Escape also cancels Play Selected ("solo") mode. setPlaySelected-
+        // Active early-returns when already off and otherwise relays through
+        // its listeners to disarm the firing-engine gate and the canvas
+        // loudspeaker cursor, so this is safe to call unconditionally.
+        toolbar.setPlaySelectedActive(false);
     });
 
     // Transport play/pause shortcuts. Two keyboard shortcuts
