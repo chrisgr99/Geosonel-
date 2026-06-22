@@ -126,11 +126,40 @@ span within the mini-notation), already produced by `parsePatternToPositions`
 and used by the Code-tab active-token highlighter. The derivation must carry,
 per beat point, which measure box and which character span it came from.
 
+## Canvas-driven strength — `NcM` tokens (beatbox)
+
+A beat token can be **`NcM`** (base strength N, swing ±M) or **`cM`** (base 0)
+instead of a fixed digit. It stays a flat token (no engine); the derivation
+records the base in `strengths[i]` and M in a parallel `ranges[i]` (0 = fixed).
+
+At fire time the object's **Driver-from-Canvas channel** (`strengthChannel`, one
+of the col image signals: lt, chr, r, g, y, b, or, li, cy, pu) is read under
+THAT beat's point on the curve (cv, 0..1) and mapped **linearly across the valid
+span**, endpoints clamped:
+
+```
+lo = max(0, base − range);  hi = min(9, base + range)
+effStrength = lo + cv·(hi − lo)
+```
+
+So `7c1` → [6, 8], `c9` → [0, 9] (a full dark→loud sweep). The whole channel
+range is used (clamping the endpoints, not the output, so no half is silenced).
+The strength is per-beat-POSITION: a static image + curve gives each beat a
+fixed level; variation comes across beats at different positions or as the
+object/image moves. A high-contrast image yields near-bimodal levels; a gradient
+gives a smooth sweep.
+
+Beatbox voices read no note **style** — the drum's velocity IS this
+(canvas-resolved) strength. The Driver-from-Canvas channel sits at the right of
+the Rhythm band for beatbox voices; the nxtNote-style picker is hidden for them.
+Canvas tokens are flat-only (operator patterns would need a later special-case).
+
 ## Rhythm band fields (final)
 
 - **Beat Pattern** — the measure boxes.
 - **Measures** — phrase length.
 - **Repeats** — phrase tilings around the path.
+- **Driver from Canvas** (beatbox voices only) — the channel an `NcM` token reads.
 
 Removed: Beat Interval (gone earlier), Qtr-Notes/Cycle (derived now), the
 mode picker (strudel-only), per-object Beats/Measure (master).

@@ -2591,16 +2591,20 @@ export class Simulation {
         const px = imageSignalsFromOKLCh(oklch);
         const col = colFromSignals(px);
         // The beat accent (Beat Strength 0-9) normalized to 0..1, surfaced as
-        // beatStrength / vel / velocity. A canvas token (NcM, range > 0) swings
-        // the base ±range by the object's Driver-from-Canvas channel under THIS
-        // beat: a mid value (0.5) leaves the base, dark/bright pull it down/up.
+        // beatStrength / vel / velocity. A canvas token (NcM, range > 0) maps the
+        // object's Driver-from-Canvas channel under THIS beat (0..1) LINEARLY
+        // across the valid strength span [base-range, base+range] clamped to
+        // [0,9] — so the whole channel range is used, none silenced. e.g. 7c1 →
+        // [6,8] (dark→6, bright→8); c9 → [0,9] (a full dark-to-loud sweep).
         let effStrength = strength;
         if (range > 0) {
             const channel = (typeof curve.strengthChannel === "string" && curve.strengthChannel !== "")
                 ? curve.strengthChannel : "lt";
-            const cv = (col !== null && typeof col[channel] === "number") ? col[channel] : 0.5;
-            effStrength = strength + (cv - 0.5) * 2 * range;
-            effStrength = Math.max(0, Math.min(9, effStrength));
+            let cv = (col !== null && typeof col[channel] === "number") ? col[channel] : 0.5;
+            cv = cv < 0 ? 0 : (cv > 1 ? 1 : cv);             // guard to 0..1
+            const lo = Math.max(0, strength - range);
+            const hi = Math.min(9, strength + range);
+            effStrength = lo + cv * (hi - lo);
         }
         const vel = effStrength / 9;
         // Firing point (this.x/this.y): the beat point's canvas
