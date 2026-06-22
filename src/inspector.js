@@ -334,6 +334,16 @@ export class Inspector {
     }
 
     /**
+     * Re-render the inspector against the current scene + selection,
+     * without any state change. Used when async data the bands depend on
+     * becomes available — e.g. the drum-machine sound index loading, which
+     * fills the Voice band's sound-in-bank dropdown once it arrives.
+     */
+    rerender() {
+        this._render();
+    }
+
+    /**
      * Update the inspector to reflect a new canvas selection.
      * Empty arrays mean nothing selected — the form clears
      * entirely. Non-empty selections re-populate the form with
@@ -499,8 +509,8 @@ export class Inspector {
         // inspector reads as blank up top (no greyed clutter) — just the
         // title bar, then empty space, then the Global band pinned at the
         // bottom. Each lower band carries its own titled-divider header
-        // (── TITLE ───────); Mutability sits above the per-object Voice
-        // band, which is empty under MIDI.
+        // (── TITLE ───────). The Voice band sits at the bottom of the
+        // per-object section, and is empty under MIDI.
         // Identity band is ALWAYS shown — even with nothing selected — so
         // its Object ID picker stays available as a "jump to object"
         // control. Its other fields grey when nothing is selected. It sits
@@ -520,7 +530,9 @@ export class Inspector {
             perObj.appendChild(this._buildBandCallbackSlots(ctx));
             perObj.appendChild(this._buildBandBeatPoints(ctx));
             perObj.appendChild(this._buildBandCycle(ctx));
-            perObj.appendChild(this._buildBandMutability(ctx));
+            // Mutability band deprecated — removed from the inspector. Its
+            // _buildBandMutability method and the position/size fields remain
+            // for now, just not rendered.
             perObj.appendChild(this._buildBandMiddleArea(ctx));
 
             // Title-less divider capping the bottom of the per-object
@@ -546,9 +558,9 @@ export class Inspector {
         flexSpacer.className = "insp-flex-spacer";
         panel.appendChild(flexSpacer);
 
-        // Global band — score-wide section, always visible, pinned to the
-        // bottom by the spacer above.
-        panel.appendChild(this._buildBandGlobal(ctx));
+        // Global band deprecated and removed: MIDI is gone (every object plays
+        // through Superdough) and the score-wide voice defaults were dropped in
+        // favour of per-object voices. _buildBandGlobal remains, just unused.
 
         // Bottom spacer — a small 7px gap below the Global band at the
         // panel's bottom edge.

@@ -199,6 +199,7 @@ import {
 } from "./src/sceneEditor.js";
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
 import { variedCycleAt } from "./src/beatPoints.js";
+import { loadDrumMachineSounds } from "./src/drumMachineSounds.js";
 
 main();
 
@@ -1049,7 +1050,9 @@ async function main() {
             // every Run Scene / Cmd-Enter) so the active
             // scene's engine wins regardless of how it was
             // edited.
-            firingEngine.setOutputMode(result.scene.engine ?? "midi");
+            // MIDI deprecated: every scene plays through Superdough now, so the
+            // firing engine is pinned regardless of the stored scene.engine.
+            firingEngine.setOutputMode("superdough");
             applySceneParamsToTransport(result.scene, transport);
             // Composition mirror runtime-state push (Phase 1A
             // commit 3). Every successful scene reload
@@ -4182,6 +4185,12 @@ async function main() {
             },
             (target) => canvas.setPreviewHighlight(target),
         );
+        // Load the drum-machine sound index (independent of the audio engine)
+        // and re-render once it arrives so the Voice band's sound-in-bank
+        // dropdown fills in for the current selection.
+        loadDrumMachineSounds().then(() => {
+            if (editor.inspector) editor.inspector.rerender();
+        });
         editor.inspector.setEditCallback(async (edit) => {
             if (edit.kind === "setState") {
                 await applySceneEdit((data) =>
@@ -4457,6 +4466,28 @@ async function main() {
                 await applySceneEdit((data) =>
                     setSceneObjectVoiceField(
                         data, edit.selection, "superdough", "bank", edit.value,
+                    ),
+                );
+            } else if (edit.kind === "setVoiceSuperdoughSample") {
+                // Voice band's sound-in-bank dropdown: the chosen
+                // sound within the object's bank (bd, sd, cp, …).
+                // Writes voice.superdough.sample. Stored as the
+                // object's voice sample for the on-active-beat
+                // style to read; not injected into playback here.
+                await applySceneEdit((data) =>
+                    setSceneObjectVoiceField(
+                        data, edit.selection, "superdough", "sample", edit.value,
+                    ),
+                );
+            } else if (edit.kind === "setVoiceSuperdoughSource") {
+                // Voice band's Instrument/Beatbox radio: which of the
+                // two sound-source types is in effect for the object.
+                // Writes voice.superdough.source ("instrument" |
+                // "beatbox"); the on-active-beat voice style reads it
+                // to choose between the pitched sound and the drum bank.
+                await applySceneEdit((data) =>
+                    setSceneObjectVoiceField(
+                        data, edit.selection, "superdough", "source", edit.value,
                     ),
                 );
             } else if (edit.kind === "createFunctionStub") {

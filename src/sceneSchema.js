@@ -117,11 +117,13 @@ const CALLBACK_SLOT_FIELDS = [
         enumValues: allBeatIntervalTokens(),
     },
     // Beat Points (Band 5): a beat-points rhythm for curves and
-    // sprites (not triggers). mode None/Normal/Euclidean; the
-    // Active Beats pattern (x active, . inactive, | bar split)
-    // and Beat Strength digit string both loop. Stored lowercase
-    // for mode to match validateBeatPointsMode.
-    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "none", enumValues: ["none", "normal", "euclidean", "auto", "strudel"] },
+    // sprites (not triggers). The rhythm is now always authored as a
+    // Strudel mini-notation pattern (default "strudel"); the legacy
+    // none/normal/euclidean/auto grid modes are deprecated and no
+    // longer selectable in the inspector, though the enum and their
+    // derivation/runtime paths remain for any score that still uses
+    // them. An empty beatPattern means no beats (what "none" expressed).
+    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "strudel", enumValues: ["none", "normal", "euclidean", "auto", "strudel"] },
     // Auto-mode RHYTHM style (by name): the generator reads this to weight the
     // generated Active Beats / Beat Strength pattern. A rhythm-style-library name
     // (built-in straight/syncopated or a user style); "" = default. (Stored as a

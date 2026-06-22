@@ -255,15 +255,20 @@ export const PITCHED_SOUND_OPTIONS = [
  * value of "RolandTR909" means an event with s="bd" (no
  * underscore) becomes RolandTR909_bd at dispatch.
  */
+// Bank values MUST match the tidal-drum-machines sample-map bank
+// prefixes exactly (the "Bank" in "Bank_sound" keys); a mismatch leaves
+// the bank with no resolvable samples AND no sounds in the sound-in-bank
+// dropdown. AceTone's Rhythm Ace is "RhythmAce" and the Roland CR-78 is
+// "RolandCompurhythm78" in that map, not the catalogue names.
 export const UNPITCHED_BANK_OPTIONS = [
-    { value: "AceToneRhythmAce", label: "AceToneRhythmAce" },
     { value: "AkaiMPC60", label: "AkaiMPC60" },
     { value: "EmuSP12", label: "EmuSP12" },
     { value: "KorgKR55", label: "KorgKR55" },
     { value: "LinnDrum", label: "LinnDrum" },
     { value: "LinnLM1", label: "LinnLM1" },
     { value: "OberheimDMX", label: "OberheimDMX" },
-    { value: "RolandCR78", label: "RolandCR78" },
+    { value: "RhythmAce", label: "RhythmAce" },
+    { value: "RolandCompurhythm78", label: "RolandCompurhythm78" },
     { value: "RolandTR606", label: "RolandTR606" },
     { value: "RolandTR707", label: "RolandTR707" },
     { value: "RolandTR808", label: "RolandTR808" },
@@ -271,21 +276,22 @@ export const UNPITCHED_BANK_OPTIONS = [
 ];
 
 /**
- * Per-object (middle band) option lists: the shared
- * instrument/bank entries with a "Global" sentinel
- * prepended. "Global" (empty-string value) means the
- * object inherits the score-wide global voice for that
- * field; it is the default for a new or untouched object
- * (an absent/empty stored value maps to "Global"). The
- * firing engine resolves a per-object "Global" by falling
- * through to scene.voiceSuperdough at dispatch time.
+ * Per-object Voice band option lists, each with an empty-string sentinel
+ * prepended for "no specific override". For the Instrument list that
+ * sentinel is "Default" (superdough's built-in default synth). For the
+ * Beatbox bank list it is "superdirt" — the no-bank Dirt-Samples default
+ * kit, whose sounds (bd, sd, hh, …) the sound-in-bank dropdown lists when
+ * it is selected. Both are the value for a new or untouched object (an
+ * absent/empty stored value maps to the sentinel). The score-wide global
+ * voice this used to inherit from was removed with the Global band, so
+ * there is nothing above the object to fall through to.
  */
 export const PER_OBJECT_SOUND_OPTIONS = [
-    { value: "", label: "Global" },
+    { value: "", label: "Default" },
     ...PITCHED_SOUND_OPTIONS,
 ];
 export const PER_OBJECT_BANK_OPTIONS = [
-    { value: "", label: "Global" },
+    { value: "", label: "superdirt" },
     ...UNPITCHED_BANK_OPTIONS,
 ];
 

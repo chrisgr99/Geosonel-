@@ -434,6 +434,22 @@
     border-color: #555555;
 }
 
+/* Native radio for the Voice band's Instrument / Beatbox source picker.
+ * Tinted to the inspector's green accent so it reads as a sibling of the
+ * round .insp-checkbox controls. */
+.insp-radio {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: #5fc858;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+.insp-radio:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
 /* Combo box. Green triangle indicator on the right. Disabled
  * variant drops the green frame and mutes the triangle but
  * keeps the lighter-grey fill so the field's footprint stays

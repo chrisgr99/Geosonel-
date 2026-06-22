@@ -2078,7 +2078,12 @@ export function setStrengthOnSelection(data, selection, value) {
  * @param {string} value
  */
 export function setBeatPatternOnSelection(data, selection, value) {
-    setStringFieldOnSelection(data, { sprites: selection.sprites, curves: selection.curves }, "beatPattern", String(value));
+    const sel = { sprites: selection.sprites, curves: selection.curves };
+    setStringFieldOnSelection(data, sel, "beatPattern", String(value));
+    // The mode picker is gone — the rhythm is always Strudel — so authoring a
+    // pattern also pins the object to strudel mode, migrating any legacy
+    // none/normal/euclidean object the moment its pattern is edited.
+    setStringFieldOnSelection(data, sel, "beatPointsMode", "strudel");
 }
 
 /**

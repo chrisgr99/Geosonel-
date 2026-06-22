@@ -2,8 +2,6 @@ import {
     aggregateBoolean,
     aggregateString,
     aggregateVoiceField,
-    patternUsesNote,
-    patternUsesSound,
     selectedObjects,
 } from "./inspectorSelection.js";
 import {
@@ -33,6 +31,7 @@ import {
 } from "./curveFieldValidation.js";
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 import { listStyles } from "./styleStore.js";
+import { getBankSoundNames } from "./drumMachineSounds.js";
 
 /** Wrap a beat-string input in a positioned span carrying the playing-beat
  *  highlight overlay, so the box can sit over the cell under the cursor. */
@@ -253,20 +252,26 @@ export const bandExtraMethods = {
     },
 
     /**
-     * Band 5 — Beat Points (formerly GeoSonix's "Curve Beat
-     * Points"). Available for curves OR sprites, never triggers;
-     * the whole band greys when the selection has no curve and
-     * no sprite. Three rows:
-     *   1. mode dropdown (None / Normal / Euclidean, extensible)
-     *      plus Beats/Cycle (the cycle's beat count).
-     *   2. Active Beats — a compact x/./| string (x active, .
-     *      inactive, | bar separator) that loops.
-     *   3. Beat Strength — a 0-9 digit string, one per beat,
-     *      that loops independently.
-     * All fields aggregate across the selected curves and
-     * sprites; "varies" renders blank and a committed value
-     * applies to every selected curve and sprite. Triggers in a
-     * mixed selection are excluded by the setters.
+     * Band 5 — Rhythm (formerly GeoSonix's "Curve Beat Points").
+     * Available for curves OR sprites, never triggers; the whole
+     * band greys when the selection has no curve and no sprite.
+     *
+     * The rhythm is always a Strudel mini-notation pattern now (the
+     * legacy None / Manual / Euclidean / Auto grid modes are
+     * deprecated and the mode picker is gone). Two rows:
+     *   1. Quarter Notes per Cycle (the cycle length in master
+     *      quarter notes) and Repeats (how many cycles tile the path).
+     *   2. Pattern — a full-width, auto-growing Strudel mini-notation
+     *      field; digits are beat strengths, ~ a rest, and operators
+     *      ([] * <> ? | (k,n) …) go through the real Strudel parser.
+     * An empty pattern means no beats (what "None" used to express).
+     *
+     * The grid-mode field branches below remain but are dead while the
+     * mode is pinned to "strudel"; they go when the grid UI is removed.
+     * All fields aggregate across the selected curves and sprites;
+     * "varies" renders blank and a committed value applies to every
+     * selected curve and sprite. Triggers in a mixed selection are
+     * excluded by the setters.
      *
      * @param {ReturnType<typeof buildSelectionContext>} ctx
      */
@@ -282,13 +287,12 @@ export const bandExtraMethods = {
         const active = ctx.hasCurves || ctx.hasSprites;
         const bpObjs = [...objs.curves, ...objs.sprites];
 
-        const modeAgg = aggregateString(bpObjs, "beatPointsMode");
-        let mode = modeAgg === "varies" ? "" : modeAgg;
-        // Auto is no longer a selectable Beat Pattern mode (the rhythm-styles feature
-        // is on hold). Present any stored "auto" as Manual, so the dropdown always
-        // shows a real value (never blank-with-fields) and the pattern stays editable.
-        // The stored data keeps "auto" until re-picked; playback derives it the same.
-        if (mode === "auto") mode = "normal";
+        // Beat-pattern mode is now always Strudel. The None / Manual / Euclidean
+        // (and on-hold Auto) modes are deprecated and the picker is gone; the
+        // rhythm band always authors a Strudel mini-notation pattern, and an empty
+        // pattern means no beats (what "None" used to express). The grid-mode
+        // branches below stay for now but never run while mode is pinned here.
+        const mode = "strudel";
         const beatsPerCycleAgg = aggregateString(bpObjs, "beatsPerCycle");
         // cycleDuration bounds the Active-Beats-count and Repeats
         // clamps. Falls back to 16 when the aggregate isn't a
@@ -297,41 +301,16 @@ export const bandExtraMethods = {
             const n = Number(beatsPerCycleAgg);
             return Number.isFinite(n) && n >= 1 ? n : 16;
         })();
-        // Grid-based sources share the Beat Interval / Per-Cycle / Per-Bar row.
-        // Auto is grid-based too (it generates onto this grid); its pattern
-        // fields arrive with the generator in a later milestone.
+        // gridMode is always false now (mode is pinned to "strudel" above), so the
+        // legacy grid branches below are dead — kept for now until the grid UI is
+        // removed wholesale. isStrudel gates the live Strudel fields.
         const gridMode = mode === "normal" || mode === "euclidean" || mode === "auto";
         const isStrudel = mode === "strudel";
-        // Strudel authors with a mini-notation expression instead of the x/dot
-        // grid, and has no Beat Interval, no Per Bar, no variation row. Its count
-        // unit is FIXED to one master quarter note, so a cycle is just Counts per
-        // Cycle quarter notes long and the path is that × Repeats. Both grid modes
-        // and Strudel share the Counts/Cycle field (Per Cycle for the grid).
-        const beatGrid = gridMode || isStrudel;
 
-        // Row 1: the mode dropdown, always present. For normal /
-        // euclidean it is followed on the same row by Beat Interval
-        // (right of the mode dropdown), Beats/Cycle, and Beats/Bar.
+        // Row 1 (Strudel only): Quarter Notes per Cycle, then Repeats. The mode
+        // picker is gone — the pattern is always Strudel — so the cycle-length
+        // field now leads the row at the left edge.
         const r1 = mkRow();
-        // Lead label: "Beat Pattern" across all modes — a reasonable
-        // description whether the pattern is defined by x/dot, the
-        // Euclidean generator, or a Strudel mini-notation expression.
-        r1.appendChild(mkLabel("Beat\nPattern", { width: W.beatStackLabel, disabled: !active, multiline: true }));
-        // Sources: None / Manual (stored as "normal") / Euclidean / Strudel (a
-        // mini-notation expression). Auto is no longer offered (rhythm-styles on
-        // hold); a stored "auto" is coerced to Manual above so the menu never blanks.
-        r1.appendChild(this._buildDropdownField({
-            options: [
-                { value: "none", label: "None" },
-                { value: "normal", label: "Manual" },
-                { value: "euclidean", label: "Euclidean" },
-                { value: "strudel", label: "Strudel" },
-            ],
-            value: mode,
-            width: W.beatPointsMode,
-            editable: active,
-            editKind: "setBeatPointsMode",
-        }));
 
         // Beat Interval — the note-duration of each beat; with Per Cycle it sets the
         // cycle length (cycleDurationSeconds). Grid modes only: Strudel's count unit
@@ -348,35 +327,21 @@ export const bandExtraMethods = {
             }));
         }
 
-        if (beatGrid) {
-            // Auto treats Beats/Cycle as the PHRASE length (Repeats lays
-            // multiple phrase instances around the path). Strudel measures the
-            // cycle's length in quarter notes (its count unit), so its label
-            // spells out "Qtr Notes / Cycle", wrapped before the slash; grid
-            // modes call it "Per Cycle".
-            const perCycleLabel = mode === "auto" ? "Per\nPhrase"
-                : isStrudel ? "Qtr Notes\n/Cycle"
-                : "Per\nCycle";
-            // The spelled-out Strudel label needs more room than the grid modes'
-            // terse stacked "Per / Cycle".
-            const perCycleLabelW = isStrudel ? 62 : W.beatPerCycleLabel;
-            r1.appendChild(mkLabel(perCycleLabel, { width: perCycleLabelW, disabled: !active, multiline: true }));
-            const perCycleField = this._buildEditableField({
-                value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
-                numeric: true,
-                width: W.beatNum,
-                editable: active,
-                validator: (c) => validateNumber(c, { min: 1 }),
-                editKind: "setBeatsPerCycle",
-                spinStep: 1,
-                selectOnFocus: false,
-            });
-            // Strudel's label hugs the field on the right; nudge the field over so
-            // the number doesn't crowd the "/Cycle" text. Grid modes keep the
-            // default row gap.
-            if (isStrudel) perCycleField.style.marginLeft = "8px";
-            r1.appendChild(perCycleField);
-        }
+        // Quarter Notes per Cycle — the cycle length in master quarter notes
+        // (Strudel's fixed count unit); with Repeats it sets the path length.
+        // One-line label sized to its content, right-aligned hugging the field,
+        // leading the row now that the mode picker is gone.
+        r1.appendChild(mkLabel("Quarter Notes per Cycle", { disabled: !active }));
+        r1.appendChild(this._buildEditableField({
+            value: beatsPerCycleAgg === "varies" ? "" : beatsPerCycleAgg,
+            numeric: true,
+            width: W.beatNum,
+            editable: active,
+            validator: (c) => validateNumber(c, { min: 1 }),
+            editKind: "setBeatsPerCycle",
+            spinStep: 1,
+            selectOnFocus: false,
+        }));
         // Strudel: Repeats sits on row 1. The mini-notation cycle (Counts/Cycle
         // quarter notes long) is laid end-to-end Repeats times around the path, so
         // the total path length is Counts/Cycle × Repeats quarter notes. Slice k
@@ -385,7 +350,7 @@ export const bandExtraMethods = {
         if (isStrudel) {
             const sRepeatsAgg = aggregateString(bpObjs, "repeats");
             r1.appendChild(mkLabel("Repeats", { width: W.beatStackLabel, disabled: !active }));
-            r1.appendChild(this._buildEditableField({
+            const repeatsField = this._buildEditableField({
                 value: sRepeatsAgg === "varies" ? "" : sRepeatsAgg,
                 numeric: true,
                 width: W.beatNum,
@@ -394,7 +359,10 @@ export const bandExtraMethods = {
                 editKind: "setRepeats",
                 spinStep: 1,
                 selectOnFocus: false,
-            }));
+            });
+            // Nudge the field clear of its label so the number doesn't crowd it.
+            repeatsField.style.marginLeft = "7px";
+            r1.appendChild(repeatsField);
         }
         // Beats/Bar shows in both normal and euclidean — it is the
         // time signature's beat count (e.g. 3 for 3/4), and it groups
@@ -590,7 +558,7 @@ export const bandExtraMethods = {
         if (isStrudel) {
             const patternAgg = aggregateString(bpObjs, "beatPattern");
             const rL = mkRow();
-            rL.appendChild(mkLabel("Pattern", { width: W.beatStackLabel, disabled: !active }));
+            rL.appendChild(mkLabel("Beat Strength Pattern", { disabled: !active }));
             band.appendChild(rL);
             const ta = document.createElement("textarea");
             ta.className = "insp-field insp-pattern-field";
@@ -768,13 +736,8 @@ export const bandExtraMethods = {
         const band = document.createElement("div");
         band.className = "insp-band insp-band-middle";
 
-        const engine =
-            (this._scene !== null && typeof this._scene.engine === "string")
-                ? this._scene.engine
-                : "midi";
-        // Only superdough has per-object voice rows; under MIDI the band
-        // stays empty — no header divider, no rows.
-        if (engine !== "superdough") return band;
+        // MIDI is deprecated — every object plays through Superdough — so the
+        // Voice band always renders; there is no longer an engine gate.
         band.appendChild(mkBandHeader("Voice"));
 
         const objs = selectedObjects(this._scene, this._activeSelection);
@@ -782,72 +745,83 @@ export const bandExtraMethods = {
         const soundAgg = aggregateVoiceField(objs.all, "superdough", "sound");
         const bankAgg = aggregateVoiceField(objs.all, "superdough", "bank");
 
-        // Per-field relevance. A Note Voice override only
-        // has an effect on events from note() / n() patterns
-        // (which carry no s field for the sound to fill);
-        // a Sound Bank override only matters for events from
-        // sound() / s() patterns (raw drum names the bank
-        // prefixes). When a single object's pattern uses
-        // only one of those forms, the other dropdown is
-        // greyed as a hint that it would do nothing for this
-        // object. The check is textual on the cyclePattern
-        // string (see patternUsesNote / patternUsesSound),
-        // deliberately simple: it can be fooled by unusual
-        // patterns, so it only ever greys a field, never
-        // disables the underlying edit path, and both fields
-        // stay active whenever the relevance is uncertain.
-        // Uncertain cases that leave BOTH active: multi-
-        // select (per-object patterns may differ), an empty
-        // or unparsed-looking pattern, or a pattern that uses
-        // both forms. This mirrors the "never surprise the
-        // user with a disabled control" stance the rest of
-        // the inspector takes.
-        let soundRelevant = true;
-        let bankRelevant = true;
-        if (ctx.isSingle && objs.all.length === 1) {
-            const pat = objs.all[0].cyclePattern;
-            const patText = typeof pat === "string" ? pat : "";
-            const usesNote = patternUsesNote(patText);
-            const usesSound = patternUsesSound(patText);
-            // Only narrow when exactly one form is present.
-            // Neither-present (empty / still-typing / non-
-            // standard) and both-present both leave the
-            // fields as they are.
-            if (usesNote !== usesSound) {
-                soundRelevant = usesNote;
-                bankRelevant = usesSound;
-            }
-        }
+        // An object's voice is ONE of two mutually-exclusive sound sources,
+        // chosen by a radio in front of each row:
+        //   Instrument — a pitched superdough sound (the old Note Voice).
+        //   Beatbox    — a drum-machine bank plus a sound within it.
+        // The radio (voice.superdough.source = "instrument" | "beatbox") picks
+        // which is in effect; the unpicked row greys. A new/untouched object
+        // defaults to Instrument; a mixed multi-select ("varies") shows neither
+        // picked and greys both until one is chosen.
+        const sampleAgg = aggregateVoiceField(objs.all, "superdough", "sample");
+        const sourceAgg = aggregateVoiceField(objs.all, "superdough", "source");
+        const source = sourceAgg === "varies" ? ""
+            : (sourceAgg === "beatbox" ? "beatbox" : "instrument");
+        const instrumentActive = voiceActive && source === "instrument";
+        const beatboxActive = voiceActive && source === "beatbox";
 
-        // Note Voice and Sound Bank share ONE row: label + field +
-        // label + field. Single-line labels; both dropdowns narrowed so
-        // the four items fit within a 440px-wide row (see widths in
-        // inspectorShared). Each half keeps its own relevance-greying
-        // (Note Voice → soundRelevant, Sound Bank → bankRelevant).
-        const r1 = mkRow();
-        r1.appendChild(mkLabel("Note Voice", {
-            width: W.voiceNoteLabel,
-            disabled: !voiceActive || !soundRelevant,
-        }));
-        r1.appendChild(this._buildDropdownField({
+        const mkSourceRadio = (val) => {
+            const input = document.createElement("input");
+            input.type = "radio";
+            input.name = "insp-voice-source";
+            input.className = "insp-radio";
+            input.checked = source === val;
+            input.disabled = !voiceActive;
+            if (voiceActive) {
+                input.addEventListener("change", () => {
+                    if (input.checked) {
+                        this._emitEdit({ kind: "setVoiceSuperdoughSource", value: val });
+                    }
+                });
+            }
+            return input;
+        };
+
+        const labelW = W.voiceBankLabel;
+
+        // Instrument row: radio + label + pitched-sound dropdown.
+        const rNote = mkRow();
+        rNote.appendChild(mkSourceRadio("instrument"));
+        rNote.appendChild(mkLabel("Instrument", { width: labelW, disabled: !instrumentActive }));
+        rNote.appendChild(this._buildDropdownField({
             options: PER_OBJECT_SOUND_OPTIONS,
             value: soundAgg === "varies" ? "" : soundAgg,
             width: W.voiceFieldCombined,
-            editable: voiceActive && soundRelevant,
+            editable: instrumentActive,
             editKind: "setVoiceSuperdoughSound",
         }));
-        r1.appendChild(mkLabel("Sound Bank", {
-            width: W.voiceBankLabel,
-            disabled: !voiceActive || !bankRelevant,
-        }));
-        r1.appendChild(this._buildDropdownField({
+        band.appendChild(rNote);
+
+        // Beatbox row: radio + label + drum-bank dropdown + sound-in-bank dropdown.
+        const rBank = mkRow();
+        rBank.appendChild(mkSourceRadio("beatbox"));
+        rBank.appendChild(mkLabel("Beatbox", { width: labelW, disabled: !beatboxActive }));
+        rBank.appendChild(this._buildDropdownField({
             options: PER_OBJECT_BANK_OPTIONS,
             value: bankAgg === "varies" ? "" : bankAgg,
             width: W.voiceFieldCombined,
-            editable: voiceActive && bankRelevant,
+            editable: beatboxActive,
             editKind: "setVoiceSuperdoughBank",
         }));
-        band.appendChild(r1);
+        // Sound-in-bank dropdown: the individual sounds within the object's
+        // bank — the chosen drum machine's drums, or the Dirt-Samples kit when
+        // the bank is "superdirt" (the "" sentinel). Picking one stores
+        // voice.superdough.sample; it doesn't inject into playback here — the
+        // on-active-beat voice style reads it later. The list comes from the
+        // sound index (loaded async; greys until it arrives). A mixed
+        // multi-select ("varies") has no single bank, so it lists nothing.
+        const bankSoundNames = bankAgg === "varies" ? [] : getBankSoundNames(bankAgg);
+        rBank.appendChild(this._buildDropdownField({
+            options: [
+                { value: "", label: "—" },
+                ...bankSoundNames.map((s) => ({ value: s, label: s })),
+            ],
+            value: sampleAgg === "varies" ? "" : sampleAgg,
+            width: 96,
+            editable: beatboxActive && bankSoundNames.length > 0,
+            editKind: "setVoiceSuperdoughSample",
+        }));
+        band.appendChild(rBank);
 
         return band;
     },
