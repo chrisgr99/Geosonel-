@@ -614,6 +614,11 @@ export const bandExtraMethods = {
                 if (active) {
                     inp.addEventListener("input", resize);
                     inp.addEventListener("blur", commit);
+                    // Enter commits the pattern (single-line inputs don't submit
+                    // on their own); blur runs commit, then the re-render lands.
+                    inp.addEventListener("keydown", (e) => {
+                        if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
+                    });
                 } else {
                     inp.disabled = true;
                 }
