@@ -32,6 +32,7 @@ import {
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 import { listStyles } from "./styleStore.js";
 import { getBankSoundNames } from "./drumMachineSounds.js";
+import { splitMeasures, resolveMeasures } from "./beatPoints.js";
 
 /** Wrap a beat-string input in a positioned span carrying the playing-beat
  *  highlight overlay, so the box can sit over the cell under the cursor. */
@@ -553,30 +554,74 @@ export const bandExtraMethods = {
             }
         }
 
-        // Strudel mode: a full-width, multi-line mini-notation field REPLACES the
-        // Active Beats x/dot string AND Beat Strength — both timing and strength live
-        // in one expression (digits 0–9 = strength, "~" rest, `?`/`|` etc. native).
-        // Two lines tall, growing as the pattern wraps past two lines.
+        // Strudel mode: the Beat Strength Pattern field — one rubber-band box per
+        // measure, with marker dividers between them. The beatPattern is `|`-joined
+        // measures; each box holds one bar's mini-notation (digits 0-9 = strength,
+        // "~" rest, native operators). An empty box inherits (ghosts) the nearest
+        // filled bar to its left; bars beyond `measures` are hidden but preserved.
         if (isStrudel) {
             const patternAgg = aggregateString(bpObjs, "beatPattern");
+            const measuresAgg = aggregateString(bpObjs, "measures");
+            const mNum = Number(measuresAgg);
+            const M = (Number.isFinite(mNum) && mNum >= 1) ? Math.floor(mNum) : 1;
+            const raw = patternAgg === "varies" ? "" : patternAgg;
+            const segs = splitMeasures(raw);            // all authored bars
+            const ghosts = resolveMeasures(segs, M);    // fill-down effective (for ghosts)
+
             const rL = mkRow();
             rL.appendChild(mkLabel("Beat Strength Pattern", { disabled: !active }));
             band.appendChild(rL);
-            const ta = document.createElement("textarea");
-            ta.className = "insp-field insp-pattern-field";
-            ta.value = patternAgg === "varies" ? "" : patternAgg;
-            ta.rows = 2;
-            ta.spellcheck = false;
-            ta.placeholder = "9 5 ~ 7?0.3 [3|7]";
-            if (!active) { ta.disabled = true; ta.classList.add("disabled"); }
-            const grow = () => { ta.style.height = "auto"; ta.style.height = `${ta.scrollHeight}px`; };
-            ta.addEventListener("input", grow);
-            if (active) {
-                // Commit on blur (Enter just inserts whitespace in mini-notation).
-                ta.addEventListener("blur", () => { this._emitEdit({ kind: "setBeatPattern", value: ta.value }); });
+
+            const fieldEl = document.createElement("div");
+            fieldEl.className = "insp-measure-field" + (active ? "" : " disabled");
+
+            /** @type {HTMLInputElement[]} */
+            const inputs = [];
+            // Rebuild the beatPattern from the M visible boxes plus any hidden
+            // trailing bars (preserved), joined by `|`, and commit.
+            const commit = () => {
+                const visible = inputs.map((inp) => inp.value.trim());
+                const hidden = segs.slice(M);
+                this._emitEdit({ kind: "setBeatPattern", value: [...visible, ...hidden].join(" | ") });
+            };
+
+            const MIN_SIZE = 4;
+            for (let i = 0; i < M; i++) {
+                if (i > 0) {
+                    const divider = document.createElement("span");
+                    divider.className = "insp-measure-divider";
+                    fieldEl.appendChild(divider);
+                }
+                const cell = document.createElement("div");
+                cell.className = "insp-measure";
+                const num = document.createElement("span");
+                num.className = "insp-measure-num";
+                num.textContent = String(i + 1);
+                cell.appendChild(num);
+                const inp = document.createElement("input");
+                inp.type = "text";
+                inp.className = "insp-measure-box";
+                inp.spellcheck = false;
+                const val = i < segs.length ? segs[i] : "";
+                inp.value = val;
+                // Ghost: an empty box that inherits a filled bar to its left shows
+                // that bar faint (grey-italic placeholder) so the user sees what plays.
+                if (val === "" && ghosts[i] !== "") inp.placeholder = ghosts[i];
+                const resize = () => {
+                    inp.size = Math.max(MIN_SIZE, inp.value.length || inp.placeholder.length);
+                };
+                resize();
+                if (active) {
+                    inp.addEventListener("input", resize);
+                    inp.addEventListener("blur", commit);
+                } else {
+                    inp.disabled = true;
+                }
+                inputs.push(inp);
+                cell.appendChild(inp);
+                fieldEl.appendChild(cell);
             }
-            band.appendChild(ta);
-            requestAnimationFrame(grow);   // size to initial content after layout
+            band.appendChild(fieldEl);
         }
 
         return band;
