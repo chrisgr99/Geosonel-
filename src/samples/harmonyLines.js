@@ -1,23 +1,26 @@
 /**
- * Sample score: "Harmony Lines" (working name).
+ * Sample score: "Harmony Lines".
  *
- * Two image-driven voices — a sawtooth bass (inner circle) and a piano melody
- * (outer circle) — each with 16 beat points that read the colour under the
- * cursor and turn it into a stepwise, chord-aware line (nxtNote) over a
- * looping C^7 | A-7 | D-7 | G7 progression. Drop an image on the canvas to
- * drive the notes. This is the first sample and the piece we'll evolve the
- * default-score behaviour from.
+ * Two INSTRUMENT voices — a sawtooth bass (inner circle) and a piano melody
+ * (outer circle) — each with a Strudel BEAT-STRENGTH PATTERN that turns the
+ * colour under the cursor into a stepwise, chord-aware line over a looping
+ * C^7 | A-7 | D-7 | G7 progression. Each voice carries an inspector-assigned
+ * note STYLE (onActiveBeatStyle = "bass" / "melodic"); the callback reads it
+ * with nxtSound and plays it with playSound. Drop an image on the canvas to
+ * drive the notes; edit the changes in the Harmony tab.
  *
- * A sample is `{ id, name, description, build(name) → Bundle }`. The build
- * returns an UNTITLED bundle (path null) so opening it lands an editable copy;
- * the original is never touched. Lives in src/samples/ so adding a sample is a
- * new file here plus a line in the manifest (src/samples/index.js).
+ * Exercises the new system: Strudel beat-strength patterns, Instrument voices,
+ * inspector-assigned nxtSound styles, and the type-agnostic nxtSound → playSound
+ * path (the SAME callback would fire a drum for a Beatbox voice). Load Engine in
+ * the transport bar to hear it.
+ *
+ * A sample is `{ id, name, description, build(name) → Bundle }`; the build
+ * returns an UNTITLED bundle so opening it lands an editable copy.
  */
 
 // @ts-check
 
 import { Bundle } from "../bundle.js";
-import { getPreference } from "../preferences.js";
 import { parseChord, parseKey } from "../irealChord.js";
 
 /**
@@ -48,25 +51,21 @@ function makeDemoHarmony() {
 export const harmonyLines = {
     id: "harmony-lines",
     name: "Harmony Lines",
-    description: "Image-driven bass + melody following a looping chord progression.",
+    description: "Strudel-driven bass + melody (Instrument voices) following a chord loop.",
     /**
      * @param {string} [name]
      * @returns {Bundle}
      */
     build(name = "Harmony Lines") {
         const bundle = new Bundle(name);
-        const triggerScale = getPreference("defaultTriggerScale");
-        const spriteScale = getPreference("defaultSpriteScale");
         const harmonyJson = JSON.stringify(makeDemoHarmony());
 
         bundle.addTextFile(
             "scene.json",
             `{
-  "bpm": 120,
+  "bpm": 110,
   "tonic": "C",
   "scaleName": "C major",
-  "triggerScale": ${triggerScale},
-  "spriteScale": ${spriteScale},
   "engine": "superdough",
 
   "harmony": ${harmonyJson},
@@ -80,13 +79,14 @@ export const harmonyLines = {
       "cursorR": 2,
       "cursorL": 0,
       "cycleSpeeds": "1",
-      "beatsPerCycle": 16,
-      "beatInterval": "Qtr",
-      "beatPointsMode": "normal",
-      "activeBeats": "x",
-      "strength": "9 6 6 6",
+      "beatsPerCycle": 4,
+      "repeats": 4,
+      "beatPointsMode": "strudel",
+      "beatPattern": "9 ~ 5 ~",
       "canActiveBeat": true,
-      "onActiveBeatFunction": "bass"
+      "onActiveBeatFunction": "bass",
+      "onActiveBeatStyle": "bass",
+      "voice": { "superdough": { "source": "instrument", "sound": "sawtooth" } }
     },
     {
       "id": "CRV2",
@@ -95,28 +95,21 @@ export const harmonyLines = {
       "cursorR": 2,
       "cursorL": 0,
       "cycleSpeeds": "1",
-      "beatsPerCycle": 16,
-      "beatInterval": "Qtr",
-      "beatPointsMode": "normal",
-      "activeBeats": "x",
-      "strength": "9 6 6 6",
+      "beatsPerCycle": 4,
+      "repeats": 4,
+      "beatPointsMode": "strudel",
+      "beatPattern": "7 5 9 5 7 5 9 5",
       "canActiveBeat": true,
-      "onActiveBeatFunction": "melody"
+      "onActiveBeatFunction": "melody",
+      "onActiveBeatStyle": "melodic",
+      "voice": { "superdough": { "source": "instrument", "sound": "piano" } }
     }
   ],
 
-  "triggers": [
-    { "id": "TRG1", "x":  9, "y":  0, "note": 60 },
-    { "id": "TRG2", "x": -9, "y":  0, "note": 64 },
-    { "id": "TRG3", "x":  0, "y":  9, "note": 67 },
-    { "id": "TRG4", "x":  0, "y": -9, "note": 72 }
-  ],
+  "triggers": [],
+  "sprites": [],
 
-  "sprites": [
-    { "id": "SPR1", "x": 0, "y": 0, "vx": 1, "vy": 1, "cycleSpeeds": "1 -1" }
-  ],
-
-  "idCounters": { "sprite": 2, "trigger": 5, "curve": 3 }
+  "idCounters": { "sprite": 1, "trigger": 1, "curve": 3 }
 }
 `,
             "application/json"
@@ -124,28 +117,23 @@ export const harmonyLines = {
 
         bundle.addTextFile(
             "script.js",
-            `// Each circle reads the image colour under its 16 beat points and turns it
-// into a melodic LINE that follows the chord progression. Each voice is a
-// MStyle: copy a built-in (styles.bass / .melody / .lead), set the instrument,
-// and nxtNote coordinates PITCH, VELOCITY and DURATION together — pitch from
-// lightness, velocity from the beat strength blended with red, duration from the
-// groove spacing shaped by blue and the phrase. Drop an image on the canvas;
-// edit the changes in the Harmony tab. Customise a voice one line at a time
-// (e.g. inner.velocityWeight = 0.8), or try styles.lead.
+            `// Two INSTRUMENT voices following the chord loop. Each circle's rhythm is a
+// Strudel Beat-Strength Pattern (Rhythm band), and each carries an
+// inspector-assigned note STYLE (Band 3) — "bass" on the inner circle,
+// "melodic" on the outer.
+//
+// nxtSound(this.style) reads the object's voice (Instrument here, so it makes a
+// pitched, chord-aware note from the style — pitch from lightness, velocity from
+// the beat strength) and playSound plays it through that voice's sound
+// (sawtooth / piano). The SAME callback would fire a drum for a Beatbox voice —
+// nxtSound and playSound are type-agnostic.
+//
+// Drop an image on the canvas to drive the lines; edit the changes in the
+// Harmony tab; try a different style in Band 3 or a different sound in the
+// Voice band. Load Engine to hear it.
 
-// Two voices, configured once and reused (these persist across beats).
-const inner = styles.bass.copy();    // inner circle — low, root-locked
-inner.sound = "sawtooth";
-const outer = styles.melodic.copy();  // outer circle — an upper-register line
-outer.sound = "piano";
-
-function bass() {
-  playNote(nxtNote(inner));          // style in → coordinated note out → play
-}
-
-function melody() {
-  playNote(nxtNote(outer));
-}
+function bass()   { playSound(nxtSound(this.style)); }
+function melody() { playSound(nxtSound(this.style)); }
 `,
         );
 

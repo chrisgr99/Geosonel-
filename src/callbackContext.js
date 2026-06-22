@@ -150,7 +150,7 @@ function chordStructurePcs(c) {
  * @param {number} [span]
  * @returns {number | import("./mStyle.js").Note}
  */
-export function nxtNote(arg0, style, low, span) {
+export function nxtSound(arg0, style, low, span) {
     if (current === null) {
         // Outside a callback: keep the legacy number default; a style argument
         // gets a benign default Note so a caller can't crash.
@@ -160,18 +160,22 @@ export function nxtNote(arg0, style, low, span) {
     }
     // No argument → the callback slot's STYLE (`this.style`, set by the engine
     // from the object's inspector-assigned style), or the default melody style
-    // when none is assigned. The zero-boilerplate `playNote(nxtNote())` path.
+    // when none is assigned. The zero-boilerplate `playSound(nxtSound())` path.
     if (arg0 === undefined) {
-        return nxtNoteFromStyle(current.style || STYLES.melodic);
+        return nxtSoundFromStyle(current.style || STYLES.melodic);
     }
-    // A MStyle (any object) → the COORDINATED note object { sound, note,
-    // velocity, duration, pan }. A number → the legacy bare-MIDI return, so
-    // existing scripts are untouched.
+    // A MStyle (any object) → the COORDINATED sound package. A number → the
+    // legacy bare-MIDI return, so existing scripts are untouched.
     if (arg0 !== null && typeof arg0 === "object") {
-        return nxtNoteFromStyle(arg0);
+        return nxtSoundFromStyle(arg0);
     }
     return nxtNoteLegacy(arg0, style, low, span);
 }
+
+// nxtNote is the prior name for nxtSound; kept as an alias so existing scripts
+// (and the installed `nxtNote` global) keep working. nxtSound is the canonical
+// name — type-agnostic across instrument and beatbox voices.
+export { nxtSound as nxtNote };
 
 /**
  * Legacy nxtNote: a number `drive` + a style profile → a bare MIDI note (0 =
@@ -208,28 +212,36 @@ function nxtNoteLegacy(drive, style, low, span) {
 }
 
 /**
- * New nxtNote: a MStyle → one COORDINATED note object. Pitch, velocity, and
- * duration are computed together — pitch from the style's `pitch` driver,
- * velocity from the beat strength blended with the `velocity` driver, duration
- * from the groove spacing shaped by `articulation`/phrase — so the line reads as
- * intentional. `sound` rides through (unset = the object's own voice). A drawn
- * gap rests (note 0). See src/mStyle.js.
+ * nxtSound: a MStyle → one COORDINATED sound package, type-agnostic across the
+ * object's two voice kinds (set by the Instrument/Beatbox radio in the inspector
+ * and bound onto the firing context as `ctx.voice`):
+ *
+ *   - INSTRUMENT (pitched) → uses ALL of the style: pitch (from the `pitch`
+ *     driver), velocity, and duration, returned as { note, velocity, duration,
+ *     pan }. playSound plays it through the object's instrument voice.
+ *   - BEATBOX (percussion) → uses only the style's PERCUSSION section — velocity
+ *     and duration, NO pitch (pickMelodicNote is skipped) — returned as
+ *     { velocity, duration, pan } with no `note`. playSound plays the object's
+ *     drum (bank + sample) at that velocity.
+ *
+ * A style never carries an instrument; the sound always comes from the object's
+ * own voice. A drawn gap rests. See src/mStyle.js.
  * @param {any} style  a MStyle (or style-shaped object)
- * @returns {{ sound: any, note: number, velocity: number, duration: number|undefined, pan: number|undefined }}
+ * @returns {import("./mStyle.js").Note}
  */
-function nxtNoteFromStyle(style) {
+function nxtSoundFromStyle(style) {
     const ctx = current;
     const phrase = currentHarmony ? currentHarmony.phrase : null;
     delete ctx._breathReleaseBeats; // the explicit duration replaces the old cap
     if (phrase && phrase.inGap) {
-        // No `sound`: a style carries no instrument, so the object's own voice plays.
         return new Note({ note: 0, velocity: 0, duration: 0 });
     }
-    let dice = resolveDrive(style.pitch, ctx);
-    dice = (typeof dice === "number" && Number.isFinite(dice))
-        ? Math.min(0.999999, Math.max(0, dice)) : 0;
-    const note = pickMelodicNote(ctx, style, dice, undefined, undefined, phrase);
+    // The object's voice kind. "beatbox" → percussion-only; anything else
+    // (instrument, or no voice set) → the full melodic path.
+    const voice = (ctx.voice !== null && typeof ctx.voice === "object") ? ctx.voice : null;
+    const beatbox = voice !== null && voice.source === "beatbox";
 
+    // The percussion section — velocity + duration — applies to both kinds.
     const strength = (typeof ctx.vel === "number" && Number.isFinite(ctx.vel)) ? ctx.vel : 0.8;
     const velocity = shapeVelocity({
         beatStrength: strength,
@@ -250,13 +262,21 @@ function nxtNoteFromStyle(style) {
         phraseDynamics: style.phraseDynamics,
     });
     const bpm = (typeof ctx.bpm === "number" && ctx.bpm > 0) ? ctx.bpm : 120;
-    return new Note({
-        // No `sound`: a style carries no instrument, so the object's own voice plays.
-        note,
-        velocity,
-        duration: durBeats * 60 / bpm,        // beats → seconds (playNote's unit)
-        pan: resolveDrive(style.pan, ctx),
-    });
+    const duration = durBeats * 60 / bpm;       // beats → seconds (playSound's unit)
+    const pan = resolveDrive(style.pan, ctx);
+
+    if (beatbox) {
+        // Percussion: no pitch. playSound resolves the drum (bank + sample) from
+        // the object's beatbox voice; the style only shapes velocity + duration.
+        return new Note({ velocity, duration, pan });
+    }
+
+    // Instrument: add the melodic pitch (the full style).
+    let dice = resolveDrive(style.pitch, ctx);
+    dice = (typeof dice === "number" && Number.isFinite(dice))
+        ? Math.min(0.999999, Math.max(0, dice)) : 0;
+    const note = pickMelodicNote(ctx, style, dice, undefined, undefined, phrase);
+    return new Note({ note, velocity, duration, pan });
 }
 
 /**

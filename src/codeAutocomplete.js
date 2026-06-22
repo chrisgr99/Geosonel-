@@ -105,7 +105,7 @@ function inferVarType(state, pos, ident) {
     while ((m = re.exec(doc)) !== null) rhs = m[1];
     if (rhs === null) return null;
     rhs = rhs.trim();
-    if (/\bnxtNote\s*\(/.test(rhs)) return "Note";
+    if (/\bnxt(Note|Sound)\s*\(/.test(rhs)) return "Note";
     if (/\.copy\s*\(\s*\)\s*$/.test(rhs)
         || /^this\.style\b/.test(rhs)
         || /^styles\.[A-Za-z_$][\w$]*\s*$/.test(rhs)
@@ -118,7 +118,7 @@ function inferVarType(state, pos, ident) {
 /** Bare action globals callable without a prefix. */
 const BARE_GLOBALS = [
     "playNote", "playSound", "applyForce", "print", "onBeatInterval",
-    "mapToHarmony", "reRange", "nxtNote", "styles", "score",
+    "mapToHarmony", "reRange", "nxtNote", "nxtSound", "styles", "score",
 ];
 
 /**

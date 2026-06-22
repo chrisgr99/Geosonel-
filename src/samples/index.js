@@ -15,13 +15,13 @@
 
 // @ts-check
 
+import { beatboxKit } from "./beatboxKit.js";
 import { harmonyLines } from "./harmonyLines.js";
-import { autoRhythmTestbed } from "./autoRhythmTestbed.js";
 
 /** All built-in samples, in menu order. */
 export const SAMPLES = [
+    beatboxKit,
     harmonyLines,
-    autoRhythmTestbed,
 ];
 
 /** Pure metadata for menu rendering (id / name / description). */

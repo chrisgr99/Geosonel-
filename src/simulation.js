@@ -636,12 +636,19 @@ function cycleDurationSeconds(bpm, beatsPerCycle, beatInterval) {
  * `.copy()`s it to customise; a no-argument `nxtNote()` reads it directly. An
  * unassigned slot resolves to the default melody style, so `this.style` is always
  * present on a note callback. No per-fire allocation (it's the template, not a
- * copy). See src/mStyle.js.
+ * copy). See src/mStyle.js. Also binds the object's superdough voice as
+ * `ctx.voice` so a no-argument `nxtSound()` can pick pitched vs percussion.
  * @param {any} ctx
  * @param {string|undefined} name
+ * @param {any} [voice]  the object's voice.superdough ({ source, sound, bank, sample })
  */
-function bindSlotStyle(ctx, name) {
+function bindSlotStyle(ctx, name, voice) {
     ctx.style = resolveStyleByName(typeof name === "string" ? name : "");
+    // The object's superdough voice ({ source, sound, bank, sample }) so a
+    // no-argument nxtSound() can choose pitched (instrument) vs percussion-only
+    // (beatbox). Null when the object carries no superdough voice.
+    ctx.voice = (voice !== null && typeof voice === "object" && !Array.isArray(voice))
+        ? voice : null;
 }
 
 function effectiveBeatsPerCycle(obj) {
@@ -1815,6 +1822,58 @@ export class Simulation {
     }
 
     /**
+     * The unified, voice-dispatching emitter behind every callback context's
+     * `playSound`. The object's superdough voice decides what plays:
+     *   - source "beatbox" → a drum hit from the object's bank + sample (or an
+     *     explicit override in args), at the spec's velocity. Pitch is ignored.
+     *   - otherwise (instrument, or unset) → a pitched note through the object's
+     *     instrument voice, from the {note, velocity, duration, pan} spec.
+     * An explicit drum-shaped arg (a leading string, or { sample }/{ bank }) on a
+     * voice that ISN'T marked instrument also routes to the drum path, so legacy
+     * `playSound("bd")` calls keep working. nxtSound's packages dispatch by the
+     * voice: an instrument package carries a `note`, a beatbox package does not.
+     *
+     * playNote stays the legacy note-only emitter; playSound is the canonical one.
+     * @param {{ sourceId: string, obj: any, args: any[], vel: number,
+     *   name?: string, col?: any, beat?: number, simTime: number,
+     *   polyTimeSec: number|null, record: boolean }} opts
+     */
+    _playVoiced(opts) {
+        if (this._audioSink === null) return;
+        const { sourceId, obj, args, vel, name, col, beat, simTime, polyTimeSec, record } = opts;
+        const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+        const sd = (obj && isObj(obj.voice) && isObj(obj.voice.superdough))
+            ? obj.voice.superdough : null;
+        const source = sd ? sd.source : undefined;
+        const drumArg = typeof args[0] === "string"
+            || (isObj(args[0]) && ("sample" in args[0] || "bank" in args[0]));
+        const beatbox = source === "beatbox" || (source !== "instrument" && drumArg);
+        if (beatbox) {
+            const s = buildSoundSpec(args, vel);
+            const bank = (s.bank !== null && s.bank !== undefined) ? s.bank
+                : ((sd && typeof sd.bank === "string" && sd.bank !== "") ? sd.bank : null);
+            const sample = (s.sample !== undefined && s.sample !== null && s.sample !== "")
+                ? s.sample : (sd ? sd.sample : undefined);
+            this._audioSink(sourceId, {
+                type: "sound",
+                bank,
+                sample,
+                amplitude: s.velocity,
+                audioTime: this._transport.audioTimeForElapsed(simTime),
+            });
+            if (record) {
+                this._recordSoundEvent(sourceId, name, col, vel, beat, simTime,
+                    { bank, sample, velocity: s.velocity });
+            }
+        } else {
+            const group = (obj && typeof obj.group === "string") ? obj.group : "";
+            const s = buildNoteSpec(args, vel);
+            if (!this._emitNote(sourceId, group, s, polyTimeSec)) return;
+            if (record) this._recordNoteEvent(sourceId, name, col, vel, beat, simTime, s);
+        }
+    }
+
+    /**
      * Set the audio sink the onTick context's playNote /
      * playSound forward to. Signature (sourceId, spec); main.js
      * wires it to the firing engine's immediate-fire methods.
@@ -2018,22 +2077,16 @@ export class Simulation {
                 self._recordNoteEvent(selfId, name, col, vel, beat, simTime, s);
             },
             /**
-             * Fire a sample from this object's sound bank (§3.3).
-             * playSound(sample, vel?) or ("bank", sample, vel?) or
-             * ({...}). Superdough-only.
+             * Play this object's voice (§3.3): the unified emitter. A beatbox
+             * voice fires its bank+sample; an instrument voice plays a pitched
+             * note. Takes nxtSound(...) or the legacy playSound/playNote forms.
              * @param {...any} args
              */
             playSound(...args) {
-                if (self._audioSink === null) return;
-                const s = buildSoundSpec(args, vel);
-                self._audioSink(selfId, {
-                    type: "sound",
-                    bank: s.bank,
-                    sample: s.sample,
-                    amplitude: s.velocity,
-                    audioTime: self._transport.audioTimeForElapsed(simTime),
+                self._playVoiced({
+                    sourceId: selfId, obj, args, vel, name, col, beat, simTime,
+                    polyTimeSec: null, record: true,
                 });
-                self._recordSoundEvent(selfId, name, col, vel, beat, simTime, s);
             },
             /**
              * Automatic gain control (design/agc.md): map this firing's
@@ -2067,7 +2120,7 @@ export class Simulation {
         this._applyHarmonyToContext(ctx, beat);
         // Per-slot melodic STYLE (this.style) for this collision/trigger note
         // callback, from the object's hasCollidedStyle / beenTriggeredStyle.
-        bindSlotStyle(ctx, obj[slot + "Style"]);
+        bindSlotStyle(ctx, obj[slot + "Style"], obj.voice && obj.voice.superdough);
         setCallbackContext(ctx);
         try {
             fn.call(recordingProxy);
@@ -2643,18 +2696,17 @@ export class Simulation {
                 if (!self._emitNote(selfId, group, s, timeToNthBeatSec)) return;
                 self._recordNoteEvent(selfId, callbackName, col, vel, beat, simTime, s);
             },
-            /** @param {...any} args  playSound(sample, vel?) or ("bank", sample, vel?) or ({...}). */
+            /**
+             * Play this object's voice (§3.3): the unified emitter — beatbox
+             * bank+sample or a pitched instrument note, per the object's voice.
+             * Takes nxtSound(...) or the legacy playSound/playNote forms.
+             * @param {...any} args
+             */
             playSound(...args) {
-                if (self._audioSink === null) return;
-                const s = buildSoundSpec(args, vel);
-                self._audioSink(selfId, {
-                    type: "sound",
-                    bank: s.bank,
-                    sample: s.sample,
-                    amplitude: s.velocity,
-                    audioTime: self._transport.audioTimeForElapsed(simTime),
+                self._playVoiced({
+                    sourceId: selfId, obj: curve, args, vel, name: callbackName,
+                    col, beat, simTime, polyTimeSec: timeToNthBeatSec, record: true,
                 });
-                self._recordSoundEvent(selfId, callbackName, col, vel, beat, simTime, s);
             },
             /**
              * Automatic gain control (design/agc.md): map this firing's
@@ -2689,7 +2741,7 @@ export class Simulation {
         // Per-slot melodic STYLE (this.style): the inspector-assigned voice a
         // no-argument nxtNote() uses. A fresh copy per fire so per-beat tweaks
         // don't accumulate (deterministic); only when one is assigned.
-        bindSlotStyle(ctx, curve.onActiveBeatStyle);
+        bindSlotStyle(ctx, curve.onActiveBeatStyle, curve.voice && curve.voice.superdough);
         setCallbackContext(ctx);
         try {
             fn.call(recordingProxy);
@@ -4604,22 +4656,18 @@ export class Simulation {
                 self._emitNote(sprite.id, group, s, null);
             },
             /**
-             * Fire a sample from the sprite's sound bank (§3.3).
-             * playSound(sample, vel?) or ("bank", sample, vel?) or
-             * ({...}). Superdough-only. Shares playNote's rate limit.
+             * Play the sprite's voice (§3.3): the unified emitter — beatbox
+             * bank+sample or a pitched instrument note, per the sprite's voice.
+             * Shares playNote's rate limit. Takes nxtSound(...) or legacy forms.
              * @param {...any} args
              */
             playSound(...args) {
                 if (self._audioSink === null) return;
                 if (simTime - state._lastAudioFireTime < MIN_AUDIO_FIRE_INTERVAL) return;
                 state._lastAudioFireTime = simTime;
-                const s = buildSoundSpec(args, vel);
-                self._audioSink(sprite.id, {
-                    type: "sound",
-                    bank: s.bank,
-                    sample: s.sample,
-                    amplitude: s.velocity,
-                    audioTime: self._transport.audioTimeForElapsed(simTime),
+                self._playVoiced({
+                    sourceId: sprite.id, obj: sprite, args, vel, simTime,
+                    polyTimeSec: null, record: false,
                 });
             },
             /**
@@ -4770,18 +4818,17 @@ export class Simulation {
                 if (!self._emitNote(selfId, group, s, null)) return;
                 self._recordNoteEvent(selfId, name, col, vel, beat, simTime, s);
             },
-            /** @param {...any} args  playSound(sample, vel?) or ("bank", sample, vel?) or ({...}). */
+            /**
+             * Play this curve's voice (§3.3): the unified emitter — beatbox
+             * bank+sample or a pitched instrument note, per the curve's voice.
+             * Takes nxtSound(...) or the legacy playSound/playNote forms.
+             * @param {...any} args
+             */
             playSound(...args) {
-                if (self._audioSink === null) return;
-                const s = buildSoundSpec(args, vel);
-                self._audioSink(selfId, {
-                    type: "sound",
-                    bank: s.bank,
-                    sample: s.sample,
-                    amplitude: s.velocity,
-                    audioTime: self._transport.audioTimeForElapsed(simTime),
+                self._playVoiced({
+                    sourceId: selfId, obj: curve, args, vel, name, col, beat, simTime,
+                    polyTimeSec: null, record: true,
                 });
-                self._recordSoundEvent(selfId, name, col, vel, beat, simTime, s);
             },
             /**
              * onTick-only musical-beat gate (§3.6). True on the one tick
