@@ -78,6 +78,21 @@ test("token sources: an inherited bar sources the FILLED box it repeats", () => 
     assert.ok(r.sources.every((s) => s && s.measure === 0));    // all light box 0
 });
 
+test("canvas token NcM: base strength + canvas swing in `ranges` (stays flat)", () => {
+    const r = deriveCurveBeatPoints(strudel("9 7c2 5 c3", 1, 1));
+    assert.deepEqual(r.strengths, [9, 7, 5, 0]);        // base; cM → base 0
+    assert.deepEqual(r.ranges, [0, 2, 0, 3]);            // 0 = fixed, > 0 = ±swing
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]); // placed natively (no engine)
+});
+
+test("canvas token highlights as one whole token", () => {
+    const r = deriveCurveBeatPoints(strudel("9 7c2", 1, 1));
+    assert.deepEqual(r.sources, [
+        { measure: 0, start: 0, end: 1 },   // "9"
+        { measure: 0, start: 2, end: 5 },   // "7c2" — the whole token
+    ]);
+});
+
 test("mode none yields no beat points", () => {
     const r = deriveCurveBeatPoints(curve({ beatPointsMode: "none", activeBeats: "x.x." }));
     assert.deepEqual(r.positions, []);

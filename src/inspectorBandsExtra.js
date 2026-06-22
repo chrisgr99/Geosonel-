@@ -46,6 +46,21 @@ function wrapBeatField(input) {
     return wrap;
 }
 
+/** Driver-from-Canvas channel options — the col image signals an NcM canvas
+ *  token reads under each beat to swing its strength (beatbox voices). */
+const STRENGTH_CHANNEL_OPTIONS = [
+    { value: "lt", label: "Lightness" },
+    { value: "chr", label: "Chroma" },
+    { value: "r", label: "Red" },
+    { value: "g", label: "Green" },
+    { value: "y", label: "Yellow" },
+    { value: "b", label: "Blue" },
+    { value: "or", label: "Orange" },
+    { value: "li", label: "Lime" },
+    { value: "cy", label: "Cyan" },
+    { value: "pu", label: "Purple" },
+];
+
 /** Voice Role options — the object's ensemble function (this.role). */
 const ROLE_OPTIONS = [
     { value: "none", label: "None" },
@@ -137,6 +152,9 @@ export const bandExtraMethods = {
         // semantics are deferred to the async-callback work.
         const onActiveBeatStyleAgg = aggregateString(objs.all, "onActiveBeatStyle");
         const roleAgg = aggregateString(objs.all, "role");
+        // Beatbox voices don't use a note style (their accent comes straight from
+        // the beat strength, canvas-driven), so the style picker is hidden for them.
+        const slotIsBeatbox = aggregateVoiceField(objs.all, "superdough", "source") === "beatbox";
         const canTickAgg = aggregateBoolean(objs.all, "canTick");
         const onTickFunctionAgg = aggregateString(objs.all, "onTickFunction");
 
@@ -226,14 +244,16 @@ export const bandExtraMethods = {
         // The label spans the leftLabel column + the 6px gap + the 18px checkbox
         // column, so (right-aligned) it hugs its dropdown — which still lines up
         // under the onActiveBeat function field above.
-        nsRow.appendChild(mkLabel("nxtNote Style", { width: W.leftLabel + 6 + 18, disabled: !styleRowEditable }));
-        nsRow.appendChild(this._buildDropdownField({
-            options: noteStyleOptions(),
-            value: onActiveBeatStyleAgg === "varies" ? "" : onActiveBeatStyleAgg,
-            width: W.callbackField,
-            editable: styleRowEditable,
-            editKind: "setOnActiveBeatStyle",
-        }));
+        if (!slotIsBeatbox) {
+            nsRow.appendChild(mkLabel("nxtNote Style", { width: W.leftLabel + 6 + 18, disabled: !styleRowEditable }));
+            nsRow.appendChild(this._buildDropdownField({
+                options: noteStyleOptions(),
+                value: onActiveBeatStyleAgg === "varies" ? "" : onActiveBeatStyleAgg,
+                width: W.callbackField,
+                editable: styleRowEditable,
+                editKind: "setOnActiveBeatStyle",
+            }));
+        }
         // "Role" sizes to its text (no fixed column) so it sits right up against the
         // nxtNote Style field, hugging the Role dropdown on its other side.
         nsRow.appendChild(mkLabel("Role", { disabled: !styleRowEditable }));
@@ -287,6 +307,9 @@ export const bandExtraMethods = {
         const objs = selectedObjects(this._scene, this._activeSelection);
         const active = ctx.hasCurves || ctx.hasSprites;
         const bpObjs = [...objs.curves, ...objs.sprites];
+        // Beatbox voices author canvas-driven strengths (NcM tokens), so the
+        // band shows a Driver-from-Canvas channel for them. All-beatbox only.
+        const isBeatbox = aggregateVoiceField(bpObjs, "superdough", "source") === "beatbox";
 
         // Beat-pattern mode is now always Strudel. The None / Manual / Euclidean
         // (and on-hold Auto) modes are deprecated and the picker is gone; the
@@ -366,6 +389,21 @@ export const bandExtraMethods = {
             // Nudge the field clear of its label so the number doesn't crowd it.
             repeatsField.style.marginLeft = "7px";
             r1.appendChild(repeatsField);
+        }
+        // Driver from Canvas (beatbox only): the image channel an NcM canvas
+        // token reads to swing the beat strength. Sits at the right of the row.
+        if (isStrudel && isBeatbox) {
+            const channelAgg = aggregateString(bpObjs, "strengthChannel");
+            const lbl = mkLabel("Driver from\nCanvas", { width: 60, disabled: !active, multiline: true });
+            lbl.style.marginLeft = "12px";
+            r1.appendChild(lbl);
+            r1.appendChild(this._buildDropdownField({
+                options: STRENGTH_CHANNEL_OPTIONS,
+                value: channelAgg === "varies" ? "" : channelAgg,
+                width: 84,
+                editable: active,
+                editKind: "setStrengthChannel",
+            }));
         }
         // Beats/Bar shows in both normal and euclidean — it is the
         // time signature's beat count (e.g. 3 for 3/4), and it groups

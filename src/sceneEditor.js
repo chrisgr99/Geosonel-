@@ -2158,6 +2158,12 @@ export function setMeasuresOnSelection(data, selection, value) {
     }
 }
 
+/** Set the Driver-from-Canvas channel (Band 5, beatbox) across the selection —
+ *  the col signal an NcM canvas token reads to swing the beat strength. */
+export function setStrengthChannelOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "strengthChannel", String(value));
+}
+
 /** Set the variation amount — the MAX notes flipped per cycle (a non-negative
  *  integer). Does NOT regenerate or re-bar the stored pattern — the variation is
  *  applied at beat-point DERIVATION time (per cycle), so the authored `activeBeats`

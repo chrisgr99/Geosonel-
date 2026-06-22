@@ -219,10 +219,10 @@ function nxtNoteLegacy(drive, style, low, span) {
  *   - INSTRUMENT (pitched) → uses ALL of the style: pitch (from the `pitch`
  *     driver), velocity, and duration, returned as { note, velocity, duration,
  *     pan }. playSound plays it through the object's instrument voice.
- *   - BEATBOX (percussion) → uses only the style's PERCUSSION section — velocity
- *     and duration, NO pitch (pickMelodicNote is skipped) — returned as
- *     { velocity, duration, pan } with no `note`. playSound plays the object's
- *     drum (bank + sample) at that velocity.
+ *   - BEATBOX (percussion) → NO style at all: the drum's velocity IS the beat
+ *     strength (already canvas-resolved at fire time via an NcM token), with no
+ *     pitch — returned as { velocity }. playSound plays the object's drum
+ *     (bank + sample) at that velocity; duration is irrelevant to a one-shot.
  *
  * A style never carries an instrument; the sound always comes from the object's
  * own voice. A drawn gap rests. See src/mStyle.js.
@@ -236,13 +236,21 @@ function nxtSoundFromStyle(style) {
     if (phrase && phrase.inGap) {
         return new Note({ note: 0, velocity: 0, duration: 0 });
     }
-    // The object's voice kind. "beatbox" → percussion-only; anything else
+    // The object's voice kind. "beatbox" → percussion (no style); anything else
     // (instrument, or no voice set) → the full melodic path.
     const voice = (ctx.voice !== null && typeof ctx.voice === "object") ? ctx.voice : null;
     const beatbox = voice !== null && voice.source === "beatbox";
 
-    // The percussion section — velocity + duration — applies to both kinds.
     const strength = (typeof ctx.vel === "number" && Number.isFinite(ctx.vel)) ? ctx.vel : 0.8;
+
+    if (beatbox) {
+        // Beatbox: the drum's velocity IS the beat strength (the firing already
+        // applied any NcM canvas swing). The style is not consulted; playSound
+        // resolves the drum from the object's beatbox voice.
+        return new Note({ velocity: strength });
+    }
+
+    // Instrument: the full melodic style — velocity, duration, then pitch.
     const velocity = shapeVelocity({
         beatStrength: strength,
         image: resolveDrive(style.velocity, ctx),
@@ -265,13 +273,6 @@ function nxtSoundFromStyle(style) {
     const duration = durBeats * 60 / bpm;       // beats → seconds (playSound's unit)
     const pan = resolveDrive(style.pan, ctx);
 
-    if (beatbox) {
-        // Percussion: no pitch. playSound resolves the drum (bank + sample) from
-        // the object's beatbox voice; the style only shapes velocity + duration.
-        return new Note({ velocity, duration, pan });
-    }
-
-    // Instrument: add the melodic pitch (the full style).
     let dice = resolveDrive(style.pitch, ctx);
     dice = (typeof dice === "number" && Number.isFinite(dice))
         ? Math.min(0.999999, Math.max(0, dice)) : 0;

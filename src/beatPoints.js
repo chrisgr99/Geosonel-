@@ -58,10 +58,16 @@ const DEFAULT_STRENGTH = 9;
  * @typedef {{
  *   positions: number[],
  *   strengths: number[],
+ *   ranges?: number[],
  *   inactivePositions: number[],
  *   sources?: Array<{measure: number, start: number, end: number} | null>,
  *   error?: string,
  * }} BeatPoints
+ *
+ * `ranges` (Strudel measure mode) is index-aligned with `strengths`: 0 = a
+ * fixed digit, > 0 = a `NcM` canvas token whose strength swings ±range about the
+ * base (`strengths[i]`) driven by the object's Driver-from-Canvas channel,
+ * resolved at fire time.
  *
  * `sources` (Strudel measure mode only) is index-aligned with `positions`: each
  * is the source box index + character span within that box's pattern that
@@ -297,14 +303,26 @@ const STRUDEL_OPERATORS = /[[\]<>(){}*/!@,?|]/;
 
 /**
  * A "simple" token is one whose position and strength we can read
- * directly: a "~" rest, a bare "x"/"X" beat, or a single strength
- * digit. Anything else (multi-character, sample names, partial
- * operators) means the pattern isn't flat and goes to the engine.
+ * directly: a "~" rest, a bare "x"/"X" beat, a single strength digit,
+ * or a canvas token (NcM / cM). Anything else (multi-character, sample
+ * names, partial operators) means the pattern isn't flat and goes to
+ * the engine.
  * @param {string} tok
  */
 function isSimpleToken(tok) {
-    return tok === "~" || tok === "x" || tok === "X" || (tok.length === 1 && isDigit(tok));
+    return tok === "~" || tok === "x" || tok === "X"
+        || (tok.length === 1 && isDigit(tok))
+        || CANVAS_TOKEN.test(tok);
 }
+
+/**
+ * Canvas-driven strength token: `NcM` = base strength N (single digit) with a
+ * ±M swing driven by the object's Driver-from-Canvas channel; `cM` = base 0.
+ * The swing M is a single digit. The base/range are read at fire time against
+ * the image colour under the beat (see the strength→velocity resolution in
+ * simulation.js); here it just records the base (as the strength) and the range.
+ */
+const CANVAS_TOKEN = /^(\d?)c(\d)$/;
 
 /**
  * Place a flat space-separated mini-notation sequence natively —
@@ -320,7 +338,7 @@ function isSimpleToken(tok) {
 function deriveFlatSequence(raw) {
     if (STRUDEL_OPERATORS.test(raw)) return null;
     const tokens = raw.split(/\s+/).filter((t) => t.length > 0);
-    if (tokens.length === 0) return { positions: [], strengths: [], inactivePositions: [] };
+    if (tokens.length === 0) return { positions: [], strengths: [], inactivePositions: [], ranges: [] };
     if (!tokens.every(isSimpleToken)) return null;
     const n = tokens.length;
     /** @type {number[]} */
@@ -329,6 +347,8 @@ function deriveFlatSequence(raw) {
     const strengths = [];
     /** @type {number[]} */
     const inactivePositions = [];
+    /** @type {number[]} */
+    const ranges = [];   // 0 = fixed; > 0 = ±swing driven by the canvas channel
     for (let i = 0; i < n; i++) {
         const tok = tokens[i];
         if (tok === "~") {
@@ -336,10 +356,18 @@ function deriveFlatSequence(raw) {
             inactivePositions.push(i / n);
             continue;
         }
-        positions.push(i / n);
-        strengths.push(isDigit(tok) ? Number(tok) : DEFAULT_STRENGTH);
+        const cm = CANVAS_TOKEN.exec(tok);
+        if (cm !== null) {
+            positions.push(i / n);
+            strengths.push(cm[1] === "" ? 0 : Number(cm[1]));   // base (cM → 0)
+            ranges.push(Number(cm[2]));                          // ±swing
+        } else {
+            positions.push(i / n);
+            strengths.push(isDigit(tok) ? Number(tok) : DEFAULT_STRENGTH);
+            ranges.push(0);
+        }
     }
-    return { positions, strengths, inactivePositions };
+    return { positions, strengths, inactivePositions, ranges };
 }
 
 /**
@@ -509,6 +537,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
 
     /** @type {number[]} */ const positions = [];
     /** @type {number[]} */ const strengths = [];
+    /** @type {number[]} */ const ranges = [];
     /** @type {number[]} */ const inactivePositions = [];
     /** @type {Array<{measure: number, start: number, end: number} | null>} */
     const sources = [];
@@ -524,6 +553,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
             for (let i = 0; i < c.flat.positions.length; i++) {
                 positions.push(base + c.flat.positions[i] * span);
                 strengths.push(c.flat.strengths[i]);
+                ranges.push(c.flat.ranges[i] || 0);
                 const sp = c.spans[i];
                 sources.push(sp ? { measure: box, start: sp.start, end: sp.end } : null);
             }
@@ -546,6 +576,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
                 if (!(frac >= 0 && frac < 1)) continue;
                 positions.push(base + frac * span);
                 strengths.push(strengthFromHapValue(hap.value));
+                ranges.push(0);                          // canvas tokens are flat-only
                 const loc = hapLoc(hap);
                 sources.push(loc ? { measure: box, start: loc.start, end: loc.end } : null);
             }
@@ -555,7 +586,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
         // "empty" → a rest measure, nothing placed.
     }
     /** @type {BeatPoints} */
-    const out = { positions, strengths, inactivePositions, sources };
+    const out = { positions, strengths, ranges, inactivePositions, sources };
     if (error !== undefined && positions.length === 0) out.error = error;
     return out;
 }

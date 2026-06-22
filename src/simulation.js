@@ -1078,6 +1078,8 @@ class CurveRuntimeState {
         this._beatFractions = [];
         /** @type {number[]} */
         this._beatStrengths = [];
+        /** @type {number[]} Per-beat canvas swing (0 = fixed digit, > 0 = NcM). */
+        this._beatRanges = [];
         // Per-cycle firing cursor. _beatOrder is the active beats
         // sorted by the progress at which THIS cycle's cursor
         // reaches them (g = f for a forward cycle, 1 - f for a
@@ -2187,6 +2189,7 @@ export class Simulation {
         const bp = deriveCurveBeatPoints(curve);
         state._beatFractions = bp.positions;
         state._beatStrengths = bp.strengths;
+        state._beatRanges = bp.ranges || [];   // canvas swing per beat (0 = fixed)
         state._beatOrder = null;
     }
 
@@ -2470,6 +2473,7 @@ export class Simulation {
                 g: s < 0 ? 1 - f : f,
                 f,
                 strength: state._beatStrengths[i],
+                range: (state._beatRanges && state._beatRanges[i]) || 0,
                 index: i,
             }))
             .sort((a, b) => a.g - b.g);
@@ -2516,7 +2520,7 @@ export class Simulation {
             // (all reached by progress 1), then build the incoming cycle.
             while (state._beatNextIdx < state._beatOrder.length) {
                 const b = state._beatOrder[state._beatNextIdx++];
-                this._runOnActiveBeat(curve, state, fn, disableKey, b.index, state._beatOrder.length, b.strength, b.f);
+                this._runOnActiveBeat(curve, state, fn, disableKey, b.index, state._beatOrder.length, b.strength, b.f, b.range);
             }
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
@@ -2539,7 +2543,7 @@ export class Simulation {
         const prog = state.cycleProgress;
         while (state._beatNextIdx < order.length && order[state._beatNextIdx].g <= prog) {
             const b = order[state._beatNextIdx++];
-            this._runOnActiveBeat(curve, state, fn, disableKey, b.index, order.length, b.strength, b.f);
+            this._runOnActiveBeat(curve, state, fn, disableKey, b.index, order.length, b.strength, b.f, b.range);
         }
     }
 
@@ -2562,18 +2566,13 @@ export class Simulation {
      * @param {number} strength
      * @param {number} fraction  The beat's cycle-fraction (for the flash).
      */
-    _runOnActiveBeat(curve, state, fn, disableKey, beatIndex, beatCount, strength, fraction) {
+    _runOnActiveBeat(curve, state, fn, disableKey, beatIndex, beatCount, strength, fraction, range) {
         const self = this;
         const selfId = curve.id;
         const simTime = this._simTime;
         const bpm = this._transport.bpm;
         const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
         const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
-        // The beat accent (Beat Strength digit 0-9) normalized to
-        // 0..1. It is the default velocity (playNote(note) plays at the
-        // beat's strength) AND is exposed by name as beatStrength.
-        // Surfaced on the context as `beatStrength`, `vel`, `velocity`.
-        const vel = strength / 9;
 
         // Colour beneath the BEAT POINT — the pixel under the cursor as
         // it crosses this beat, NOT the curve centre — so the author
@@ -2591,6 +2590,19 @@ export class Simulation {
             : null;
         const px = imageSignalsFromOKLCh(oklch);
         const col = colFromSignals(px);
+        // The beat accent (Beat Strength 0-9) normalized to 0..1, surfaced as
+        // beatStrength / vel / velocity. A canvas token (NcM, range > 0) swings
+        // the base ±range by the object's Driver-from-Canvas channel under THIS
+        // beat: a mid value (0.5) leaves the base, dark/bright pull it down/up.
+        let effStrength = strength;
+        if (range > 0) {
+            const channel = (typeof curve.strengthChannel === "string" && curve.strengthChannel !== "")
+                ? curve.strengthChannel : "lt";
+            const cv = (col !== null && typeof col[channel] === "number") ? col[channel] : 0.5;
+            effStrength = strength + (cv - 0.5) * 2 * range;
+            effStrength = Math.max(0, Math.min(9, effStrength));
+        }
+        const vel = effStrength / 9;
         // Firing point (this.x/this.y): the beat point's canvas
         // position — the sampled point on the curve plus the runtime
         // offset, the same coordinates `col` was read from. Zero when

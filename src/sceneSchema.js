@@ -144,6 +144,10 @@ const CALLBACK_SLOT_FIELDS = [
     // bar; the cycle length is measures × master-beats × repeats quarter notes
     // (so beatsPerCycle is derived, not authored). See design/measure-patterns.md.
     { key: "measures", label: "Measures", type: "integer", default: 1, min: 1 },
+    // Driver from Canvas (beatbox voices): the image colour channel that an NcM
+    // canvas token reads under each beat to swing its strength. One of the col
+    // signals (lt = lightness, r/g/b, …). See design/measure-patterns.md.
+    { key: "strengthChannel", label: "Driver from Canvas", type: "enum", default: "lt", enumValues: ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"] },
     // Strudel cycle length (beatPointsMode === "strudel"): the span
     // the one-cycle mini-notation pattern maps across, given as a
     // note-duration token times an integer count

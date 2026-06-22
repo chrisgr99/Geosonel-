@@ -81,7 +81,7 @@ export const beatboxKit = {
       "measures": 2,
       "repeats": 1,
       "beatPointsMode": "strudel",
-      "beatPattern": "7 5 7 5 7 5 7 5",
+      "beatPattern": "7c2 5 7c2 5 7c2 5 7c2 5",
       "canActiveBeat": true,
       "onActiveBeatFunction": "drum",
       "voice": { "superdough": { "source": "beatbox", "bank": "RolandTR909", "sample": "hh" } }
@@ -105,11 +105,13 @@ export const beatboxKit = {
 // sound) in the Voice band.
 //
 // One callback drives them all: nxtSound() reads THIS object's voice — here a
-// beatbox drum — and shapes a hit from the style's velocity/duration (no
-// pitch). playSound then fires that drum at the beat's strength. The same
-// function would play a pitched line for an Instrument voice — nxtSound and
-// playSound are type-agnostic. Load Engine to hear it; tweak a pattern or swap
-// a drum and play again.
+// beatbox drum — and fires it at the beat's strength (no style, no pitch).
+// The same function would play a pitched line for an Instrument voice —
+// nxtSound and playSound are type-agnostic.
+//
+// The hat uses a CANVAS token: "7c2" = base accent 7, swung +/-2 by the image
+// under each beat through the Driver-from-Canvas channel (Lightness). Drop an
+// image on the canvas to hear the hats breathe. Load Engine to play.
 
 function drum() { playSound(nxtSound(this.style)); }
 `,

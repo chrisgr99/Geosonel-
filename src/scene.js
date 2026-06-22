@@ -751,6 +751,7 @@ export class Curve {
         this.strength = opts.strength ?? "9";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
+        this.strengthChannel = opts.strengthChannel ?? "lt";
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
@@ -923,6 +924,7 @@ export class Trigger {
         this.strength = opts.strength ?? "9";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
+        this.strengthChannel = opts.strengthChannel ?? "lt";
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
@@ -1143,6 +1145,7 @@ export class Sprite {
         this.strength = opts.strength ?? "9";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
+        this.strengthChannel = opts.strengthChannel ?? "lt";
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */

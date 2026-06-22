@@ -160,6 +160,7 @@ import {
     setBeatShiftOnSelection,
     setRepeatsOnSelection,
     setMeasuresOnSelection,
+    setStrengthChannelOnSelection,
     setVaryOnSelection,
     setVarySeedOnSelection,
     setVariabilityOnSelection,
@@ -4344,6 +4345,10 @@ async function main() {
             } else if (edit.kind === "setMeasures") {
                 await applySceneEdit((data) =>
                     setMeasuresOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setStrengthChannel") {
+                await applySceneEdit((data) =>
+                    setStrengthChannelOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setVary") {
                 await applySceneEdit((data) =>
