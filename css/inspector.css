@@ -478,7 +478,10 @@
 /* Native radio for the Voice band's Instrument / Beatbox source picker.
  * Tinted to the inspector's green accent so it reads as a sibling of the
  * round .insp-checkbox controls. */
-.insp-radio {
+/* The Voice band's Instrument/Beatbox radio INPUT. Distinct from .insp-radio,
+ * which the Band 1 State control puts on a <label> (a different element) — a
+ * width/height here would clip those labels. */
+.insp-voice-radio {
     width: 16px;
     height: 16px;
     margin: 0;
@@ -486,7 +489,7 @@
     flex-shrink: 0;
     cursor: pointer;
 }
-.insp-radio:disabled {
+.insp-voice-radio:disabled {
     cursor: default;
     opacity: 0.5;
 }

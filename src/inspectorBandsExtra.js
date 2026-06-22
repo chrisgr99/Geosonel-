@@ -866,7 +866,7 @@ export const bandExtraMethods = {
             const input = document.createElement("input");
             input.type = "radio";
             input.name = "insp-voice-source";
-            input.className = "insp-radio";
+            input.className = "insp-voice-radio";
             input.checked = source === val;
             input.disabled = !voiceActive;
             if (voiceActive) {
