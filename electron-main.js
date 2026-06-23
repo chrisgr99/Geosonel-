@@ -191,6 +191,13 @@ function sendMidiMessage(bytes) {
 // without another interception cycle.
 let closeConfirmed = false;
 
+// Tracks whether we've sent gxw:close-requested and are waiting for the
+// renderer's gxw:close-decision — i.e. the "Save changes?" dialog is up. A
+// second Cmd-Q during this window means "quit anyway" (see the
+// before-input-event handler in createWindow). Cleared when the decision
+// arrives or when a fresh close is forced.
+let awaitingCloseDecision = false;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1600,
@@ -234,7 +241,34 @@ function createWindow() {
     if (closeConfirmed) return;
     if (!mainWindow.isDocumentEdited()) return;
     event.preventDefault();
+    awaitingCloseDecision = true;
     mainWindow.webContents.send('gxw:close-requested');
+  });
+
+  // Press-again-to-force-quit. The first Cmd-Q on a dirty document brings up
+  // the "Save changes?" dialog (via the close interceptor above) and leaves
+  // us awaiting the renderer's decision. Pressing Cmd-Q a SECOND time while
+  // that dialog is up means "quit anyway" — discard the changes and exit.
+  // This gives a fast keyboard-only force-quit for test iteration without a
+  // separate shortcut. (Cmd-Shift-Q can't serve this purpose: macOS reserves
+  // it for Log Out, so the app never sees it.)
+  //
+  // before-input-event fires even for menu-accelerator keys, and calling
+  // preventDefault suppresses the default Quit accelerator — so on the second
+  // press we take over: set closeConfirmed so the close isn't re-intercepted,
+  // then app.quit() (which still runs will-quit, closing the MIDI port). On
+  // the FIRST press awaitingCloseDecision is false, so we do nothing and let
+  // the normal Quit → dialog flow run. Keyed off input.code (layout-agnostic).
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown'
+      && input.code === 'KeyQ'
+      && input.meta && !input.shift && !input.control && !input.alt
+      && awaitingCloseDecision) {
+      event.preventDefault();
+      awaitingCloseDecision = false;
+      closeConfirmed = true;
+      app.quit();
+    }
   });
 }
 
@@ -1382,6 +1416,7 @@ function registerStorageHandlers() {
   // next 'close' event sees the flag and allows the close. On 'cancel',
   // do nothing — the original close was already prevented.
   ipcMain.on('gxw:close-decision', (_event, decision) => {
+    awaitingCloseDecision = false;
     if (decision === 'proceed' && mainWindow !== undefined && mainWindow !== null) {
       closeConfirmed = true;
       mainWindow.close();

@@ -5159,6 +5159,11 @@ async function main() {
                 }
                 const decision = await confirmDiscardDialog({
                     scoreName: session.bundle.name,
+                    // Window-close path only: a second Cmd-Q while this dialog
+                    // is up force-quits (discards + exits) — see the
+                    // before-input-event handler in electron-main.js.
+                    description: "If you don’t save, your changes will be lost. " +
+                        "Press ⌘Q again to discard and quit.",
                 });
                 if (decision === "cancel") {
                     gxwWindow.sendCloseDecision("cancel");
