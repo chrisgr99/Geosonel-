@@ -307,9 +307,11 @@ export const bandExtraMethods = {
         const objs = selectedObjects(this._scene, this._activeSelection);
         const active = ctx.hasCurves || ctx.hasSprites;
         const bpObjs = [...objs.curves, ...objs.sprites];
-        // Beatbox voices author canvas-driven strengths (NcM tokens), so the
-        // band shows a Driver-from-Canvas channel for them. All-beatbox only.
-        const isBeatbox = aggregateVoiceField(bpObjs, "superdough", "source") === "beatbox";
+        // Canvas-driven strength (the swing/range digit of a strength token) maps
+        // the image colour under each beat onto its loudness, for BOTH beatbox
+        // (the drum's velocity is the strength) and instrument voices (the
+        // strength feeds shapeVelocity). So the Driver-from-Canvas channel shows
+        // for every Strudel voice, not beatbox only.
 
         // Beat-pattern mode is now always Strudel. The None / Manual / Euclidean
         // (and on-hold Auto) modes are deprecated and the picker is gone; the
@@ -392,7 +394,7 @@ export const bandExtraMethods = {
         }
         // Driver from Canvas (beatbox only): the image channel an NcM canvas
         // token reads to swing the beat strength. Sits at the right of the row.
-        if (isStrudel && isBeatbox) {
+        if (isStrudel) {
             const channelAgg = aggregateString(bpObjs, "strengthChannel");
             const lbl = mkLabel("Driver from\nCanvas", { width: 60, disabled: !active, multiline: true });
             lbl.style.marginLeft = "12px";

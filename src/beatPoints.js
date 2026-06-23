@@ -59,6 +59,7 @@ const DEFAULT_STRENGTH = 9;
  *   positions: number[],
  *   strengths: number[],
  *   ranges?: number[],
+ *   drops?: number[],
  *   inactivePositions: number[],
  *   sources?: Array<{measure: number, start: number, end: number} | null>,
  *   error?: string,
@@ -68,6 +69,13 @@ const DEFAULT_STRENGTH = 9;
  * fixed digit, > 0 = a `NcM` canvas token whose strength swings ±range about the
  * base (`strengths[i]`) driven by the object's Driver-from-Canvas channel,
  * resolved at fire time.
+ *
+ * `drops` (Strudel measure mode) is index-aligned with `strengths`: 0 = the beat
+ * always plays; 1..9 = a canvas DROP level from the third positional digit
+ * (`SVD`, e.g. `705`). At fire time the beat is SILENCED where the object's
+ * Drop-from-Canvas channel under it sits in the lowest `drop × 10%` of its range
+ * (low = drop), so the line thins out over part of the image. Like `ranges`,
+ * drops are flat-only (0 for engine-parsed measures).
  *
  * `sources` (Strudel measure mode only) is index-aligned with `positions`: each
  * is the source box index + character span within that box's pattern that
@@ -311,7 +319,7 @@ const STRUDEL_OPERATORS = /[[\]<>(){}*/!@,?|]/;
  */
 function isSimpleToken(tok) {
     return tok === "~" || tok === "x" || tok === "X"
-        || (tok.length === 1 && isDigit(tok))
+        || DIGITS_TOKEN.test(tok)
         || CANVAS_TOKEN.test(tok);
 }
 
@@ -323,6 +331,19 @@ function isSimpleToken(tok) {
  * simulation.js); here it just records the base (as the strength) and the range.
  */
 const CANVAS_TOKEN = /^(\d?)c(\d)$/;
+
+/**
+ * Positional digit token, 1–3 digits, `S` / `SV` / `SVD`:
+ *   - S   strength (0–9).
+ *   - V   ±swing about the strength, driven by the canvas strength channel —
+ *         the brief equivalent of the `NcM` swing token (`72` == `7c2`).
+ *   - D   canvas DROP level (1–9): the beat is silenced where the object's
+ *         Drop-from-Canvas channel under it is in the lowest `D × 10%` of its
+ *         range (low = drop); 0/absent = always plays.
+ * The swing slot must be present (use `0`) to reach the drop digit, e.g. `705`
+ * = strength 7, no swing, ~50% drop. Resolved at fire time in simulation.js.
+ */
+const DIGITS_TOKEN = /^(\d)(\d)?(\d)?$/;
 
 /**
  * Place a flat space-separated mini-notation sequence natively —
@@ -338,7 +359,7 @@ const CANVAS_TOKEN = /^(\d?)c(\d)$/;
 function deriveFlatSequence(raw) {
     if (STRUDEL_OPERATORS.test(raw)) return null;
     const tokens = raw.split(/\s+/).filter((t) => t.length > 0);
-    if (tokens.length === 0) return { positions: [], strengths: [], inactivePositions: [], ranges: [] };
+    if (tokens.length === 0) return { positions: [], strengths: [], inactivePositions: [], ranges: [], drops: [] };
     if (!tokens.every(isSimpleToken)) return null;
     const n = tokens.length;
     /** @type {number[]} */
@@ -349,6 +370,8 @@ function deriveFlatSequence(raw) {
     const inactivePositions = [];
     /** @type {number[]} */
     const ranges = [];   // 0 = fixed; > 0 = ±swing driven by the canvas channel
+    /** @type {number[]} */
+    const drops = [];    // 0 = always plays; 1..9 = canvas drop level (low = drop)
     for (let i = 0; i < n; i++) {
         const tok = tokens[i];
         if (tok === "~") {
@@ -361,13 +384,24 @@ function deriveFlatSequence(raw) {
             positions.push(i / n);
             strengths.push(cm[1] === "" ? 0 : Number(cm[1]));   // base (cM → 0)
             ranges.push(Number(cm[2]));                          // ±swing
-        } else {
-            positions.push(i / n);
-            strengths.push(isDigit(tok) ? Number(tok) : DEFAULT_STRENGTH);
-            ranges.push(0);
+            drops.push(0);                                       // NcM carries no drop
+            continue;
         }
+        const dm = DIGITS_TOKEN.exec(tok);
+        if (dm !== null) {
+            positions.push(i / n);
+            strengths.push(Number(dm[1]));                       // S
+            ranges.push(dm[2] !== undefined ? Number(dm[2]) : 0);// V swing
+            drops.push(dm[3] !== undefined ? Number(dm[3]) : 0); // D drop
+            continue;
+        }
+        // x / X: default-strength beat, no swing, no drop.
+        positions.push(i / n);
+        strengths.push(DEFAULT_STRENGTH);
+        ranges.push(0);
+        drops.push(0);
     }
-    return { positions, strengths, inactivePositions, ranges };
+    return { positions, strengths, inactivePositions, ranges, drops };
 }
 
 /**
@@ -538,6 +572,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
     /** @type {number[]} */ const positions = [];
     /** @type {number[]} */ const strengths = [];
     /** @type {number[]} */ const ranges = [];
+    /** @type {number[]} */ const drops = [];
     /** @type {number[]} */ const inactivePositions = [];
     /** @type {Array<{measure: number, start: number, end: number} | null>} */
     const sources = [];
@@ -554,6 +589,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
                 positions.push(base + c.flat.positions[i] * span);
                 strengths.push(c.flat.strengths[i]);
                 ranges.push(c.flat.ranges[i] || 0);
+                drops.push((c.flat.drops && c.flat.drops[i]) || 0);
                 const sp = c.spans[i];
                 sources.push(sp ? { measure: box, start: sp.start, end: sp.end } : null);
             }
@@ -577,6 +613,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
                 positions.push(base + frac * span);
                 strengths.push(strengthFromHapValue(hap.value));
                 ranges.push(0);                          // canvas tokens are flat-only
+                drops.push(0);                           // drop is flat-only too
                 const loc = hapLoc(hap);
                 sources.push(loc ? { measure: box, start: loc.start, end: loc.end } : null);
             }
@@ -586,7 +623,7 @@ function deriveStrudelMeasures(beatPattern, measures, repeats) {
         // "empty" → a rest measure, nothing placed.
     }
     /** @type {BeatPoints} */
-    const out = { positions, strengths, ranges, inactivePositions, sources };
+    const out = { positions, strengths, ranges, drops, inactivePositions, sources };
     if (error !== undefined && positions.length === 0) out.error = error;
     return out;
 }

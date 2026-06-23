@@ -2190,6 +2190,7 @@ export class Simulation {
         state._beatFractions = bp.positions;
         state._beatStrengths = bp.strengths;
         state._beatRanges = bp.ranges || [];   // canvas swing per beat (0 = fixed)
+        state._beatDrops = bp.drops || [];     // canvas drop level per beat (0 = always plays)
         state._beatOrder = null;
     }
 
@@ -2341,6 +2342,7 @@ export class Simulation {
                 f,
                 strength: state._beatStrengths[i],
                 range: (state._beatRanges && state._beatRanges[i]) || 0,
+                drop: (state._beatDrops && state._beatDrops[i]) || 0,
                 index: i,
             }))
             .sort((a, b) => a.g - b.g);
@@ -2387,7 +2389,7 @@ export class Simulation {
             // (all reached by progress 1), then build the incoming cycle.
             while (state._beatNextIdx < state._beatOrder.length) {
                 const b = state._beatOrder[state._beatNextIdx++];
-                this._runOnActiveBeat(curve, state, fn, disableKey, b.index, state._beatOrder.length, b.strength, b.f, b.range);
+                this._runOnActiveBeat(curve, state, fn, disableKey, b.index, state._beatOrder.length, b.strength, b.f, b.range, b.drop);
             }
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
@@ -2410,7 +2412,7 @@ export class Simulation {
         const prog = state.cycleProgress;
         while (state._beatNextIdx < order.length && order[state._beatNextIdx].g <= prog) {
             const b = order[state._beatNextIdx++];
-            this._runOnActiveBeat(curve, state, fn, disableKey, b.index, order.length, b.strength, b.f, b.range);
+            this._runOnActiveBeat(curve, state, fn, disableKey, b.index, order.length, b.strength, b.f, b.range, b.drop);
         }
     }
 
@@ -2433,7 +2435,7 @@ export class Simulation {
      * @param {number} strength
      * @param {number} fraction  The beat's cycle-fraction (for the flash).
      */
-    _runOnActiveBeat(curve, state, fn, disableKey, beatIndex, beatCount, strength, fraction, range) {
+    _runOnActiveBeat(curve, state, fn, disableKey, beatIndex, beatCount, strength, fraction, range, drop) {
         const self = this;
         const selfId = curve.id;
         const simTime = this._simTime;
@@ -2457,6 +2459,21 @@ export class Simulation {
             : null;
         const px = imageSignalsFromOKLCh(oklch);
         const col = colFromSignals(px);
+        // Canvas-driven DROP (the third positional digit, SVD). A drop level
+        // 1..9 silences this beat where the object's Drop-from-Canvas channel
+        // under the beat point sits in the lowest `drop × 10%` of its 0..1
+        // range (low = drop) — so the line thins out over part of the image,
+        // deterministically and in step with the object's motion. Default
+        // channel is Chroma until the inspector exposes a chooser. A dropped
+        // beat fires nothing: no note, no flash, no event-trace entry — it
+        // behaves as a momentary rest while still drawing its diamond.
+        if (typeof drop === "number" && drop > 0) {
+            const dropChannel = (typeof curve.dropChannel === "string" && curve.dropChannel !== "")
+                ? curve.dropChannel : "chr";
+            let dv = (col !== null && typeof col[dropChannel] === "number") ? col[dropChannel] : 0.5;
+            dv = dv < 0 ? 0 : (dv > 1 ? 1 : dv);             // guard to 0..1
+            if (dv < drop / 10) return;                       // below threshold → drop
+        }
         // The beat accent (Beat Strength 0-9) normalized to 0..1, surfaced as
         // beatStrength / vel / velocity. A canvas token (NcM, range > 0) maps the
         // object's Driver-from-Canvas channel under THIS beat (0..1) LINEARLY

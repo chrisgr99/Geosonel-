@@ -85,6 +85,26 @@ test("canvas token NcM: base strength + canvas swing in `ranges` (stays flat)", 
     assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]); // placed natively (no engine)
 });
 
+test("positional shorthand SV: two digits = strength + canvas swing (72 == 7c2)", () => {
+    const r = deriveCurveBeatPoints(strudel("9 72 5", 1, 1));
+    assert.deepEqual(r.strengths, [9, 7, 5]);            // first digit = strength
+    assert.deepEqual(r.ranges, [0, 2, 0]);               // second digit = ±swing
+    assert.deepEqual(r.drops, [0, 0, 0]);                // no third digit = always plays
+    assert.deepEqual(r.positions, [0, 1 / 3, 2 / 3]);    // placed natively (flat)
+});
+
+test("positional SVD: third digit = canvas drop level (705 = str 7, no swing, drop 5)", () => {
+    const r = deriveCurveBeatPoints(strudel("9 705 725", 1, 1));
+    assert.deepEqual(r.strengths, [9, 7, 7]);
+    assert.deepEqual(r.ranges, [0, 0, 2]);               // middle digit = swing (0 then 2)
+    assert.deepEqual(r.drops, [0, 5, 5]);                // third digit = drop level
+});
+
+test("single digit keeps no swing and no drop", () => {
+    const r = deriveCurveBeatPoints(strudel("9 5", 1, 1));
+    assert.deepEqual(r.drops, [0, 0]);
+});
+
 test("canvas token highlights as one whole token", () => {
     const r = deriveCurveBeatPoints(strudel("9 7c2", 1, 1));
     assert.deepEqual(r.sources, [
