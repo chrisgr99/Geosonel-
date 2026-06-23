@@ -27,7 +27,6 @@ import {
     validateBeatShift,
     validateRepeats,
     validateCycleSpeeds,
-    validateStopAtCycle,
 } from "./curveFieldValidation.js";
 import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
 import { listStyles } from "./styleStore.js";
@@ -626,11 +625,26 @@ export const bandExtraMethods = {
             };
 
             const MIN_SIZE = 4;
+            // Lay the measures in rows of four, each row its own flex line, so the
+            // boxes stay snug (no last-box stretch) and the field never spreads
+            // into one long row when the pane is widened. A horizontal rule
+            // separates consecutive rows; same-row gaps get the bar divider.
+            const PER_ROW = 4;
+            let rowEl = null;
             for (let i = 0; i < M; i++) {
-                if (i > 0) {
+                if (i % PER_ROW === 0) {
+                    if (i > 0) {
+                        const sep = document.createElement("div");
+                        sep.className = "insp-measure-rowsep";
+                        fieldEl.appendChild(sep);
+                    }
+                    rowEl = document.createElement("div");
+                    rowEl.className = "insp-measure-row";
+                    fieldEl.appendChild(rowEl);
+                } else {
                     const divider = document.createElement("span");
                     divider.className = "insp-measure-divider";
-                    fieldEl.appendChild(divider);
+                    rowEl.appendChild(divider);
                 }
                 const cell = document.createElement("div");
                 cell.className = "insp-measure";
@@ -664,7 +678,7 @@ export const bandExtraMethods = {
                 }
                 inputs.push(inp);
                 cell.appendChild(inp);
-                fieldEl.appendChild(cell);
+                rowEl.appendChild(cell);
             }
             band.appendChild(fieldEl);
 
@@ -681,109 +695,34 @@ export const bandExtraMethods = {
             }
         }
 
-        return band;
-    },
-
-    /**
-     * Band 6 — Cycle. Two lines:
-     *   1. Cycle Speeds (short field) + Start at Cycle + Stop at
-     *      Cycle. These are cursor-cycle controls, so they apply to
-     *      curves and sprites and grey for trigger-only / empty.
-     *      Start default 0 (from the beginning), Stop default -1
-     *      (never stop).
-     *   2. Trigger Sync To Beat — the shared interval dropdown
-     *      ("Off" = no sync). Applies to triggers; greys otherwise.
-     * GeoSonix's Cursor Speed / Cycle Time / Time Lock are dropped.
-     *
-     * @param {ReturnType<typeof buildSelectionContext>} ctx
-     */
-    _buildBandCycle(ctx) {
-        const band = document.createElement("div");
-        band.className = "insp-band";
-        band.appendChild(mkBandHeader("Timing"));
-
-        const objs = selectedObjects(this._scene, this._activeSelection);
-        const cycleObjs = [...objs.curves, ...objs.sprites];
-        const cycleActive = ctx.hasCurves || ctx.hasSprites;
-        const triggerActive = ctx.hasTriggers;
-
-        const speedsAgg = aggregateString(cycleObjs, "cycleSpeeds");
-        const startAgg = aggregateString(cycleObjs, "startAtCycle");
-        const stopAgg = aggregateString(cycleObjs, "stopAtCycle");
-
-        const r1 = mkRow();
-        r1.classList.add("insp-cyclespeeds-row");
-        r1.appendChild(mkLabel("Cycle\nSpeeds", { width: W.beatStackLabel, disabled: !cycleActive, multiline: true }));
-        r1.appendChild(this._buildEditableField({
-            value: speedsAgg === "varies" ? "" : speedsAgg,
-            width: W.cycleSpeedsShort,
-            editable: cycleActive,
-            validator: validateCycleSpeeds,
-            editKind: "setCycleSpeeds",
-            selectOnFocus: false,
-        }));
-        r1.appendChild(mkLabel("Start at\nCycle", { width: W.beatStackLabel, disabled: !cycleActive, multiline: true }));
-        r1.appendChild(this._buildEditableField({
-            value: startAgg === "varies" ? "" : startAgg,
-            numeric: true,
-            width: W.beatNum,
-            editable: cycleActive,
-            validator: (c) => validateNumber(c, { min: 0, integer: true }),
-            editKind: "setStartAtCycle",
-            spinStep: 1,
-            selectOnFocus: false,
-        }));
-        r1.appendChild(mkLabel("Stop at\nCycle", { width: W.beatStackLabel, disabled: !cycleActive, multiline: true }));
-        r1.appendChild(this._buildEditableField({
-            value: stopAgg === "varies" ? "" : stopAgg,
-            numeric: true,
-            width: W.beatNum,
-            editable: cycleActive,
-            validator: validateStopAtCycle,
-            editKind: "setStopAtCycle",
-            spinStep: 1,
-            selectOnFocus: false,
-        }));
-        band.appendChild(r1);
-
-        const syncAgg = aggregateString(objs.triggers, "triggerSyncToBeat");
-        // Time Lag In Object aggregates across the WHOLE selection
-        // (universal across kinds), independent of Trigger Sync.
+        // Bottom row — cursor-cycle controls relocated from the removed Timing
+        // band: Cycle Speeds (curves/sprites) and Time Lag In Object (universal,
+        // multiplier × interval). Start/Stop at Cycle and Trigger Sync were
+        // dropped for now; their data fields stay in the model (may return).
+        const speedsAgg = aggregateString(bpObjs, "cycleSpeeds");
         const allObjs = [...objs.curves, ...objs.triggers, ...objs.sprites];
         const anySelected = ctx.total > 0;
         const timeLagMultAgg = aggregateString(allObjs, "timeLagMultiplier");
         const timeLagIntervalAgg = aggregateString(allObjs, "timeLagInterval");
         const timeLagIntervalValue =
             (timeLagIntervalAgg === "varies" || timeLagIntervalAgg === "")
-                ? ""
-                : timeLagIntervalAgg;
+                ? "" : timeLagIntervalAgg;
 
-        const r2 = mkRow();
-        r2.classList.add("insp-triggersync-row");
-        r2.appendChild(mkLabel("Trigger Sync", { width: W.leftLabel, disabled: !triggerActive }));
-        r2.appendChild(this._buildDropdownField({
-            options: INTERVAL_OPTIONS,
-            value: syncAgg === "varies" ? "" : syncAgg,
-            width: W.timeLagInterval,
-            editable: triggerActive,
-            editKind: "setTriggerSyncToBeat",
+        const rCycle = mkRow();
+        rCycle.classList.add("insp-cyclespeeds-row");
+        rCycle.appendChild(mkLabel("Cycle\nSpeeds", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+        rCycle.appendChild(this._buildEditableField({
+            value: speedsAgg === "varies" ? "" : speedsAgg,
+            width: W.cycleSpeedsShort,
+            editable: active,
+            validator: validateCycleSpeeds,
+            editKind: "setCycleSpeeds",
+            selectOnFocus: false,
         }));
-        // Time Lag In Object: moved here from Band 1 (to make room
-        // for Group). Universal across kinds — editable for any
-        // non-empty selection. Separated from Trigger Sync To Beat
-        // by a FIXED gap (not margin-left:auto) so the two read as
-        // unrelated controls without the field riding to the far
-        // edge when the inspector pane is widened; the fixed gap
-        // keeps this row no wider than the other inspector lines.
-        // A multiplier times an interval from the shared menu; the
-        // "x" reads "times". Runtime behaviour is still TBD.
-        const timeLagLabel = mkLabel("Time Lag", {
-            width: W.timeLagLabel,
-            disabled: !anySelected,
-        });
-        timeLagLabel.style.marginLeft = "40px";
-        r2.appendChild(timeLagLabel);
-        r2.appendChild(this._buildEditableField({
+        const timeLagLabel = mkLabel("Time Lag", { width: W.timeLagLabel, disabled: !anySelected });
+        timeLagLabel.style.marginLeft = "12px";
+        rCycle.appendChild(timeLagLabel);
+        rCycle.appendChild(this._buildEditableField({
             value: timeLagMultAgg === "varies" ? "" : timeLagMultAgg,
             numeric: true,
             width: W.timeLagMult,
@@ -793,15 +732,15 @@ export const bandExtraMethods = {
             spinStep: 1,
             selectOnFocus: false,
         }));
-        r2.appendChild(mkInlineLetter("x", { disabled: !anySelected }));
-        r2.appendChild(this._buildDropdownField({
+        rCycle.appendChild(mkInlineLetter("x", { disabled: !anySelected }));
+        rCycle.appendChild(this._buildDropdownField({
             options: INTERVAL_OPTIONS,
             value: timeLagIntervalValue,
             width: W.timeLagInterval,
             editable: anySelected,
             editKind: "setTimeLagInterval",
         }));
-        band.appendChild(r2);
+        band.appendChild(rCycle);
 
         return band;
     },

@@ -126,41 +126,52 @@ span within the mini-notation), already produced by `parsePatternToPositions`
 and used by the Code-tab active-token highlighter. The derivation must carry,
 per beat point, which measure box and which character span it came from.
 
-## Canvas-driven strength — `NcM` tokens (beatbox)
+## Canvas-driven strength and drop — positional digits
 
-A beat token can be **`NcM`** (base strength N, swing ±M) or **`cM`** (base 0)
-instead of a fixed digit. It stays a flat token (no engine); the derivation
-records the base in `strengths[i]` and M in a parallel `ranges[i]` (0 = fixed).
+A beat token is one to three **positional digits**, `strength·swing·drop`:
 
-At fire time the object's **Driver-from-Canvas channel** (`strengthChannel`, one
-of the col image signals: lt, chr, r, g, y, b, or, li, cy, pu) is read under
-THAT beat's point on the curve (cv, 0..1) and mapped **linearly across the valid
-span**, endpoints clamped:
+- `7` — fixed strength 7.
+- `72` — strength 7, canvas **swing ±2** (the second digit is the range).
+- `725` — strength 7, swing ±2, **drop level 5** (the third digit is the drop).
+
+It stays a flat token (no engine); the derivation records the base in
+`strengths[i]`, the swing range in a parallel `ranges[i]` (0 = fixed), and the
+drop level in `drops[i]` (0 = always plays). This applies to **every Strudel
+voice**, beatbox and instrument alike.
+
+At fire time the object's strength channel (one of the col image signals: lt,
+chr, r, g, y, b, or, li, cy, pu) is read under THAT beat's point on the curve
+(cv, 0..1) and mapped **linearly across the valid span**, endpoints clamped:
 
 ```
 lo = max(0, base − range);  hi = min(9, base + range)
 effStrength = lo + cv·(hi − lo)
 ```
 
-So `7c1` → [6, 8], `c9` → [0, 9] (a full dark→loud sweep). The whole channel
+So `71` → [6, 8], `09` → [0, 9] (a full dark→loud sweep). The whole channel
 range is used (clamping the endpoints, not the output, so no half is silenced).
 The strength is per-beat-POSITION: a static image + curve gives each beat a
 fixed level; variation comes across beats at different positions or as the
-object/image moves. A high-contrast image yields near-bimodal levels; a gradient
-gives a smooth sweep.
+object/image moves. Drop silences a beat where its drop channel (default Chroma)
+sits in the lowest `drop × 10%` of its range (low = drop).
 
 Beatbox voices read no note **style** — the drum's velocity IS this
-(canvas-resolved) strength. The Driver-from-Canvas channel sits at the right of
-the Rhythm band for beatbox voices; the nxtNote-style picker is hidden for them.
+(canvas-resolved) strength; instrument voices feed it into `shapeVelocity`.
 Canvas tokens are flat-only (operator patterns would need a later special-case).
+
+The **channels** these digits read, and an object-wide **depth** that scales the
+range and drop before the per-beat digit is evaluated, live in the **Canvas to
+Sound Drivers** band — see `canvas-to-sound-drivers.md`.
 
 ## Rhythm band fields (final)
 
 - **Beat Pattern** — the measure boxes.
 - **Measures** — phrase length.
 - **Repeats** — phrase tilings around the path.
-- **Driver from Canvas** (beatbox voices only) — the channel an `NcM` token reads.
+- **Bottom row** — Cycle Speeds, Time Lag In Object (multiplier + interval),
+  relocated from the removed Timing band.
 
+The strength/drop channel choosers moved to the Canvas to Sound Drivers band.
 Removed: Beat Interval (gone earlier), Qtr-Notes/Cycle (derived now), the
 mode picker (strudel-only), per-object Beats/Measure (master).
 

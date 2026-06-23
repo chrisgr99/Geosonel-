@@ -595,12 +595,14 @@ export class Inspector {
             perObj.className = "insp-perobject";
             perObj.appendChild(this._buildBandGeometry(ctx));
             perObj.appendChild(this._buildBandCallbackSlots(ctx));
+            // Voice sits above Rhythm (between Behaviours and Rhythm); the
+            // Rhythm band now carries the cursor-cycle fields (Cycle Speeds,
+            // Time Lag) in its bottom row, and the former Timing band is gone.
+            perObj.appendChild(this._buildBandMiddleArea(ctx));
             perObj.appendChild(this._buildBandBeatPoints(ctx));
-            perObj.appendChild(this._buildBandCycle(ctx));
             // Mutability band deprecated — removed from the inspector. Its
             // _buildBandMutability method and the position/size fields remain
             // for now, just not rendered.
-            perObj.appendChild(this._buildBandMiddleArea(ctx));
 
             // Title-less divider capping the bottom of the per-object
             // section, separating it from the empty space above the

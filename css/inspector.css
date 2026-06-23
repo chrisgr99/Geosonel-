@@ -228,8 +228,12 @@
  * the rubber-band (size-to-content) and wrap are robust. */
 .insp-measure-field {
     display: flex;
-    flex-wrap: wrap;
-    align-items: stretch;
+    flex-direction: column;
+    /* Hug the content (widest row of four boxes) instead of stretching to the
+     * full band width, so the rightmost box ends the field rather than running
+     * an empty cell out to the sidebar edge. */
+    width: fit-content;
+    max-width: 100%;
     margin-top: 2px;
     border: 2px solid #789678;
     border-radius: 4px;
@@ -238,6 +242,17 @@
     font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 }
 .insp-measure-field.disabled { opacity: 0.5; }
+/* One row of up to four measures. Cells size to their content and pack left
+ * (no flex-grow), so the rightmost box stays snug instead of stretching. */
+.insp-measure-row {
+    display: flex;
+    align-items: stretch;
+}
+/* Horizontal rule between consecutive rows of measures. */
+.insp-measure-rowsep {
+    height: 2px;
+    background-color: #6f8f6f;
+}
 /* One measure region: the bar number in the corner, the input below. */
 .insp-measure {
     position: relative;

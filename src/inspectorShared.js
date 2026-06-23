@@ -107,11 +107,10 @@ export const W = {
     beatPerCycleLabel: 38,
     beatPerBarLabel: 26,
     beatNum: 40,
-    // Band 6 (Cycle): Cycle Speeds string field. Widened to hold a
-    // longer speed list while keeping Band 6's row 1 no wider than
-    // the inspector's longest rows (the Band 3 callback rows). At
-    // 168 the row totals ~410px, under that ~450px ceiling.
-    cycleSpeedsShort: 168,
+    // Cycle Speeds string field (now the Rhythm band's bottom row). Holds a
+    // speed list; trimmed to 160 to keep the Cycle Speeds + Time Lag row narrow
+    // now that they share one line.
+    cycleSpeedsShort: 160,
     // Start/Stop at Cycle reuse beatNum (40).
 
     // Band 1 cycle duration numeric field. Small width
