@@ -717,47 +717,10 @@ export class StylesPanel {
     _buildVelocityBand(el, s) {
         const band = this._band("Note Velocity");
 
-        // Row 1: Velocity Mix   A ◀──slider──▶ B  (A = beat strength, B = canvas).
-        // velocityWeight maps DIRECTLY: 0 = A (beat, left) … 1 = B (canvas, right).
-        const mixRow = document.createElement("div");
-        mixRow.className = "styles-row";
-        mixRow.appendChild(this._fieldLabel("Velocity Mix"));
-        const aEnd = document.createElement("span");
-        aEnd.className = "styles-mix-end";
-        aEnd.textContent = "A";
-        mixRow.appendChild(aEnd);
-        const slider = document.createElement("input");
-        slider.type = "range";
-        slider.min = "0"; slider.max = "1"; slider.step = "0.01";
-        slider.className = "styles-weight-slider";
-        slider.title = "A (Inspector beat strength) ◀──▶ B (colour from canvas)";
-        slider.value = String(clamp01(s.velocityWeight));
-        slider.addEventListener("input", () => { s.velocityWeight = clamp01(Number(slider.value)); this._markDirty(); });
-        mixRow.appendChild(slider);
-        const bEnd = document.createElement("span");
-        bEnd.className = "styles-mix-end";
-        bEnd.textContent = "B";
-        mixRow.appendChild(bEnd);
-        band.appendChild(mixRow);
-
-        // Row 2: the A legend.
-        const aRow = document.createElement("div");
-        aRow.className = "styles-row styles-mix-legend";
-        const aTxt = document.createElement("span");
-        aTxt.textContent = "A: Inspector Beat Strength";
-        aRow.appendChild(aTxt);
-        band.appendChild(aRow);
-
-        // Row 3: the B legend + the canvas source / value dropdowns.
-        const bRow = document.createElement("div");
-        bRow.className = "styles-row styles-mix-legend";
-        const bTxt = document.createElement("span");
-        bTxt.textContent = "B: Color From Canvas";
-        bRow.appendChild(bTxt);
-        this._driverSourceValue(bRow, "velocity", { defaultChannel: "r" });
-        band.appendChild(bRow);
-
-        // Row 4: the two shaping knobs. "Dynamic Range" sits in the field-label
+        // Image-driven velocity (the canvas channel + its blend weight) moved to
+        // the inspector's Canvas to Sound Drivers band, per object — the style no
+        // longer carries image influence. What remains is the non-image shaping:
+        // the two shaping knobs. "Dynamic Range" sits in the field-label
         // column so it lines up with the Velocity Mix label above it.
         const shapeRow = document.createElement("div");
         shapeRow.className = "styles-row styles-field-nudge";
@@ -882,49 +845,19 @@ export class StylesPanel {
     _buildSustainBand(el, s) {
         const band = this._band("Note Sustain");
 
-        // Row 1: Sustain Mix   A ◀──slider──▶ B  (A = fixed default, B = canvas).
-        // durationWeight maps DIRECTLY: 0 = A (fixed, left) … 1 = B (canvas, right).
-        const mixRow = document.createElement("div");
-        mixRow.className = "styles-row";
-        mixRow.appendChild(this._fieldLabel("Sustain Mix"));
-        const aEnd = document.createElement("span");
-        aEnd.className = "styles-mix-end";
-        aEnd.textContent = "A";
-        mixRow.appendChild(aEnd);
-        const slider = document.createElement("input");
-        slider.type = "range";
-        slider.min = "0"; slider.max = "1"; slider.step = "0.01";
-        slider.className = "styles-weight-slider";
-        slider.title = "A (fixed default sustain) ◀──▶ B (colour from canvas)";
-        slider.value = String(clamp01(s.durationWeight));
-        slider.addEventListener("input", () => { s.durationWeight = clamp01(Number(slider.value)); this._markDirty(); });
-        mixRow.appendChild(slider);
-        const bEnd = document.createElement("span");
-        bEnd.className = "styles-mix-end";
-        bEnd.textContent = "B";
-        mixRow.appendChild(bEnd);
-        band.appendChild(mixRow);
-
-        // Row 2: the A legend — A is the fixed default sustain (editable, in beats).
+        // Image-driven sustain (the canvas channel + its blend weight) moved to
+        // the inspector's Canvas to Sound Drivers band, per object — the style no
+        // longer carries image influence. What remains here is the fixed default
+        // sustain (in beats) the per-object image driver now blends against.
         const aRow = document.createElement("div");
         aRow.className = "styles-row styles-mix-legend";
         const aTxt = document.createElement("span");
-        aTxt.textContent = "A: Fixed at";
+        aTxt.textContent = "Fixed sustain at";
         aRow.appendChild(aTxt);
         const aNum = this._numInput(s.articulation, (v) => { s.articulation = v; this._markDirty(); }, { min: 0, max: 2, step: 0.05, fallback: 0.9 });
         aNum.title = "The default note sustain in beats — how long the note holds from its onset, absolute and independent of the next note (so it works for collision/trigger notes too).";
         aRow.appendChild(aNum);
         band.appendChild(aRow);
-
-        // Row 3: the B legend + the canvas source / value dropdowns.
-        const bRow = document.createElement("div");
-        bRow.className = "styles-row styles-mix-legend";
-        const bTxt = document.createElement("span");
-        bTxt.textContent = "B: Color From Canvas";
-        bTxt.title = "A canvas value (a colour channel, etc.) driving the sustain, scaled to the beat range. The Sustain Mix slider blends it against the fixed default (A).";
-        bRow.appendChild(bTxt);
-        this._driverSourceValue(bRow, "duration", { defaultChannel: "b" });
-        band.appendChild(bRow);
 
         // Row 4: clip-at-next-note (the overlap param), flush-left.
         const clipRow = document.createElement("div");

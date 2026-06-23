@@ -747,6 +747,11 @@ export const bandExtraMethods = {
         const objs = selectedObjects(this._scene, this._activeSelection);
         const bpObjs = [...objs.curves, ...objs.sprites];
         const active = ctx.hasCurves || ctx.hasSprites;
+        // Beatbox voices are one-shot drums with no sustain (the sample plays its
+        // own length), so the Sustain row greys for an all-beatbox selection. The
+        // other rows — including Note Velocity, which now also shapes a drum's
+        // loudness — stay live.
+        const beatboxOnly = aggregateVoiceField(bpObjs, "superdough", "source") === "beatbox";
 
         // A 0..1 depth aggregate → slider value; default Full (1) when the
         // selection is empty or its depths vary (no blank state on a range input).
@@ -756,20 +761,21 @@ export const bandExtraMethods = {
         };
 
         // One driver row: right-aligned label, channel dropdown, then depth slider.
-        const driverRow = (labelText, channelField, channelKind, depthField, depthKind) => {
+        // rowActive lets a row grey independently (e.g. Sustain for beatbox).
+        const driverRow = (labelText, channelField, channelKind, depthField, depthKind, rowActive = active) => {
             const row = mkRow();
-            row.appendChild(mkLabel(labelText, { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            row.appendChild(mkLabel(labelText, { width: W.beatStackLabel, disabled: !rowActive, multiline: true }));
             const chanAgg = aggregateString(bpObjs, channelField);
             row.appendChild(this._buildDropdownField({
                 options: STRENGTH_CHANNEL_OPTIONS,
                 value: chanAgg === "varies" ? "" : chanAgg,
                 width: 84,
-                editable: active,
+                editable: rowActive,
                 editKind: channelKind,
             }));
             const slider = this._buildSliderField({
                 value: depthValue(aggregateString(bpObjs, depthField)),
-                editable: active,
+                editable: rowActive,
                 editKind: depthKind,
             });
             slider.style.marginLeft = "10px";
@@ -779,6 +785,8 @@ export const bandExtraMethods = {
 
         driverRow("Beat\nStrength", "strengthChannel", "setStrengthChannel", "strengthDepth", "setStrengthDepth");
         driverRow("Drop", "dropChannel", "setDropChannel", "dropDepth", "setDropDepth");
+        driverRow("Note\nVelocity", "velocityChannel", "setVelocityChannel", "velocityDepth", "setVelocityDepth");
+        driverRow("Sustain", "durationChannel", "setDurationChannel", "durationDepth", "setDurationDepth", active && !beatboxOnly);
 
         return band;
     },

@@ -155,6 +155,13 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "dropChannel", label: "Drop Driver from Canvas", type: "enum", default: "chr", enumValues: ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"] },
     { key: "strengthDepth", label: "Beat Strength Depth", type: "number", default: 1, min: 0, max: 1 },
     { key: "dropDepth", label: "Drop Depth", type: "number", default: 1, min: 0, max: 1 },
+    // Note velocity / sustain image drivers (Canvas to Sound Drivers band). The
+    // channel each reads under the beat and its depth (None 0 … Full 1, default
+    // None — the style no longer carries image influence).
+    { key: "velocityChannel", label: "Velocity Driver from Canvas", type: "enum", default: "lt", enumValues: ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"] },
+    { key: "velocityDepth", label: "Velocity Depth", type: "number", default: 0, min: 0, max: 1 },
+    { key: "durationChannel", label: "Sustain Driver from Canvas", type: "enum", default: "lt", enumValues: ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"] },
+    { key: "durationDepth", label: "Sustain Depth", type: "number", default: 0, min: 0, max: 1 },
     // Strudel cycle length (beatPointsMode === "strudel"): the span
     // the one-cycle mini-notation pattern maps across, given as a
     // note-duration token times an integer count

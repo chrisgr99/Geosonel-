@@ -75,6 +75,18 @@ object, and still combine with the style the way they did before:
 The style still shapes everything else (base level, accent response, phrasing);
 only the image knobs move here.
 
+### Beatbox voices
+
+A beatbox voice is a one-shot drum (no style, sample plays its own length):
+
+- **Note velocity** applies. A drum's velocity is the beat strength, further
+  shaped by the velocity driver — `shapeVelocity(beatStrength, velocityChannel,
+  velocityDepth)` with no style shaping. At depth None the velocity IS the beat
+  strength (so the Beat Strength row alone already moves a drum's loudness);
+  raising the depth layers the velocity channel on top.
+- **Sustain does not apply** — there is nothing to hold. The Sustain row greys
+  for an all-beatbox selection.
+
 ## Pan
 
 `panMode` dropdown:

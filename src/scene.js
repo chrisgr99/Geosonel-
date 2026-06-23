@@ -749,6 +749,14 @@ export class Curve {
         this.dropChannel = opts.dropChannel ?? "chr";
         this.strengthDepth = opts.strengthDepth ?? 1;
         this.dropDepth = opts.dropDepth ?? 1;
+        // Note velocity / sustain image drivers: the channel each reads and its
+        // depth (0 = no image, the note's velocity/length come from beat strength
+        // and the style; 1 = full image). Default None — opt-in, since the style
+        // no longer carries image influence.
+        this.velocityChannel = opts.velocityChannel ?? "lt";
+        this.velocityDepth = opts.velocityDepth ?? 0;
+        this.durationChannel = opts.durationChannel ?? "lt";
+        this.durationDepth = opts.durationDepth ?? 0;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
@@ -929,6 +937,14 @@ export class Trigger {
         this.dropChannel = opts.dropChannel ?? "chr";
         this.strengthDepth = opts.strengthDepth ?? 1;
         this.dropDepth = opts.dropDepth ?? 1;
+        // Note velocity / sustain image drivers: the channel each reads and its
+        // depth (0 = no image, the note's velocity/length come from beat strength
+        // and the style; 1 = full image). Default None — opt-in, since the style
+        // no longer carries image influence.
+        this.velocityChannel = opts.velocityChannel ?? "lt";
+        this.velocityDepth = opts.velocityDepth ?? 0;
+        this.durationChannel = opts.durationChannel ?? "lt";
+        this.durationDepth = opts.durationDepth ?? 0;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
@@ -1157,6 +1173,14 @@ export class Sprite {
         this.dropChannel = opts.dropChannel ?? "chr";
         this.strengthDepth = opts.strengthDepth ?? 1;
         this.dropDepth = opts.dropDepth ?? 1;
+        // Note velocity / sustain image drivers: the channel each reads and its
+        // depth (0 = no image, the note's velocity/length come from beat strength
+        // and the style; 1 = full image). Default None — opt-in, since the style
+        // no longer carries image influence.
+        this.velocityChannel = opts.velocityChannel ?? "lt";
+        this.velocityDepth = opts.velocityDepth ?? 0;
+        this.durationChannel = opts.durationChannel ?? "lt";
+        this.durationDepth = opts.durationDepth ?? 0;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */

@@ -229,6 +229,16 @@ function nxtNoteLegacy(drive, style, low, span) {
  * @param {any} style  a MStyle (or style-shaped object)
  * @returns {import("./mStyle.js").Note}
  */
+/** Sample one image channel (0..1) under the firing point for a Canvas to Sound
+ *  Drivers row — the col signal named by `channel` (default Lightness), clamped;
+ *  0.5 when no canvas/col is present. See design/canvas-to-sound-drivers.md. */
+function channelImage(ctx, channel) {
+    const col = ctx.col;
+    const ch = (typeof channel === "string" && channel !== "") ? channel : "lt";
+    const v = (col !== null && typeof col === "object" && typeof col[ch] === "number") ? col[ch] : 0.5;
+    return v < 0 ? 0 : (v > 1 ? 1 : v);
+}
+
 function nxtSoundFromStyle(style) {
     const ctx = current;
     const phrase = currentHarmony ? currentHarmony.phrase : null;
@@ -244,25 +254,36 @@ function nxtSoundFromStyle(style) {
     const strength = (typeof ctx.vel === "number" && Number.isFinite(ctx.vel)) ? ctx.vel : 0.8;
 
     if (beatbox) {
-        // Beatbox: the drum's velocity IS the beat strength (the firing already
-        // applied any NcM canvas swing). The style is not consulted; playSound
-        // resolves the drum from the object's beatbox voice.
-        return new Note({ velocity: strength });
+        // Beatbox: a one-shot drum — no style, no sustain (the sample plays its
+        // own length). Its velocity is the beat strength (already canvas-swung at
+        // fire time), further shaped by the object's Note Velocity driver: at
+        // depth None the velocity IS the beat strength, and raising it layers the
+        // velocity channel on top. playSound resolves the drum from the voice.
+        const velocity = shapeVelocity({
+            beatStrength: strength,
+            image: channelImage(ctx, ctx.velocityChannel),
+            weight: (typeof ctx.velocityDepth === "number") ? ctx.velocityDepth : 0,
+        });
+        return new Note({ velocity });
     }
 
-    // Instrument: the full melodic style — velocity, duration, then pitch.
+    // Instrument: the full melodic style — velocity, duration, then pitch. The
+    // image input + weight for velocity and sustain now come from the object's
+    // Canvas to Sound Drivers (ctx.velocityChannel/Depth, ctx.durationChannel/
+    // Depth), not the style — the style shapes everything else (accent response,
+    // phrasing, base level). Depth 0 (None) = no image, all beat strength.
     const velocity = shapeVelocity({
         beatStrength: strength,
-        image: resolveDrive(style.velocity, ctx),
-        weight: style.velocityWeight,
+        image: channelImage(ctx, ctx.velocityChannel),
+        weight: (typeof ctx.velocityDepth === "number") ? ctx.velocityDepth : 0,
         accentResponse: style.accentResponse,
         phrase,
         phraseDynamics: style.phraseDynamics,
     });
     const durBeats = shapeDuration({
         beatsToNext: typeof ctx.beatsToNext === "number" ? ctx.beatsToNext : null,
-        image: resolveDrive(style.duration, ctx),
-        weight: style.durationWeight,
+        image: channelImage(ctx, ctx.durationChannel),
+        weight: (typeof ctx.durationDepth === "number") ? ctx.durationDepth : 0,
         articulation: style.articulation,
         overlap: style.overlap,
         beatStrength: strength,

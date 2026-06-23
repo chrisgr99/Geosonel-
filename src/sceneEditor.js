@@ -2161,6 +2161,32 @@ export function setDropDepthOnSelection(data, selection, value) {
     setFieldOnSelection(data, selection, "dropDepth", Math.min(1, Math.max(0, n)));
 }
 
+/** Set the note-velocity Driver-from-Canvas channel across the selection — the
+ *  col signal that drives each note's loudness (Canvas to Sound Drivers). */
+export function setVelocityChannelOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "velocityChannel", String(value));
+}
+
+/** Set the note-velocity image depth (None 0 … Full 1) across the selection. */
+export function setVelocityDepthOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "velocityDepth", Math.min(1, Math.max(0, n)));
+}
+
+/** Set the sustain Driver-from-Canvas channel across the selection — the col
+ *  signal that drives each note's length (Canvas to Sound Drivers). */
+export function setDurationChannelOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "durationChannel", String(value));
+}
+
+/** Set the sustain image depth (None 0 … Full 1) across the selection. */
+export function setDurationDepthOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "durationDepth", Math.min(1, Math.max(0, n)));
+}
+
 /** Set the variation amount — the MAX notes flipped per cycle (a non-negative
  *  integer). Does NOT regenerate or re-bar the stored pattern — the variation is
  *  applied at beat-point DERIVATION time (per cycle), so the authored `activeBeats`

@@ -164,6 +164,10 @@ import {
     setDropChannelOnSelection,
     setStrengthDepthOnSelection,
     setDropDepthOnSelection,
+    setVelocityChannelOnSelection,
+    setVelocityDepthOnSelection,
+    setDurationChannelOnSelection,
+    setDurationDepthOnSelection,
     setVaryOnSelection,
     setVarySeedOnSelection,
     setVariabilityOnSelection,
@@ -4344,6 +4348,22 @@ async function main() {
             } else if (edit.kind === "setDropDepth") {
                 await applySceneEdit((data) =>
                     setDropDepthOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setVelocityChannel") {
+                await applySceneEdit((data) =>
+                    setVelocityChannelOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setVelocityDepth") {
+                await applySceneEdit((data) =>
+                    setVelocityDepthOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setDurationChannel") {
+                await applySceneEdit((data) =>
+                    setDurationChannelOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setDurationDepth") {
+                await applySceneEdit((data) =>
+                    setDurationDepthOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setVary") {
                 await applySceneEdit((data) =>
