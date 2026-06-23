@@ -193,7 +193,6 @@ import {
     setSceneTimeSignature,
     setSceneHarmony,
     setScenePhrases,
-    setSceneMasterObjectId,
     setSceneEngine,
     setSceneVoiceSuperdoughSound,
     setSceneVoiceSuperdoughBank,
@@ -668,14 +667,12 @@ async function main() {
 
     // Harmony now-playing cursor. The canvas feeds the current global beat
     // each playing frame (null on stop); the Harmony tab's chord chart
-    // highlights the bar sounding at that beat. Under phrase-sync the sounding
-    // chord follows the MASTER's groove, not the wall clock, so map the beat
-    // through the same slaving the engine uses (harmonyLookupBeat) — without a
-    // master it returns the beat unchanged, so ordinary playback is untouched.
+    // highlights the bar sounding at that beat. The chart plays on the
+    // transport clock and wraps at its end, so the beat maps straight to the
+    // sounding bar.
     canvas.setHarmonyBeatSink((beat) => {
         if (!editor.harmonyPanel) return;
-        const hb = beat === null ? null : simulation.harmonyLookupBeat(beat);
-        editor.harmonyPanel.setPlayhead(hb);
+        editor.harmonyPanel.setPlayhead(beat);
     });
 
     // Inspector hover-preview sink. As the pointer hovers an object on
@@ -1127,14 +1124,6 @@ async function main() {
                 editor.harmonyPanel.setHarmony(
                     result.scene.harmony ?? null,
                     result.scene.harmonyLoop !== false,
-                );
-                // Phrase-sync master: the candidate objects are those carrying a
-                // beat pattern (any of curves/triggers/sprites with
-                // beatPointsMode !== "none"); the panel's master dropdown chooses
-                // among them, and scene.masterObjectId is the current pick.
-                editor.harmonyPanel.setMasterContext(
-                    buildMasterCandidates(result.scene),
-                    result.scene.masterObjectId ?? null,
                 );
             }
             dispatchSelectedObjectIds(canvas.getSelection());
@@ -2062,15 +2051,6 @@ async function main() {
             });
         });
 
-        // Master object (phrase-sync): designate which beat-pattern object's
-        // groove drives the chord clock, or null to clear. One value, so it
-        // simply replaces any prior master. Re-run so the slaving (stage 2)
-        // picks it up; no rewind — designating a master is non-structural.
-        editor.harmonyPanel.onChangeMaster(async (objectId) => {
-            await applySceneEdit((data) => {
-                setSceneMasterObjectId(data, objectId);
-            });
-        });
     }
 
     // Styles tab: persist library edits and re-run so objects using a changed
@@ -2874,31 +2854,6 @@ async function main() {
      * object set and change only when objects are added,
      * removed, or renamed.
      */
-    /**
-     * Build the phrase-sync master candidates from a scene: every object (curve,
-     * trigger, or sprite) that carries a beat pattern (beatPointsMode !== "none"),
-     * since only those produce the generated beat-pattern phrases that drive the
-     * chord clock. Each candidate is { id, label } where label is the object id
-     * plus the user's name when set, for the chart's master dropdown.
-     * @param {import("./src/scene.js").Scene | null} scene
-     * @returns {Array<{ id: string, label: string }>}
-     */
-    const buildMasterCandidates = (scene) => {
-        /** @type {Array<{ id: string, label: string }>} */
-        const out = [];
-        if (scene === null) return out;
-        const add = (obj) => {
-            if (!obj || typeof obj.id !== "string") return;
-            if (obj.beatPointsMode === undefined || obj.beatPointsMode === "none") return;
-            const name = typeof obj.name === "string" ? obj.name.trim() : "";
-            out.push({ id: obj.id, label: name ? `${obj.id} — ${name}` : obj.id });
-        };
-        for (const obj of scene.curves) add(obj);
-        for (const obj of scene.triggers) add(obj);
-        for (const obj of scene.sprites) add(obj);
-        return out;
-    };
-
     const dispatchKnownObjectIds = () => {
         /** @type {Set<string>} */
         const ids = new Set();

@@ -544,8 +544,21 @@ export function harmonyAt(expanded, globalBeat, opts = {}) {
     return ended;
   }
 
-  const idx = findSpanIndex(spans, beat);
+  let idx = findSpanIndex(spans, beat);
   if (idx === -1) return ended;
+
+  // Boundary snap. A beat onset lands a few thousandths of a beat EARLY
+  // (simulation beat-firing jitter places a downbeat just shy of the integer
+  // beat). Without a snap, a downbeat that coincides with a chord change falls
+  // in the tail of the OUTGOING span: beatsToNext ≈ 0 clamps the note to the
+  // 0.02-beat floor (an ~11 ms click) AND it sounds the wrong (outgoing) chord.
+  // When the onset is within BOUNDARY_EPS of this span's end, treat it as the
+  // start of the NEXT chord, so the note gets that chord and its full length.
+  const BOUNDARY_EPS = 1 / 32; // beats — far above the jitter, below any real note
+  if (spans[idx].endBeat - beat <= BOUNDARY_EPS) {
+    idx = loop ? (idx + 1) % spans.length : Math.min(idx + 1, spans.length - 1);
+    beat = spans[idx].startBeat;
+  }
 
   const cur = spans[idx];
   const nextIdx = idx + 1;

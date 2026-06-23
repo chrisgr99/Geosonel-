@@ -1,211 +1,85 @@
-# Phrase as the shared sync unit (chart phrasing ↔ beat-pattern phrasing)
+# Chord-chart playback: the chart as the top-level form
 
-DEFERRED design, in discussion with Chris. The companion to
-[rhythm-auto-generation.md](rhythm-auto-generation.md) (the Auto groove) and
-[variations-and-repeats.md](variations-and-repeats.md) (compose-by-phrases) —
-this note is about making those two notions of "phrase" line up instead of
-fighting, which a real bug exposed (below).
+How a chord chart provides a harmonic sequence and cadences to a scene, and how
+the whole piece loops, without any object being slaved to it.
 
-## Two different things wearing one word
+## The two layers
 
 - **Chart phrasing** (`scene.harmony.phrases`) shapes the melodic LINE: where it
-  breathes, rests, and anchors to grounded tones over the changes. It's a
-  property of the HARMONY, and it reaches a voice through `nxtNote` (the ambient
-  phrase state). It answers "how does the line shape itself over the chords?"
-- **Beat-pattern phrasing** (the Auto generator's Beats/Phrase + Repeats) shapes
-  the GROOVE: which beat points fire, their strength, ratchets, how the pattern
-  repeats around the path. A per-curve rhythm property. It answers "when do I
-  hit?"
+  breathes, rests, and anchors to grounded/cadential tones over the changes.
+  It's a property of the HARMONY and reaches a voice through `nxtNote` (the
+  ambient phrase state). It answers "how does the line shape itself over the
+  chords?"
+- **Beat-pattern phrasing** (an object's measures × repeats) shapes the GROOVE:
+  which beat points fire, their strength, how the pattern tiles around the path.
+  A per-object rhythm property. It answers "when do I hit?"
 
-They are orthogonal LAYERS — rhythm picks the onsets; chart phrasing articulates
-the line that plays on them.
+These are orthogonal and run on independent clocks. The chart does NOT drive any
+object's groove, and no object drives the chart. Each object loops on its own
+path cycle; the chart loops on its own length.
 
-## The bug that motivates this
+## How the chart plays
 
-A curve (CRV4) in Auto rhythm mode whose callback is `nxtNote(styles.melody)` is
-BOTH a generated groove and a melodic line. It inherited the chart breath
-automatically (every `nxtNote` voice does, gated only by `breathe`), so notes
-got clipped at chord-phrase ends that have nothing to do with the groove. The
-event-trace showed durations 0.9 → 0.75 → 0.50 → 3e-10 (a near-silent click)
-approaching a phrase end at base-cycle beat 75.5, exactly matching
-`release = (phraseEnd − 0.5) − beat`. Because the auto-phrases are cadence-
-length (28/16/32/16/32/4 beats) and the cursor cycles every 4 beats, the breaths
-landed every 4–8 cursor cycles — "irregular pauses unrelated to the groove".
+The progression is stored folded (repeats/sections as markers) on
+`scene.harmony`. At `setScene` it is expanded (repeat barlines unrolled) into
+timed `ChordSpan`s over a beat axis — one bar lasts `timeSignature[0]` beats.
 
-Two takeaways: (1) following the chart phrasing is currently automatic and
-invisible; (2) the chart phrase boundaries and the groove boundaries DRIFT, so
-the breath lands in musically arbitrary spots.
+Playback is **pull-based on the transport clock**. Each firing object, at its
+fire beat `globalBeat = elapsedSeconds × BPM / 60`, looks up the spanning chord
+and the phrase state and reads them as context (`ctx.chord`, `ctx.nextChord`,
+the ambient phrase). An Instrument voice uses that to choose pitches
+(`melodicStep`); a Beatbox voice ignores it. The chord chart never emits notes
+itself.
 
-## The direction: make the phrase the shared boundary
+The chart wraps at its end: the chord lookup folds the beat into the chart's
+total length, so the progression repeats. `scene.harmony.phrases` are authored
+in that same base-cycle beat space, so the phrase grid applies to every loop.
 
-Instead of the harmony running on its own beat loop and each groove on its own
-cursor loop (so they drift), LOCK them together: one chart phrase's chord
-changes play across one groove phrase, and when the groove phrase completes the
-composition advances to the next chart phrase (looping the chart after the
-last). Then the two phrasings stop being two things — they're the same
-boundaries by construction:
+## The ensemble loop (objects restart with the form)
 
-- Chord changes apply sensibly to a groove-generated tune (the line plays the
-  current phrase's changes).
-- The chart's breath/anchor land exactly at groove-phrase ends — a musically
-  right spot, and the drift-induced pauses can't happen.
+The chord chart is the top-level musical form, so when it has played through
+once the **whole piece** returns to the top together: the transport rewinds at
+the chart's end.
 
-Harmony lookup becomes PHRASE-RELATIVE: at groove progress p (0→1 through the
-groove phrase), the chord is "this chart phrase's chord at p × phraseLength".
-Everything downstream (`nxtNote`, breath, anchoring) follows for free.
+- The period is `simulation._syncLoopBeats` = `_harmonyBaseCycleBeats`, the
+  chart's full expanded length in beats (the same value the chord lookup wraps
+  at), recomputed in `setScene`. Null when there is no chart (ordinary,
+  non-looping play).
+- `tick()` watches `transport.elapsedBeats` against that period and calls
+  `transport.rewind()` at the boundary — a genuine backward jump that BOTH the
+  sim (`_rewind`: object home, melody memory, voice registry, metronome) and the
+  firing engine reset on via their existing backward-jump detection. So every
+  object restarts its own cycle from the beginning at the top of the form.
+- Deferred while an audition boundary is armed (the two loops are exclusive).
 
-## The commensurability constraint (Chris)
+This is keyed to the actual chord progression repeating, so the reset lands at
+a musically meaningful point — the top of the form — rather than at some
+sub-multiple commensurate with nothing.
 
-The danger is an ugly stretch: a 5-bar chart phrase warped onto an 11-bar groove
-phrase is a 2.2× scale — chords slide off the bar lines and fly by at irrational
-spots. So REQUIRE the two phrase lengths to be COMMENSURATE: equal, or one an
-integer multiple of the other (and we lean toward power-of-two-friendly lengths,
-as real phrases usually are 2/4/8 bars). Three clean cases, no ugly stretch:
+### Notes ring out across the wrap
 
-- **1:1** — groove phrase length = chart phrase length (in bars). No stretch at
-  all; chords sit on the groove's bar lines. The simplest and the default we'd
-  aim for.
-- **Groove = k × chart phrase** — the chart phrase's chords stretch by an
-  INTEGER k (each chord lasts k× the bars, still landing on bar lines), or the
-  chart phrase repeats k times.
-- **Chart phrase = k × groove** — the groove repeats k times within the chart
-  phrase.
+The rewind must not chop sounding notes. It doesn't: superdough notes are
+fire-and-forget through Web Audio, scheduled with their full durations, and the
+backward-jump detection only **panics MIDI** — nothing cancels scheduled
+superdough voices. So notes already sounding at the seam play to their natural
+end while the new pass begins. (GX2 is superdough-only; the MIDI panic is the
+legacy path.)
 
-Anything non-integer (5↔11) is disallowed rather than stretched.
+### The commensurability note
 
-The cleanest way to GUARANTEE commensurability is to derive one length from the
-other rather than set them independently and hope: e.g. the groove phrase length
-SNAPS to the current chart phrase's bar count (1:1), so the groove adapts its
-generated length per phrase (a 4-bar phrase → a 4-bar groove, a 6-bar phrase → a
-6-bar groove). That removes stretch entirely; the chart phrase structure becomes
-the skeleton and the groove fills each phrase exactly.
+An object whose own cycle length does not divide the chart length is cut
+mid-cycle at the wrap. That is inherent to "the form repeats as one unit" and is
+predictable — it always happens at the top of the form. Give an object a cycle
+that divides the chart length to avoid it; that is a compositional choice, not
+something the engine forces.
 
-## Settled (Q&A with Chris)
+## What was removed
 
-- **Beat pattern drives, not the chart.** The groove is the master clock; the
-  chart is OPTIONAL (no chart → the groove just plays). This is cleaner than
-  "chart defines the skeleton" because the user may not care about changes.
-- **One "beat-pattern phrase" = one generated pattern** (the Beats/Phrase unit),
-  even when Repeats lays several copies around the object. So Repeats = N means N
-  phrase-slots per path sweep, each mapping to one chart phrase 1:1 (and each
-  slot can carry its own colour-driven groove + its own chord phrase — the
-  compose-by-phrases picture).
-- **Stretch, never drop.** A chart phrase is time-scaled to fit its beat-pattern
-  phrase; no chords lost. Lengths are usually integer multiples so the stretch
-  lands on bar lines; the awkward case (a short groove phrase, < 4 bars, vs a
-  longer chart phrase) gets reasonable-results rules TBD. We may enforce
-  nice (multiple-of-4-ish) lengths on the beat-pattern side.
-- **Master object** = any one beat-pattern object (curve OR sprite — sprites have
-  patterns too). Mutually exclusive (designating one clears the previous), opt-in
-  (none by default). Other voices read whatever chord the master is on (one
-  shared harmony clock, many independent grooves).
-- **Chart phrases** = the existing `scene.harmony.phrases`; chords laid out
-  proportionally inside each. The auto-phraser (`autoPhrase`) should be TWEAKED
-  to avoid extremes — merge a sub-minimum remainder (no 1-bar tail), and keep a
-  tighter band (no 8-bar monsters) — which also keeps the stretch ratios sane.
-- **Breath set aside** (see below) until we know we need it.
-
-## Still open
-
-1. **Multiple grooves with different lengths.** Confirmed one master drives the
-   chord clock; the open part is whether non-master objects snap to the master's
-   phrase boundaries or free-run (default: free-run, just reading the chords).
-2. **The stretch edge case** — a short groove phrase vs a longer chart phrase
-   (extreme compression). Reasonable-results rules to design.
-3. **Terminology.** Rename the Auto "Beats/Phrase" to e.g. "Beats/Figure" /
-   "Pattern Length" — it's the groove's repeat unit, not articulation phrasing.
-
-## Done already / regardless of the above
-
-- The auto-breath is SET ASIDE — disabled behind `BREATH_ENABLED = false` in
-  src/harmonyPhrasing.js (`phraseStateAt` produces no release-cap). Drawn-gap
-  rests and start/end anchoring still apply; only the note-clipping breath is
-  off. The mechanism (the release computation and nxtNote's handling) is intact,
-  so flipping the flag restores it. Revisit once the sync lands and we can see
-  whether a breath landing cleanly on groove boundaries is wanted.
-- The degenerate near-zero note is fixed regardless: a note trimmed below ~5 ms
-  now RESTS instead of emitting an inaudible click (src/simulation.js,
-  MIN_AUDIBLE_DURATION_SECONDS).
-
-## Build status
-
-Staged: (1) master designation + autoPhrase tweak; (2) harmony-slaving +
-proportional stretch; (3) UI polish.
-
-- **(1) DONE.** `scene.masterObjectId` (a top-level nullable string; scene.js,
-  sceneLoader.js, sceneSchema.js) names the master object. One value, so it is
-  naturally mutually exclusive — designating a new one replaces the old. Set via
-  `setSceneMasterObjectId` (sceneEditor.js, validates the id exists / clears a
-  dangling one). UI: a **"Master" entry in the Harmony chart's hamburger menu**
-  (alongside Chords / Key / Unwind), a flyout listing "None" + every candidate
-  object — chosen at Chris's suggestion over per-object toggles, since one
-  dropdown where the chords live reads clearer. Candidates = objects with a beat
-  pattern (`beatPointsMode !== "none"`), built in main.js (`buildMasterCandidates`)
-  and pushed via `harmonyPanel.setMasterContext`; the pick dispatches through
-  `applySceneEdit`. NO behaviour yet — the field is stored and surfaced; the
-  slaving is stage 2. `autoPhrase` also TWEAKED: a sub-minimum tail phrase now
-  folds into a neighbour (no 1-bar remainders), keeping lengths in a sane band.
-- **(2a) DONE — the slaving + option B.** `src/phraseSync.js` (`phraseSyncBeat`,
-  pure + tested) maps the master's groove phase to a base-cycle harmony beat:
-  the sweep (cycleProgress 0→1) splits into `repeats` groove phrases, phrase k of
-  sweep cc → chart phrase (cc*repeats+k) mod P (wrapping), and a chord change
-  snaps to the master's nearest preceding onset (option B). simulation.js wires
-  it in `_harmonyLookupBeat(globalBeat)` — the master's phase is derived in closed
-  form from the global beat (computeCyclePhaseFromGlobalTime), onsets from the
-  curve's cached `_beatFractions` (or deriveCurveBeatPoints for other kinds),
-  direction from the speed list — and `_applyHarmonyToContext` looks the chord +
-  phrase state up at that beat. No master → returns the global beat unchanged, so
-  prior behaviour is untouched. NOTE: `beatsToNext` is still the base-cycle value,
-  not yet re-timed to the stretched groove (minor; revisit if a callback leans on
-  it under sync).
-- **(2b) DONE — the ensemble loop on chart wrap.** Object motion/cycle phase is a
-  pure function of global `_simTime`, so a recognizable repeat means looping the
-  whole clock. Confirmed with Chris: loop the whole transport at the chart period,
-  reusing the rewind path. Rather than wrap `_simTime` by hand (would desync the
-  position display, metronome, and firing engine, which read the transport), the
-  sim's `tick()` watches `transport.elapsedBeats` against `_syncLoopBeats` and
-  calls `transport.rewind()` at the boundary — a genuine backward jump that BOTH
-  the sim (`_rewind`: object home, melody memory, voice registry, metronome) and
-  the firing engine reset on via their existing detection (the audition Loop uses
-  the same path; `setSeamBoundary` turned out to be an unwired TODO). The period
-  (`_computeSyncLoopBeats`, recomputed in setScene) = `numChartPhrases × the
-  master's base-pattern beats` (beatsPerCycle × beat-interval quarters) — tracks
-  the master, BPM-independent, Repeats-independent. Deferred while an audition
-  boundary is armed (the two loops are mutually exclusive). It aligns exactly with
-  2a's chart wrap (same global beat, period = numChartPhrases groove phrases), so
-  the harmony continuity is unchanged; 2b only adds the motion reset.
-- **(3) DONE — UI polish.** The master picker moved from the chart's hamburger
-  menu to a VISIBLE labelled dropdown in the chart header ("Master ▾", beside the
-  Phrases toggle), per Chris's wish for a more discoverable location
-  (harmonyPanel.js `_buildMasterControl` / `_syncMasterControl`; styled in
-  css/inspector.css). It lists None + every beat-pattern object, disables when
-  there are none, and takes a light-orange accent when a master is actually
-  driving the chords. The hamburger "Master" entry is gone (no duplication).
-  The now-playing cursor is sync-aware too: the harmony beat sink (main.js) maps
-  the playhead beat through `simulation.harmonyLookupBeat` (a public view of the
-  slaving) before `setPlayhead`, so under sync the highlighted bar tracks the
-  chord the master's groove is on, not the wall-clock beat. Without a master it
-  returns the beat unchanged, so ordinary playback is untouched.
-- Settled with Chris for stage 2:
-  - **Chord placement = snap to the master's onsets (option B), not proportional
-    slide.** Within a groove phrase, a chord change lands on the master's beat
-    grid (it changes ON a hit), trading exact proportional timing for always
-    landing on a heard beat — more musical. (Option A, proportional stretch with
-    off-grid landings, was the alternative.)
-  - **Ensemble reset on chart wrap.** When the chart phrase index wraps back to
-    phrase 0 (the whole progression has played through), reset the runtime state
-    of ALL objects to their chart-start state, so the whole piece repeats
-    recognizably — the chart becomes the top-level loop and the ensemble
-    re-seeds together (deterministic retrace). Build as 2a (slaving + option B)
-    then 2b (the wrap reset).
-  - `repeats = N` on the master → N chord-phrase slots per path sweep; the
-    master's groove drives the chord clock for ALL voices (each keeps its own
-    groove); the chart-phrase index advances one per groove phrase and wraps.
-
-## Relationship to compose-by-phrases
-
-This is [variations-and-repeats.md](variations-and-repeats.md)'s "compose by
-phrases" maturing: a phrase becomes the top-level unit carrying chords (from the
-chart) + groove (from the beat pattern) + a shared, commensurate length. The
-chart supplies harmonic content per phrase; the groove supplies rhythm and the
-clock; the commensurability rule binds them without warping.
+An earlier "master object" design slaved the chord clock to one designated
+beat-pattern object's groove (chords snapping to its onsets) and looped the
+transport at a master-derived sub-period. It was abandoned: the reset landed at
+points that didn't correspond to anything the objects did, and it gave the chart
+control over every object's repeats. The chart now runs free and wraps at its
+own end; objects keep their independent cycles. (`scene.masterObjectId`,
+`src/phraseSync.js`, the chart's Master dropdown, and the master-slaved harmony
+lookup are all gone.)

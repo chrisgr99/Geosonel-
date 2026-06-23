@@ -163,15 +163,6 @@ export class HarmonyPanel {
          */
         this._onEditPhrases = null;
 
-        /**
-         * Master-object callback wired by main.js. Receives the chosen object
-         * id (e.g. "CRV1") or null for "None"; main.js sets scene.masterObjectId
-         * and re-runs. The master's groove drives the chord clock (phrase-sync;
-         * see design/phrase-sync.md). Null until wired.
-         * @type {((objectId: string | null) => void) | null}
-         */
-        this._onChangeMaster = null;
-
         // --- Picker state ---
 
         /** Selected playlist id, or SCOPE_ALL. */
@@ -218,20 +209,6 @@ export class HarmonyPanel {
          */
         this._displayMode = "letter";
 
-        /**
-         * The currently designated master object id, or null for none. Pushed
-         * in from main.js via setMasterContext after each scene load/re-run.
-         * @type {string | null}
-         */
-        this._masterObjectId = null;
-        /**
-         * Candidate master objects (those with a beat pattern), pushed in from
-         * main.js via setMasterContext. Each is {id, label} where label is a
-         * human-readable name for the dropdown (id, plus the user's name if set).
-         * @type {Array<{ id: string, label: string }>}
-         */
-        this._masterCandidates = [];
-
         // --- DOM handles (filled by _render) ---
         /** @type {HTMLSelectElement | null} */
         this._playlistSelect = null;
@@ -271,8 +248,6 @@ export class HarmonyPanel {
         this._unwindMenuItem = null;
         /** The "Unwind" row's current-value span. @type {HTMLElement | null} */
         this._unwindValueEl = null;
-        /** The visible "Master" dropdown in the chart header (phrase-sync). @type {HTMLSelectElement | null} */
-        this._masterSelect = null;
         /** Whether the hamburger popup is open. */
         this._menuOpen = false;
 
@@ -377,29 +352,6 @@ export class HarmonyPanel {
     }
 
     /**
-     * Wire the master-object callback (main.js owns the scene edit + re-run).
-     * @param {(objectId: string | null) => void} cb
-     */
-    onChangeMaster(cb) {
-        this._onChangeMaster = cb;
-    }
-
-    /**
-     * Reflect the scene's phrase-sync master state into the panel (the INBOUND
-     * direction; onChangeMaster is the outbound one). main.js calls this after
-     * each scene load/re-run with the list of candidate beat-pattern objects and
-     * the currently designated master id (or null). Re-syncs the "Master" menu
-     * row's value and submenu ticks.
-     * @param {Array<{ id: string, label: string }>} candidates  objects with a beat pattern
-     * @param {string | null} masterObjectId  the designated master, or null for none
-     */
-    setMasterContext(candidates, masterObjectId) {
-        this._masterCandidates = Array.isArray(candidates) ? candidates : [];
-        this._masterObjectId = typeof masterObjectId === "string" ? masterObjectId : null;
-        this._syncMasterControl();
-    }
-
-    /**
      * Reflect the scene's current harmony into the panel (the INBOUND
      * direction; onChooseSong is the outbound one). main.js calls this
      * after every scene load/re-run with `scene.harmony` (or null), so both
@@ -461,7 +413,6 @@ export class HarmonyPanel {
         this._keyMenuItem = null;
         this._unwindMenuItem = null;
         this._unwindValueEl = null;
-        this._masterSelect = null;
         this._menuOpen = false;
 
         const playlists = listPlaylists();
@@ -774,9 +725,8 @@ export class HarmonyPanel {
      * DOM handles. The Letter/Roman toggle lives in the picker grid above.
      */
     _buildChartSection() {
-        // Header row: the song title on the left, and on the right the
-        // phrase-sync Master picker + the phrase-tool toggle (which arms the
-        // light-orange phrase drawing tool).
+        // Header row: the song title on the left, and on the right the phrase-
+        // tool toggle (which arms the light-orange phrase drawing tool).
         const header = document.createElement("div");
         header.className = "harmony-chart-header";
 
@@ -787,7 +737,6 @@ export class HarmonyPanel {
 
         const controls = document.createElement("div");
         controls.className = "harmony-chart-controls";
-        controls.appendChild(this._buildMasterControl());
 
         const phraseBtn = document.createElement("button");
         phraseBtn.type = "button";
@@ -895,86 +844,10 @@ export class HarmonyPanel {
         }
         popup.appendChild(unwindItem.item);
 
-        // (The phrase-sync "Master" picker is NOT in this menu — it's a visible
-        // dropdown in the chart header, _buildMasterControl, so designating the
-        // object whose groove drives the chord changes is discoverable.)
-
         menu.appendChild(popup);
         this._menuPopup = popup;
         this._syncMenuState();
         return menu;
-    }
-
-    /**
-     * Build the visible phrase-sync "Master" control for the chart header: a
-     * small label + a dropdown listing "None" plus every candidate object (the
-     * ones carrying a beat pattern). Designating one makes its groove drive the
-     * chord changes and loops the whole chart as one unit (design/phrase-sync.md).
-     * The options are filled by _syncMasterControl, since the object list varies.
-     * @returns {HTMLElement}
-     */
-    _buildMasterControl() {
-        const wrap = document.createElement("label");
-        wrap.className = "harmony-master";
-        wrap.title = "The object whose groove drives the chord changes. "
-            + "The whole chart then loops as one unit.";
-
-        const text = document.createElement("span");
-        text.className = "harmony-master-label";
-        text.textContent = "Master";
-        wrap.appendChild(text);
-
-        const select = document.createElement("select");
-        select.className = "harmony-master-select";
-        select.addEventListener("change", () => {
-            this._chooseMaster(select.value || null);
-        });
-        this._masterSelect = select;
-        wrap.appendChild(select);
-
-        this._syncMasterControl();
-        return wrap;
-    }
-
-    /**
-     * (Re)fill the master dropdown from the current candidate list and select
-     * the designated object. Disabled (and forced to "None") when nothing in the
-     * scene carries a beat pattern. Called on build and on setMasterContext.
-     */
-    _syncMasterControl() {
-        const sel = this._masterSelect;
-        if (sel === null) return;
-        sel.innerHTML = "";
-        const none = document.createElement("option");
-        none.value = "";
-        none.textContent = "None";
-        sel.appendChild(none);
-        for (const cand of this._masterCandidates) {
-            const opt = document.createElement("option");
-            opt.value = cand.id;
-            opt.textContent = cand.label;
-            sel.appendChild(opt);
-        }
-        const current = this._masterObjectId || "";
-        sel.value = current;
-        const noCandidates = this._masterCandidates.length === 0;
-        sel.disabled = noCandidates;
-        // Highlight when a master is actually driving the chords.
-        sel.classList.toggle("active", !noCandidates && current !== "");
-    }
-
-    /**
-     * Apply a master-object choice (an object id, or null to clear). No-op
-     * without a wired callback or when unchanged. main.js sets
-     * scene.masterObjectId and re-runs.
-     * @param {string | null} objectId
-     */
-    _chooseMaster(objectId) {
-        const id = objectId === "" ? null : objectId;
-        if (id === this._masterObjectId) return;
-        this._masterObjectId = id;
-        this._syncMasterControl();
-        if (this._onChangeMaster !== null) this._onChangeMaster(id);
     }
 
     /**

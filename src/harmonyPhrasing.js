@@ -15,8 +15,7 @@
  *     unmusical case of a cadence-run leaking across a boundary (or orphaning a
  *     section's last bar into the next section's phrase).
  *   - Within a section we prefer 4- and 8-bar phrases — the lengths real phrases
- *     take, and the ones that map cleanly onto a beat-pattern phrase under
- *     phrase-sync (design/phrase-sync.md). A cadence landing on the 4-bar grid
+ *     take. A cadence landing on the 4-bar grid
  *     carves a 4-bar phrase; otherwise the section reads as 8-bar arcs. Off-grid
  *     cadences are deliberately ignored in favour of the 4/8 shape. We still
  *     detect the authentic cadence V→I (dominant degree 5 → tonic degree 1),
@@ -64,10 +63,10 @@ const BREATH_BEATS = 0.5;
 const MIN_VOICED_BEATS = 2;
 
 /**
- * The auto-breath is SET ASIDE for now (it clipped notes at chord-phrase ends
- * that drifted against the groove; see design/phrase-sync.md). Drawn-gap rests
- * and start/end anchoring still apply — only the release-cap breath is off. Flip
- * to true to restore it (the logic below and nxtNote's handling are intact).
+ * The auto-breath is SET ASIDE for now (it clipped notes at chord-phrase ends).
+ * Drawn-gap rests and start/end anchoring still apply — only the release-cap
+ * breath is off. Flip to true to restore it (the logic below and nxtNote's
+ * handling are intact).
  */
 const BREATH_ENABLED = false;
 
@@ -179,8 +178,7 @@ export function autoPhrase(harmony) {
     // boundary / double barline) is a HARD phrase boundary — a phrase never
     // straddles it — because in lead-sheet music the section is the top
     // structural unit and phrases sit inside it. Within a section we prefer 4-
-    // and 8-bar phrases (see phraseLen), which read musically and map cleanly
-    // onto a beat-pattern phrase under phrase-sync (design/phrase-sync.md).
+    // and 8-bar phrases (see phraseLen), which read musically.
     const sectionStarts = sectionStartBars(spans, beatsPerBar, totalBars);
 
     /** @type {PhraseSpan[]} */

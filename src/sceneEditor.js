@@ -1614,31 +1614,6 @@ export function setSceneHarmonyLoop(data, value) {
 }
 
 /**
- * Set the phrase-sync MASTER object at the top level of scene.json. The master
- * is the one beat-pattern object (curve/sprite/trigger, by id) whose groove
- * drives the chord clock (see design/phrase-sync.md). One value, so designating
- * a new master simply replaces the old one — it is naturally mutually exclusive.
- *
- * An empty string or null clears the designation (no master; the chord changes
- * run on their own beat loop). A non-empty id is accepted only if it names an
- * object actually present in the scene; an unknown id clears rather than stores
- * a dangling reference. Mirrors setSceneBpm's defensive style.
- *
- * @param {any} data
- * @param {string | null} objectId  an object id (e.g. "CRV1"), or null/"" to clear
- */
-export function setSceneMasterObjectId(data, objectId) {
-    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
-    if (objectId === null || objectId === "") {
-        data.masterObjectId = null;
-        return;
-    }
-    const has = (arr) => Array.isArray(arr) && arr.some((o) => o && o.id === objectId);
-    data.masterObjectId =
-        (has(data.curves) || has(data.triggers) || has(data.sprites)) ? objectId : null;
-}
-
-/**
  * Set the engine field at the top level of scene.json.
  * Used by the property inspector's global band's Sound
  * Engine dropdown. The engine choice is per-score: it

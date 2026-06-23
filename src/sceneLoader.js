@@ -411,12 +411,8 @@ function applyPieceLevelFields(scene, data) {
     if ("harmonyLoop" in data && typeof data.harmonyLoop === "boolean") {
         scene.harmonyLoop = data.harmonyLoop;
     }
-    // The phrase-sync master object id (a curve/sprite/trigger id, or null for
-    // none). Only a string or explicit null overrides the default.
-    if ("masterObjectId" in data
-        && (typeof data.masterObjectId === "string" || data.masterObjectId === null)) {
-        scene.masterObjectId = data.masterObjectId;
-    }
+    // (A legacy `masterObjectId` field on older scenes is ignored: the chord
+    // chart now runs free on the transport clock and wraps at its end.)
     if ("tonic" in data) scene.tonic = data.tonic;
     if ("scaleName" in data) scene.scaleName = data.scaleName;
     if ("root" in data) scene.root = data.root;

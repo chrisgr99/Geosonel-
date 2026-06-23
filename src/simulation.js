@@ -270,7 +270,6 @@ import {
 import { HarmonyPlayer, expandProgression } from "./harmonyPlayer.js";
 import { applyUnwind } from "./harmonyUnwind.js";
 import { phraseStateAt } from "./harmonyPhrasing.js";
-import { phraseSyncBeat } from "./phraseSync.js";
 import { resolveStyleByName } from "./harmonyMelody.js";
 import { chordStructure } from "./harmonyMap.js";
 import { EventTrace } from "./eventTrace.js";
@@ -1346,16 +1345,17 @@ export class Simulation {
         /** @type {(() => void) | null} */
         this._auditionBoundaryHandler = null;
         /**
-         * Phrase-sync ENSEMBLE LOOP (stage 2b). When a master object drives the
-         * chord changes, the whole chart is the top-level loop: after it has
-         * played through once (numChartPhrases groove phrases), the piece resets
-         * so it repeats recognizably. This holds that period as a master-clock
-         * beat count — chart phrases × the master's base-pattern beats — recomputed
-         * in setScene. When non-null and the transport's elapsed beats reach it,
-         * tick() rewinds the transport (a genuine backward jump that both the sim
-         * and the firing engine already reset on), so every object returns to its
-         * chart-start state. Null when no master/chart is active (ordinary play).
-         * Deferred while an audition boundary is armed (the two are exclusive).
+         * Chart-wrap ENSEMBLE LOOP. The chord chart is the top-level form: after
+         * it has played through once (its full expanded length in beats), the
+         * whole piece resets so it repeats recognizably. This holds that period —
+         * the chart's total beats, recomputed in setScene. When non-null and the
+         * transport's elapsed beats reach it, tick() rewinds the transport (a
+         * genuine backward jump that both the sim and the firing engine already
+         * reset on), so every object returns to its chart-start state together.
+         * Notes already scheduled in superdough ring out across the seam (only
+         * MIDI panics), so the wrap doesn't chop sounding notes. Null when no
+         * chart is active (ordinary play). Deferred while an audition boundary is
+         * armed (the two are exclusive).
          * @type {number | null}
          */
         this._syncLoopBeats = null;
@@ -2260,152 +2260,19 @@ export class Simulation {
      * @param {number} beat  the current global beat
      */
     _applyHarmonyToContext(ctx, beat) {
-        // Phrase-sync: when a master beat-pattern object is designated, the chord
-        // changes follow ITS groove rather than the wall clock — so look up the
-        // chord (and phrase state) at the master-derived base-cycle beat. With no
-        // master this returns `beat` unchanged, preserving the prior behaviour.
-        const hb = this._harmonyLookupBeat(beat);
-        const h = this._harmonyContextAt(hb);
+        // The chart plays on the transport clock and wraps at its end; the chord
+        // (and phrase state) for the moment is looked up at the global beat. The
+        // whole ensemble rewinds at the chart wrap (see the tick() loop), so the
+        // progression is the top-level form without slaving any object's groove.
+        const h = this._harmonyContextAt(beat);
         ctx.chord = h ? chordStructure(h.chord, h.key) : null;
         ctx.nextChord = h ? chordStructure(h.next, h.key) : null;
         ctx.beatsToNext = h ? h.beatsToNext : null;
         if (!h) { setCallbackHarmony(null); return; }
-        const phrase = this._phraseStateAt(hb);
+        const phrase = this._phraseStateAt(beat);
         setCallbackHarmony(phrase
             ? { chord: h.chord, key: h.key, phrase }
             : { chord: h.chord, key: h.key });
-    }
-
-    /**
-     * The harmony-lookup beat for the current moment. Normally the global beat
-     * passed in, but when scene.masterObjectId names a valid beat-pattern object,
-     * the chord clock is SLAVED to that master's groove: its sweep is divided
-     * into `repeats` groove phrases, each mapped to one chart phrase, with chord
-     * changes snapping to the master's onsets (phrase-sync stage 2a; see
-     * src/phraseSync.js and design/phrase-sync.md). Returns a base-cycle beat in
-     * the chart's phrase space, which _harmonyContextAt / _phraseStateAt consume
-     * exactly as they do the global beat.
-     *
-     * The master's phase is derived in closed form from the global beat (the same
-     * pure timing computeCyclePhaseFromGlobalTime does for motion), so this stays
-     * a deterministic function of the moment — no per-tick ordering dependence.
-     *
-     * @param {number} globalBeat
-     * @returns {number}
-     */
-    /**
-     * Public view of the harmony-lookup beat for a global beat — the base-cycle
-     * beat the chord chart should HIGHLIGHT so its now-playing bar matches the
-     * sounding chord. Under phrase-sync this is the master-slaved beat; without a
-     * master it's the global beat unchanged. Mirrors what _applyHarmonyToContext
-     * looks the chord up at, so the chart and the audio agree.
-     * @param {number} globalBeat
-     * @returns {number}
-     */
-    harmonyLookupBeat(globalBeat) {
-        if (typeof globalBeat !== "number" || !Number.isFinite(globalBeat)) return globalBeat;
-        return this._harmonyLookupBeat(globalBeat);
-    }
-
-    _harmonyLookupBeat(globalBeat) {
-        const scene = this._scene;
-        if (scene === null) return globalBeat;
-        const masterId = scene.masterObjectId;
-        if (typeof masterId !== "string" || masterId === "") return globalBeat;
-        const harmony = scene.harmony;
-        const phrases = harmony ? harmony.phrases : null;
-        if (!Array.isArray(phrases) || phrases.length === 0) return globalBeat;
-        const master = this._findSceneObject(masterId);
-        if (master === null) return globalBeat;
-        const mode = master.beatPointsMode;
-        if (mode === undefined || mode === "none") return globalBeat; // no groove to drive
-
-        // Master cycle duration in BEAT units (quarter-note beats) so the phase
-        // derives straight from the global beat: D_beats = effectiveBeatsPerCycle
-        // × the beat interval's quarter-note length.
-        const effBPC = effectiveBeatsPerCycle(master);
-        if (typeof effBPC !== "number" || !(effBPC > 0)) return globalBeat;
-        const mInterval = effectiveBeatInterval(master);
-        const token = (typeof mInterval === "string" && mInterval !== "")
-            ? mInterval : DEFAULT_BEAT_INTERVAL;
-        const entry = getBeatIntervalEntry(token);
-        const quarters = entry !== null ? entry.quarterNotes : 1;
-        const dBeats = effBPC * quarters;
-        if (!(dBeats > 0)) return globalBeat;
-
-        // Speed list: curves carry their own (direction/halt aware); triggers and
-        // sprites run at a plain forward [1].
-        const cstate = this._curveState.get(masterId);
-        const sstate = cstate ? null : this._spriteState.get(masterId);
-        const speedList = cstate ? cstate.speedList
-            : (sstate ? sstate.speedList : [1]);
-        const phase = computeCyclePhaseFromGlobalTime(globalBeat, dBeats, speedList);
-        const loopLen = cycleSpeedsLoopLength(speedList);
-        const reversed = loopLen > 0 && speedList[phase.cycleCount % loopLen] < 0;
-
-        // Groove phrases per sweep = the Repeats multiplier (1 for non-tiling modes).
-        const r = Number(master.repeats);
-        const repeats = (mode === "normal" || mode === "euclidean" || mode === "auto")
-            && Number.isFinite(r) && r >= 1 ? Math.floor(r) : 1;
-
-        // Master onsets (path fractions over the whole sweep). Reuse a curve's
-        // cached beat fractions; derive on the fly for other kinds.
-        const onsets = (cstate && Array.isArray(cstate._beatFractions) && cstate._beatFractions.length > 0)
-            ? cstate._beatFractions
-            : deriveCurveBeatPoints(master).positions;
-
-        const eff = phraseSyncBeat({
-            phrases,
-            cycleCount: phase.cycleCount,
-            cycleProgress: phase.cycleProgress,
-            repeats,
-            onsets,
-            reversed,
-        });
-        return eff === null ? globalBeat : eff;
-    }
-
-    /**
-     * The phrase-sync ensemble loop period (stage 2b), in master-clock beats, or
-     * null when no master/chart is active. The chart is the top-level loop: it
-     * plays through once per `numChartPhrases` groove phrases, each groove phrase
-     * being one of the master's BASE patterns (beatsPerCycle × the beat
-     * interval's quarter-note length). So the period is independent of the
-     * master's Repeats (those tile the pattern around the path within a sweep but
-     * don't change the per-phrase length) and of BPM. See design/phrase-sync.md.
-     *
-     * @param {any} scene  the scene being loaded (param, not this._scene — may
-     *                     not be assigned yet at the setScene call site)
-     * @returns {number | null}
-     */
-    _computeSyncLoopBeats(scene) {
-        if (scene === null) return null;
-        const masterId = scene.masterObjectId;
-        if (typeof masterId !== "string" || masterId === "") return null;
-        const harmony = scene.harmony;
-        const phrases = harmony ? harmony.phrases : null;
-        if (!Array.isArray(phrases) || phrases.length === 0) return null;
-        let master = null;
-        for (const arr of [scene.curves, scene.triggers, scene.sprites]) {
-            if (!Array.isArray(arr)) continue;
-            for (const obj of arr) {
-                if (obj && obj.id === masterId) { master = obj; break; }
-            }
-            if (master !== null) break;
-        }
-        if (master === null) return null;
-        const mode = master.beatPointsMode;
-        if (mode === undefined || mode === "none") return null;
-        const base = Number(master.beatsPerCycle);
-        if (!Number.isFinite(base) || base <= 0) return null;
-        const mInterval = effectiveBeatInterval(master);
-        const token = (typeof mInterval === "string" && mInterval !== "")
-            ? mInterval : DEFAULT_BEAT_INTERVAL;
-        const entry = getBeatIntervalEntry(token);
-        const quarters = entry !== null ? entry.quarterNotes : 1;
-        const basePatternBeats = base * quarters; // one groove phrase, master-clock beats
-        if (!(basePatternBeats > 0)) return null;
-        return phrases.length * basePatternBeats;  // the whole chart, played once
     }
 
     /**
@@ -2986,11 +2853,17 @@ export class Simulation {
         } else {
             this._harmonyBaseCycleBeats = 0;
         }
-        // Phrase-sync ensemble loop period (stage 2b): when a master drives the
-        // chords, the chart loops as the top-level unit. Recomputed here so a
-        // scene edit (new master, chart, or pattern) updates it; in master-clock
-        // beats so it is BPM-independent.
-        this._syncLoopBeats = this._computeSyncLoopBeats(scene);
+        // Chart-wrap ensemble loop period: the chord chart is the top-level form,
+        // so the whole transport rewinds once it has played through (its full
+        // expanded length in beats — the same value the chord lookup wraps at).
+        // Objects then restart their cycles together at the top of the form.
+        // Gated on harmonyLoop: when chart looping is off the progression plays
+        // once and stops, so nothing should restart. Null when there is no chart
+        // (or looping is off). Recomputed here so a chart/loop edit updates it.
+        const harmonyLoops = scene !== null && scene.harmony
+            && (scene.harmonyLoop !== false);
+        this._syncLoopBeats = (harmonyLoops && this._harmonyBaseCycleBeats > 0)
+            ? this._harmonyBaseCycleBeats : null;
         if (scene === null) {
             this._curveState.clear();
             this._triggerState.clear();
@@ -3236,13 +3109,15 @@ export class Simulation {
                 return;
             }
         }
-        // Phrase-sync ensemble loop (stage 2b). When the chart — driven by the
-        // master — has played through once, rewind the transport so the whole
-        // piece repeats recognizably: the backward jump in elapsedSeconds resets
-        // every object (sim _rewind) and flushes the firing engine, both via
-        // their existing backward-jump detection. Deferred while auditioning (the
-        // two loops are exclusive). Like the audition boundary, return after the
-        // rewind so the next frame starts cleanly from the reset state.
+        // Chart-wrap ensemble loop. When the chord chart has played through once
+        // (its full length in beats), rewind the transport so the whole piece
+        // repeats recognizably: the backward jump in elapsedSeconds resets every
+        // object (sim _rewind) and flushes the firing engine, both via their
+        // existing backward-jump detection. Superdough notes already scheduled
+        // for the seam ring out (Web Audio plays them to their natural end; only
+        // MIDI panics), so the wrap doesn't abruptly cut sounding notes. Deferred
+        // while auditioning (the two loops are exclusive). Like the audition
+        // boundary, return after the rewind so the next frame starts cleanly.
         if (this._syncLoopBeats !== null
             && this._auditionBoundaryBeats === null
             && this._transport.isPlaying) {
@@ -3278,7 +3153,24 @@ export class Simulation {
         // (elapsed + window); the sub-window leftover carries naturally
         // because _simTime persists across ticks. After a long stall,
         // snap forward rather than queue a freeze-inducing run of steps.
-        const target = elapsed + LOOKAHEAD_WINDOW;
+        let target = elapsed + LOOKAHEAD_WINDOW;
+        // Don't let the look-ahead schedule a beat AT or past the chart-wrap
+        // loop boundary. The boundary rewinds the transport (above), and the
+        // sim re-fires from beat 0 after; if the look-ahead had already fired
+        // the loop's downbeat just before the rewind, it would sound twice —
+        // a doubled note a look-ahead-window apart at the seam. Clamping the
+        // step target to the boundary defers that downbeat to the post-rewind
+        // pass, so it fires exactly once. Only while the chart-wrap loop is the
+        // active one (an armed audition boundary owns the loop instead).
+        if (this._syncLoopBeats !== null && this._auditionBoundaryBeats === null) {
+            const bpm = this._transport.bpm;
+            if (typeof bpm === "number" && bpm > 0) {
+                const loopBoundarySec = (this._syncLoopBeats * 60) / bpm;
+                if (loopBoundarySec > 0 && loopBoundarySec < target) {
+                    target = loopBoundarySec;
+                }
+            }
+        }
         if (target - this._simTime > MAX_CATCHUP_SECONDS) {
             this._simTime = target - MAX_CATCHUP_SECONDS;
             this._accumulator = 0;
