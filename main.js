@@ -161,6 +161,9 @@ import {
     setRepeatsOnSelection,
     setMeasuresOnSelection,
     setStrengthChannelOnSelection,
+    setDropChannelOnSelection,
+    setStrengthDepthOnSelection,
+    setDropDepthOnSelection,
     setVaryOnSelection,
     setVarySeedOnSelection,
     setVariabilityOnSelection,
@@ -4329,6 +4332,18 @@ async function main() {
             } else if (edit.kind === "setStrengthChannel") {
                 await applySceneEdit((data) =>
                     setStrengthChannelOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setDropChannel") {
+                await applySceneEdit((data) =>
+                    setDropChannelOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setStrengthDepth") {
+                await applySceneEdit((data) =>
+                    setStrengthDepthOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setDropDepth") {
+                await applySceneEdit((data) =>
+                    setDropDepthOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setVary") {
                 await applySceneEdit((data) =>

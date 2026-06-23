@@ -600,6 +600,7 @@ export class Inspector {
             // Time Lag) in its bottom row, and the former Timing band is gone.
             perObj.appendChild(this._buildBandMiddleArea(ctx));
             perObj.appendChild(this._buildBandBeatPoints(ctx));
+            perObj.appendChild(this._buildBandCanvasDrivers(ctx));
             // Mutability band deprecated — removed from the inspector. Its
             // _buildBandMutability method and the position/size fields remain
             // for now, just not rendered.

@@ -2463,31 +2463,39 @@ export class Simulation {
         // 1..9 silences this beat where the object's Drop-from-Canvas channel
         // under the beat point sits in the lowest `drop × 10%` of its 0..1
         // range (low = drop) — so the line thins out over part of the image,
-        // deterministically and in step with the object's motion. Default
-        // channel is Chroma until the inspector exposes a chooser. A dropped
-        // beat fires nothing: no note, no flash, no event-trace entry — it
-        // behaves as a momentary rest while still drawing its diamond.
+        // deterministically and in step with the object's motion. The Canvas to
+        // Sound Drivers band's Drop depth (0..1) scales the level first: Full
+        // uses the digit as authored, None disables dropping object-wide. A
+        // dropped beat fires nothing: no note, no flash, no event-trace entry —
+        // it behaves as a momentary rest while still drawing its diamond.
         if (typeof drop === "number" && drop > 0) {
-            const dropChannel = (typeof curve.dropChannel === "string" && curve.dropChannel !== "")
-                ? curve.dropChannel : "chr";
-            let dv = (col !== null && typeof col[dropChannel] === "number") ? col[dropChannel] : 0.5;
-            dv = dv < 0 ? 0 : (dv > 1 ? 1 : dv);             // guard to 0..1
-            if (dv < drop / 10) return;                       // below threshold → drop
+            const dDepth = (typeof curve.dropDepth === "number") ? curve.dropDepth : 1;
+            const effDrop = drop * (dDepth < 0 ? 0 : (dDepth > 1 ? 1 : dDepth));
+            if (effDrop > 0) {
+                const dropChannel = (typeof curve.dropChannel === "string" && curve.dropChannel !== "")
+                    ? curve.dropChannel : "chr";
+                let dv = (col !== null && typeof col[dropChannel] === "number") ? col[dropChannel] : 0.5;
+                dv = dv < 0 ? 0 : (dv > 1 ? 1 : dv);             // guard to 0..1
+                if (dv < effDrop / 10) return;                   // below threshold → drop
+            }
         }
         // The beat accent (Beat Strength 0-9) normalized to 0..1, surfaced as
-        // beatStrength / vel / velocity. A canvas token (NcM, range > 0) maps the
-        // object's Driver-from-Canvas channel under THIS beat (0..1) LINEARLY
-        // across the valid strength span [base-range, base+range] clamped to
-        // [0,9] — so the whole channel range is used, none silenced. e.g. 7c1 →
-        // [6,8] (dark→6, bright→8); c9 → [0,9] (a full dark-to-loud sweep).
+        // beatStrength / vel / velocity. A swing digit (range > 0) maps the
+        // object's strength channel under THIS beat (0..1) LINEARLY across the
+        // valid strength span [base-range, base+range] clamped to [0,9] — so the
+        // whole channel range is used, none silenced. The Canvas to Sound Drivers
+        // band's Beat Strength depth (0..1) scales the range first: Full swings as
+        // authored, None pins each beat to its base.
         let effStrength = strength;
-        if (range > 0) {
+        const sDepth = (typeof curve.strengthDepth === "number") ? curve.strengthDepth : 1;
+        const effRange = range * (sDepth < 0 ? 0 : (sDepth > 1 ? 1 : sDepth));
+        if (effRange > 0) {
             const channel = (typeof curve.strengthChannel === "string" && curve.strengthChannel !== "")
                 ? curve.strengthChannel : "lt";
             let cv = (col !== null && typeof col[channel] === "number") ? col[channel] : 0.5;
             cv = cv < 0 ? 0 : (cv > 1 ? 1 : cv);             // guard to 0..1
-            const lo = Math.max(0, strength - range);
-            const hi = Math.min(9, strength + range);
+            const lo = Math.max(0, strength - effRange);
+            const hi = Math.min(9, strength + effRange);
             effStrength = lo + cv * (hi - lo);
         }
         const vel = effStrength / 9;

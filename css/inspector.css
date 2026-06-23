@@ -627,6 +627,26 @@
     color: #f0f0f0;
 }
 
+/* --- Canvas to Sound Drivers depth slider (None ◀▶ Full) --- */
+.insp-slider-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.insp-slider-field.disabled { opacity: 0.5; }
+.insp-slider-end {
+    font-size: 9px;
+    color: #9aa89a;
+    white-space: nowrap;
+    pointer-events: none;
+}
+.insp-slider {
+    accent-color: #789678;
+    height: 14px;
+    cursor: pointer;
+}
+.insp-slider:disabled { cursor: default; }
+
 /* --- Object ID picker (custom dropdown) ---
  *
  * Identity band's "jump to object" control. Looks like .insp-dropdown but

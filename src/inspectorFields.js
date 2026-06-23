@@ -402,6 +402,50 @@ export const fieldMethods = {
     },
 
     /**
+     * Build a 0..1 depth slider with None / Full end labels — the influence
+     * control on each Canvas to Sound Drivers row. The value commits on release
+     * (the `change` event, not `input`) so a re-render doesn't interrupt a drag;
+     * the thumb tracks live during the drag via the browser's native handling.
+     *
+     * @param {{
+     *   value: number,          // 0..1 (non-finite → 1 / Full)
+     *   editable: boolean,
+     *   editKind: string,       // emitted as { kind, value: <0..1 number> }
+     *   width?: number,         // slider width in px (default 96)
+     * }} opts
+     * @returns {HTMLElement}
+     */
+    _buildSliderField(opts) {
+        const wrap = document.createElement("div");
+        wrap.className = "insp-slider-field" + (opts.editable ? "" : " disabled");
+        const none = document.createElement("span");
+        none.className = "insp-slider-end";
+        none.textContent = "None";
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = "0";
+        slider.max = "1";
+        slider.step = "0.01";
+        slider.className = "insp-slider";
+        slider.style.width = `${opts.width || 96}px`;
+        slider.value = String(Number.isFinite(opts.value) ? opts.value : 1);
+        const full = document.createElement("span");
+        full.className = "insp-slider-end";
+        full.textContent = "Full";
+        if (opts.editable) {
+            slider.addEventListener("change", () => {
+                this._emitEdit({ kind: opts.editKind, value: Number(slider.value) });
+            });
+        } else {
+            slider.disabled = true;
+        }
+        wrap.appendChild(none);
+        wrap.appendChild(slider);
+        wrap.appendChild(full);
+        return wrap;
+    },
+
+    /**
      * Build a horizontal radio-button group field. Parallel to
      * _buildDropdownField but renders one native radio input
      * plus its label per option, in options order, on a single

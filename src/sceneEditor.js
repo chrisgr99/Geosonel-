@@ -2133,10 +2133,32 @@ export function setMeasuresOnSelection(data, selection, value) {
     }
 }
 
-/** Set the Driver-from-Canvas channel (Band 5, beatbox) across the selection —
- *  the col signal an NcM canvas token reads to swing the beat strength. */
+/** Set the beat-strength Driver-from-Canvas channel across the selection — the
+ *  col signal the swing digit reads under each beat (Canvas to Sound Drivers). */
 export function setStrengthChannelOnSelection(data, selection, value) {
     setStringFieldOnSelection(data, selection, "strengthChannel", String(value));
+}
+
+/** Set the drop (likelihood-of-beat) Driver-from-Canvas channel across the
+ *  selection — the col signal the drop digit reads under each beat. */
+export function setDropChannelOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "dropChannel", String(value));
+}
+
+/** Set the beat-strength image depth (None 0 … Full 1) across the selection —
+ *  the object-wide influence that scales each beat's swing digit. */
+export function setStrengthDepthOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "strengthDepth", Math.min(1, Math.max(0, n)));
+}
+
+/** Set the drop image depth (None 0 … Full 1) across the selection — the
+ *  object-wide influence that scales each beat's drop digit. */
+export function setDropDepthOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "dropDepth", Math.min(1, Math.max(0, n)));
 }
 
 /** Set the variation amount — the MAX notes flipped per cycle (a non-negative

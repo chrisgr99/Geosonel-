@@ -742,6 +742,13 @@ export class Curve {
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";
+        // Canvas to Sound Drivers: the drop channel (likelihood-of-beat), and the
+        // object-wide depths that scale the per-beat swing/drop digits before they
+        // are evaluated (0 = no image influence, 1 = full). See
+        // design/canvas-to-sound-drivers.md.
+        this.dropChannel = opts.dropChannel ?? "chr";
+        this.strengthDepth = opts.strengthDepth ?? 1;
+        this.dropDepth = opts.dropDepth ?? 1;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
@@ -915,6 +922,13 @@ export class Trigger {
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";
+        // Canvas to Sound Drivers: the drop channel (likelihood-of-beat), and the
+        // object-wide depths that scale the per-beat swing/drop digits before they
+        // are evaluated (0 = no image influence, 1 = full). See
+        // design/canvas-to-sound-drivers.md.
+        this.dropChannel = opts.dropChannel ?? "chr";
+        this.strengthDepth = opts.strengthDepth ?? 1;
+        this.dropDepth = opts.dropDepth ?? 1;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
@@ -1136,6 +1150,13 @@ export class Sprite {
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";
+        // Canvas to Sound Drivers: the drop channel (likelihood-of-beat), and the
+        // object-wide depths that scale the per-beat swing/drop digits before they
+        // are evaluated (0 = no image influence, 1 = full). See
+        // design/canvas-to-sound-drivers.md.
+        this.dropChannel = opts.dropChannel ?? "chr";
+        this.strengthDepth = opts.strengthDepth ?? 1;
+        this.dropDepth = opts.dropDepth ?? 1;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */

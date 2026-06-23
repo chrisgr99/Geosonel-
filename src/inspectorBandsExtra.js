@@ -45,8 +45,8 @@ function wrapBeatField(input) {
     return wrap;
 }
 
-/** Driver-from-Canvas channel options — the col image signals an NcM canvas
- *  token reads under each beat to swing its strength (beatbox voices). */
+/** Canvas channel options — the ten col image signals a Canvas to Sound Drivers
+ *  row reads under each beat (drives beat strength, drop, velocity, sustain). */
 const STRENGTH_CHANNEL_OPTIONS = [
     { value: "lt", label: "Lightness" },
     { value: "chr", label: "Chroma" },
@@ -391,21 +391,6 @@ export const bandExtraMethods = {
             repeatsField.style.marginLeft = "7px";
             r1.appendChild(repeatsField);
         }
-        // Driver from Canvas (beatbox only): the image channel an NcM canvas
-        // token reads to swing the beat strength. Sits at the right of the row.
-        if (isStrudel) {
-            const channelAgg = aggregateString(bpObjs, "strengthChannel");
-            const lbl = mkLabel("Driver from\nCanvas", { width: 60, disabled: !active, multiline: true });
-            lbl.style.marginLeft = "12px";
-            r1.appendChild(lbl);
-            r1.appendChild(this._buildDropdownField({
-                options: STRENGTH_CHANNEL_OPTIONS,
-                value: channelAgg === "varies" ? "" : channelAgg,
-                width: 84,
-                editable: active,
-                editKind: "setStrengthChannel",
-            }));
-        }
         // Beats/Bar shows in both normal and euclidean — it is the
         // time signature's beat count (e.g. 3 for 3/4), and it groups
         // the Active Beats / Beat Strength strings into bars with `|`
@@ -741,6 +726,59 @@ export const bandExtraMethods = {
             editKind: "setTimeLagInterval",
         }));
         band.appendChild(rCycle);
+
+        return band;
+    },
+
+    /**
+     * Canvas to Sound Drivers band — one row per sound parameter the canvas can
+     * drive, each a channel dropdown plus a None..Full depth slider (how strongly
+     * that channel influences this object). This milestone wires Beat strength and
+     * Drop (likelihood of beat); Note velocity, Sustain, Pan and Bend follow in
+     * later milestones. The depth scales the per-beat swing / drop digits before
+     * they are evaluated. See design/canvas-to-sound-drivers.md.
+     * @param {ReturnType<typeof buildSelectionContext>} ctx
+     */
+    _buildBandCanvasDrivers(ctx) {
+        const band = document.createElement("div");
+        band.className = "insp-band";
+        band.appendChild(mkBandHeader("Canvas to Sound Drivers"));
+
+        const objs = selectedObjects(this._scene, this._activeSelection);
+        const bpObjs = [...objs.curves, ...objs.sprites];
+        const active = ctx.hasCurves || ctx.hasSprites;
+
+        // A 0..1 depth aggregate → slider value; default Full (1) when the
+        // selection is empty or its depths vary (no blank state on a range input).
+        const depthValue = (agg) => {
+            const n = Number(agg);
+            return (agg === "varies" || agg === "" || !Number.isFinite(n)) ? 1 : n;
+        };
+
+        // One driver row: right-aligned label, channel dropdown, then depth slider.
+        const driverRow = (labelText, channelField, channelKind, depthField, depthKind) => {
+            const row = mkRow();
+            row.appendChild(mkLabel(labelText, { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            const chanAgg = aggregateString(bpObjs, channelField);
+            row.appendChild(this._buildDropdownField({
+                options: STRENGTH_CHANNEL_OPTIONS,
+                value: chanAgg === "varies" ? "" : chanAgg,
+                width: 84,
+                editable: active,
+                editKind: channelKind,
+            }));
+            const slider = this._buildSliderField({
+                value: depthValue(aggregateString(bpObjs, depthField)),
+                editable: active,
+                editKind: depthKind,
+            });
+            slider.style.marginLeft = "10px";
+            row.appendChild(slider);
+            band.appendChild(row);
+        };
+
+        driverRow("Beat\nStrength", "strengthChannel", "setStrengthChannel", "strengthDepth", "setStrengthDepth");
+        driverRow("Drop", "dropChannel", "setDropChannel", "dropDepth", "setDropDepth");
 
         return band;
     },
