@@ -4918,6 +4918,14 @@ async function main() {
             if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
             if (target.isContentEditable) return;
         }
+        // Only delete when the pointer is actually over the canvas region.
+        // The common slip is clicking an inspector field that doesn't take
+        // focus (so focus stays on the canvas/body) and pressing Delete to
+        // edit text in the field — which would otherwise remove the selected
+        // canvas object. Requiring the pointer over the canvas ties this
+        // destructive key to where the user is working. Guard for a missing
+        // element so we never wedge delete entirely.
+        if (canvasAreaEl !== null && !canvasAreaEl.matches(":hover")) return;
         const sel = canvas.getSelection();
         const total = sel.sprites.length + sel.triggers.length + sel.curves.length;
         if (total === 0) return;
