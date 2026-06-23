@@ -152,6 +152,66 @@ const VCSL_SOUND_NAMES = new Set([
     "sax",
 ]);
 
+/**
+ * Return a hap value with every NON-FINITE numeric field removed, so superdough
+ * never receives a NaN/Infinity it would turn into a non-finite node schedule
+ * time (which throws in AudioScheduledSourceNode.stop and leaks the voice — see
+ * StrudelRuntime.play). A field that's deleted falls back to superdough's own
+ * default, which is always finite. Returns the value unchanged (same reference)
+ * when nothing needs stripping — the common case — so the hot path allocates
+ * nothing; only a value that actually carries a bad number is shallow-copied.
+ * Non-object values pass through untouched.
+ * @param {any} value
+ * @returns {any}
+ */
+function sanitiseVoiceValue(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return value;
+    }
+    /** @type {Record<string, any> | null} */
+    let copy = null;
+    for (const key of Object.keys(value)) {
+        const v = /** @type {any} */ (value)[key];
+        if (typeof v === "number" && !Number.isFinite(v)) {
+            if (copy === null) copy = { ...value };
+            delete copy[key];
+        }
+    }
+    return copy === null ? value : copy;
+}
+
+/**
+ * Install a one-time guard on AudioScheduledSourceNode.start/stop that clamps a
+ * NON-FINITE time argument to "now" instead of letting the native call throw.
+ *
+ * Superdough computes some stop times inside a node's own `onended` handler
+ * (e.g. an envelope release edge case); when that arithmetic yields NaN/Infinity
+ * it calls node.stop(NaN), which throws — and a throw inside onended aborts the
+ * handler before it disconnects the voice, so the node graph leaks (the slow
+ * GC-thrash failure). That computation is inside the runtime-loaded @strudel/web
+ * bundle, downstream of anything StrudelRuntime.play can sanitise, so we patch
+ * the one chokepoint every such call must pass through: the prototype method.
+ * A non-finite stop time is always a bug, so stopping immediately is the correct
+ * and safe substitute. Idempotent, and a no-op in non-browser test runs where
+ * AudioScheduledSourceNode is undefined.
+ */
+function installAudioSourceTimeGuard() {
+    if (typeof AudioScheduledSourceNode === "undefined") return;
+    const proto = AudioScheduledSourceNode.prototype;
+    if (/** @type {any} */ (proto).__gxwTimeGuarded) return;
+    /** @type {any} */ (proto).__gxwTimeGuarded = true;
+    for (const name of ["start", "stop"]) {
+        const original = /** @type {any} */ (proto)[name];
+        if (typeof original !== "function") continue;
+        /** @type {any} */ (proto)[name] = function (when) {
+            if (arguments.length === 0 || Number.isFinite(when)) {
+                return original.apply(this, arguments);
+            }
+            return original.call(this);
+        };
+    }
+}
+
 export class StrudelRuntime {
     /**
      * @param {Transport} transport
@@ -329,15 +389,30 @@ export class StrudelRuntime {
         if (this._status !== "loaded") return;
         if (this._superdough === null) return;
         if (this._audioContext === null) return;
-        const clampedTime = Math.max(audioTime, this._audioContext.currentTime);
+        const now = this._audioContext.currentTime;
+        // Non-finite guard. A NaN/Infinity reaching superdough makes it call
+        // AudioScheduledSourceNode.stop(NaN), which throws inside the node's
+        // own `onended` handler. That throw aborts the handler before it
+        // disconnects the voice, so the voice's audio nodes (source, gain,
+        // params) are never released and accumulate — a slow leak that GC-
+        // thrashes the main thread until audio drops out entirely. The schedule
+        // time is the usual culprit (Math.max(NaN, x) is NaN), but a malformed
+        // value field works too, so clamp the time to a finite value and strip
+        // any non-finite numeric control field before the hap reaches the graph.
+        let when = Math.max(Number.isFinite(audioTime) ? audioTime : now, now);
+        if (!Number.isFinite(when)) when = now;
+        const safeValue = sanitiseVoiceValue(value);
         try {
-            if (typeof duration === "number" && Number.isFinite(duration)) {
-                this._superdough(value, clampedTime, duration);
+            if (typeof duration === "number" && Number.isFinite(duration) && duration > 0) {
+                this._superdough(safeValue, when, duration);
             } else {
-                this._superdough(value, clampedTime);
+                this._superdough(safeValue, when);
             }
         } catch (err) {
-            console.warn(`${LOG_PREFIX} superdough failed:`, err);
+            // Log the message, not the Error object: a logged Error keeps its
+            // stack (and the captured scope) alive, which can itself pin voice
+            // nodes when DevTools retains console arguments.
+            console.warn(`${LOG_PREFIX} superdough failed:`, err && err.message ? err.message : err);
         }
     }
 
@@ -382,6 +457,13 @@ export class StrudelRuntime {
         // share this one context.
         const ctx = this._transport.ensureAudioContext();
         this._audioContext = ctx;
+
+        // Guard the Web Audio source prototype against non-finite start/stop
+        // times before superdough can schedule any voice. superdough computes
+        // some stop times inside a node's onended handler; a NaN there makes
+        // node.stop(NaN) throw, which aborts the handler before it disconnects
+        // the voice and leaks the graph. See installAudioSourceTimeGuard.
+        installAudioSourceTimeGuard();
 
         // Step 2: Import the strudel umbrella package and call
         // initStrudel. The umbrella covers core, mini, webaudio,

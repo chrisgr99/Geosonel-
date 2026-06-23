@@ -289,7 +289,7 @@ const LOG_PASS2 = true;
  * flip to false once the lazy-load fix is confirmed audibly
  * so normal playback is not noisy.
  */
-const LOG_VOICE = true;
+const LOG_VOICE = false;
 
 /**
  * Per-instrument amplitude-envelope table for the
