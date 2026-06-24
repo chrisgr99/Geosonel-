@@ -732,7 +732,7 @@ export class Curve {
          */
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
         /** @type {"none" | "normal" | "euclidean" | "auto" | "strudel"} Beat Points mode (Band 5). */
-        this.beatPointsMode = opts.beatPointsMode ?? "none";
+        this.beatPointsMode = opts.beatPointsMode ?? "normal";
         /** @type {"melody"|"lead"|"bass"} Auto-mode rhythmic style (Band 5). */
         this.autoStyle = opts.autoStyle ?? "melody";
         /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */
@@ -925,7 +925,7 @@ export class Trigger {
         /** @type {string} */
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
         /** @type {"none" | "normal" | "euclidean" | "auto" | "strudel"} Beat Points mode (Band 5). */
-        this.beatPointsMode = opts.beatPointsMode ?? "none";
+        this.beatPointsMode = opts.beatPointsMode ?? "normal";
         /** @type {"melody"|"lead"|"bass"} Auto-mode rhythmic style (Band 5). */
         this.autoStyle = opts.autoStyle ?? "melody";
         /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */
@@ -1166,7 +1166,7 @@ export class Sprite {
         /** @type {string} */
         this.beatInterval = opts.beatInterval ?? DEFAULT_BEAT_INTERVAL;
         /** @type {"none" | "normal" | "euclidean" | "auto" | "strudel"} Beat Points mode (Band 5). */
-        this.beatPointsMode = opts.beatPointsMode ?? "none";
+        this.beatPointsMode = opts.beatPointsMode ?? "normal";
         /** @type {"melody"|"lead"|"bass"} Auto-mode rhythmic style (Band 5). */
         this.autoStyle = opts.autoStyle ?? "melody";
         /** @type {string} Active Beats pattern (x / . / | string), Band 5. Loops. Default one active beat. */

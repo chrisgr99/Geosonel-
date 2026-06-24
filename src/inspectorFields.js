@@ -1020,6 +1020,132 @@ export const fieldMethods = {
             return input;
         }
 
+        // Manual Active Beats: an in-place, measure-aligned grid editor. Typing
+        // OVERWRITES the cell at the caret (never inserts); Backspace/Delete clears
+        // it to a dot; at the very end, typing appends a whole measure and
+        // Backspace/Delete removes the last one. The value is always a whole number
+        // of measures (each `cellsPerBar` cells, padded with dots). See
+        // design/measure-patterns.md. Commits on blur/Enter like the normal field.
+        if (opts.fixedGrid) {
+            const cpb = Math.max(1, Math.round(Number(opts.cellsPerBar)) || 1);
+            // Cap the typed pattern at the cycle length (Measures × cells-per-bar):
+            // appends that would exceed it are rejected. Infinity = uncapped.
+            const maxCells = (typeof opts.maxCells === "number" && opts.maxCells > 0)
+                ? Math.floor(opts.maxCells) : Infinity;
+            const cellsOf = (disp) => (disp || "").replace(/\|/g, "");
+            // Keep only valid cell chars, ensure at least one cell, pad the partial
+            // last measure with dots so the value is whole measures.
+            const normalize = (cells) => {
+                let s = (cells || "").replace(/[^xX.0-9]/g, "");
+                if (s.length === 0) s = "x";
+                const rem = s.length % cpb;
+                return rem === 0 ? s : s + ".".repeat(cpb - rem);
+            };
+            // Map a typed character to a cell: dot/space → rest, 1-9 → ratchet,
+            // anything else → an active beat "x". Pipes/whitespace are dropped.
+            const cellChar = (ch) => (ch === "." || ch === " " ? "."
+                : (/[1-9]/.test(ch) ? ch : (/[|\s]/.test(ch) ? null : "x")));
+            // Display with a bar divider after EVERY complete measure — INCLUDING a
+            // trailing one — so a finished measure visibly shows it's complete.
+            const gridBarize = (cells) => {
+                let out = "";
+                for (let i = 0; i < cells.length; i++) {
+                    out += cells[i];
+                    if ((i + 1) % cpb === 0) out += "|";
+                }
+                return out;
+            };
+            const logicalCaret = () => {
+                const disp = input.value;
+                const caret = input.selectionStart ?? disp.length;
+                let L = 0;
+                for (let i = 0; i < caret && i < disp.length; i++) if (disp[i] !== "|") L++;
+                return L;
+            };
+            const render = (cells, caret) => {
+                const disp = gridBarize(cells);
+                input.value = disp;
+                let off;
+                if (caret >= cells.length) {
+                    off = disp.length;                       // at/after the end (past the trailing |)
+                } else {
+                    off = disp.length; let count = 0;
+                    for (let i = 0; i <= disp.length; i++) {
+                        if (count === caret) { off = i; break; }
+                        if (i < disp.length && disp[i] !== "|") count++;
+                    }
+                }
+                input.setSelectionRange(off, off);
+            };
+
+            let dirty = false;
+            let committed = false;
+            const commit = () => {
+                if (committed || !dirty) return;
+                committed = true;
+                // Commit the no-trailing-pipe form (matches sceneEditor's repipe).
+                this._emitEdit({ kind: opts.editKind, value: barizeBeatString(cellsOf(input.value), cpb) });
+            };
+            const reset = () => {
+                input.value = gridBarize(normalize(cellsOf(opts.value)));
+                dirty = false;
+                committed = false;
+            };
+            reset();
+
+            input.addEventListener("focus", reset);
+            input.addEventListener("blur", commit);
+            // Edit through beforeinput (the same path the normal field uses, which
+            // works reliably here), but OVERWRITE the cell at the caret instead of
+            // inserting; at the very end, type appends a whole measure and a delete
+            // removes the last one.
+            input.addEventListener("beforeinput", (e) => {
+                const t = e.inputType;
+                let cells = cellsOf(input.value);
+                const L = logicalCaret();
+                // "Past the end" is the caret sitting AFTER the trailing bar divider
+                // (the very end of the display) — reachable only by Right-arrow or a
+                // click beyond. The end-of-the-last-cell spot (before the trailing
+                // `|`) is still INSIDE the last measure, so typing there overwrites
+                // the last cell rather than appending a new measure.
+                const atEnd = (input.selectionStart ?? input.value.length) >= input.value.length;
+                if (t === "insertText" || t === "insertFromPaste" || t === "insertReplacementText") {
+                    e.preventDefault();
+                    let pos = L;
+                    let append = atEnd;
+                    for (const raw of (e.data ?? "")) {
+                        const ch = cellChar(raw);
+                        if (ch === null) continue;
+                        if (append) {
+                            if (cells.length + cpb > maxCells) continue;                  // at the cycle cap — reject
+                            cells = cells + ch + ".".repeat(cpb - 1);                     // new measure
+                            pos = Math.min(cells.length - cpb + 1, cells.length - 1);     // its next beat
+                            append = false;
+                        } else {
+                            const p = Math.min(pos, cells.length - 1);                    // never past the last cell
+                            cells = cells.slice(0, p) + ch + cells.slice(p + 1);          // overwrite
+                            pos = Math.min(p + 1, cells.length - 1);
+                        }
+                    }
+                    dirty = true; render(cells, pos);
+                } else if (t === "deleteContentBackward") {
+                    e.preventDefault();
+                    if (atEnd && cells.length > cpb) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length); }
+                    else if (L > 0) { const p = Math.min(L - 1, cells.length - 1); cells = cells.slice(0, p) + "." + cells.slice(p + 1); dirty = true; render(cells, p); }
+                } else if (t === "deleteContentForward") {
+                    e.preventDefault();
+                    if (atEnd && cells.length > cpb) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length); }
+                    else if (L < cells.length) { cells = cells.slice(0, L) + "." + cells.slice(L + 1); dirty = true; render(cells, L); }
+                } else if (t.startsWith("insert")) {
+                    e.preventDefault();                      // block newlines / other inserts
+                }
+            });
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") { e.preventDefault(); commit(); input.blur(); }
+            });
+            return input;
+        }
+
         const bar = Math.max(1, Math.round(Number(opts.beatsPerBar)) || 1);
         const isPattern = opts.kind === "pattern";
         /** @param {string} ch */

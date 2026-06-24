@@ -677,11 +677,19 @@ function effectiveBeatsPerCycle(obj) {
 }
 
 /**
- * Set each Strudel object's beatsPerCycle from the master meter:
- * beatsPerCycle = measures × master-beats-per-measure. The cycle duration is
- * then beatsPerCycle × repeats quarter notes (effectiveBeatsPerCycle), so a phrase
- * is measures × repeats master-bars long. Called from setScene; the master beats
- * is the scene time-signature numerator (default 4). Quarter-note beats only.
+ * Set each beat-points object's cycle length from the master meter, for Strudel,
+ * Manual (normal) and Euclidean modes alike. A bar holds CELLS-PER-BAR beats,
+ * where cells-per-bar = master-beats-per-measure ÷ the cell's beat interval in
+ * quarter notes (Strudel's cell is one master quarter, so cells-per-bar =
+ * master-beats); the pattern is `measures` bars, so:
+ *
+ *   beatsPerCycle = measures × cells-per-bar
+ *
+ * For grid modes the same cells-per-bar is written back as `beatsPerBar` so the
+ * `|` bar grouping and the variation are master-driven (the per-object Per Bar
+ * field is gone). Called from setScene and so recomputed on every edit, so a
+ * time-signature / Measures / Beat-Interval change retimes the phrase. The
+ * master beats is the scene time-signature numerator (default 4).
  * @param {any} scene
  */
 function deriveStrudelCycleLengths(scene) {
@@ -692,11 +700,16 @@ function deriveStrudelCycleLengths(scene) {
     for (const group of groups) {
         if (!Array.isArray(group)) continue;
         for (const obj of group) {
-            if (obj && obj.beatPointsMode === "strudel") {
-                const m = Number(obj.measures);
-                const M = (Number.isFinite(m) && m >= 1) ? Math.floor(m) : 1;
-                obj.beatsPerCycle = M * masterBeats;
-            }
+            if (!obj) continue;
+            const mode = obj.beatPointsMode;
+            if (mode !== "strudel" && mode !== "normal" && mode !== "euclidean") continue;
+            const m = Number(obj.measures);
+            const M = (Number.isFinite(m) && m >= 1) ? Math.floor(m) : 1;
+            const entry = getBeatIntervalEntry(effectiveBeatInterval(obj));
+            const q = (entry && entry.quarterNotes > 0) ? entry.quarterNotes : 1;
+            const cellsPerBar = Math.max(1, Math.round(masterBeats / q));
+            obj.beatsPerCycle = M * cellsPerBar;
+            if (mode === "normal" || mode === "euclidean") obj.beatsPerBar = cellsPerBar;
         }
     }
 }

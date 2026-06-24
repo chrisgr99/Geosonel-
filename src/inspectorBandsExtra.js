@@ -22,13 +22,12 @@ import {
 import { INTERVAL_OPTIONS } from "./intervalMenu.js";
 import {
     validateNumber,
-    validateBeatsPerBar,
     validateActiveBeatsCount,
     validateBeatShift,
     validateRepeats,
     validateCycleSpeeds,
 } from "./curveFieldValidation.js";
-import { TOKENS as BEAT_INTERVAL_TOKENS } from "./beatIntervals.js";
+import { TOKENS as BEAT_INTERVAL_TOKENS, getBeatIntervalEntry } from "./beatIntervals.js";
 import { listStyles } from "./styleStore.js";
 import { getBankSoundNames } from "./drumMachineSounds.js";
 import { splitMeasures, resolveMeasures, deriveCurveBeatPoints } from "./beatPoints.js";
@@ -44,6 +43,16 @@ function wrapBeatField(input) {
     wrap.appendChild(hl);
     return wrap;
 }
+
+/** Beat-pattern type options for the Rhythm band's mode picker. "normal" is the
+ *  Manual grid (type the active-beats + strength strings); Euclidean generates
+ *  the pattern from a k-of-n count; Strudel authors a mini-notation pattern. The
+ *  deprecated "none"/"auto" modes are not offered. */
+const BEAT_POINTS_MODE_OPTIONS = [
+    { value: "normal", label: "Manual" },
+    { value: "euclidean", label: "Euclidean" },
+    { value: "strudel", label: "Strudel" },
+];
 
 /** Pan-mode options for the Canvas to Sound Drivers Pan row. Collision L/R is
  *  reserved (greyed) until wired. */
@@ -284,18 +293,16 @@ export const bandExtraMethods = {
      * Available for curves OR sprites, never triggers; the whole
      * band greys when the selection has no curve and no sprite.
      *
-     * The rhythm is always a Strudel mini-notation pattern now (the
-     * legacy None / Manual / Euclidean / Auto grid modes are
-     * deprecated and the mode picker is gone). Two rows:
-     *   1. Quarter Notes per Cycle (the cycle length in master
-     *      quarter notes) and Repeats (how many cycles tile the path).
-     *   2. Pattern — a full-width, auto-growing Strudel mini-notation
-     *      field; digits are beat strengths, ~ a rest, and operators
-     *      ([] * <> ? | (k,n) …) go through the real Strudel parser.
-     * An empty pattern means no beats (what "None" used to express).
+     * A Pattern Type picker at the head of row 1 chooses how beat points
+     * are defined, per object:
+     *   - Manual (normal) / Euclidean — the grid fields: Beat Interval,
+     *     Per Bar, a variation row (dice + flips, Euclidean count + shift),
+     *     and the Active Beats + Beat Strength strings (typed for Manual,
+     *     generated read-only for Euclidean).
+     *   - Strudel — Measures + Repeats, then the measure-box Pattern field
+     *     (digits = beat strengths, ~ a rest, operators via the real parser).
+     * The band's bottom row (Cycle Speeds + Time Lag) shows for every mode.
      *
-     * The grid-mode field branches below remain but are dead while the
-     * mode is pinned to "strudel"; they go when the grid UI is removed.
      * All fields aggregate across the selected curves and sprites;
      * "varies" renders blank and a committed value applies to every
      * selected curve and sprite. Triggers in a mixed selection are
@@ -320,36 +327,81 @@ export const bandExtraMethods = {
         // strength feeds shapeVelocity). So the Driver-from-Canvas channel shows
         // for every Strudel voice, not beatbox only.
 
-        // Beat-pattern mode is now always Strudel. The None / Manual / Euclidean
-        // (and on-hold Auto) modes are deprecated and the picker is gone; the
-        // rhythm band always authors a Strudel mini-notation pattern, and an empty
-        // pattern means no beats (what "None" used to express). The grid-mode
-        // branches below stay for now but never run while mode is pinned here.
-        const mode = "strudel";
-        const beatsPerCycleAgg = aggregateString(bpObjs, "beatsPerCycle");
-        // cycleDuration bounds the Active-Beats-count and Repeats
-        // clamps. Falls back to 16 when the aggregate isn't a
-        // clean single value (varies / empty multi-select).
-        const cycleDur = (() => {
-            const n = Number(beatsPerCycleAgg);
-            return Number.isFinite(n) && n >= 1 ? n : 16;
-        })();
-        // gridMode is always false now (mode is pinned to "strudel" above), so the
-        // legacy grid branches below are dead — kept for now until the grid UI is
-        // removed wholesale. isStrudel gates the live Strudel fields.
+        // Beat-pattern type is chosen per object by the mode picker at the head of
+        // row 1: Manual (normal) and Euclidean drive the grid fields, Strudel the
+        // mini-notation pattern. The aggregate is "" for a mixed selection (no
+        // single mode), which shows neither field set — just the picker.
+        const modeAgg = aggregateString(bpObjs, "beatPointsMode");
+        const mode = (modeAgg === "varies" || modeAgg === "") ? "" : modeAgg;
+        // gridMode = the Manual/Euclidean grid fields; isStrudel = the mini-notation
+        // pattern + Repeats. (Auto is on hold and not offered by the picker.)
         const gridMode = mode === "normal" || mode === "euclidean" || mode === "auto";
         const isStrudel = mode === "strudel";
 
-        // Row 1 (Strudel only): Quarter Notes per Cycle, then Repeats. The mode
-        // picker is gone — the pattern is always Strudel — so the cycle-length
-        // field now leads the row at the left edge.
+        // Master meter: beats (quarter notes) per measure = the scene time-
+        // signature numerator (default 4).
+        const masterBeats = (() => {
+            const ts = this._scene && Array.isArray(this._scene.timeSignature)
+                ? Number(this._scene.timeSignature[0]) : NaN;
+            return (Number.isFinite(ts) && ts >= 1) ? Math.floor(ts) : 4;
+        })();
+        const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
+        const measuresAgg = aggregateString(bpObjs, "measures");
+        // Cells per bar = master beats per measure ÷ the cell's beat interval in
+        // quarter notes (Strudel's cell is one master quarter). This is the `|`
+        // bar-grouping width AND, × Measures, the pattern (cycle) length — both now
+        // master-driven, replacing the removed per-object Per Bar field.
+        const cellsPerBar = (() => {
+            const tok = isStrudel ? "Qtr"
+                : (beatIntervalAgg && beatIntervalAgg !== "varies" ? beatIntervalAgg : "Qtr");
+            const entry = getBeatIntervalEntry(tok);
+            const q = (entry && entry.quarterNotes > 0) ? entry.quarterNotes : 1;
+            return Math.max(1, Math.round(masterBeats / q));
+        })();
+        const measuresNum = (() => {
+            const m = Number(measuresAgg);
+            return (Number.isFinite(m) && m >= 1) ? Math.floor(m) : 1;
+        })();
+        // Pattern length in beats (slots) = Measures × cells-per-bar; bounds the
+        // Euclidean Active-Beats count below.
+        const cycleDur = measuresNum * cellsPerBar;
+        const bpbForBars = cellsPerBar;
+
+        // Row 1: the Pattern Type picker leads, then the per-mode fields.
         const r1 = mkRow();
+
+        // Pattern Type — Manual / Euclidean / Strudel. Drives which fields below
+        // render (gridMode vs isStrudel). Wired to the existing setBeatPointsMode.
+        r1.appendChild(mkLabel("Pattern\nType", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+        r1.appendChild(this._buildDropdownField({
+            options: BEAT_POINTS_MODE_OPTIONS,
+            value: mode,
+            width: W.beatPointsMode,
+            editable: active,
+            editKind: "setBeatPointsMode",
+        }));
+
+        // Measures — the pattern length in bars; × cells-per-bar gives the cycle
+        // length the pattern loops to fill. Sits between Pattern Type and Beat
+        // Interval, for every mode (each bar is one master-meter measure).
+        if (gridMode || isStrudel) {
+            r1.appendChild(mkLabel("Measures", { disabled: !active }));
+            r1.appendChild(this._buildEditableField({
+                value: measuresAgg === "varies" ? "" : measuresAgg,
+                numeric: true,
+                width: W.beatNum,
+                editable: active,
+                validator: (c) => validateNumber(c, { min: 1, integer: true }),
+                editKind: "setMeasures",
+                spinStep: 1,
+                selectOnFocus: false,
+            }));
+        }
 
         // Beat Interval — the note-duration of each beat; with Per Cycle it sets the
         // cycle length (cycleDurationSeconds). Grid modes only: Strudel's count unit
         // is fixed to one master quarter note, so it carries no Beat Interval field.
         if (gridMode) {
-            const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
             r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatStackLabel, disabled: !active, multiline: true }));
             r1.appendChild(this._buildDropdownField({
                 options: BEAT_INTERVAL_TOKENS.map((t) => ({ value: t.token, label: t.label })),
@@ -360,23 +412,6 @@ export const bandExtraMethods = {
             }));
         }
 
-        // Measures — the phrase length (number of measure-bars in the Beat
-        // Pattern field). Each measure is one master-meter bar; the cycle length
-        // is measures × master-beats × repeats quarter notes (beatsPerCycle is
-        // derived in the simulation). Interim M1 UI: a plain number; the
-        // measure-box pattern field arrives in M2. See design/measure-patterns.md.
-        const measuresAgg = aggregateString(bpObjs, "measures");
-        r1.appendChild(mkLabel("Measures", { disabled: !active }));
-        r1.appendChild(this._buildEditableField({
-            value: measuresAgg === "varies" ? "" : measuresAgg,
-            numeric: true,
-            width: W.beatNum,
-            editable: active,
-            validator: (c) => validateNumber(c, { min: 1, integer: true }),
-            editKind: "setMeasures",
-            spinStep: 1,
-            selectOnFocus: false,
-        }));
         // Strudel: Repeats sits on row 1. The mini-notation cycle (Counts/Cycle
         // quarter notes long) is laid end-to-end Repeats times around the path, so
         // the total path length is Counts/Cycle × Repeats quarter notes. Slice k
@@ -399,24 +434,8 @@ export const bandExtraMethods = {
             repeatsField.style.marginLeft = "7px";
             r1.appendChild(repeatsField);
         }
-        // Beats/Bar shows in both normal and euclidean — it is the
-        // time signature's beat count (e.g. 3 for 3/4), and it groups
-        // the Active Beats / Beat Strength strings into bars with `|`
-        // separators.
-        if (gridMode) {
-            const beatsPerBarAgg = aggregateString(bpObjs, "beatsPerBar");
-            r1.appendChild(mkLabel("Per\nBar", { width: W.beatPerBarLabel, disabled: !active, multiline: true }));
-            r1.appendChild(this._buildEditableField({
-                value: beatsPerBarAgg === "varies" ? "" : beatsPerBarAgg,
-                numeric: true,
-                width: W.beatNum,
-                editable: active,
-                validator: validateBeatsPerBar,
-                editKind: "setBeatsPerBar",
-                spinStep: 1,
-                selectOnFocus: false,
-            }));
-        }
+        // (The per-object Per Bar field is gone: the bar grouping is now the
+        // master meter's cells-per-bar, computed above as bpbForBars.)
         band.appendChild(r1);
 
         // Variation + Repeats row — directly under the Beat Pattern dropdown
@@ -527,11 +546,8 @@ export const bandExtraMethods = {
         if (gridMode) {
             const activeBeatsAgg = aggregateString(bpObjs, "activeBeats");
             const strengthAgg = aggregateString(bpObjs, "strength");
-            // Beats/Bar drives the live bar grouping in both fields.
-            const bpbForBars = (() => {
-                const n = Number(aggregateString(bpObjs, "beatsPerBar"));
-                return Number.isFinite(n) && n >= 1 ? Math.round(n) : 1;
-            })();
+            // bpbForBars (the master-meter cells-per-bar) drives the `|` grouping
+            // in both string fields; computed once at the top of the band.
 
             // The Active Beats field always shows the editable BASE pattern (the
             // variation is NOT shown here — it plays per cycle and appears on the
@@ -547,6 +563,12 @@ export const bandExtraMethods = {
                 editable: active,
                 locked: mode === "euclidean" || mode === "auto",
                 beatsPerBar: bpbForBars,
+                // Manual: in-place, measure-aligned overwrite editor. Euclidean is
+                // locked (returns above), so this only ever affects Manual. The typed
+                // pattern is capped at the cycle length (Measures × cells-per-bar).
+                fixedGrid: mode === "normal",
+                cellsPerBar: bpbForBars,
+                maxCells: cycleDur,
                 kind: "pattern",
                 editKind: "setActiveBeats",
                 ariaLabel: "Active Beats",

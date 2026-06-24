@@ -31,7 +31,7 @@
 // @ts-check
 
 import { generateId, ensureIdCounters } from "./idGen.js";
-import { isValidBeatInterval } from "./beatIntervals.js";
+import { isValidBeatInterval, getBeatIntervalEntry } from "./beatIntervals.js";
 import { sanitiseSceneHarmony, sanitisePhrases } from "./harmonyScene.js";
 import { autoPhrase } from "./harmonyPhrasing.js";
 import { generateEuclideanPattern } from "./euclidean.js";
@@ -1543,6 +1543,9 @@ export function setSceneTimeSignature(data, value) {
     if (num !== 3 && num !== 4) return;
     if (den !== 4) return;
     data.timeSignature = [num, den];
+    // The master meter sets every grid object's cells-per-bar (and so its
+    // Euclidean length and bar grouping), so regenerate / re-bar them all.
+    regenerateAndRebarAll(data);
 }
 
 /**
@@ -1911,12 +1914,20 @@ function applyBeatFieldFormatting(data, selection, regenerate) {
             if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
             const mode = entry.beatPointsMode;
             if (mode !== "normal" && mode !== "euclidean" && mode !== "auto") continue;
-            const bar = Math.max(1, Math.round(Number(entry.beatsPerBar ?? 1)) || 1);
+            // Bar grouping = master beats per measure ÷ the cell's beat interval in
+            // quarter notes (the per-object Per Bar field is gone). The pattern is
+            // `measures` such bars long. Mirrors deriveStrudelCycleLengths.
+            const ts = data && Array.isArray(data.timeSignature) ? Number(data.timeSignature[0]) : NaN;
+            const masterBeats = (Number.isFinite(ts) && ts >= 1) ? Math.floor(ts) : 4;
+            const ivE = getBeatIntervalEntry(typeof entry.beatInterval === "string" ? entry.beatInterval : "Qtr");
+            const ivQ = (ivE && ivE.quarterNotes > 0) ? ivE.quarterNotes : 1;
+            const bar = Math.max(1, Math.round(masterBeats / ivQ));
+            const measuresM = Math.max(1, Math.round(Number(entry.measures ?? 1)) || 1);
             // Auto generates BOTH strings from its style + meter (v0: deterministic;
             // a later milestone feeds the image as the per-slot dice). On a
             // non-regenerating pass it just re-bars the stored pattern, below.
             if (regenerate && mode === "auto") {
-                const n = Math.max(1, Math.round(Number(entry.beatsPerCycle ?? 16)) || 1);
+                const n = measuresM * bar;
                 const gen = generatePhrase({
                     beatsPerBar: bar,
                     beatsPerPhrase: n,
@@ -1930,21 +1941,22 @@ function applyBeatFieldFormatting(data, selection, regenerate) {
                 continue;
             }
             if (regenerate && mode === "euclidean") {
-                const n = Math.max(1, Math.round(Number(entry.beatsPerCycle ?? 16)) || 1);
+                const n = measuresM * bar;
                 const k = Math.max(0, Math.round(Number(entry.activeBeatsCount ?? 0)) || 0);
                 const shift = Math.round(Number(entry.beatShift ?? 0)) || 0;
                 // Repeats no longer feeds the generator (it multiplies copies in
                 // the derivation); the stored Euclidean pattern is one cycle.
                 entry.activeBeats = repipeWithBars(generateEuclideanPattern(n, k, shift), bar);
             } else {
-                // Absent (a brand-new object that has never had the
-                // field written) falls back to the schema default
-                // "x" — NOT "" — so switching into a beat-points
-                // mode doesn't wipe the default single active beat.
-                // An explicitly-emptied string is a real "" and is
-                // preserved.
-                entry.activeBeats = repipeWithBars(
-                    typeof entry.activeBeats === "string" ? entry.activeBeats : "x", bar);
+                // Absent (a brand-new object that has never had the field written)
+                // falls back to the schema default "x"; an explicit "" (no beats)
+                // is preserved. Otherwise PAD to whole measures so Manual is always
+                // measure-aligned (the in-place editor's invariant): a partial last
+                // measure is filled with dots (e.g. "x" → "x..." at cells-per-bar 4).
+                const cells = (typeof entry.activeBeats === "string" ? entry.activeBeats : "x").replace(/\|/g, "");
+                const rem = cells.length % bar;
+                const padded = (cells === "" || rem === 0) ? cells : cells + ".".repeat(bar - rem);
+                entry.activeBeats = repipeWithBars(padded, bar);
             }
             // Beat Strength absent -> schema default "9".
             entry.strength = repipeWithBars(
@@ -1965,6 +1977,15 @@ function rebarBeatFieldsForSelection(data, selection) {
  * switches into euclidean. */
 function regenerateAndRebarForSelection(data, selection) {
     applyBeatFieldFormatting(data, selection, true);
+}
+
+/** Regenerate / re-bar EVERY object — used when the master meter changes, which
+ * shifts cells-per-bar (and the Euclidean length) for all grid objects at once. */
+function regenerateAndRebarAll(data) {
+    const all = (key) => (Array.isArray(data?.[key]) ? data[key].map((_, i) => i) : []);
+    regenerateAndRebarForSelection(data, {
+        curves: all("curves"), sprites: all("sprites"), triggers: all("triggers"),
+    });
 }
 
 /**
@@ -2131,6 +2152,10 @@ export function setMeasuresOnSelection(data, selection, value) {
     if (Number.isFinite(n)) {
         setFieldOnSelection(data, selection, "measures", Math.max(1, Math.round(n)));
     }
+    // Measures sets a grid pattern's length (× cells-per-bar), so a Euclidean
+    // object regenerates; Manual just re-bars (no-op for Strudel). Strudel reads
+    // measures in the derivation directly, so it needs no regeneration here.
+    regenerateAndRebarForSelection(data, selection);
 }
 
 /** Set the beat-strength Driver-from-Canvas channel across the selection — the
@@ -2276,6 +2301,9 @@ export function setMutateSizeOnSelection(data, selection, value) {
 export function setBeatIntervalOnSelection(data, selection, value) {
     if (typeof value !== "string" || !isValidBeatInterval(value)) return;
     setFieldOnSelection(data, selection, "beatInterval", value);
+    // Beat Interval sets cells-per-bar (and so a grid pattern's length and bar
+    // grouping), so a Euclidean object regenerates and Manual re-bars.
+    regenerateAndRebarForSelection(data, selection);
 }
 
 /**

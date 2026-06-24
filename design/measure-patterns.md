@@ -163,17 +163,37 @@ The **channels** these digits read, and an object-wide **depth** that scales the
 range and drop before the per-beat digit is evaluated, live in the **Canvas to
 Sound Drivers** band — see `canvas-to-sound-drivers.md`.
 
-## Rhythm band fields (final)
+## Rhythm band fields
 
-- **Beat Pattern** — the measure boxes.
-- **Measures** — phrase length.
-- **Repeats** — phrase tilings around the path.
-- **Bottom row** — Cycle Speeds, Time Lag In Object (multiplier + interval),
-  relocated from the removed Timing band.
+Row 1 leads with a **Pattern Type** picker — **Manual** (normal), **Euclidean**,
+or **Strudel** — then mode-specific fields:
 
-The strength/drop channel choosers moved to the Canvas to Sound Drivers band.
-Removed: Beat Interval (gone earlier), Qtr-Notes/Cycle (derived now), the
-mode picker (strudel-only), per-object Beats/Measure (master).
+- **Measures** (all modes) — the pattern length in bars.
+- **Beat Interval** (grid modes) — the note-duration of each cell.
+- **Repeats** (Strudel) — phrase tilings around the path.
+- **Beat Pattern / Active Beats** — the Strudel measure boxes, or the grid
+  Active-Beats + Beat-Strength strings.
+- **Bottom row** (all modes) — Cycle Speeds, Time Lag In Object.
+
+### Master meter drives cells-per-bar and length
+
+There is no per-object Per Bar field. A bar holds **cells-per-bar** beats:
+
+```
+cellsPerBar    = masterBeats ÷ (Beat Interval in quarter notes)   // Strudel cell = 1 master quarter
+beatsPerCycle  = Measures × cellsPerBar
+```
+
+`masterBeats` is the scene time-signature numerator (default 4). So a `|` bar
+divider falls every `cellsPerBar` cells (e.g. 4/4 + 1/8 → 8; 3/4 + 1/4 → 3), and
+the pattern (cycle) length is `Measures × cellsPerBar` beats. `deriveStrudelCycle-
+Lengths` writes both `beatsPerCycle` and (for grid) `beatsPerBar` from the master
+meter on every scene run; `applyBeatFieldFormatting` regenerates the Euclidean
+string (n = Measures × cellsPerBar) and re-bars on the matching edits.
+
+Manual loops the typed Active-Beats string to fill `beatsPerCycle` (resetting to
+the start each cycle); Euclidean generates a k-of-n pattern with n = beatsPerCycle.
+The strength/drop channel choosers live in the Canvas to Sound Drivers band.
 
 ## Samples
 
