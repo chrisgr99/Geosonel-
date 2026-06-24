@@ -45,6 +45,14 @@ function wrapBeatField(input) {
     return wrap;
 }
 
+/** Pan-mode options for the Canvas to Sound Drivers Pan row. Collision L/R is
+ *  reserved (greyed) until wired. */
+const PAN_MODE_OPTIONS = [
+    { value: "off", label: "Off" },
+    { value: "canvasLR", label: "Canvas L/R" },
+    { value: "collisionLR", label: "Collision L/R", disabled: true },
+];
+
 /** Canvas channel options — the ten col image signals a Canvas to Sound Drivers
  *  row reads under each beat (drives beat strength, drop, velocity, sustain). */
 const STRENGTH_CHANNEL_OPTIONS = [
@@ -787,6 +795,42 @@ export const bandExtraMethods = {
         driverRow("Drop", "dropChannel", "setDropChannel", "dropDepth", "setDropDepth");
         driverRow("Note\nVelocity", "velocityChannel", "setVelocityChannel", "velocityDepth", "setVelocityDepth");
         driverRow("Sustain", "durationChannel", "setDurationChannel", "durationDepth", "setDurationDepth", active && !beatboxOnly);
+
+        // Pan — its own mode dropdown (not a channel) plus a depth slider.
+        const panRow = mkRow();
+        panRow.appendChild(mkLabel("Pan", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+        const panModeAgg = aggregateString(bpObjs, "panMode");
+        panRow.appendChild(this._buildDropdownField({
+            options: PAN_MODE_OPTIONS,
+            value: panModeAgg === "varies" ? "" : panModeAgg,
+            width: 84,
+            editable: active,
+            editKind: "setPanMode",
+        }));
+        const panSlider = this._buildSliderField({
+            value: depthValue(aggregateString(bpObjs, "panDepth")),
+            editable: active,
+            editKind: "setPanDepth",
+        });
+        panSlider.style.marginLeft = "10px";
+        panRow.appendChild(panSlider);
+        band.appendChild(panRow);
+
+        // Bend — reserved placeholder (TBD), greyed: label + disabled stub controls
+        // so the band's shape is settled.
+        const bendRow = mkRow();
+        bendRow.appendChild(mkLabel("Bend", { width: W.beatStackLabel, disabled: true, multiline: true }));
+        bendRow.appendChild(this._buildDropdownField({
+            options: [{ value: "", label: "—" }],
+            value: "",
+            width: 84,
+            editable: false,
+            editKind: "setBend",
+        }));
+        const bendSlider = this._buildSliderField({ value: 0, editable: false, editKind: "setBend" });
+        bendSlider.style.marginLeft = "10px";
+        bendRow.appendChild(bendSlider);
+        band.appendChild(bendRow);
 
         return band;
     },

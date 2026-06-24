@@ -757,6 +757,11 @@ export class Curve {
         this.velocityDepth = opts.velocityDepth ?? 0;
         this.durationChannel = opts.durationChannel ?? "lt";
         this.durationDepth = opts.durationDepth ?? 0;
+        // Pan driver: "off" (centre), "canvasLR" (pan by the firing point's
+        // horizontal offset from the canvas centre), or "collisionLR" (TBD).
+        // panDepth (0..1) scales the spread; default Full so picking a mode pans.
+        this.panMode = opts.panMode ?? "off";
+        this.panDepth = opts.panDepth ?? 1;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
@@ -945,6 +950,11 @@ export class Trigger {
         this.velocityDepth = opts.velocityDepth ?? 0;
         this.durationChannel = opts.durationChannel ?? "lt";
         this.durationDepth = opts.durationDepth ?? 0;
+        // Pan driver: "off" (centre), "canvasLR" (pan by the firing point's
+        // horizontal offset from the canvas centre), or "collisionLR" (TBD).
+        // panDepth (0..1) scales the spread; default Full so picking a mode pans.
+        this.panMode = opts.panMode ?? "off";
+        this.panDepth = opts.panDepth ?? 1;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */
@@ -1181,6 +1191,11 @@ export class Sprite {
         this.velocityDepth = opts.velocityDepth ?? 0;
         this.durationChannel = opts.durationChannel ?? "lt";
         this.durationDepth = opts.durationDepth ?? 0;
+        // Pan driver: "off" (centre), "canvasLR" (pan by the firing point's
+        // horizontal offset from the canvas centre), or "collisionLR" (TBD).
+        // panDepth (0..1) scales the spread; default Full so picking a mode pans.
+        this.panMode = opts.panMode ?? "off";
+        this.panDepth = opts.panDepth ?? 1;
         this.cycleInterval = opts.cycleInterval ?? "Qtr";
         this.cycleCount = opts.cycleCount ?? 16;
         /** @type {number} Euclidean: beats per bar (Band 5). Default 1 (no bar lines drawn). */

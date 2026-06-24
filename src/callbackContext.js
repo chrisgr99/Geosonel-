@@ -239,6 +239,22 @@ function channelImage(ctx, channel) {
     return v < 0 ? 0 : (v > 1 ? 1 : v);
 }
 
+/** Pan (0..1, 0.5 = centre) from the Canvas to Sound Drivers Pan row. "canvasLR"
+ *  pans by the firing point's horizontal offset from the canvas centre (ctx.x vs
+ *  ctx.panHalfW). panDepth is a GAIN on that offset so the slider can exaggerate
+ *  small movements: 0 = centred, 0.5 = the true positional offset, 1 = doubled
+ *  (then clamped to the edges). Off / Collision (TBD) / no geometry → undefined
+ *  (centre). See design/canvas-to-sound-drivers.md. */
+function canvasPan(ctx) {
+    if (ctx.panMode !== "canvasLR") return undefined;
+    const halfW = ctx.panHalfW;
+    if (!(typeof halfW === "number" && halfW > 0) || !Number.isFinite(ctx.x)) return undefined;
+    const d = (typeof ctx.panDepth === "number") ? (ctx.panDepth < 0 ? 0 : (ctx.panDepth > 1 ? 1 : ctx.panDepth)) : 1;
+    let off = (ctx.x / halfW) * (2 * d);                  // gain 0..2 on the offset
+    off = off < -1 ? -1 : (off > 1 ? 1 : off);            // clamp to the edges
+    return 0.5 + 0.5 * off;
+}
+
 function nxtSoundFromStyle(style) {
     const ctx = current;
     const phrase = currentHarmony ? currentHarmony.phrase : null;
@@ -252,6 +268,9 @@ function nxtSoundFromStyle(style) {
     const beatbox = voice !== null && voice.source === "beatbox";
 
     const strength = (typeof ctx.vel === "number" && Number.isFinite(ctx.vel)) ? ctx.vel : 0.8;
+    // Pan from the object's Pan driver (canvas L/R by firing position), for both
+    // voice kinds. undefined = centre.
+    const pan = canvasPan(ctx);
 
     if (beatbox) {
         // Beatbox: a one-shot drum — no style, no sustain (the sample plays its
@@ -264,7 +283,7 @@ function nxtSoundFromStyle(style) {
             image: channelImage(ctx, ctx.velocityChannel),
             weight: (typeof ctx.velocityDepth === "number") ? ctx.velocityDepth : 0,
         });
-        return new Note({ velocity });
+        return new Note({ velocity, pan });
     }
 
     // Instrument: the full melodic style — velocity, duration, then pitch. The
@@ -292,7 +311,6 @@ function nxtSoundFromStyle(style) {
     });
     const bpm = (typeof ctx.bpm === "number" && ctx.bpm > 0) ? ctx.bpm : 120;
     const duration = durBeats * 60 / bpm;       // beats → seconds (playSound's unit)
-    const pan = resolveDrive(style.pan, ctx);
 
     let dice = resolveDrive(style.pitch, ctx);
     dice = (typeof dice === "number" && Number.isFinite(dice))

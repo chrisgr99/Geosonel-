@@ -91,12 +91,18 @@ A beatbox voice is a one-shot drum (no style, sample plays its own length):
 
 `panMode` dropdown:
 
-- **None / Off** — pan fixed at centre.
-- **Canvas L/R** — pan from the event's horizontal offset from the **centre of
-  the image**: left of centre pans left, right pans right.
+- **Off** — pan fixed at centre.
+- **Canvas L/R** — pan from the firing point's horizontal offset from the
+  **centre of the canvas** (the playable region the image fills, x = 0 at centre,
+  edges at ±`canvasW`/2): left of centre pans left, right pans right. Applies to
+  both instrument and beatbox voices.
 - **Collision L/R** — **greyed for now** (future: pan from the collision side).
 
-`panDepth` (None ◀▶ Full) scales the spread.
+`panDepth` (None ◀▶ Full) is a **gain** on the positional offset, so the slider
+can exaggerate small movements: `0.5 + 0.5 · clamp((x / (canvasW/2)) · 2·panDepth,
+−1, 1)`. Depth 0 = centred, **0.5 = the true positional offset**, 1 = doubled
+(then clamped to the edges). Default Full, so picking Canvas L/R pans hard and the
+user dials back to taste.
 
 ## Bend
 
@@ -105,19 +111,21 @@ settled.
 
 ## Data model (per object — curves and sprites)
 
-Already present: `strengthChannel`, `dropChannel`.
-
-Add: `strengthDepth`, `dropDepth`, `velocityChannel`, `velocityDepth`,
-`durationChannel`, `durationDepth`, `panMode`, `panDepth`.
+Fields: `strengthChannel`, `dropChannel`, `strengthDepth`, `dropDepth`,
+`velocityChannel`, `velocityDepth`, `durationChannel`, `durationDepth`,
+`panMode`, `panDepth` (constructors in `scene.js`, schema in `sceneSchema.js`,
+setters in `sceneEditor.js`, dispatch in `main.js`).
 
 Defaults:
 
 - `strengthDepth`, `dropDepth` → **1 (Full)** — preserve the already-shipped
   digit behaviour.
-- `velocityDepth`, `durationDepth` → **0 (None)** — new opt-in drivers; with the
+- `velocityDepth`, `durationDepth` → **0 (None)** — opt-in drivers; with the
   style no longer image-driven, default to no image influence until chosen.
-- `strengthChannel` → `lt`, `dropChannel` → `chr` (current implicit defaults);
-  `velocityChannel`, `durationChannel` → `lt`; `panMode` → None/Off.
+- `panDepth` → **1 (Full)** — but `panMode` defaults **Off**, so pan is centred
+  until a mode is chosen, then full spread.
+- `strengthChannel` → `lt`, `dropChannel` → `chr`; `velocityChannel`,
+  `durationChannel` → `lt`; `panMode` → `off`.
 
 ## Milestones
 

@@ -162,6 +162,11 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "velocityDepth", label: "Velocity Depth", type: "number", default: 0, min: 0, max: 1 },
     { key: "durationChannel", label: "Sustain Driver from Canvas", type: "enum", default: "lt", enumValues: ["lt", "chr", "r", "g", "y", "b", "or", "li", "cy", "pu"] },
     { key: "durationDepth", label: "Sustain Depth", type: "number", default: 0, min: 0, max: 1 },
+    // Pan driver (Canvas to Sound Drivers band). panMode chooses how pan is
+    // generated ("off" centre, "canvasLR" by horizontal offset from the canvas
+    // centre, "collisionLR" reserved); panDepth (None 0 … Full 1) scales it.
+    { key: "panMode", label: "Pan", type: "enum", default: "off", enumValues: ["off", "canvasLR", "collisionLR"] },
+    { key: "panDepth", label: "Pan Depth", type: "number", default: 1, min: 0, max: 1 },
     // Strudel cycle length (beatPointsMode === "strudel"): the span
     // the one-cycle mini-notation pattern maps across, given as a
     // note-duration token times an integer count

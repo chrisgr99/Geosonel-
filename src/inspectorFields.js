@@ -382,6 +382,9 @@ export const fieldMethods = {
             const option = document.createElement("option");
             option.value = tok.value;
             option.textContent = tok.label;
+            // A per-option disabled flag greys an entry (selectable list shows it,
+            // but it can't be chosen) — used for not-yet-wired modes.
+            if (tok.disabled) option.disabled = true;
             el.appendChild(option);
         }
         // Assignment after children are attached so the

@@ -2187,6 +2187,20 @@ export function setDurationDepthOnSelection(data, selection, value) {
     setFieldOnSelection(data, selection, "durationDepth", Math.min(1, Math.max(0, n)));
 }
 
+/** Set the pan mode across the selection — how pan is generated ("off",
+ *  "canvasLR", "collisionLR"; Canvas to Sound Drivers). */
+export function setPanModeOnSelection(data, selection, value) {
+    setStringFieldOnSelection(data, selection, "panMode", String(value));
+}
+
+/** Set the pan depth (None 0 … Full 1) across the selection — scales the spread
+ *  of the chosen pan mode. */
+export function setPanDepthOnSelection(data, selection, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setFieldOnSelection(data, selection, "panDepth", Math.min(1, Math.max(0, n)));
+}
+
 /** Set the variation amount — the MAX notes flipped per cycle (a non-negative
  *  integer). Does NOT regenerate or re-bar the stored pattern — the variation is
  *  applied at beat-point DERIVATION time (per cycle), so the authored `activeBeats`

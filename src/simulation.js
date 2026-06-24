@@ -641,7 +641,7 @@ function cycleDurationSeconds(bpm, beatsPerCycle, beatInterval) {
  * @param {string|undefined} name
  * @param {any} [voice]  the object's voice.superdough ({ source, sound, bank, sample })
  */
-function bindSlotStyle(ctx, name, voice, obj) {
+function bindSlotStyle(ctx, name, voice, obj, canvasW) {
     ctx.style = resolveStyleByName(typeof name === "string" ? name : "");
     // The object's superdough voice ({ source, sound, bank, sample }) so a
     // no-argument nxtSound() can choose pitched (instrument) vs percussion-only
@@ -658,6 +658,12 @@ function bindSlotStyle(ctx, name, voice, obj) {
     ctx.durationChannel = (obj && typeof obj.durationChannel === "string" && obj.durationChannel !== "")
         ? obj.durationChannel : "lt";
     ctx.durationDepth = (obj && typeof obj.durationDepth === "number") ? obj.durationDepth : 0;
+    // Pan driver: the mode + depth, plus the canvas half-width so nxtSoundFromStyle
+    // can turn the firing point's x (ctx.x) into a left/right pan. Half-width 0
+    // (no canvas) → pan stays centred.
+    ctx.panMode = (obj && typeof obj.panMode === "string" && obj.panMode !== "") ? obj.panMode : "off";
+    ctx.panDepth = (obj && typeof obj.panDepth === "number") ? obj.panDepth : 1;
+    ctx.panHalfW = (typeof canvasW === "number" && canvasW > 0) ? canvasW / 2 : 0;
 }
 
 function effectiveBeatsPerCycle(obj) {
@@ -2151,7 +2157,7 @@ export class Simulation {
         this._applyHarmonyToContext(ctx, beat);
         // Per-slot melodic STYLE (this.style) for this collision/trigger note
         // callback, from the object's hasCollidedStyle / beenTriggeredStyle.
-        bindSlotStyle(ctx, obj[slot + "Style"], obj.voice && obj.voice.superdough, obj);
+        bindSlotStyle(ctx, obj[slot + "Style"], obj.voice && obj.voice.superdough, obj, this._scene && this._scene.canvasW);
         setCallbackContext(ctx);
         try {
             fn.call(recordingProxy);
@@ -2643,7 +2649,7 @@ export class Simulation {
         // Per-slot melodic STYLE (this.style): the inspector-assigned voice a
         // no-argument nxtNote() uses. A fresh copy per fire so per-beat tweaks
         // don't accumulate (deterministic); only when one is assigned.
-        bindSlotStyle(ctx, curve.onActiveBeatStyle, curve.voice && curve.voice.superdough, curve);
+        bindSlotStyle(ctx, curve.onActiveBeatStyle, curve.voice && curve.voice.superdough, curve, this._scene && this._scene.canvasW);
         setCallbackContext(ctx);
         try {
             fn.call(recordingProxy);

@@ -168,6 +168,8 @@ import {
     setVelocityDepthOnSelection,
     setDurationChannelOnSelection,
     setDurationDepthOnSelection,
+    setPanModeOnSelection,
+    setPanDepthOnSelection,
     setVaryOnSelection,
     setVarySeedOnSelection,
     setVariabilityOnSelection,
@@ -4364,6 +4366,14 @@ async function main() {
             } else if (edit.kind === "setDurationDepth") {
                 await applySceneEdit((data) =>
                     setDurationDepthOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setPanMode") {
+                await applySceneEdit((data) =>
+                    setPanModeOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setPanDepth") {
+                await applySceneEdit((data) =>
+                    setPanDepthOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setVary") {
                 await applySceneEdit((data) =>
