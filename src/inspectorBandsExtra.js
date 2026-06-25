@@ -633,6 +633,12 @@ export const bandExtraMethods = {
             box.className = "insp-phrase-box" + (active ? "" : " disabled");
             /** @type {Array<{field: any, highlight: Element|null, playout: string, numberEl: HTMLElement}>} */
             const phraseFields = [];
+            // Up/Down move the caret between rows (every row edits the same generated
+            // Active Beats, so they all show any ratchet).
+            const moveRow = (r, delta) => {
+                const next = phraseFields[r + delta];
+                if (next) next.field.focus();
+            };
             for (let r = 0; r < phrasesNum; r++) {
                 const row = document.createElement("div");
                 row.className = "insp-phrase-row";
@@ -640,14 +646,22 @@ export const bandExtraMethods = {
                 numEl.className = "insp-phrase-num";
                 numEl.textContent = String(r + 1);
                 row.appendChild(numEl);
+                // ratchetOnly: the generated structure is read-only; only typing 2–9
+                // on an active beat (or x to revert) edits it. Commits the whole
+                // pattern back to the single generated Active Beats (shown in every
+                // row). The ratchet survives until count/shift/measures regenerate.
                 const field = this._buildBeatStringField({
                     value: genValue,
                     width: W.repeatField,
                     editable: active,
-                    locked: true,                       // generated → read-only (for now)
-                    beatsPerBar: bpbForBars,
+                    fixedGrid: true,
+                    ratchetOnly: true,
+                    cellsPerBar: bpbForBars,
+                    maxCells: cycleDur,
                     kind: "pattern",
                     editKind: `euclidPattern:${r}`,
+                    onCommit: (v) => this._emitEdit({ kind: "setActiveBeats", value: v }),
+                    onArrowTab: (delta) => moveRow(r, delta),
                     ariaLabel: `Phrase ${r + 1} Active Beats`,
                 });
                 const wrap = wrapBeatField(field);

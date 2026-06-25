@@ -1051,14 +1051,21 @@ export const fieldMethods = {
                 return rem === 0 ? s : s + ".".repeat(cpb - rem);
             };
             const minCells = opts.allowEmpty ? 0 : cpb;     // smallest the pattern may shrink to
+            // ratchetOnly (Euclidean): the active/rest structure is generated and
+            // read-only; the only edit allowed is ratcheting an ACTIVE beat (typing
+            // 2–9 to repeat it that many times) or reverting it (x). No rests can be
+            // created or removed, and no measures added/deleted.
+            const ratchetOnly = opts.ratchetOnly === true;
             // Map a typed character to a cell. A rest: the dot key OR the SPACE bar
             // (space is the natural "rest" key while tapping in a rhythm, and from a
             // field it no longer toggles transport — that's canvas-only now). An
-            // active beat: x/X OR the COMMA key — comma sits right next to the dot,
-            // so a beat pattern can be tapped in one-handed (comma = beat, dot =
-            // rest). Every other key (digits, other letters) does nothing — those are
-            // reserved for future uses.
-            const cellChar = (ch) => (ch === "." || ch === " " ? "." : (ch === "x" || ch === "X" || ch === "," ? "x" : null));
+            // active beat: x/X OR the COMMA key — comma sits right next to the dot, so
+            // a beat pattern can be tapped in one-handed (comma = beat, dot = rest). A
+            // ratchet: a digit 2–9 (repeat that beat that many evenly-spaced times).
+            // In ratchetOnly the rest keys are dropped (structure is fixed).
+            const cellChar = ratchetOnly
+                ? (ch) => (ch === "x" || ch === "X" || ch === "," ? "x" : (/[2-9]/.test(ch) ? ch : null))
+                : (ch) => (ch === "." || ch === " " ? "." : (ch === "x" || ch === "X" || ch === "," ? "x" : (/[2-9]/.test(ch) ? ch : null)));
             // Display with a bar divider after EVERY complete measure — INCLUDING a
             // trailing one — so a finished measure visibly shows it's complete.
             const gridBarize = (cells) => {
@@ -1176,9 +1183,19 @@ export const fieldMethods = {
                             // Caret is in the gap past the last cell: start a NEW
                             // measure (its first cell is the typed beat), unless that
                             // would exceed the cap (Measures × cells-per-bar).
+                            if (ratchetOnly) continue;                                    // structure fixed — no new measures
                             if (cells.length + cpb > maxCells) continue;                  // at the cycle cap — reject
                             cells = cells + ch + ".".repeat(cpb - 1);                     // new measure
                             pos = cells.length - cpb + 1;                                 // caret after the typed beat
+                        } else if (ratchetOnly) {
+                            // Only ratchet an ACTIVE beat; rest cells are read-only.
+                            // Advance past rests so a run of digits lands on the active
+                            // beats it passes.
+                            const cur = cells[pos];
+                            if (cur === "x" || cur === "X" || /[2-9]/.test(cur)) {
+                                cells = cells.slice(0, pos) + ch + cells.slice(pos + 1);
+                            }
+                            pos = pos + 1;
                         } else {
                             cells = cells.slice(0, pos) + ch + cells.slice(pos + 1);      // overwrite the cell
                             pos = pos + 1;                                                // ALWAYS advance — may reach
@@ -1188,13 +1205,16 @@ export const fieldMethods = {
                     dirty = true; render(cells, pos);
                 } else if (t === "deleteContentBackward") {
                     e.preventDefault();
-                    // afterTail: leave the caret AFTER the new trailing | so a repeated
-                    // Delete keeps removing measures.
-                    if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length, true); }
+                    // ratchetOnly: structure is fixed, so Backspace does nothing (revert
+                    // a ratchet by typing x). afterTail: leave the caret AFTER the new
+                    // trailing | so a repeated Delete keeps removing measures.
+                    if (ratchetOnly) { /* no-op */ }
+                    else if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length, true); }
                     else if (L > 0) { const p = Math.min(L - 1, cells.length - 1); cells = cells.slice(0, p) + "." + cells.slice(p + 1); dirty = true; render(cells, p); }
                 } else if (t === "deleteContentForward") {
                     e.preventDefault();
-                    if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length, true); }
+                    if (ratchetOnly) { /* no-op */ }
+                    else if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length, true); }
                     else if (L < cells.length) { cells = cells.slice(0, L) + "." + cells.slice(L + 1); dirty = true; render(cells, L); }
                 } else if (t.startsWith("insert")) {
                     e.preventDefault();                      // block newlines / other inserts
