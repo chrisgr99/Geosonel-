@@ -2694,15 +2694,20 @@ export function scaffoldCallbackSlotFunction(content, functionName, slotKey) {
     //
     // The three NOTE slots scaffold a working THREE-STAGE body so each step is
     // exposed for editing: copy this slot's Style (set in the inspector dropdown)
-    // into a local `style` you can customise, build a `note` from it with
-    // nxtNote, then playNote it. Kept unwrapped (not playNote(nxtNote(...))) so
-    // the style and the note are easy to inspect and tweak. onTick isn't a note
-    // event, so it stays an empty stub.
+    // into a local `style` you can customise, build a coordinated sound package
+    // from it with nxtSound, then playSound it. nxtSound + playSound are voice-
+    // agnostic — the SAME body plays a beatbox voice's bank+sample OR an
+    // instrument voice's pitched note, because playSound dispatches on the
+    // object's voice source. (The old scaffold used playNote, which only ever
+    // emits a pitched note, so a beatbox-voiced object fell silent — its hit
+    // lives in bank/sample, which playNote can't reach.) Kept unwrapped (not
+    // playSound(nxtSound(...))) so the style and the sound are easy to inspect
+    // and tweak. onTick isn't a note event, so it stays an empty stub.
     const isNoteSlot = slotKey === "onActiveBeat"
         || slotKey === "hasCollided" || slotKey === "beenTriggered";
     const body = isNoteSlot
         ? "    const style = this.style.copy();   // this slot's Style; customise, e.g. style.velocityWeight = 0.8\n"
-            + "    const note = nxtNote(style);\n    playNote(note);\n"
+            + "    const sound = nxtSound(style);\n    playSound(sound);\n"
         : "    \n";
     const stub = `function ${functionName}() {\n${body}}\n`;
     const trimmed = content.replace(/\s+$/, "");
