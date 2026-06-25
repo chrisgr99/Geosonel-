@@ -1076,14 +1076,17 @@ export const fieldMethods = {
                 for (let i = 0; i < caret && i < disp.length; i++) if (disp[i] !== "|") L++;
                 return L;
             };
-            const render = (cells, caret) => {
+            const render = (cells, caret, afterTail = false) => {
                 const disp = gridBarize(cells);
                 input.value = disp;
                 let off;
                 if (caret >= cells.length) {
-                    // Land just BEFORE the trailing bar divider (the gap at the end of
-                    // the last measure), so typing here appends a new measure.
-                    off = (disp.length > 0 && disp[disp.length - 1] === "|") ? disp.length - 1 : disp.length;
+                    // End of the cells. Default: land just BEFORE the trailing bar
+                    // divider (the gap at the end of the last measure) so typing here
+                    // APPENDS a new measure. After a measure DELETE (afterTail), land
+                    // AFTER the trailing divider instead, so the next Delete/Backspace
+                    // removes the next measure (rather than clearing a cell).
+                    off = (!afterTail && disp.length > 0 && disp[disp.length - 1] === "|") ? disp.length - 1 : disp.length;
                 } else {
                     off = disp.length; let count = 0;
                     for (let i = 0; i <= disp.length; i++) {
@@ -1092,6 +1095,38 @@ export const fieldMethods = {
                     }
                 }
                 input.setSelectionRange(off, off);
+                updateGhost();
+            };
+
+            // Ghost preview: a lighter-font overlay showing the beats that WILL play
+            // beyond what's typed — the recycled fill of a partly-defined phrase, or
+            // the whole inherited pattern of an empty phrase. opts.ghost is the full
+            // resolved play-out (barized, the cycle's length); the typed value is its
+            // prefix, so the suffix after it is what's ghosted (pipes included). The
+            // overlay (insp-beat-ghost) is added next to the input by wrapBeatField.
+            const ghostEl = document.createElement("div");
+            ghostEl.className = "insp-beat-ghost";
+            ghostEl.style.width = `${opts.width}px`;
+            ghostEl.style.display = "none";
+            input._ghostEl = ghostEl;
+            const updateGhost = () => {
+                const full = (typeof opts.ghost === "string") ? opts.ghost : "";
+                const val = input.value;
+                const suffix = (val === "") ? full
+                    : (full.length > val.length && full.startsWith(val)) ? full.slice(val.length) : "";
+                ghostEl.textContent = "";
+                if (suffix === "") { ghostEl.style.display = "none"; return; }
+                ghostEl.style.display = "";
+                // A hidden prefix span occupies the typed text's width so the visible
+                // ghost lands exactly where the typed value ends.
+                const pre = document.createElement("span");
+                pre.className = "insp-beat-ghost-pre";
+                pre.textContent = val;
+                const gh = document.createElement("span");
+                gh.className = "insp-beat-ghost-text";
+                gh.textContent = suffix;
+                ghostEl.appendChild(pre);
+                ghostEl.appendChild(gh);
             };
 
             // Commit IMMEDIATELY on each edit (the beforeinput handler calls commit()
@@ -1111,6 +1146,7 @@ export const fieldMethods = {
             const reset = () => {
                 input.value = gridBarize(normalize(cellsOf(opts.value)));
                 dirty = false;
+                updateGhost();
             };
             reset();
 
@@ -1152,11 +1188,13 @@ export const fieldMethods = {
                     dirty = true; render(cells, pos);
                 } else if (t === "deleteContentBackward") {
                     e.preventDefault();
-                    if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length); }
+                    // afterTail: leave the caret AFTER the new trailing | so a repeated
+                    // Delete keeps removing measures.
+                    if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length, true); }
                     else if (L > 0) { const p = Math.min(L - 1, cells.length - 1); cells = cells.slice(0, p) + "." + cells.slice(p + 1); dirty = true; render(cells, p); }
                 } else if (t === "deleteContentForward") {
                     e.preventDefault();
-                    if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length); }
+                    if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length, true); }
                     else if (L < cells.length) { cells = cells.slice(0, L) + "." + cells.slice(L + 1); dirty = true; render(cells, L); }
                 } else if (t.startsWith("insert")) {
                     e.preventDefault();                      // block newlines / other inserts

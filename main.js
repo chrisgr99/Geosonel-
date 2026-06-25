@@ -2139,7 +2139,9 @@ async function main() {
         const n = beatsPerCycle * reps;
         const pathIndex = Math.min(n - 1, Math.max(0, Math.floor(t * n)));
         // Playing-beat highlight only while playing (no "current beat" at rest).
-        if (playing) insp.setBeatHighlight(varyPreviewId, pathIndex);
+        // beatsPerCycle (one phrase's length) lets the inspector split pathIndex into
+        // which phrase is sounding and the beat within it (per-phrase tab highlight).
+        if (playing) insp.setBeatHighlight(varyPreviewId, pathIndex, beatsPerCycle);
         else insp.clearBeatHighlight();
         // Variation preview value (vary > 0): show the cursor's cycle's mutation —
         // PLAYING OR STOPPED — so a re-roll (the dice → new seed) is visibly reflected

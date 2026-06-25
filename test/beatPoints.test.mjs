@@ -234,6 +234,50 @@ test("repeats defaults to 1 (one copy) when absent or < 1", () => {
     assert.deepEqual(zero.positions, [0, 0.5]);
 });
 
+// --- Per-phrase patterns (Manual): each phrase plays its OWN pattern, and a
+// phrase with no pattern inherits the nearest preceding one (fill-forward). ---
+
+test("phrases: each phrase plays its own defined pattern", () => {
+    // P1 "x..." (beat on 0), P2 ".x.." (beat on 1). beatsPerCycle 4, 2 phrases → 8
+    // slots; P1 fills [0,0.5), P2 fills [0.5,1).
+    const r = deriveCurveBeatPoints(curve({
+        phrasePatterns: "x...,.x..", strength: "9", beatsPerCycle: 4, phrases: 2,
+    }));
+    assert.deepEqual(r.positions, [0, 5 / 8]);   // 0 (P1 slot 0) and (4+1)/8 (P2 slot 1)
+});
+
+test("phrases: an empty phrase inherits the nearest preceding defined phrase", () => {
+    // P1 "x...", P2 empty (→ inherits "x..."), P3 ".x..". 3 phrases, 12 slots.
+    const r = deriveCurveBeatPoints(curve({
+        phrasePatterns: "x...,,.x..", strength: "9", beatsPerCycle: 4, phrases: 3,
+    }));
+    assert.deepEqual(r.positions, [0, 4 / 12, (8 + 1) / 12]);  // P1@0, P2(inherited)@4, P3@9
+});
+
+test("phrases: a phrase pattern carries forward to the end until the next defined", () => {
+    // Only P1 defined → all 3 phrases inherit it (matches the old loop-all behavior).
+    const r = deriveCurveBeatPoints(curve({
+        phrasePatterns: "x...", strength: "9", beatsPerCycle: 4, phrases: 3,
+    }));
+    assert.deepEqual(r.positions, [0, 4 / 12, 8 / 12]);
+});
+
+test("phrases: no phrasePatterns falls back to the legacy activeBeats for every phrase", () => {
+    const r = deriveCurveBeatPoints(curve({
+        activeBeats: "x.x.", strength: "9", beatsPerCycle: 4, phrases: 2,
+    }));
+    assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);   // "x.x." tiled across both phrases
+});
+
+test("phrases: strength is also resolved per-phrase (fill-forward)", () => {
+    // P1 strength "9", P2 strength "1"; both all-active single-cell so every beat in
+    // a phrase takes that phrase's strength.
+    const r = deriveCurveBeatPoints(curve({
+        phrasePatterns: "x,x", phraseStrengths: "9,1", beatsPerCycle: 2, phrases: 2,
+    }));
+    assert.deepEqual(r.strengths, [9, 9, 1, 1]);   // P1 → 9,9 ; P2 → 1,1
+});
+
 // --- Normal mode: the activeBeats and strength strings LOOP (each
 // sampled modulo its own length) to fill Per Cycle (beatsPerCycle)
 // beats, so a short string drives a long cycle. Normal-only — euclidean

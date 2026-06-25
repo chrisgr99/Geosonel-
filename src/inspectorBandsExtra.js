@@ -29,7 +29,7 @@ import {
 } from "./curveFieldValidation.js";
 import { listStyles } from "./styleStore.js";
 import { getBankSoundNames } from "./drumMachineSounds.js";
-import { splitMeasures, resolveMeasures, deriveCurveBeatPoints } from "./beatPoints.js";
+import { splitMeasures, resolveMeasures, deriveCurveBeatPoints, fillForwardPhrases } from "./beatPoints.js";
 
 /** Wrap a beat-string input in a positioned span carrying the playing-beat
  *  highlight overlay, so the box can sit over the cell under the cursor. */
@@ -39,6 +39,9 @@ function wrapBeatField(input) {
     const hl = document.createElement("div");
     hl.className = "insp-beat-hl";
     wrap.appendChild(input);
+    // Ghost-preview overlay (lighter font, recycled/inherited beats), when the
+    // field built one. Sits between the input and the highlight box.
+    if (input._ghostEl) wrap.appendChild(input._ghostEl);
     wrap.appendChild(hl);
     return wrap;
 }
@@ -527,6 +530,8 @@ export const bandExtraMethods = {
 
             const tabStrip = document.createElement("div");
             tabStrip.className = "insp-repeat-tabs";
+            /** @type {HTMLButtonElement[]} */
+            const tabButtons = [];
             for (let r = 0; r < phrasesNum; r++) {
                 const tab = document.createElement("button");
                 tab.type = "button";
@@ -535,9 +540,31 @@ export const bandExtraMethods = {
                 if (active) tab.addEventListener("click", () => { this._patternTab = r; this._render(); });
                 else tab.disabled = true;
                 tabStrip.appendChild(tab);
+                tabButtons.push(tab);
             }
             control.appendChild(tabStrip);
 
+            // Ghost preview for the selected phrase: its RESOLVED pattern (its own,
+            // or the inherited one if this phrase is empty) looped to the full cycle
+            // (cycleDur cells) and barized. The field renders, in a lighter font, the
+            // part of this beyond what's typed — recycled fill / inherited beats.
+            const ghostPattern = (() => {
+                const patFF = patAgg === "varies" ? "" : patAgg;
+                const abFF = abAgg === "varies" ? "" : abAgg;
+                const resolved = fillForwardPhrases(patFF, selected + 1, abFF)[selected] || "";
+                let cells = resolved.replace(/\|/g, "");
+                if (cells === "" || !(cycleDur > 0)) return "";
+                // Pad a partial last measure to a whole one, exactly as the field does
+                // on display, so the looped ghost's prefix matches the typed value.
+                const rem = cells.length % bpbForBars;
+                if (rem !== 0) cells += ".".repeat(bpbForBars - rem);
+                let out = "";
+                for (let i = 0; i < cycleDur; i++) {
+                    out += cells[i % cells.length];
+                    if ((i + 1) % bpbForBars === 0) out += "|";   // bar divider, trailing included
+                }
+                return out;
+            })();
             const patLbl = mkLabel("Beat Pattern", { width: W.beatStrengthLabel, disabled: !active });
             patLbl.classList.add("insp-repeat-lbl-pat");
             control.appendChild(patLbl);
@@ -552,12 +579,14 @@ export const bandExtraMethods = {
                 maxCells: cycleDur,
                 allowEmpty: selected > 0,
                 kind: "pattern",
+                ghost: ghostPattern,
                 editKind: "setPhrasePattern",
                 onCommit: (v) => this._emitEdit({ kind: "setPhrasePattern", value: v, index: selected }),
                 onArrowTab: switchTab,
                 ariaLabel: `Phrase ${selected + 1} Active Beats`,
             });
-            patCell.appendChild(wrapBeatField(patField));
+            const patWrap = wrapBeatField(patField);
+            patCell.appendChild(patWrap);
             control.appendChild(patCell);
 
             const strLbl = mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active });
@@ -576,8 +605,24 @@ export const bandExtraMethods = {
                 onArrowTab: switchTab,
                 ariaLabel: `Phrase ${selected + 1} Beat Strength`,
             });
-            strCell.appendChild(wrapBeatField(strField));
+            const strWrap = wrapBeatField(strField);
+            strCell.appendChild(strWrap);
             control.appendChild(strCell);
+
+            // Playing-beat highlight wiring (single beat-points object only). main.js
+            // calls setBeatHighlight each frame with the global beat index; the boxes
+            // step the selected tab's pattern (over the full play-out, ghost included)
+            // and strength, and the playing phrase's tab number lights up.
+            if (bpObjs.length === 1 && typeof bpObjs[0].id === "string") {
+                this._activeBeatsField = patField;
+                this._activeBeatsObjectId = bpObjs[0].id;
+                this._activeBeatsHighlight = patWrap.querySelector(".insp-beat-hl");
+                this._activeBeatsPlayout = ghostPattern;
+                this._beatStrengthField = strField;
+                this._beatStrengthHighlight = strWrap.querySelector(".insp-beat-hl");
+                this._phraseTabs = tabButtons;
+                this._phraseSelected = selected;
+            }
 
             band.appendChild(control);
         } else if (gridMode) {

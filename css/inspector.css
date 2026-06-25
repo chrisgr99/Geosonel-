@@ -310,6 +310,14 @@
     border-bottom: 2px solid #474747;   /* open into the box below (connects) */
     font-weight: 600;
 }
+/* The currently-PLAYING phrase's tab, boxed in white — the same marker as the beat
+ * boxes and the Script-Editor active token. Lets you see WHICH phrase you're hearing
+ * even when its beats are on a tab you're not viewing. */
+.insp-repeat-tab.playing {
+    outline: 2px solid #ffffff;
+    outline-offset: -1px;
+    border-radius: 4px 4px 0 0;
+}
 /* The two fields share one box: top cell open at the bottom, bottom cell carries
  * the dividing rule as its top border; their left/right borders line up. */
 .insp-repeat-cell-top {
@@ -386,19 +394,46 @@
     position: relative;
     display: inline-block;
 }
-/* A translucent box over the slot currently under the cursor (one monospace cell).
- * Pointer-transparent, behind the input's text (so the char shows through), hidden
- * until positioned by setBeatHighlight. */
+/* A white outline box around the slot currently under the cursor (one monospace
+ * cell) — the SAME marker the Script Editor uses for the currently-active token.
+ * Pointer-transparent, no fill (the char/ghost shows through), hidden until
+ * positioned by setBeatHighlight. */
 .insp-beat-hl {
     position: absolute;
     top: 1px;
     bottom: 1px;
     width: 1ch;
-    background: rgba(125, 214, 138, 0.40);
+    outline: 2px solid #ffffff;
     border-radius: 2px;
     pointer-events: none;
     display: none;
 }
+
+/* Ghost preview overlay: the beats that WILL play beyond what's typed — the
+ * recycled fill of a partly-defined phrase, or the whole inherited pattern of an
+ * empty phrase — in a lighter font, pipes included. Sits over the input, aligned
+ * to it (same monospace font, font-size, padding, border width and left margin),
+ * pointer-transparent so it never blocks editing, and clipped to the field width.
+ * A hidden prefix span occupies the typed text's width so the visible ghost lands
+ * exactly where the typed value ends. */
+.insp-beat-ghost {
+    position: absolute;
+    left: 5px;                  /* match .insp-beat-field margin-left */
+    top: 0;
+    height: 20px;               /* match .insp-field height */
+    box-sizing: border-box;
+    border: 2px solid transparent;   /* match the input border so text x-aligns */
+    padding: 0 6px;             /* match .insp-field padding */
+    display: flex;
+    align-items: center;        /* vertically centre like the input's text */
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 11pt;
+    white-space: pre;
+    overflow: hidden;
+    pointer-events: none;
+}
+.insp-beat-ghost-pre { visibility: hidden; }   /* spacer matching the typed prefix */
+.insp-beat-ghost-text { color: #9a9a9a; }       /* the ghosted will-play beats */
 
 /* Locked Active Beats field (Euclidean mode): read-only and
  * generated, so it drops the editable mint frame but keeps the

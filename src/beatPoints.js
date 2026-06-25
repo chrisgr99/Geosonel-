@@ -233,26 +233,32 @@ export function variedCycleAt(activeBeats, vary, varySeed, cycleIndex, beatsPerB
  * @returns {BeatPoints}
  */
 function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary, varySeed, beatsPerBar) {
-    const original = bareString(activeBeats) || "x";
-    const strengths = bareString(strength) || String(DEFAULT_STRENGTH);
-    const bpc = Number(beatsPerCycle);
-    const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : original.length;
-    // Phrases lays whole copies of the base pattern end-to-end around the path:
-    // N copies → N × beat points, the cursor sweeping them in one traversal.
+    // Phrases lays whole copies of a base pattern end-to-end around the path: N
+    // copies → N × beat points, the cursor sweeping them in one traversal. The
+    // pattern (and strength) may be PER PHRASE — an array entry per phrase (Manual,
+    // fill-forward resolved by the caller) — or a single string used for every
+    // phrase (Euclidean/Auto, one generated pattern). Each phrase loops its own
+    // pattern/strength to fill its cycle independently.
     const r = Number(phrases);
     const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
+    const patAt = (k) => bareString(Array.isArray(activeBeats)
+        ? activeBeats[Math.min(k, activeBeats.length - 1)] : activeBeats) || "x";
+    const strAt = (k) => bareString(Array.isArray(strength)
+        ? strength[Math.min(k, strength.length - 1)] : strength) || String(DEFAULT_STRENGTH);
+    const phrasePats = Array.from({ length: reps }, (_, k) => patAt(k));
+    const phraseStrs = Array.from({ length: reps }, (_, k) => strAt(k));
+    const bpc = Number(beatsPerCycle);
+    const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : phrasePats[0].length;
     const n = base * reps;
-    // Variation: `vary` = max notes flipped PER CYCLE. Each repeat (cycle) gets its
-    // OWN variation — a delta from the ORIGINAL at the PATTERN's length (non-
-    // cumulative), seeded by the cycle index so cycles differ; that varied pattern
-    // then LOOPS to fill the cycle exactly as the unvaried one does (so an 8-char
-    // pattern stays 8 chars, not expanded to beatsPerCycle). vary 0 → original.
+    // Variation: `vary` = max notes flipped PER CYCLE. Each phrase (cycle) gets its
+    // OWN variation — a delta from THAT phrase's pattern (non-cumulative), seeded by
+    // the phrase index so phrases differ; the varied pattern then LOOPS to fill the
+    // cycle exactly as the unvaried one does. vary 0 → the phrase's pattern as-is.
     const maxFlips = Math.max(0, Math.floor(Number(vary)) || 0);
     const seed = Number(varySeed) | 0;
-    const patLen = original.length;
-    const cycles = (maxFlips > 0)
-        ? Array.from({ length: reps }, (_, k) => variedCycle(original, maxFlips, seed, k, beatsPerBar))
-        : null;
+    const cyclePats = (maxFlips > 0)
+        ? phrasePats.map((p, k) => variedCycle(p, maxFlips, seed, k, beatsPerBar))
+        : phrasePats;
     /** @type {number[]} */
     const positions = [];
     /** @type {number[]} */
@@ -260,18 +266,20 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary,
     /** @type {number[]} */
     const inactivePositions = [];
     for (let i = 0; i < n; i++) {
-        const ch = (cycles !== null)
-            ? cycles[Math.floor(i / base)][(i % base) % patLen]
-            : original[i % patLen];
+        const k = Math.floor(i / base);          // which phrase this slot is in
+        const slot = i % base;                   // slot within the phrase
+        const pat = cyclePats[k];
+        const ch = pat[slot % pat.length];
         const count = beatCountForSlot(ch);
         if (count > 0) {
-            const d = strengths[i % strengths.length];
+            const strs = phraseStrs[k];
+            const d = strs[slot % strs.length];  // strength loops WITHIN the phrase
             const strengthVal = (d !== undefined && isDigit(d))
                 ? Number(d) : DEFAULT_STRENGTH;
             // A digit slot is a ratchet: `count` evenly-spaced sub-hits
             // across the slot's interval, all at the slot's strength.
-            for (let k = 0; k < count; k++) {
-                positions.push((i + k / count) / n);
+            for (let j = 0; j < count; j++) {
+                positions.push((i + j / count) / n);
                 out.push(strengthVal);
             }
         } else {
@@ -279,6 +287,30 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary,
         }
     }
     return { positions, strengths: out, inactivePositions };
+}
+
+/**
+ * Resolve a comma-segmented per-phrase field (phrasePatterns / phraseStrengths)
+ * into a length-`count` array with FILL-FORWARD: a phrase with no segment of its
+ * own inherits the nearest preceding phrase that has one. Phrase 0 (and any empty
+ * leading phrases) falls back to `fallback` — the legacy single field. So defining
+ * a pattern at phrase N makes it apply from N forward until the next phrase that
+ * defines its own, or the end.
+ * @param {unknown} agg  comma-joined segments (one per phrase), or ""/non-string.
+ * @param {number} count  number of phrases.
+ * @param {unknown} fallback  the legacy single value for phrase 0 / unfilled head.
+ * @returns {string[]}
+ */
+export function fillForwardPhrases(agg, count, fallback) {
+    const parts = (typeof agg === "string" && agg !== "") ? agg.split(",") : [];
+    const out = [];
+    let last = (typeof fallback === "string") ? fallback : "";
+    for (let k = 0; k < count; k++) {
+        const v = (k < parts.length && typeof parts[k] === "string") ? parts[k] : "";
+        if (v !== "") last = v;          // this phrase defines its own → the running value
+        out.push(last);                  // own, or inherited from the nearest defined phrase
+    }
+    return out;
 }
 
 /**
@@ -643,14 +675,21 @@ export function deriveCurveBeatPoints(curve) {
         : "none";
     if (mode === "normal" || mode === "auto" || mode === "euclidean") {
         // Manual / Euclidean grid: one looped derivation, Phrases multiplying the
-        // beat-point count. Manual reads phrase 1's pattern from the per-phrase
-        // store (phrasePatterns[0]); phrases 2+ are authored via the tabs but not
-        // yet played (next milestone). Euclidean uses its generated activeBeats.
-        const seg = (s) => (typeof s === "string" && s !== "") ? s.split(",")[0] : "";
-        const ab = (mode === "normal") ? (seg(curve.phrasePatterns) || curve.activeBeats) : curve.activeBeats;
-        const st = (mode === "normal") ? (seg(curve.phraseStrengths) || curve.strength) : curve.strength;
+        // beat-point count. Manual resolves a pattern (and strength) PER PHRASE with
+        // fill-forward — a phrase with no pattern of its own inherits the nearest
+        // preceding phrase that has one, phrase 1 falling back to the legacy
+        // activeBeats/strength. Euclidean/Auto have no per-phrase tabs, so their one
+        // generated activeBeats/strength tiles across every phrase.
+        const r = Number(curve.phrases);
+        const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
+        const ab = (mode === "normal")
+            ? fillForwardPhrases(curve.phrasePatterns, reps, curve.activeBeats)
+            : curve.activeBeats;
+        const st = (mode === "normal")
+            ? fillForwardPhrases(curve.phraseStrengths, reps, curve.strength)
+            : curve.strength;
         return deriveNormalLooped(
-            ab, st, curve.beatsPerCycle, curve.phrases,
+            ab, st, curve.beatsPerCycle, reps,
             curve.vary, curve.varySeed, curve.beatsPerBar);
     }
     if (mode === "strudel") {
