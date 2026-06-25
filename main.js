@@ -66,7 +66,7 @@ import {
 } from "./src/storage.js";
 import { TabbedEditor } from "./src/editor.js";
 import { Transport } from "./src/transport.js";
-import { Simulation } from "./src/simulation.js";
+import { Simulation, deriveStrudelCycleLengths } from "./src/simulation.js";
 import { TransportBarView } from "./src/transportBar.js";
 import { StrudelRuntime } from "./src/strudel/runtime.js";
 import { MIDISender } from "./src/strudel/midiSender.js";
@@ -1074,6 +1074,14 @@ async function main() {
         await ensureIdentityFieldsAreFilled();
         const result = sceneLoader.load(session.bundle);
         if (result.success && result.scene !== null) {
+            // Settle each object's cycle length (beatsPerCycle = measures ×
+            // master-beats) on the freshly loaded scene BEFORE any consumer reads
+            // it. The canvas caches beat-marker positions in its setScene (derived
+            // once, not per frame), so it must see the meter-corrected value, not
+            // the raw schema default — otherwise a newly created curve draws its
+            // markers off a stale beatsPerCycle. Derivation is idempotent;
+            // simulation.setScene re-runs it harmlessly for standalone callers.
+            deriveStrudelCycleLengths(result.scene);
             canvas.setScene(result.scene);
             simulation.setScene(result.scene);
             firingEngine.setScene(result.scene);

@@ -683,12 +683,23 @@ export function addCurveAt(data, shape) {
         ]);
         if (shape.closed) roundedShape.closed = true;
     }
+    // Seed the beat pattern as a FULL one-measure phrase — an X on beat 1 then a
+    // real rest on every other beat of the measure (master numerator = cells per
+    // bar, default 4 → "x..."). Storing the whole measure (not a bare "x") makes
+    // the rests defined data, so the looping derivation reads one active beat per
+    // measure; a bare "x" would loop as every-beat-active. The cycle length is
+    // settled separately (measures × master-beats), so one measure over one cycle
+    // draws exactly one beat point.
+    const tsNum = Array.isArray(data.timeSignature) ? Number(data.timeSignature[0]) : NaN;
+    const cellsPerBar = (Number.isFinite(tsNum) && tsNum >= 1) ? Math.floor(tsNum) : 4;
+    const oneMeasure = "x" + ".".repeat(cellsPerBar - 1);
     data.curves.push({
         id,
         name: "",
         shape: roundedShape,
         cursorR: 1,
         cursorL: 1,
+        activeBeats: oneMeasure,
     });
 }
 

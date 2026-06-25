@@ -692,7 +692,7 @@ function effectiveBeatsPerCycle(obj) {
  * master beats is the scene time-signature numerator (default 4).
  * @param {any} scene
  */
-function deriveStrudelCycleLengths(scene) {
+export function deriveStrudelCycleLengths(scene) {
     if (scene === null || typeof scene !== "object") return;
     const ts = Array.isArray(scene.timeSignature) ? Number(scene.timeSignature[0]) : NaN;
     const masterBeats = (Number.isFinite(ts) && ts >= 1) ? Math.floor(ts) : 4;
