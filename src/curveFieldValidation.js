@@ -596,19 +596,18 @@ export function validateBeatShift(candidate) {
 }
 
 /**
- * Validate Repeats. Runtime value is a positive integer (≥ 1) — the number of
- * whole copies of the pattern laid end-to-end around the path. There is NO upper
- * bound (it's a multiplier, not a within-cycle subdivision). Sub-1 values clamp
- * to 1 with a soft warning; non-integer input rounds; non-numeric / empty input
- * is hard-blocked.
+ * Validate Phrases. Runtime value is a positive integer (≥ 1) — the number of
+ * whole copies of the pattern laid end-to-end around the path. Capped at 8 (one
+ * tab per phrase). Sub-1 values clamp to 1 with a soft warning; non-integer input
+ * rounds; non-numeric / empty input is hard-blocked.
  *
  * @param {string} candidate
  * @returns {ValidationResult}
  */
-export function validateRepeats(candidate) {
+export function validatePhrases(candidate) {
     const trimmed = candidate.trim();
     if (trimmed === "") {
-        return { kind: "hard", value: "", message: "Repeats is required." };
+        return { kind: "hard", value: "", message: "Phrases is required." };
     }
     const n = Number(trimmed);
     if (!Number.isFinite(n)) {
@@ -618,19 +617,19 @@ export function validateRepeats(candidate) {
     if (rounded < 1) {
         return {
             kind: "soft", value: "1",
-            message: "Repeats clamped to 1 (must be at least 1).",
+            message: "Phrases clamped to 1 (must be at least 1).",
         };
     }
     if (n !== rounded) {
         return {
             kind: "soft", value: String(rounded),
-            message: `Repeats must be an integer; rounded to ${rounded}.`,
+            message: `Phrases must be an integer; rounded to ${rounded}.`,
         };
     }
     if (rounded > 8) {
         return {
             kind: "soft", value: "8",
-            message: "Repeats clamped to 8 (the maximum, one tab per repeat).",
+            message: "Phrases clamped to 8 (the maximum, one tab per phrase).",
         };
     }
     return { kind: "ok", value: String(rounded) };

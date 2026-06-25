@@ -151,8 +151,8 @@ import {
     setBeatPointsModeOnSelection,
     setAutoStyleOnSelection,
     setActiveBeatsOnSelection,
-    setRepeatPatternOnSelection,
-    setRepeatStrengthOnSelection,
+    setPhrasePatternOnSelection,
+    setPhraseStrengthOnSelection,
     setStrengthOnSelection,
     setBeatPatternOnSelection,
     setCycleIntervalOnSelection,
@@ -160,7 +160,7 @@ import {
     setBeatsPerBarOnSelection,
     setActiveBeatsCountOnSelection,
     setBeatShiftOnSelection,
-    setRepeatsOnSelection,
+    setPhrasesOnSelection,
     setMeasuresOnSelection,
     setStrengthChannelOnSelection,
     setDropChannelOnSelection,
@@ -2135,7 +2135,7 @@ async function main() {
         const tRaw = simulation.getCurveCursorT(varyPreviewId);   // 0 when stopped / rewound
         const t = (typeof tRaw === "number" && Number.isFinite(tRaw)) ? tRaw : 0;
         const beatsPerCycle = Math.max(1, Math.round(Number(obj.beatsPerCycle ?? 16)) || 1);
-        const reps = Math.max(1, Math.round(Number(obj.repeats ?? 1)) || 1);
+        const reps = Math.max(1, Math.round(Number(obj.phrases ?? 1)) || 1);
         const n = beatsPerCycle * reps;
         const pathIndex = Math.min(n - 1, Math.max(0, Math.floor(t * n)));
         // Playing-beat highlight only while playing (no "current beat" at rest).
@@ -4309,13 +4309,13 @@ async function main() {
                 await applySceneEdit((data) =>
                     setActiveBeatsOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setRepeatPattern") {
+            } else if (edit.kind === "setPhrasePattern") {
                 await applySceneEdit((data) =>
-                    setRepeatPatternOnSelection(data, edit.selection, edit.value, edit.index),
+                    setPhrasePatternOnSelection(data, edit.selection, edit.value, edit.index),
                 );
-            } else if (edit.kind === "setRepeatStrength") {
+            } else if (edit.kind === "setPhraseStrength") {
                 await applySceneEdit((data) =>
-                    setRepeatStrengthOnSelection(data, edit.selection, edit.value, edit.index),
+                    setPhraseStrengthOnSelection(data, edit.selection, edit.value, edit.index),
                 );
             } else if (edit.kind === "setStrength") {
                 await applySceneEdit((data) =>
@@ -4345,9 +4345,9 @@ async function main() {
                 await applySceneEdit((data) =>
                     setBeatShiftOnSelection(data, edit.selection, edit.value),
                 );
-            } else if (edit.kind === "setRepeats") {
+            } else if (edit.kind === "setPhrases") {
                 await applySceneEdit((data) =>
-                    setRepeatsOnSelection(data, edit.selection, edit.value),
+                    setPhrasesOnSelection(data, edit.selection, edit.value),
                 );
             } else if (edit.kind === "setMeasures") {
                 await applySceneEdit((data) =>

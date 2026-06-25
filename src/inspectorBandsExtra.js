@@ -24,7 +24,7 @@ import {
     validateNumber,
     validateActiveBeatsCount,
     validateBeatShift,
-    validateRepeats,
+    validatePhrases,
     validateCycleSpeeds,
 } from "./curveFieldValidation.js";
 import { listStyles } from "./styleStore.js";
@@ -390,25 +390,25 @@ export const bandExtraMethods = {
             }));
         }
 
-        // Repeats — directly after Measures on row 1, for every mode. The pattern
-        // (Manual's per-repeat tabs, or the Strudel/Euclidean cycle) is laid end-to-
-        // end Repeats times around the path. Beat Interval is gone (always a quarter).
+        // Phrases — directly after Measures on row 1, for every mode. The pattern
+        // (Manual's per-phrase tabs, or the Strudel/Euclidean cycle) is laid end-to-
+        // end Phrases times around the path. Beat Interval is gone (always a quarter).
         if (gridMode || isStrudel) {
-            const sRepeatsAgg = aggregateString(bpObjs, "repeats");
-            r1.appendChild(mkLabel("Repeats", { width: W.beatStackLabel, disabled: !active }));
-            const repeatsField = this._buildEditableField({
-                value: sRepeatsAgg === "varies" ? "" : sRepeatsAgg,
+            const sPhrasesAgg = aggregateString(bpObjs, "phrases");
+            r1.appendChild(mkLabel("Phrases", { width: W.beatStackLabel, disabled: !active }));
+            const phrasesField = this._buildEditableField({
+                value: sPhrasesAgg === "varies" ? "" : sPhrasesAgg,
                 numeric: true,
                 width: W.beatNum,
                 editable: active,
-                validator: (c) => validateRepeats(c),
-                editKind: "setRepeats",
+                validator: (c) => validatePhrases(c),
+                editKind: "setPhrases",
                 spinStep: 1,
                 selectOnFocus: false,
             });
             // Nudge the field clear of its label so the number doesn't crowd it.
-            repeatsField.style.marginLeft = "7px";
-            r1.appendChild(repeatsField);
+            phrasesField.style.marginLeft = "7px";
+            r1.appendChild(phrasesField);
         }
         // (The per-object Per Bar field is gone: the bar grouping is now the
         // master meter's cells-per-bar, computed above as bpbForBars.)
@@ -484,22 +484,22 @@ export const bandExtraMethods = {
         // generated result, and Beat Strength still sets per-beat
         // velocity. Both strings loop.
         if (gridMode && mode === "normal") {
-            // Manual: a PER-REPEAT editor. One tab per Repeat; the selected tab's
+            // Manual: a PER-PHRASE editor. One tab per Phrase; the selected tab's
             // beat pattern (in-place measure grid) and Beat Strength (free-length)
-            // stack in one two-line field. Repeat 1 is repeatPatterns[0] (falling
-            // back to the legacy activeBeats); repeats 2+ start empty. Playback of
-            // repeats 2+ lands in the next milestone.
-            const repeatsAgg = aggregateString(bpObjs, "repeats");
-            const repeatsNum = (() => {
-                const n = Number(repeatsAgg);
+            // stack in one two-line field. Phrase 1 is phrasePatterns[0] (falling
+            // back to the legacy activeBeats); phrases 2+ start empty. Playback of
+            // phrases 2+ lands in the next milestone.
+            const phrasesAgg = aggregateString(bpObjs, "phrases");
+            const phrasesNum = (() => {
+                const n = Number(phrasesAgg);
                 return (Number.isFinite(n) && n >= 1) ? Math.min(8, Math.floor(n)) : 1;
             })();
-            const selected = Math.min(Math.max(this._patternTab || 0, 0), repeatsNum - 1);
-            const patAgg = aggregateString(bpObjs, "repeatPatterns");
-            const strAgg = aggregateString(bpObjs, "repeatStrengths");
+            const selected = Math.min(Math.max(this._patternTab || 0, 0), phrasesNum - 1);
+            const patAgg = aggregateString(bpObjs, "phrasePatterns");
+            const strAgg = aggregateString(bpObjs, "phraseStrengths");
             const abAgg = aggregateString(bpObjs, "activeBeats");
             const stAgg = aggregateString(bpObjs, "strength");
-            // Pull repeat k's segment from a comma-joined aggregate; repeat 0 falls
+            // Pull phrase k's segment from a comma-joined aggregate; phrase 0 falls
             // back to the legacy single field. "varies" / missing → blank.
             const seg = (agg, k, fallback) => {
                 if (agg === "varies") return "";
@@ -510,7 +510,7 @@ export const bandExtraMethods = {
 
             // Up = previous tab, Down = next tab (from inside either field).
             const switchTab = (delta) => {
-                this._patternTab = Math.min(Math.max(selected + delta, 0), repeatsNum - 1);
+                this._patternTab = Math.min(Math.max(selected + delta, 0), phrasesNum - 1);
                 this._render();
             };
 
@@ -527,7 +527,7 @@ export const bandExtraMethods = {
 
             const tabStrip = document.createElement("div");
             tabStrip.className = "insp-repeat-tabs";
-            for (let r = 0; r < repeatsNum; r++) {
+            for (let r = 0; r < phrasesNum; r++) {
                 const tab = document.createElement("button");
                 tab.type = "button";
                 tab.className = "insp-repeat-tab" + (r === selected ? " active" : "");
@@ -552,10 +552,10 @@ export const bandExtraMethods = {
                 maxCells: cycleDur,
                 allowEmpty: selected > 0,
                 kind: "pattern",
-                editKind: "setRepeatPattern",
-                onCommit: (v) => this._emitEdit({ kind: "setRepeatPattern", value: v, index: selected }),
+                editKind: "setPhrasePattern",
+                onCommit: (v) => this._emitEdit({ kind: "setPhrasePattern", value: v, index: selected }),
                 onArrowTab: switchTab,
-                ariaLabel: `Repeat ${selected + 1} Active Beats`,
+                ariaLabel: `Phrase ${selected + 1} Active Beats`,
             });
             patCell.appendChild(wrapBeatField(patField));
             control.appendChild(patCell);
@@ -571,10 +571,10 @@ export const bandExtraMethods = {
                 editable: active,
                 beatsPerBar: bpbForBars,
                 kind: "strength",
-                editKind: "setRepeatStrength",
-                onCommit: (v) => this._emitEdit({ kind: "setRepeatStrength", value: v, index: selected }),
+                editKind: "setPhraseStrength",
+                onCommit: (v) => this._emitEdit({ kind: "setPhraseStrength", value: v, index: selected }),
                 onArrowTab: switchTab,
-                ariaLabel: `Repeat ${selected + 1} Beat Strength`,
+                ariaLabel: `Phrase ${selected + 1} Beat Strength`,
             });
             strCell.appendChild(wrapBeatField(strField));
             control.appendChild(strCell);

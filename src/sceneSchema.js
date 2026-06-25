@@ -132,10 +132,10 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "autoStyle", label: "Auto Style", type: "string", default: "" },
     { key: "activeBeats", label: "Active Beats", type: "string", default: "x" },
     { key: "strength", label: "Beat Strength", type: "string", default: "9" },
-    // Per-repeat Manual patterns: comma-separated entries (one per Repeats tab),
-    // each a `|`-barized Active-Beats / Beat-Strength string. Index 0 = repeat 1.
-    { key: "repeatPatterns", label: "Repeat Patterns", type: "string", default: "" },
-    { key: "repeatStrengths", label: "Repeat Strengths", type: "string", default: "" },
+    // Per-phrase Manual patterns: comma-separated entries (one per Phrases tab),
+    // each a `|`-barized Active-Beats / Beat-Strength string. Index 0 = phrase 1.
+    { key: "phrasePatterns", label: "Phrase Patterns", type: "string", default: "" },
+    { key: "phraseStrengths", label: "Phrase Strengths", type: "string", default: "" },
     // Strudel beat-points mode (beatPointsMode === "strudel"): a
     // mini-notation expression whose one-cycle event positions and
     // numeric tokens become the beat points and their strengths,
@@ -145,7 +145,7 @@ const CALLBACK_SLOT_FIELDS = [
     // Measure-based phrase (beatPointsMode === "strudel"): the beatPattern is
     // split on the top-level `|` into measures; `measures` is how many of those
     // measures the phrase spans (the box count). Each measure is one master-meter
-    // bar; the cycle length is measures × master-beats × repeats quarter notes
+    // bar; the cycle length is measures × master-beats × phrases quarter notes
     // (so beatsPerCycle is derived, not authored). See design/measure-patterns.md.
     { key: "measures", label: "Measures", type: "integer", default: 1, min: 1 },
     // Driver from Canvas (beatbox voices): the image colour channel that an NcM
@@ -185,7 +185,7 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "beatsPerBar", label: "Beats/Bar", type: "integer", default: 1, min: 1 },
     { key: "activeBeatsCount", label: "Active Beats Count", type: "integer", default: 0, min: 0 },
     { key: "beatShift", label: "Beat Shift", type: "integer", default: 0 },
-    { key: "repeats", label: "Beat Repeats", type: "integer", default: 1, min: 1 },
+    { key: "phrases", label: "Phrases", type: "integer", default: 1, min: 1 },
     // Pattern variation: `vary` = the number of notes flipped per cycle (each cycle
     // flips this many beats x<->., as a delta from the ORIGINAL activeBeats — never
     // cumulative). Applied when beat points are derived, per repeat (cycle), seeded

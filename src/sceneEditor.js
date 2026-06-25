@@ -37,6 +37,7 @@ import { autoPhrase } from "./harmonyPhrasing.js";
 import { generateEuclideanPattern } from "./euclidean.js";
 import { generatePhrase } from "./rhythmGenerator.js";
 import { resolveRhythm } from "./rhythmStyles.js";
+import { migrateLegacySceneKeys } from "./sceneMigrate.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const ARRAY_KEYS = new Set(["curves", "triggers", "sprites"]);
@@ -53,6 +54,7 @@ export function parseScene(text) {
         if (typeof data !== "object" || data === null || Array.isArray(data)) {
             return { ok: false, error: "scene.json must be a JSON object at top level." };
         }
+        migrateLegacySceneKeys(data);
         return { ok: true, data };
     } catch (err) {
         return {
@@ -532,7 +534,7 @@ export function stripObsoleteFields(data) {
             "cycleDuration", "cycleBeats",
             "beatOffset",
             // NOTE: beatPointsMode, activeBeats, strength, beatsPerBar,
-            // activeBeatsCount, beatShift and repeats were on this
+            // activeBeatsCount, beatShift and phrases were on this
             // obsolete list (stripped at the Strudel pivot) but are
             // REVIVED as live V2 Band 5 (Beat Points) fields, so they
             // must NOT be stripped — removing them here was the cause
@@ -1899,7 +1901,7 @@ export function setBeatsPerCycleOnSelection(data, selection, value) {
  * pattern from the Euclidean generator inputs first.
  *
  * `regenerate` is true only when a Euclidean PARAMETER changed
- * (beatsPerCycle, activeBeatsCount, beatShift, repeats, or
+ * (beatsPerCycle, activeBeatsCount, beatShift, phrases, or
  * switching into euclidean): the pattern is freshly generated as a
  * STARTER. When the composer instead edits the Active Beats string
  * directly, or only Beats/Bar changes, `regenerate` is false and
@@ -2093,28 +2095,28 @@ function eachSelectedObject(data, selection, fn) {
     }
 }
 
-/** Set the `index`-th comma-segment of a per-repeat string field, padding with
+/** Set the `index`-th comma-segment of a per-phrase string field, padding with
  *  empty segments as needed. */
-function setRepeatSegment(str, index, value) {
+function setPhraseSegment(str, index, value) {
     const parts = (typeof str === "string" && str !== "") ? str.split(",") : [];
     while (parts.length <= index) parts.push("");
     parts[index] = value;
     return parts.join(",");
 }
 
-/** Set repeat `index`'s Manual beat pattern (per-repeat tabs). Mutates `data`. */
-export function setRepeatPatternOnSelection(data, selection, value, index) {
+/** Set phrase `index`'s Manual beat pattern (per-phrase tabs). Mutates `data`. */
+export function setPhrasePatternOnSelection(data, selection, value, index) {
     const k = Math.max(0, Math.round(Number(index)) || 0);
     eachSelectedObject(data, selection, (e) => {
-        e.repeatPatterns = setRepeatSegment(e.repeatPatterns, k, String(value));
+        e.phrasePatterns = setPhraseSegment(e.phrasePatterns, k, String(value));
     });
 }
 
-/** Set repeat `index`'s Beat Strength string (per-repeat tabs). Mutates `data`. */
-export function setRepeatStrengthOnSelection(data, selection, value, index) {
+/** Set phrase `index`'s Beat Strength string (per-phrase tabs). Mutates `data`. */
+export function setPhraseStrengthOnSelection(data, selection, value, index) {
     const k = Math.max(0, Math.round(Number(index)) || 0);
     eachSelectedObject(data, selection, (e) => {
-        e.repeatStrengths = setRepeatSegment(e.repeatStrengths, k, String(value));
+        e.phraseStrengths = setPhraseSegment(e.phraseStrengths, k, String(value));
     });
 }
 
@@ -2191,20 +2193,20 @@ export function setBeatShiftOnSelection(data, selection, value) {
 }
 
 /** @see setBeatsPerBarOnSelection */
-export function setRepeatsOnSelection(data, selection, value) {
+export function setPhrasesOnSelection(data, selection, value) {
     const n = Number(value);
     if (Number.isFinite(n)) {
         const reps = Math.max(1, Math.min(8, Math.round(n)));
-        setFieldOnSelection(data, selection, "repeats", reps);
-        // Lowering Repeats discards the now-unused repeats' per-repeat patterns.
+        setFieldOnSelection(data, selection, "phrases", reps);
+        // Lowering Phrases discards the now-unused phrases' per-phrase patterns.
         const trim = (str) => {
             if (typeof str !== "string" || str === "") return str;   // leave missing as-is
             const parts = str.split(",");
             return parts.length > reps ? parts.slice(0, reps).join(",") : str;
         };
         eachSelectedObject(data, selection, (e) => {
-            if (typeof e.repeatPatterns === "string") e.repeatPatterns = trim(e.repeatPatterns);
-            if (typeof e.repeatStrengths === "string") e.repeatStrengths = trim(e.repeatStrengths);
+            if (typeof e.phrasePatterns === "string") e.phrasePatterns = trim(e.phrasePatterns);
+            if (typeof e.phraseStrengths === "string") e.phraseStrengths = trim(e.phraseStrengths);
         });
     }
     regenerateAndRebarForSelection(data, selection);
@@ -2212,7 +2214,7 @@ export function setRepeatsOnSelection(data, selection, value) {
 
 /** Set the Measures count (Strudel phrase length, Band 5) across the selection,
  *  clamped to an integer >= 1. The number of measure-bars the beatPattern spans;
- *  the cycle length derives from it (measures × master-beats × repeats). */
+ *  the cycle length derives from it (measures × master-beats × phrases). */
 export function setMeasuresOnSelection(data, selection, value) {
     const n = Number(value);
     if (Number.isFinite(n)) {
@@ -2232,8 +2234,8 @@ export function setMeasuresOnSelection(data, selection, value) {
             return bare.length > maxCells ? repipeWithBars(bare.slice(0, maxCells), cpb) : s;
         };
         eachSelectedObject(data, selection, (e) => {
-            if (typeof e.repeatPatterns === "string" && e.repeatPatterns !== "") {
-                e.repeatPatterns = e.repeatPatterns.split(",").map(cap).join(",");
+            if (typeof e.phrasePatterns === "string" && e.phrasePatterns !== "") {
+                e.phrasePatterns = e.phrasePatterns.split(",").map(cap).join(",");
             }
             if (typeof e.activeBeats === "string") e.activeBeats = cap(e.activeBeats);
         });

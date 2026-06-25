@@ -739,13 +739,13 @@ export class Curve {
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
-        // Per-repeat Manual patterns (Repeats tabs): comma-separated entries, one
-        // per repeat, each a `|`-barized Active-Beats / Beat-Strength string. Index
-        // 0 = repeat 1; empty entries are allowed. `activeBeats`/`strength` remain
-        // repeat 1's value for back-compat / current playback. See
-        // design/measure-patterns.md. Playback of repeats 2+ lands next milestone.
-        this.repeatPatterns = opts.repeatPatterns ?? "";
-        this.repeatStrengths = opts.repeatStrengths ?? "";
+        // Per-phrase Manual patterns (Phrases tabs): comma-separated entries, one
+        // per phrase, each a `|`-barized Active-Beats / Beat-Strength string. Index
+        // 0 = phrase 1; empty entries are allowed. `activeBeats`/`strength` remain
+        // phrase 1's value for back-compat / current playback. See
+        // design/measure-patterns.md. Playback of phrases 2+ lands next milestone.
+        this.phrasePatterns = opts.phrasePatterns ?? "";
+        this.phraseStrengths = opts.phraseStrengths ?? "";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";
@@ -777,8 +777,8 @@ export class Curve {
         this.activeBeatsCount = opts.activeBeatsCount ?? 0;
         /** @type {number} Euclidean: rotational shift in slots. */
         this.beatShift = opts.beatShift ?? 0;
-        /** @type {number} Euclidean: internal repeat count. */
-        this.repeats = opts.repeats ?? 1;
+        /** @type {number} Phrase count: the phrase is tiled this many times around the path. */
+        this.phrases = opts.phrases ?? 1;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
@@ -939,13 +939,13 @@ export class Trigger {
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
-        // Per-repeat Manual patterns (Repeats tabs): comma-separated entries, one
-        // per repeat, each a `|`-barized Active-Beats / Beat-Strength string. Index
-        // 0 = repeat 1; empty entries are allowed. `activeBeats`/`strength` remain
-        // repeat 1's value for back-compat / current playback. See
-        // design/measure-patterns.md. Playback of repeats 2+ lands next milestone.
-        this.repeatPatterns = opts.repeatPatterns ?? "";
-        this.repeatStrengths = opts.repeatStrengths ?? "";
+        // Per-phrase Manual patterns (Phrases tabs): comma-separated entries, one
+        // per phrase, each a `|`-barized Active-Beats / Beat-Strength string. Index
+        // 0 = phrase 1; empty entries are allowed. `activeBeats`/`strength` remain
+        // phrase 1's value for back-compat / current playback. See
+        // design/measure-patterns.md. Playback of phrases 2+ lands next milestone.
+        this.phrasePatterns = opts.phrasePatterns ?? "";
+        this.phraseStrengths = opts.phraseStrengths ?? "";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";
@@ -977,8 +977,8 @@ export class Trigger {
         this.activeBeatsCount = opts.activeBeatsCount ?? 0;
         /** @type {number} Euclidean: rotational shift in slots. */
         this.beatShift = opts.beatShift ?? 0;
-        /** @type {number} Euclidean: internal repeat count. */
-        this.repeats = opts.repeats ?? 1;
+        /** @type {number} Phrase count: the phrase is tiled this many times around the path. */
+        this.phrases = opts.phrases ?? 1;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
@@ -1187,13 +1187,13 @@ export class Sprite {
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
-        // Per-repeat Manual patterns (Repeats tabs): comma-separated entries, one
-        // per repeat, each a `|`-barized Active-Beats / Beat-Strength string. Index
-        // 0 = repeat 1; empty entries are allowed. `activeBeats`/`strength` remain
-        // repeat 1's value for back-compat / current playback. See
-        // design/measure-patterns.md. Playback of repeats 2+ lands next milestone.
-        this.repeatPatterns = opts.repeatPatterns ?? "";
-        this.repeatStrengths = opts.repeatStrengths ?? "";
+        // Per-phrase Manual patterns (Phrases tabs): comma-separated entries, one
+        // per phrase, each a `|`-barized Active-Beats / Beat-Strength string. Index
+        // 0 = phrase 1; empty entries are allowed. `activeBeats`/`strength` remain
+        // phrase 1's value for back-compat / current playback. See
+        // design/measure-patterns.md. Playback of phrases 2+ lands next milestone.
+        this.phrasePatterns = opts.phrasePatterns ?? "";
+        this.phraseStrengths = opts.phraseStrengths ?? "";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";
@@ -1225,8 +1225,8 @@ export class Sprite {
         this.activeBeatsCount = opts.activeBeatsCount ?? 0;
         /** @type {number} Euclidean: rotational shift in slots. */
         this.beatShift = opts.beatShift ?? 0;
-        /** @type {number} Euclidean: internal repeat count. */
-        this.repeats = opts.repeats ?? 1;
+        /** @type {number} Phrase count: the phrase is tiled this many times around the path. */
+        this.phrases = opts.phrases ?? 1;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */

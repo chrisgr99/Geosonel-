@@ -40,7 +40,7 @@ import {
     setBeatsPerBarOnSelection,
     setActiveBeatsCountOnSelection,
     setBeatShiftOnSelection,
-    setRepeatsOnSelection,
+    setPhrasesOnSelection,
     setVariabilityOnSelection,
     setCanActiveBeatOnSelection,
     setOnActiveBeatFunctionOnSelection,
@@ -155,7 +155,7 @@ const FIELDS = {
     beatsPerBar: { apply: (d, s, v) => setBeatsPerBarOnSelection(d, s, v), read: (r) => r.beatsPerBar, kinds: ["curve", "sprite"] },
     activeBeatsCount: { apply: (d, s, v) => setActiveBeatsCountOnSelection(d, s, v), read: (r) => r.activeBeatsCount, kinds: ["curve", "sprite"] },
     beatShift: { apply: (d, s, v) => setBeatShiftOnSelection(d, s, v), read: (r) => r.beatShift, kinds: ["curve", "sprite"] },
-    repeats: { apply: (d, s, v) => setRepeatsOnSelection(d, s, v), read: (r) => r.repeats, kinds: ["curve", "sprite"] },
+    phrases: { apply: (d, s, v) => setPhrasesOnSelection(d, s, v), read: (r) => r.phrases, kinds: ["curve", "sprite"] },
     variability: { apply: (d, s, v) => setVariabilityOnSelection(d, s, v), read: (r) => r.variability, kinds: ["curve", "sprite"] },
 
     // --- Callback gates + function names ---

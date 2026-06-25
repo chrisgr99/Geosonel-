@@ -84,6 +84,7 @@ import {
     nxtSound as bareNxtSound,
 } from "./callbackContext.js";
 import { styles as STYLE_LIBRARY } from "./harmonyMelody.js";
+import { migrateLegacySceneKeys } from "./sceneMigrate.js";
 import * as acorn from "https://esm.sh/acorn@8";
 
 const SCRIPT_PREFIX = `"use strict";\n`;
@@ -141,7 +142,7 @@ export class SceneLoader {
         // --- 1. Parse scene.json ---
         let sceneData;
         try {
-            sceneData = JSON.parse(sceneFile.content);
+            sceneData = migrateLegacySceneKeys(JSON.parse(sceneFile.content));
         } catch (err) {
             return errorResult(
                 formatJsonParseError(err, sceneFile.content)

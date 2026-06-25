@@ -225,21 +225,21 @@ export function variedCycleAt(activeBeats, vary, varySeed, cycleIndex, beatsPerB
  *
  * Manual, Euclidean, and Auto all flow through here: Euclidean and Auto store
  * a full-length (beatsPerCycle) generated pattern, Manual a short looping one,
- * and `repeats` then multiplies the whole thing N times around the path.
+ * and `phrases` then multiplies the whole thing N times around the path.
  * @param {unknown} activeBeats
  * @param {unknown} strength
  * @param {unknown} beatsPerCycle
- * @param {unknown} repeats
+ * @param {unknown} phrases
  * @returns {BeatPoints}
  */
-function deriveNormalLooped(activeBeats, strength, beatsPerCycle, repeats, vary, varySeed, beatsPerBar) {
+function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary, varySeed, beatsPerBar) {
     const original = bareString(activeBeats) || "x";
     const strengths = bareString(strength) || String(DEFAULT_STRENGTH);
     const bpc = Number(beatsPerCycle);
     const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : original.length;
-    // Repeats lays whole copies of the base pattern end-to-end around the path:
+    // Phrases lays whole copies of the base pattern end-to-end around the path:
     // N copies → N × beat points, the cursor sweeping them in one traversal.
-    const r = Number(repeats);
+    const r = Number(phrases);
     const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
     const n = base * reps;
     // Variation: `vary` = max notes flipped PER CYCLE. Each repeat (cycle) gets its
@@ -536,14 +536,14 @@ function compileMeasure(p) {
  *
  * @param {unknown} beatPattern  the `|`-joined measure string.
  * @param {unknown} measures     phrase length M (coerced to an integer >= 1).
- * @param {unknown} repeats      phrase tilings R (coerced to an integer >= 1).
+ * @param {unknown} phrases      phrase tilings R (coerced to an integer >= 1).
  * @returns {BeatPoints}
  */
-function deriveStrudelMeasures(beatPattern, measures, repeats) {
+function deriveStrudelMeasures(beatPattern, measures, phrases) {
     const raw = typeof beatPattern === "string" ? beatPattern : "";
     const mM = Number(measures);
     const M = Number.isFinite(mM) && mM >= 1 ? Math.floor(mM) : 1;
-    const rR = Number(repeats);
+    const rR = Number(phrases);
     const R = Number.isFinite(rR) && rR >= 1 ? Math.floor(rR) : 1;
     const slices = M * R;
 
@@ -642,22 +642,22 @@ export function deriveCurveBeatPoints(curve) {
         ? curve.beatPointsMode
         : "none";
     if (mode === "normal" || mode === "auto" || mode === "euclidean") {
-        // Manual / Euclidean grid: one looped derivation, Repeats multiplying the
-        // beat-point count. Manual reads repeat 1's pattern from the per-repeat
-        // store (repeatPatterns[0]); repeats 2+ are authored via the tabs but not
+        // Manual / Euclidean grid: one looped derivation, Phrases multiplying the
+        // beat-point count. Manual reads phrase 1's pattern from the per-phrase
+        // store (phrasePatterns[0]); phrases 2+ are authored via the tabs but not
         // yet played (next milestone). Euclidean uses its generated activeBeats.
         const seg = (s) => (typeof s === "string" && s !== "") ? s.split(",")[0] : "";
-        const ab = (mode === "normal") ? (seg(curve.repeatPatterns) || curve.activeBeats) : curve.activeBeats;
-        const st = (mode === "normal") ? (seg(curve.repeatStrengths) || curve.strength) : curve.strength;
+        const ab = (mode === "normal") ? (seg(curve.phrasePatterns) || curve.activeBeats) : curve.activeBeats;
+        const st = (mode === "normal") ? (seg(curve.phraseStrengths) || curve.strength) : curve.strength;
         return deriveNormalLooped(
-            ab, st, curve.beatsPerCycle, curve.repeats,
+            ab, st, curve.beatsPerCycle, curve.phrases,
             curve.vary, curve.varySeed, curve.beatsPerBar);
     }
     if (mode === "strudel") {
-        // Measure-based phrase: M measures × R repeats around the path; slice s
+        // Measure-based phrase: M measures × R phrases around the path; slice s
         // takes measure (s mod M) sampled at Strudel cycle s (see
         // deriveStrudelMeasures and design/measure-patterns.md).
-        return deriveStrudelMeasures(curve.beatPattern, curve.measures, curve.repeats);
+        return deriveStrudelMeasures(curve.beatPattern, curve.measures, curve.phrases);
     }
     return { positions: [], strengths: [], inactivePositions: [] };
 }

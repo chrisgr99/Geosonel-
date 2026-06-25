@@ -671,7 +671,7 @@ function effectiveBeatsPerCycle(obj) {
     if (typeof base !== "number" || !Number.isFinite(base) || base <= 0) return base;
     const mode = obj.beatPointsMode;
     if (mode !== "normal" && mode !== "euclidean" && mode !== "auto" && mode !== "strudel") return base;
-    const r = Number(obj.repeats);
+    const r = Number(obj.phrases);
     const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
     return base * reps;
 }
@@ -2882,7 +2882,7 @@ export class Simulation {
         this._scene = scene;
         // Derive each Strudel object's cycle length from the master meter:
         // beatsPerCycle = measures × master-beats-per-measure (effectiveBeatsPerCycle
-        // then × repeats). Recomputed every scene run, so a time-signature or
+        // then × phrases). Recomputed every scene run, so a time-signature or
         // Measures change retimes the phrase. See design/measure-patterns.md.
         deriveStrudelCycleLengths(scene);
         // Build (or clear) the harmony player from the scene's chosen
