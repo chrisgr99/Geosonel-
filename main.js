@@ -4910,14 +4910,15 @@ async function main() {
     // above via the toggleTransport edit) all collapse to the
     // same toggle: start if stopped, stop if playing.
     //
-    // Spacebar follows the universal music-app convention, gated SOLELY
-    // by pointer position: it toggles transport while the pointer is over
-    // the canvas, and is left alone anywhere else — so Space types a
-    // character into a focused field (Script tab, Beat Points, any input)
-    // while the pointer is over the sidebar, yet the SAME keypress toggles
-    // playback once the pointer moves over the canvas, even if that field
-    // still holds focus. The pointer-over-canvas gate mirrors the Delete-
-    // key handler below.
+    // Spacebar follows the universal music-app convention, gated by what the
+    // pointer is OVER (hover), not focus: it toggles transport over any
+    // non-editable area — the canvas, the inspector background, the message
+    // area, buttons, sliders — and is suppressed ONLY when the pointer is over
+    // a TEXT field (a text input, textarea, contenteditable region, or the
+    // CodeMirror editor), so Space types there. So the same keypress enters a
+    // rest in a pattern field while the pointer is over that field, yet toggles
+    // playback the moment the pointer is anywhere else, even if the field still
+    // holds focus.
     //
     // Cmd-Period is the always-active alternative. Works
     // everywhere including inside the Script tab and Properties
@@ -4946,17 +4947,17 @@ async function main() {
             return;
         }
         if (e.key === " " || e.code === "Space") {
-            // Pointer position is the SOLE gate, and it OVERRIDES focus. While the
-            // pointer is over the canvas, Space toggles transport even if a text
-            // field (Beat Points, the Script tab, any input) still holds focus.
-            // Anywhere else (the right-side inspector, menu bar, body) Space is left
-            // alone, so it types a character into a focused field as usual. The same
-            // keypress therefore enters a rest in a focused pattern field while the
-            // pointer is over the sidebar, yet toggles playback once the pointer is
-            // over the canvas. Mirrors the Delete-key handler below; a null element
-            // counts as not-over-canvas so a missing canvas never hijacks typing
-            // (Cmd-Period stays the always-available toggle).
-            if (canvasAreaEl === null || !canvasAreaEl.matches(":hover")) return;
+            // Suppress ONLY when the pointer is over a TEXT field, so Space types
+            // there. Hover (pointer position), not focus, is the gate — :hover holds
+            // the element under the pointer at keydown. Sliders / radios / colour
+            // pickers are NOT text fields, so Space over them still toggles; an
+            // editable contenteditable (the number/text fields and hex field) is.
+            const overTextField = document.querySelector(
+                ".cm-editor:hover, textarea:hover, "
+                + "input:hover:not([type='range']):not([type='radio']):not([type='color']), "
+                + "[contenteditable]:hover:not([contenteditable='false'])"
+            ) !== null;
+            if (overTextField) return;
             // Prevent the default space-scrolls-page behaviour and the spurious
             // activate-focused-button click that some browsers fire on Space.
             e.preventDefault();
