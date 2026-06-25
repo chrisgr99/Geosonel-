@@ -642,10 +642,15 @@ export function deriveCurveBeatPoints(curve) {
         ? curve.beatPointsMode
         : "none";
     if (mode === "normal" || mode === "auto" || mode === "euclidean") {
-        // Legacy grid modes (deprecated, no inspector UI): one looped derivation,
-        // with Repeats multiplying the beat-point count.
+        // Manual / Euclidean grid: one looped derivation, Repeats multiplying the
+        // beat-point count. Manual reads repeat 1's pattern from the per-repeat
+        // store (repeatPatterns[0]); repeats 2+ are authored via the tabs but not
+        // yet played (next milestone). Euclidean uses its generated activeBeats.
+        const seg = (s) => (typeof s === "string" && s !== "") ? s.split(",")[0] : "";
+        const ab = (mode === "normal") ? (seg(curve.repeatPatterns) || curve.activeBeats) : curve.activeBeats;
+        const st = (mode === "normal") ? (seg(curve.repeatStrengths) || curve.strength) : curve.strength;
         return deriveNormalLooped(
-            curve.activeBeats, curve.strength, curve.beatsPerCycle, curve.repeats,
+            ab, st, curve.beatsPerCycle, curve.repeats,
             curve.vary, curve.varySeed, curve.beatsPerBar);
     }
     if (mode === "strudel") {

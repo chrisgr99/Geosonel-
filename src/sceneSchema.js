@@ -132,6 +132,10 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "autoStyle", label: "Auto Style", type: "string", default: "" },
     { key: "activeBeats", label: "Active Beats", type: "string", default: "x" },
     { key: "strength", label: "Beat Strength", type: "string", default: "9" },
+    // Per-repeat Manual patterns: comma-separated entries (one per Repeats tab),
+    // each a `|`-barized Active-Beats / Beat-Strength string. Index 0 = repeat 1.
+    { key: "repeatPatterns", label: "Repeat Patterns", type: "string", default: "" },
+    { key: "repeatStrengths", label: "Repeat Strengths", type: "string", default: "" },
     // Strudel beat-points mode (beatPointsMode === "strudel"): a
     // mini-notation expression whose one-cycle event positions and
     // numeric tokens become the beat points and their strengths,

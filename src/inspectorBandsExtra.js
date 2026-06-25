@@ -27,7 +27,6 @@ import {
     validateRepeats,
     validateCycleSpeeds,
 } from "./curveFieldValidation.js";
-import { TOKENS as BEAT_INTERVAL_TOKENS, getBeatIntervalEntry } from "./beatIntervals.js";
 import { listStyles } from "./styleStore.js";
 import { getBankSoundNames } from "./drumMachineSounds.js";
 import { splitMeasures, resolveMeasures, deriveCurveBeatPoints } from "./beatPoints.js";
@@ -345,19 +344,11 @@ export const bandExtraMethods = {
                 ? Number(this._scene.timeSignature[0]) : NaN;
             return (Number.isFinite(ts) && ts >= 1) ? Math.floor(ts) : 4;
         })();
-        const beatIntervalAgg = aggregateString(bpObjs, "beatInterval");
         const measuresAgg = aggregateString(bpObjs, "measures");
-        // Cells per bar = master beats per measure ÷ the cell's beat interval in
-        // quarter notes (Strudel's cell is one master quarter). This is the `|`
-        // bar-grouping width AND, × Measures, the pattern (cycle) length — both now
-        // master-driven, replacing the removed per-object Per Bar field.
-        const cellsPerBar = (() => {
-            const tok = isStrudel ? "Qtr"
-                : (beatIntervalAgg && beatIntervalAgg !== "varies" ? beatIntervalAgg : "Qtr");
-            const entry = getBeatIntervalEntry(tok);
-            const q = (entry && entry.quarterNotes > 0) ? entry.quarterNotes : 1;
-            return Math.max(1, Math.round(masterBeats / q));
-        })();
+        // Cells per bar = the master beats per measure — each cell is a quarter note
+        // (Beat Interval is fixed to a quarter for Manual and Euclidean alike). This
+        // is the `|` bar-grouping width and, × Measures, the cycle length.
+        const cellsPerBar = masterBeats;
         const measuresNum = (() => {
             const m = Number(measuresAgg);
             return (Number.isFinite(m) && m >= 1) ? Math.floor(m) : 1;
@@ -371,8 +362,9 @@ export const bandExtraMethods = {
         const r1 = mkRow();
 
         // Pattern Type — Manual / Euclidean / Strudel. Drives which fields below
-        // render (gridMode vs isStrudel). Wired to the existing setBeatPointsMode.
-        r1.appendChild(mkLabel("Pattern\nType", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+        // render (gridMode vs isStrudel). Single-line label at the tab control's
+        // left-column width, so the dropdown left-aligns with the tabs/box below.
+        r1.appendChild(mkLabel("Pattern Type", { width: W.beatStrengthLabel, disabled: !active }));
         r1.appendChild(this._buildDropdownField({
             options: BEAT_POINTS_MODE_OPTIONS,
             value: mode,
@@ -398,26 +390,10 @@ export const bandExtraMethods = {
             }));
         }
 
-        // Beat Interval — the note-duration of each beat; with Per Cycle it sets the
-        // cycle length (cycleDurationSeconds). Grid modes only: Strudel's count unit
-        // is fixed to one master quarter note, so it carries no Beat Interval field.
-        if (gridMode) {
-            r1.appendChild(mkLabel("Beat\nInterval", { width: W.beatStackLabel, disabled: !active, multiline: true }));
-            r1.appendChild(this._buildDropdownField({
-                options: BEAT_INTERVAL_TOKENS.map((t) => ({ value: t.token, label: t.label })),
-                value: beatIntervalAgg === "varies" ? "" : beatIntervalAgg,
-                width: W.beatInterval,
-                editable: active,
-                editKind: "setBeatInterval",
-            }));
-        }
-
-        // Strudel: Repeats sits on row 1. The mini-notation cycle (Counts/Cycle
-        // quarter notes long) is laid end-to-end Repeats times around the path, so
-        // the total path length is Counts/Cycle × Repeats quarter notes. Slice k
-        // samples Strudel cycle k, so cross-cycle operators evolve across the
-        // repeats (see deriveStrudelTiled in beatPoints.js).
-        if (isStrudel) {
+        // Repeats — directly after Measures on row 1, for every mode. The pattern
+        // (Manual's per-repeat tabs, or the Strudel/Euclidean cycle) is laid end-to-
+        // end Repeats times around the path. Beat Interval is gone (always a quarter).
+        if (gridMode || isStrudel) {
             const sRepeatsAgg = aggregateString(bpObjs, "repeats");
             r1.appendChild(mkLabel("Repeats", { width: W.beatStackLabel, disabled: !active }));
             const repeatsField = this._buildEditableField({
@@ -438,40 +414,30 @@ export const bandExtraMethods = {
         // master meter's cells-per-bar, computed above as bpbForBars.)
         band.appendChild(r1);
 
-        // Variation + Repeats row — directly under the Beat Pattern dropdown
-        // (Manual / Euclidean). On the LEFT, no labels: a 🎲 dice button (aligned
-        // under the mode dropdown via a lead spacer) + the 0–1 flip-probability
-        // field. The flip is applied at DERIVATION time from the ORIGINAL pattern, so
-        // re-rolls never drift. (The per-cycle auto-roll CHECKBOX — between them and
-        // Repeats — lands with Phase 2.) On the RIGHT: Repeats, at the same column as
-        // the Euclidean Repeats below, so it stays put across modes.
-        if (gridMode) {
-            const diceW = 22;                 // snug around the dice glyph
-            const varyW = W.beatNum + 12;       // wide enough for a decimal like 0.35
-            const rV = mkRow();
-            const lead = document.createElement("div");   // align the dice under the mode dropdown
-            lead.style.width = `${W.beatStackLabel}px`;
-            lead.style.flexShrink = "0";
-            rV.appendChild(lead);
+        // Random variation: a 🎲 re-roll button + the flip-count field. For Manual
+        // these move INTO the tab row (built into the grid below, left of the tabs)
+        // to save a row; Euclidean/Auto keep them on their own row, followed by the
+        // generator's Active Beats count + Beat Shift.
+        const makeDiceVary = () => {
+            const wrap = document.createElement("div");
+            wrap.className = "insp-dicevary";
             const diceBtn = document.createElement("button");
             diceBtn.type = "button";
             diceBtn.className = "insp-dice-btn";
             diceBtn.textContent = "🎲";
-            diceBtn.style.width = `${diceW}px`;
+            diceBtn.style.width = "22px";
             diceBtn.style.padding = "0";
             diceBtn.title = "Re-roll the variation — a new random variation of the original pattern.";
             diceBtn.disabled = !active;
-            if (active) {
-                diceBtn.addEventListener("click", () => {
-                    this._emitEdit({ kind: "setVarySeed", value: Math.floor(Math.random() * 0x7fffffff) });
-                });
-            }
-            rV.appendChild(diceBtn);
+            if (active) diceBtn.addEventListener("click", () => {
+                this._emitEdit({ kind: "setVarySeed", value: Math.floor(Math.random() * 0x7fffffff) });
+            });
+            wrap.appendChild(diceBtn);
             const varyAgg = aggregateString(bpObjs, "vary");
             const varyField = this._buildEditableField({
                 value: varyAgg === "varies" ? "" : varyAgg,
                 numeric: true,
-                width: varyW,
+                width: W.beatNum + 12,
                 editable: active,
                 validator: (c) => validateNumber(c, { min: 0, integer: true }),
                 editKind: "setVary",
@@ -479,106 +445,160 @@ export const bandExtraMethods = {
                 selectOnFocus: false,
             });
             varyField.title = "Notes flipped per cycle (0 = none). Each cycle flips this many beats x<->., a fresh delta from the base pattern; use Repeats for variety across cycles.";
-            rV.appendChild(varyField);
-            // running x-cost of everything placed so far (widths + their trailing
-            // gaps), used to size the spacer so Repeats lands at a fixed column.
-            let usedLeft = (W.beatStackLabel + 3) + (diceW + 3) + (varyW + 3);   // lead + dice + vary
-            // Euclidean: the generator's Active Beats count + Beat Shift sit on THIS
-            // row — between the variation fields and Repeats — instead of a row below.
+            varyField.style.marginLeft = "3px";
+            wrap.appendChild(varyField);
+            return wrap;
+        };
+
+        if (mode === "euclidean" || mode === "auto") {
+            const rV = mkRow();
+            const lead = document.createElement("div");
+            lead.style.width = `${W.beatStackLabel}px`;
+            lead.style.flexShrink = "0";
+            rV.appendChild(lead);
+            rV.appendChild(makeDiceVary());
             if (mode === "euclidean") {
                 const countAgg = aggregateString(bpObjs, "activeBeatsCount");
                 const shiftAgg = aggregateString(bpObjs, "beatShift");
                 rV.appendChild(mkLabel("Active\nBeats", { width: W.beatStackLabel, disabled: !active, multiline: true }));
                 rV.appendChild(this._buildEditableField({
                     value: countAgg === "varies" ? "" : countAgg,
-                    numeric: true,
-                    width: W.beatNum,
-                    editable: active,
+                    numeric: true, width: W.beatNum, editable: active,
                     validator: (c) => validateActiveBeatsCount(c, cycleDur),
-                    editKind: "setActiveBeatsCount",
-                    spinStep: 1,
-                    selectOnFocus: false,
+                    editKind: "setActiveBeatsCount", spinStep: 1, selectOnFocus: false,
                 }));
                 rV.appendChild(mkLabel("Beat\nShift", { width: W.beatStackLabel, disabled: !active, multiline: true }));
                 rV.appendChild(this._buildEditableField({
                     value: shiftAgg === "varies" ? "" : shiftAgg,
-                    numeric: true,
-                    width: W.beatNum,
-                    editable: active,
+                    numeric: true, width: W.beatNum, editable: active,
                     validator: validateBeatShift,
-                    editKind: "setBeatShift",
-                    spinStep: 1,
-                    selectOnFocus: false,
+                    editKind: "setBeatShift", spinStep: 1, selectOnFocus: false,
                 }));
-                usedLeft += (W.beatStackLabel + 3) + (W.beatNum + 3) + (W.beatStackLabel + 3) + (W.beatNum + 3);
             }
-            // Repeats on the FAR RIGHT, at a fixed column (x≈314) across modes; the
-            // spacer fills from the last field to there.
-            const repeatsColX = (W.beatStackLabel + 3 + W.beatPointsMode) + 3 + (2 * W.beatStackLabel + 2 * W.beatNum + 3 * 3) + 3;
-            const repSpacer = document.createElement("div");
-            repSpacer.style.width = `${repeatsColX - 3 - usedLeft}px`;   // − the gap before the Repeats label
-            repSpacer.style.flexShrink = "0";
-            rV.appendChild(repSpacer);
-            const repeatsAgg = aggregateString(bpObjs, "repeats");
-            rV.appendChild(mkLabel("Repeats", { width: W.beatStackLabel, disabled: !active }));
-            rV.appendChild(this._buildEditableField({
-                value: repeatsAgg === "varies" ? "" : repeatsAgg,
-                numeric: true,
-                width: W.beatNum,
-                editable: active,
-                validator: (c) => validateRepeats(c),
-                editKind: "setRepeats",
-                spinStep: 1,
-                selectOnFocus: false,
-            }));
             band.appendChild(rV);
         }
-
-        // (Auto is coerced to Manual above and the rhythm-styles feature is on hold,
-        // so there's no Auto-specific row. The Euclidean Active Beats count + Beat
-        // Shift, and Repeats for all modes, now live on the variation row above.)
 
         // Active Beats pattern string + Beat Strength digit
         // string, shown for BOTH Normal and Euclidean. In Normal
         // the pattern is typed directly; in Euclidean it is the
         // generated result, and Beat Strength still sets per-beat
         // velocity. Both strings loop.
-        if (gridMode) {
+        if (gridMode && mode === "normal") {
+            // Manual: a PER-REPEAT editor. One tab per Repeat; the selected tab's
+            // beat pattern (in-place measure grid) and Beat Strength (free-length)
+            // stack in one two-line field. Repeat 1 is repeatPatterns[0] (falling
+            // back to the legacy activeBeats); repeats 2+ start empty. Playback of
+            // repeats 2+ lands in the next milestone.
+            const repeatsAgg = aggregateString(bpObjs, "repeats");
+            const repeatsNum = (() => {
+                const n = Number(repeatsAgg);
+                return (Number.isFinite(n) && n >= 1) ? Math.min(8, Math.floor(n)) : 1;
+            })();
+            const selected = Math.min(Math.max(this._patternTab || 0, 0), repeatsNum - 1);
+            const patAgg = aggregateString(bpObjs, "repeatPatterns");
+            const strAgg = aggregateString(bpObjs, "repeatStrengths");
+            const abAgg = aggregateString(bpObjs, "activeBeats");
+            const stAgg = aggregateString(bpObjs, "strength");
+            // Pull repeat k's segment from a comma-joined aggregate; repeat 0 falls
+            // back to the legacy single field. "varies" / missing → blank.
+            const seg = (agg, k, fallback) => {
+                if (agg === "varies") return "";
+                const parts = (typeof agg === "string" && agg !== "") ? agg.split(",") : [];
+                const v = (k < parts.length) ? parts[k] : "";
+                return (v === "" && k === 0) ? (fallback === "varies" ? "" : fallback) : v;
+            };
+
+            // Up = previous tab, Down = next tab (from inside either field).
+            const switchTab = (delta) => {
+                this._patternTab = Math.min(Math.max(selected + delta, 0), repeatsNum - 1);
+                this._render();
+            };
+
+            // One control: a CSS grid where the two-line labels sit in front (left
+            // column) and the two fields share a single bordered box (right column)
+            // split by a horizontal rule, with the tab strip attached to the box top.
+            const control = document.createElement("div");
+            control.className = "insp-repeat-control" + (active ? "" : " disabled");
+
+            // Random-variation controls sit to the LEFT of the tabs, on the same row.
+            const varCell = makeDiceVary();
+            varCell.classList.add("insp-repeat-var");
+            control.appendChild(varCell);
+
+            const tabStrip = document.createElement("div");
+            tabStrip.className = "insp-repeat-tabs";
+            for (let r = 0; r < repeatsNum; r++) {
+                const tab = document.createElement("button");
+                tab.type = "button";
+                tab.className = "insp-repeat-tab" + (r === selected ? " active" : "");
+                tab.textContent = String(r + 1);
+                if (active) tab.addEventListener("click", () => { this._patternTab = r; this._render(); });
+                else tab.disabled = true;
+                tabStrip.appendChild(tab);
+            }
+            control.appendChild(tabStrip);
+
+            const patLbl = mkLabel("Beat Pattern", { width: W.beatStrengthLabel, disabled: !active });
+            patLbl.classList.add("insp-repeat-lbl-pat");
+            control.appendChild(patLbl);
+            const patCell = document.createElement("div");
+            patCell.className = "insp-repeat-cell-top";
+            const patField = this._buildBeatStringField({
+                value: seg(patAgg, selected, abAgg),
+                width: W.repeatField,
+                editable: active,
+                fixedGrid: true,
+                cellsPerBar: bpbForBars,
+                maxCells: cycleDur,
+                allowEmpty: selected > 0,
+                kind: "pattern",
+                editKind: "setRepeatPattern",
+                onCommit: (v) => this._emitEdit({ kind: "setRepeatPattern", value: v, index: selected }),
+                onArrowTab: switchTab,
+                ariaLabel: `Repeat ${selected + 1} Active Beats`,
+            });
+            patCell.appendChild(wrapBeatField(patField));
+            control.appendChild(patCell);
+
+            const strLbl = mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active });
+            strLbl.classList.add("insp-repeat-lbl-str");
+            control.appendChild(strLbl);
+            const strCell = document.createElement("div");
+            strCell.className = "insp-repeat-cell-bottom";
+            const strField = this._buildBeatStringField({
+                value: seg(strAgg, selected, stAgg),
+                width: W.repeatField,
+                editable: active,
+                beatsPerBar: bpbForBars,
+                kind: "strength",
+                editKind: "setRepeatStrength",
+                onCommit: (v) => this._emitEdit({ kind: "setRepeatStrength", value: v, index: selected }),
+                onArrowTab: switchTab,
+                ariaLabel: `Repeat ${selected + 1} Beat Strength`,
+            });
+            strCell.appendChild(wrapBeatField(strField));
+            control.appendChild(strCell);
+
+            band.appendChild(control);
+        } else if (gridMode) {
+            // Euclidean / Auto: the generated Active Beats (read-only) + Beat
+            // Strength, as two rows. Both strings loop.
+            const single = bpObjs.length === 1 && typeof bpObjs[0].id === "string";
             const activeBeatsAgg = aggregateString(bpObjs, "activeBeats");
             const strengthAgg = aggregateString(bpObjs, "strength");
-            // bpbForBars (the master-meter cells-per-bar) drives the `|` grouping
-            // in both string fields; computed once at the top of the band.
-
-            // The Active Beats field always shows the editable BASE pattern (the
-            // variation is NOT shown here — it plays per cycle and appears on the
-            // canvas dots + audio). Editing it changes the base the per-cycle deltas
-            // are taken from. Euclidean's generated pattern stays read-only.
-            const single = bpObjs.length === 1 && typeof bpObjs[0].id === "string";
 
             const rA = mkRow();
             rA.appendChild(mkLabel("Active Beats", { width: W.beatStrengthLabel, disabled: !active }));
             const abField = this._buildBeatStringField({
                 value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
-                width: W.beatString,
-                editable: active,
+                width: W.beatString, editable: active,
                 locked: mode === "euclidean" || mode === "auto",
-                beatsPerBar: bpbForBars,
-                // Manual: in-place, measure-aligned overwrite editor. Euclidean is
-                // locked (returns above), so this only ever affects Manual. The typed
-                // pattern is capped at the cycle length (Measures × cells-per-bar).
-                fixedGrid: mode === "normal",
-                cellsPerBar: bpbForBars,
-                maxCells: cycleDur,
-                kind: "pattern",
-                editKind: "setActiveBeats",
-                ariaLabel: "Active Beats",
+                beatsPerBar: bpbForBars, kind: "pattern",
+                editKind: "setActiveBeats", ariaLabel: "Active Beats",
             });
             const abWrap = wrapBeatField(abField);
             rA.appendChild(abWrap);
             band.appendChild(rA);
-            // Capture for the live variation preview + playing-beat highlight: for a
-            // single beat-points object, main.js drives both per frame while playing
-            // (the preview value, and the slot-under-the-cursor box on both fields).
             if (single) {
                 this._activeBeatsField = abField;
                 this._activeBeatsObjectId = bpObjs[0].id;
@@ -589,15 +609,10 @@ export const bandExtraMethods = {
             rS.appendChild(mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active }));
             const stField = this._buildBeatStringField({
                 value: strengthAgg === "varies" ? "" : strengthAgg,
-                width: W.beatString,
-                editable: active,
-                // Auto generates Beat Strength too, so lock it there; Euclidean
-                // and Manual leave it editable (it sets per-beat velocity).
+                width: W.beatString, editable: active,
                 locked: mode === "auto",
-                beatsPerBar: bpbForBars,
-                kind: "strength",
-                editKind: "setStrength",
-                ariaLabel: "Beat Strength",
+                beatsPerBar: bpbForBars, kind: "strength",
+                editKind: "setStrength", ariaLabel: "Beat Strength",
             });
             const stWrap = wrapBeatField(stField);
             rS.appendChild(stWrap);

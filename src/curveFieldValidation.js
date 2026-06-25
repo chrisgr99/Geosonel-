@@ -627,6 +627,12 @@ export function validateRepeats(candidate) {
             message: `Repeats must be an integer; rounded to ${rounded}.`,
         };
     }
+    if (rounded > 8) {
+        return {
+            kind: "soft", value: "8",
+            message: "Repeats clamped to 8 (the maximum, one tab per repeat).",
+        };
+    }
     return { kind: "ok", value: String(rounded) };
 }
 

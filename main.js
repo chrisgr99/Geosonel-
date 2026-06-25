@@ -151,6 +151,8 @@ import {
     setBeatPointsModeOnSelection,
     setAutoStyleOnSelection,
     setActiveBeatsOnSelection,
+    setRepeatPatternOnSelection,
+    setRepeatStrengthOnSelection,
     setStrengthOnSelection,
     setBeatPatternOnSelection,
     setCycleIntervalOnSelection,
@@ -4298,6 +4300,14 @@ async function main() {
             } else if (edit.kind === "setActiveBeats") {
                 await applySceneEdit((data) =>
                     setActiveBeatsOnSelection(data, edit.selection, edit.value),
+                );
+            } else if (edit.kind === "setRepeatPattern") {
+                await applySceneEdit((data) =>
+                    setRepeatPatternOnSelection(data, edit.selection, edit.value, edit.index),
+                );
+            } else if (edit.kind === "setRepeatStrength") {
+                await applySceneEdit((data) =>
+                    setRepeatStrengthOnSelection(data, edit.selection, edit.value, edit.index),
                 );
             } else if (edit.kind === "setStrength") {
                 await applySceneEdit((data) =>

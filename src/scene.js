@@ -739,6 +739,13 @@ export class Curve {
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
+        // Per-repeat Manual patterns (Repeats tabs): comma-separated entries, one
+        // per repeat, each a `|`-barized Active-Beats / Beat-Strength string. Index
+        // 0 = repeat 1; empty entries are allowed. `activeBeats`/`strength` remain
+        // repeat 1's value for back-compat / current playback. See
+        // design/measure-patterns.md. Playback of repeats 2+ lands next milestone.
+        this.repeatPatterns = opts.repeatPatterns ?? "";
+        this.repeatStrengths = opts.repeatStrengths ?? "";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";
@@ -932,6 +939,13 @@ export class Trigger {
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
+        // Per-repeat Manual patterns (Repeats tabs): comma-separated entries, one
+        // per repeat, each a `|`-barized Active-Beats / Beat-Strength string. Index
+        // 0 = repeat 1; empty entries are allowed. `activeBeats`/`strength` remain
+        // repeat 1's value for back-compat / current playback. See
+        // design/measure-patterns.md. Playback of repeats 2+ lands next milestone.
+        this.repeatPatterns = opts.repeatPatterns ?? "";
+        this.repeatStrengths = opts.repeatStrengths ?? "";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";
@@ -1173,6 +1187,13 @@ export class Sprite {
         this.activeBeats = opts.activeBeats ?? "x";
         /** @type {string} Beat Strength (digits 0-9 and dots), Band 5. Loops. Default single 9. */
         this.strength = opts.strength ?? "9";
+        // Per-repeat Manual patterns (Repeats tabs): comma-separated entries, one
+        // per repeat, each a `|`-barized Active-Beats / Beat-Strength string. Index
+        // 0 = repeat 1; empty entries are allowed. `activeBeats`/`strength` remain
+        // repeat 1's value for back-compat / current playback. See
+        // design/measure-patterns.md. Playback of repeats 2+ lands next milestone.
+        this.repeatPatterns = opts.repeatPatterns ?? "";
+        this.repeatStrengths = opts.repeatStrengths ?? "";
         this.beatPattern = opts.beatPattern ?? "";
         this.measures = opts.measures ?? 1;
         this.strengthChannel = opts.strengthChannel ?? "lt";

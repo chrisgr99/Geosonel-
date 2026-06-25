@@ -117,6 +117,7 @@ function formatInlineEntry(obj) {
     }
     const parts = [];
     for (const k of Object.keys(obj)) {
+        if (obj[k] === undefined) continue;   // undefined would render as bare `undefined`
         parts.push(`${jsonKey(k)}: ${JSON.stringify(obj[k])}`);
     }
     return `{ ${parts.join(", ")} }`;
@@ -140,7 +141,10 @@ function formatMultilineEntry(obj, indent) {
         return [`${pad}${JSON.stringify(obj)}`];
     }
     const lines = [`${pad}{`];
-    const keys = Object.keys(obj);
+    // Skip undefined-valued keys: JSON.stringify(undefined) is the JS value
+    // undefined, which a template literal renders as the bare word `undefined` —
+    // invalid JSON that would then fail every subsequent parseScene.
+    const keys = Object.keys(obj).filter((k) => obj[k] !== undefined);
     for (let i = 0; i < keys.length; i++) {
         const k = keys[i];
         const v = obj[k];
@@ -2065,6 +2069,44 @@ export function setStrengthOnSelection(data, selection, value) {
     rebarBeatFieldsForSelection(data, selection);
 }
 
+/** Iterate the selected curve/sprite/trigger objects, applying `fn` to each. */
+function eachSelectedObject(data, selection, fn) {
+    for (const key of ["curves", "sprites", "triggers"]) {
+        const idxs = selection ? selection[key] : undefined;
+        const arr = data ? data[key] : undefined;
+        if (!idxs || !Array.isArray(arr)) continue;
+        for (const i of idxs) {
+            const e = arr[i];
+            if (e && typeof e === "object" && !Array.isArray(e)) fn(e);
+        }
+    }
+}
+
+/** Set the `index`-th comma-segment of a per-repeat string field, padding with
+ *  empty segments as needed. */
+function setRepeatSegment(str, index, value) {
+    const parts = (typeof str === "string" && str !== "") ? str.split(",") : [];
+    while (parts.length <= index) parts.push("");
+    parts[index] = value;
+    return parts.join(",");
+}
+
+/** Set repeat `index`'s Manual beat pattern (per-repeat tabs). Mutates `data`. */
+export function setRepeatPatternOnSelection(data, selection, value, index) {
+    const k = Math.max(0, Math.round(Number(index)) || 0);
+    eachSelectedObject(data, selection, (e) => {
+        e.repeatPatterns = setRepeatSegment(e.repeatPatterns, k, String(value));
+    });
+}
+
+/** Set repeat `index`'s Beat Strength string (per-repeat tabs). Mutates `data`. */
+export function setRepeatStrengthOnSelection(data, selection, value, index) {
+    const k = Math.max(0, Math.round(Number(index)) || 0);
+    eachSelectedObject(data, selection, (e) => {
+        e.repeatStrengths = setRepeatSegment(e.repeatStrengths, k, String(value));
+    });
+}
+
 /**
  * Set the Strudel beat-points pattern (Beat Points band, "strudel" mode) on
  * the curve/sprite slices of the selection. A free-form mini-notation string;
@@ -2140,7 +2182,20 @@ export function setBeatShiftOnSelection(data, selection, value) {
 /** @see setBeatsPerBarOnSelection */
 export function setRepeatsOnSelection(data, selection, value) {
     const n = Number(value);
-    if (Number.isFinite(n)) setFieldOnSelection(data, selection, "repeats", Math.round(n));
+    if (Number.isFinite(n)) {
+        const reps = Math.max(1, Math.min(8, Math.round(n)));
+        setFieldOnSelection(data, selection, "repeats", reps);
+        // Lowering Repeats discards the now-unused repeats' per-repeat patterns.
+        const trim = (str) => {
+            if (typeof str !== "string" || str === "") return str;   // leave missing as-is
+            const parts = str.split(",");
+            return parts.length > reps ? parts.slice(0, reps).join(",") : str;
+        };
+        eachSelectedObject(data, selection, (e) => {
+            if (typeof e.repeatPatterns === "string") e.repeatPatterns = trim(e.repeatPatterns);
+            if (typeof e.repeatStrengths === "string") e.repeatStrengths = trim(e.repeatStrengths);
+        });
+    }
     regenerateAndRebarForSelection(data, selection);
 }
 
@@ -2150,7 +2205,27 @@ export function setRepeatsOnSelection(data, selection, value) {
 export function setMeasuresOnSelection(data, selection, value) {
     const n = Number(value);
     if (Number.isFinite(n)) {
-        setFieldOnSelection(data, selection, "measures", Math.max(1, Math.round(n)));
+        const m = Math.max(1, Math.round(n));
+        setFieldOnSelection(data, selection, "measures", m);
+        // Cap each Manual repeat's PATTERN to the new measure count, DISCARDING any
+        // excess (and persisting it to scene.json). So lowering Measures drops the
+        // beats past it for good — raising it again shows dots, not the old beats.
+        // Cells are quarter beats, so cells-per-bar = the master numerator (def 4).
+        // Beat Strength is free-length and left untouched.
+        const ts = data && Array.isArray(data.timeSignature) ? Number(data.timeSignature[0]) : NaN;
+        const cpb = (Number.isFinite(ts) && ts >= 1) ? Math.floor(ts) : 4;
+        const maxCells = m * cpb;
+        const cap = (s) => {
+            if (typeof s !== "string" || s === "") return s;
+            const bare = s.replace(/\|/g, "");
+            return bare.length > maxCells ? repipeWithBars(bare.slice(0, maxCells), cpb) : s;
+        };
+        eachSelectedObject(data, selection, (e) => {
+            if (typeof e.repeatPatterns === "string" && e.repeatPatterns !== "") {
+                e.repeatPatterns = e.repeatPatterns.split(",").map(cap).join(",");
+            }
+            if (typeof e.activeBeats === "string") e.activeBeats = cap(e.activeBeats);
+        });
     }
     // Measures sets a grid pattern's length (× cells-per-bar), so a Euclidean
     // object regenerates; Manual just re-bars (no-op for Strudel). Strudel reads

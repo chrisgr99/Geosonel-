@@ -1037,14 +1037,24 @@ export const fieldMethods = {
             // last measure with dots so the value is whole measures.
             const normalize = (cells) => {
                 let s = (cells || "").replace(/[^xX.0-9]/g, "");
-                if (s.length === 0) s = "x";
+                // Never show more than the cap (Measures × cells-per-bar): a pattern
+                // stored longer than the current Measures is truncated on display.
+                if (Number.isFinite(maxCells)) s = s.slice(0, maxCells);
+                // allowEmpty (repeats 2+): an empty pattern stays empty (no measure
+                // shown) until the first character is typed. Otherwise default to a
+                // single active beat.
+                if (s.length === 0) { if (opts.allowEmpty) return ""; s = "x"; }
+                // Pad the partial last measure to a whole measure. Measures is only a
+                // CAP — raising it doesn't add measures, so the field shows just the
+                // pattern's own (capped) measures, not Measures of them.
                 const rem = s.length % cpb;
                 return rem === 0 ? s : s + ".".repeat(cpb - rem);
             };
-            // Map a typed character to a cell: dot/space → rest, 1-9 → ratchet,
-            // anything else → an active beat "x". Pipes/whitespace are dropped.
-            const cellChar = (ch) => (ch === "." || ch === " " ? "."
-                : (/[1-9]/.test(ch) ? ch : (/[|\s]/.test(ch) ? null : "x")));
+            const minCells = opts.allowEmpty ? 0 : cpb;     // smallest the pattern may shrink to
+            // Map a typed character to a cell: ONLY the dot key enters a rest and
+            // ONLY x/X enters an active beat. Every other key (space, digits, other
+            // letters) does nothing — those are reserved for future uses.
+            const cellChar = (ch) => (ch === "." ? "." : (ch === "x" || ch === "X" ? "x" : null));
             // Display with a bar divider after EVERY complete measure — INCLUDING a
             // trailing one — so a finished measure visibly shows it's complete.
             const gridBarize = (cells) => {
@@ -1084,7 +1094,9 @@ export const fieldMethods = {
                 if (committed || !dirty) return;
                 committed = true;
                 // Commit the no-trailing-pipe form (matches sceneEditor's repipe).
-                this._emitEdit({ kind: opts.editKind, value: barizeBeatString(cellsOf(input.value), cpb) });
+                const v = barizeBeatString(cellsOf(input.value), cpb);
+                if (typeof opts.onCommit === "function") opts.onCommit(v);
+                else this._emitEdit({ kind: opts.editKind, value: v });
             };
             const reset = () => {
                 input.value = gridBarize(normalize(cellsOf(opts.value)));
@@ -1130,18 +1142,22 @@ export const fieldMethods = {
                     dirty = true; render(cells, pos);
                 } else if (t === "deleteContentBackward") {
                     e.preventDefault();
-                    if (atEnd && cells.length > cpb) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length); }
+                    if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length); }
                     else if (L > 0) { const p = Math.min(L - 1, cells.length - 1); cells = cells.slice(0, p) + "." + cells.slice(p + 1); dirty = true; render(cells, p); }
                 } else if (t === "deleteContentForward") {
                     e.preventDefault();
-                    if (atEnd && cells.length > cpb) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length); }
+                    if (atEnd && cells.length - cpb >= minCells) { cells = cells.slice(0, cells.length - cpb); dirty = true; render(cells, cells.length); }
                     else if (L < cells.length) { cells = cells.slice(0, L) + "." + cells.slice(L + 1); dirty = true; render(cells, L); }
                 } else if (t.startsWith("insert")) {
                     e.preventDefault();                      // block newlines / other inserts
                 }
             });
             input.addEventListener("keydown", (e) => {
-                if (e.key === "Enter") { e.preventDefault(); commit(); input.blur(); }
+                if (e.key === "Enter") { e.preventDefault(); commit(); input.blur(); return; }
+                // Up/Down move between repeat tabs (commit the current edit first).
+                if (typeof opts.onArrowTab === "function" && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                    e.preventDefault(); commit(); opts.onArrowTab(e.key === "ArrowUp" ? -1 : 1);
+                }
             });
             return input;
         }
@@ -1243,7 +1259,8 @@ export const fieldMethods = {
         const commit = () => {
             if (committed || !dirty) return;
             committed = true;
-            this._emitEdit({ kind: opts.editKind, value: input.value });
+            if (typeof opts.onCommit === "function") opts.onCommit(input.value);
+            else this._emitEdit({ kind: opts.editKind, value: input.value });
         };
         input.addEventListener("focus", () => {
             // Snap back to the editable BASE, dropping any live variation preview the
@@ -1260,6 +1277,9 @@ export const fieldMethods = {
                 e.preventDefault();
                 commit();
                 input.blur();
+            } else if (typeof opts.onArrowTab === "function" && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                // Up/Down move between repeat tabs (commit the current edit first).
+                e.preventDefault(); commit(); opts.onArrowTab(e.key === "ArrowUp" ? -1 : 1);
             }
         });
         input.addEventListener("blur", () => commit());

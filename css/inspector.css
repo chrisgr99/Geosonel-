@@ -253,6 +253,85 @@
     height: 2px;
     background-color: #6f8f6f;
 }
+
+/* Per-repeat Manual editor. A grid: two-line labels in the left column, and the
+ * two fields sharing ONE bordered box in the right column (top cell = beat
+ * pattern, bottom cell = Beat Strength) split by a horizontal rule. The tab strip
+ * attaches to the top of that box. */
+.insp-repeat-control {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    grid-template-areas:
+        "var    tabs"
+        "patlbl pat"
+        "strlbl str";
+    align-items: center;
+    margin-top: 2px;
+    width: fit-content;
+}
+.insp-repeat-control.disabled { opacity: 0.5; }
+.insp-repeat-lbl-pat { grid-area: patlbl; }
+.insp-repeat-lbl-str { grid-area: strlbl; }
+/* Dice + flip-count, left of the tabs on the top row. */
+.insp-repeat-var { grid-area: var; align-self: end; }
+.insp-dicevary { display: flex; align-items: center; }
+.insp-repeat-tabs {
+    grid-area: tabs;
+    display: flex;
+    gap: 2px;
+    /* Centre the tabs over the point ~1/3 along the fields: occupy the left
+     * two-thirds of the box and centre within that. */
+    justify-self: start;
+    width: 66.7%;
+    justify-content: center;
+    align-self: end;
+    margin-bottom: -2px;            /* overlap the box top border so tabs connect */
+    position: relative;
+    z-index: 1;
+}
+.insp-repeat-tab {
+    min-width: 19px;
+    height: 17px;
+    padding: 0 3px;
+    font-size: 10px;
+    line-height: 15px;
+    color: #859285;                 /* dim — clearly an inactive tab */
+    background-color: #2c2c2c;
+    border: 2px solid #789678;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    cursor: pointer;
+}
+.insp-repeat-tab:hover { color: #c3cdc3; }
+.insp-repeat-tab.active {
+    color: #e8efe8;                 /* muted green highlight (~50% softer) */
+    background-color: #5a7d56;
+    border-color: #789678;
+    border-bottom: 2px solid #474747;   /* open into the box below (connects) */
+    font-weight: 600;
+}
+/* The two fields share one box: top cell open at the bottom, bottom cell carries
+ * the dividing rule as its top border; their left/right borders line up. */
+.insp-repeat-cell-top {
+    grid-area: pat;
+    border: 2px solid #789678;
+    border-bottom: none;
+    border-radius: 0 4px 0 0;
+    background-color: #474747;
+}
+.insp-repeat-cell-bottom {
+    grid-area: str;
+    border: 2px solid #789678;
+    border-top: 2px solid #6f8f6f;  /* the horizontal divider between the fields */
+    border-radius: 0 0 4px 4px;
+    background-color: #474747;
+}
+.insp-repeat-cell-top .insp-beat-field,
+.insp-repeat-cell-bottom .insp-beat-field {
+    border: none;
+    border-radius: 0;
+    background-color: transparent;
+}
 /* One measure region: the bar number in the corner, the input below. */
 .insp-measure {
     position: relative;

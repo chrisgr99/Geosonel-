@@ -80,6 +80,8 @@ export const W = {
     // Active Beats / Beat Strength x-dot string field. Narrowed 22px
     // (280 -> 258) to claw back the width the now single-line labels take.
     beatString: 258,
+    // Per-repeat Manual pattern/strength fields; long patterns scroll.
+    repeatField: 313,
     // Strudel-mode "Cycle Length" label — single line (unwrapped),
     // wide enough to hold the full text at 10pt before the
     // note-duration dropdown.
