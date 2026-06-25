@@ -453,31 +453,30 @@ export const bandExtraMethods = {
             return wrap;
         };
 
-        if (mode === "euclidean" || mode === "auto") {
+        if (mode === "euclidean") {
+            // Euclidean generator params: Active Beats count + Beat Shift, on their
+            // own row. (Dice + vary are hidden for now — they may later move to the
+            // end of each phrase row; makeDiceVary is kept above for that.)
             const rV = mkRow();
-            const lead = document.createElement("div");
-            lead.style.width = `${W.beatStackLabel}px`;
-            lead.style.flexShrink = "0";
-            rV.appendChild(lead);
-            rV.appendChild(makeDiceVary());
-            if (mode === "euclidean") {
-                const countAgg = aggregateString(bpObjs, "activeBeatsCount");
-                const shiftAgg = aggregateString(bpObjs, "beatShift");
-                rV.appendChild(mkLabel("Active\nBeats", { width: W.beatStackLabel, disabled: !active, multiline: true }));
-                rV.appendChild(this._buildEditableField({
-                    value: countAgg === "varies" ? "" : countAgg,
-                    numeric: true, width: W.beatNum, editable: active,
-                    validator: (c) => validateActiveBeatsCount(c, cycleDur),
-                    editKind: "setActiveBeatsCount", spinStep: 1, selectOnFocus: false,
-                }));
-                rV.appendChild(mkLabel("Beat\nShift", { width: W.beatStackLabel, disabled: !active, multiline: true }));
-                rV.appendChild(this._buildEditableField({
-                    value: shiftAgg === "varies" ? "" : shiftAgg,
-                    numeric: true, width: W.beatNum, editable: active,
-                    validator: validateBeatShift,
-                    editKind: "setBeatShift", spinStep: 1, selectOnFocus: false,
-                }));
-            }
+            const countAgg = aggregateString(bpObjs, "activeBeatsCount");
+            const shiftAgg = aggregateString(bpObjs, "beatShift");
+            // "Active Beats" label widened to the Pattern Type label's width so the
+            // count field left-aligns with the Pattern Type dropdown above it (and
+            // Beat Shift shifts over by the same amount).
+            rV.appendChild(mkLabel("Active\nBeats", { width: W.beatStrengthLabel, disabled: !active, multiline: true }));
+            rV.appendChild(this._buildEditableField({
+                value: countAgg === "varies" ? "" : countAgg,
+                numeric: true, width: W.beatNum, editable: active,
+                validator: (c) => validateActiveBeatsCount(c, cycleDur),
+                editKind: "setActiveBeatsCount", spinStep: 1, selectOnFocus: false,
+            }));
+            rV.appendChild(mkLabel("Beat\nShift", { width: W.beatStackLabel, disabled: !active, multiline: true }));
+            rV.appendChild(this._buildEditableField({
+                value: shiftAgg === "varies" ? "" : shiftAgg,
+                numeric: true, width: W.beatNum, editable: active,
+                validator: validateBeatShift,
+                editKind: "setBeatShift", spinStep: 1, selectOnFocus: false,
+            }));
             band.appendChild(rV);
         }
 
@@ -605,43 +604,83 @@ export const bandExtraMethods = {
                 this._beatStrengthHighlight = strWrap.querySelector(".insp-beat-hl");
             }
         } else if (gridMode) {
-            // Euclidean / Auto: the generated Active Beats (read-only) + Beat
-            // Strength, as two rows. Both strings loop.
+            // Euclidean / Auto: the GENERATED Active Beats shown READ-ONLY in the same
+            // phrase box as Manual — one row per phrase, every phrase identical for now
+            // (the generated pattern is considered to repeat each phrase) — plus a
+            // single Beat Strength field below. Mirrors the Manual layout; the playing-
+            // beat box steps the sounding phrase's row and lights its number.
             const single = bpObjs.length === 1 && typeof bpObjs[0].id === "string";
+            const phrasesNum = (() => {
+                const n = Number(aggregateString(bpObjs, "phrases"));
+                return (Number.isFinite(n) && n >= 1) ? Math.min(8, Math.floor(n)) : 1;
+            })();
             const activeBeatsAgg = aggregateString(bpObjs, "activeBeats");
             const strengthAgg = aggregateString(bpObjs, "strength");
+            // Barize the generated pattern (a bar divider every cells-per-bar) so the
+            // rows read like the Manual box.
+            const barize = (s) => {
+                const cells = (typeof s === "string" ? s : "").replace(/\|/g, "");
+                let out = "";
+                for (let i = 0; i < cells.length; i++) {
+                    out += cells[i];
+                    if ((i + 1) % bpbForBars === 0) out += "|";
+                }
+                return out;
+            };
+            const genValue = barize(activeBeatsAgg === "varies" ? "" : activeBeatsAgg);
 
-            const rA = mkRow();
-            rA.appendChild(mkLabel("Active Beats", { width: W.beatStrengthLabel, disabled: !active }));
-            const abField = this._buildBeatStringField({
-                value: activeBeatsAgg === "varies" ? "" : activeBeatsAgg,
-                width: W.beatString, editable: active,
-                locked: mode === "euclidean" || mode === "auto",
-                beatsPerBar: bpbForBars, kind: "pattern",
-                editKind: "setActiveBeats", ariaLabel: "Active Beats",
-            });
-            const abWrap = wrapBeatField(abField);
-            rA.appendChild(abWrap);
-            band.appendChild(rA);
-            if (single) {
-                this._activeBeatsField = abField;
-                this._activeBeatsObjectId = bpObjs[0].id;
-                this._activeBeatsHighlight = abWrap.querySelector(".insp-beat-hl");
+            const box = document.createElement("div");
+            box.className = "insp-phrase-box" + (active ? "" : " disabled");
+            /** @type {Array<{field: any, highlight: Element|null, playout: string, numberEl: HTMLElement}>} */
+            const phraseFields = [];
+            for (let r = 0; r < phrasesNum; r++) {
+                const row = document.createElement("div");
+                row.className = "insp-phrase-row";
+                const numEl = document.createElement("div");
+                numEl.className = "insp-phrase-num";
+                numEl.textContent = String(r + 1);
+                row.appendChild(numEl);
+                const field = this._buildBeatStringField({
+                    value: genValue,
+                    width: W.repeatField,
+                    editable: active,
+                    locked: true,                       // generated → read-only (for now)
+                    beatsPerBar: bpbForBars,
+                    kind: "pattern",
+                    editKind: `euclidPattern:${r}`,
+                    ariaLabel: `Phrase ${r + 1} Active Beats`,
+                });
+                const wrap = wrapBeatField(field);
+                row.appendChild(wrap);
+                box.appendChild(row);
+                phraseFields.push({ field, highlight: wrap.querySelector(".insp-beat-hl"), playout: "", numberEl: numEl });
             }
 
-            const rS = mkRow();
-            rS.appendChild(mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active }));
+            const abRow = mkRow();
+            abRow.classList.add("insp-phrase-ab-row");
+            abRow.appendChild(mkLabel("Active Beats", { width: W.beatStrengthLabel, disabled: !active }));
+            abRow.appendChild(box);
+
+            const sRow = mkRow();
+            sRow.classList.add("insp-phrase-strength-row");
+            sRow.appendChild(mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active }));
             const stField = this._buildBeatStringField({
                 value: strengthAgg === "varies" ? "" : strengthAgg,
-                width: W.beatString, editable: active,
+                width: W.repeatField,
+                editable: active,
                 locked: mode === "auto",
                 beatsPerBar: bpbForBars, kind: "strength",
                 editKind: "setStrength", ariaLabel: "Beat Strength",
             });
             const stWrap = wrapBeatField(stField);
-            rS.appendChild(stWrap);
-            band.appendChild(rS);
+            sRow.appendChild(stWrap);
+
+            band.appendChild(abRow);
+            band.appendChild(sRow);
+
             if (single) {
+                this._phraseFields = phraseFields;
+                this._activeBeatsObjectId = bpObjs[0].id;
                 this._beatStrengthField = stField;
                 this._beatStrengthHighlight = stWrap.querySelector(".insp-beat-hl");
             }
