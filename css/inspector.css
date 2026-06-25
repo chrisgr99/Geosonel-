@@ -340,6 +340,60 @@
     border-radius: 0;
     background-color: transparent;
 }
+
+/* Unwrapped phrase editor: every phrase's beat-pattern field stacked in ONE box.
+ * Each row is [number | pattern field]; a vertical rule divides the number from the
+ * measures, horizontal rules divide the phrases. The fields drop their own border
+ * (the box frame + rules provide all the structure). Beat Strength is a separate
+ * single field below. */
+.insp-phrase-box {
+    width: fit-content;
+    margin-top: 2px;
+    margin-left: 5px;                   /* match .insp-beat-field's margin so the box's
+                                           left edge aligns with the Beat Strength field */
+    border: 2px solid #789678;
+    border-radius: 4px;
+    background-color: #474747;
+    overflow: hidden;                   /* clip rows to the rounded frame */
+}
+.insp-phrase-box.disabled { opacity: 0.5; }
+.insp-phrase-row {
+    display: flex;
+    align-items: stretch;
+}
+.insp-phrase-row:not(:last-child) {
+    border-bottom: 2px solid #6f8f6f;   /* divider between phrases */
+}
+.insp-phrase-num {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    padding: 0 4px;
+    border-right: 2px solid #6f8f6f;    /* vertical divider: number | measures */
+    color: #cdd6cd;
+    font-size: 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+}
+/* The currently-PLAYING phrase's number, boxed white (same marker as the beats). */
+.insp-phrase-num.playing {
+    outline: 2px solid #ffffff;
+    outline-offset: -2px;
+    border-radius: 2px;
+}
+.insp-phrase-box .insp-beat-field {
+    border: none;
+    border-radius: 0;
+    background-color: transparent;
+}
+/* Field border removed inside the box, so drop the ghost overlay's matching border
+ * too — keeps the ghost text aligned with the typed text. */
+.insp-phrase-box .insp-beat-ghost { border: none; }
+/* The single Beat Strength field, below the phrase box. */
+.insp-phrase-strength-row { margin-top: 4px; }
+/* "Active Beats" label aligns with the box's FIRST row, not its vertical centre. */
+.insp-phrase-ab-row { align-items: flex-start; }
+.insp-phrase-ab-row .insp-label { margin-top: 3px; }
 /* One measure region: the bar number in the corner, the input below. */
 .insp-measure {
     position: relative;

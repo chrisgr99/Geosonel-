@@ -269,13 +269,14 @@ test("phrases: no phrasePatterns falls back to the legacy activeBeats for every 
     assert.deepEqual(r.positions, [0, 0.25, 0.5, 0.75]);   // "x.x." tiled across both phrases
 });
 
-test("phrases: strength is also resolved per-phrase (fill-forward)", () => {
-    // P1 strength "9", P2 strength "1"; both all-active single-cell so every beat in
-    // a phrase takes that phrase's strength.
+test("phrases: a single strength repeats across all phrases (not per-phrase)", () => {
+    // strength "91" loops within each phrase, identically for every phrase —
+    // phraseStrengths is ignored now that strength is a single field.
     const r = deriveCurveBeatPoints(curve({
-        phrasePatterns: "x,x", phraseStrengths: "9,1", beatsPerCycle: 2, phrases: 2,
+        phrasePatterns: "x,x", phraseStrengths: "5,5", strength: "91",
+        beatsPerCycle: 2, phrases: 2,
     }));
-    assert.deepEqual(r.strengths, [9, 9, 1, 1]);   // P1 → 9,9 ; P2 → 1,1
+    assert.deepEqual(r.strengths, [9, 1, 9, 1]);   // both phrases: 9,1
 });
 
 // --- Normal mode: the activeBeats and strength strings LOOP (each

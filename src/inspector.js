@@ -270,28 +270,26 @@ export class Inspector {
      */
     setBeatHighlight(objectId, pathIndex, beatsPerCycle) {
         if (this._activeBeatsObjectId !== objectId) { this.clearBeatHighlight(); return; }
-        if (this._phraseTabs && this._phraseTabs.length) {
-            // Manual per-phrase: pathIndex is the GLOBAL beat index across all phrases.
-            // Split it into which phrase is sounding and the beat within that phrase.
+        if (this._phraseFields && this._phraseFields.length) {
+            // Manual per-phrase (all phrases on screen): pathIndex is the GLOBAL beat
+            // index. Split it into which phrase is sounding and the beat within it.
             const bpc = (Number.isFinite(beatsPerCycle) && beatsPerCycle >= 1)
                 ? Math.floor(beatsPerCycle) : 1;
-            const count = this._phraseTabs.length;
+            const count = this._phraseFields.length;
             const playing = Math.floor(pathIndex / bpc) % count;
             const within = ((pathIndex % bpc) + bpc) % bpc;
-            // Box the currently-PLAYING phrase's tab number (whichever it is), so the
-            // user always knows which phrase they're hearing.
-            this._phraseTabs.forEach((t, i) => t.classList.toggle("playing", i === playing));
-            // Step the beat boxes only when the playing phrase IS the one on screen;
-            // otherwise the beats belong to a tab you can't see, so hide them (the lit
-            // tab number tells you where they are). The pattern box walks the full
-            // play-out (typed + ghost); the strength box cycles its own displayed cells.
-            if (playing === this._phraseSelected) {
-                this._positionBeatHighlight(this._activeBeatsField, this._activeBeatsHighlight, within, this._activeBeatsPlayout);
-                this._positionBeatHighlight(this._beatStrengthField, this._beatStrengthHighlight, within);
-            } else {
-                if (this._activeBeatsHighlight) this._activeBeatsHighlight.style.display = "none";
-                if (this._beatStrengthHighlight) this._beatStrengthHighlight.style.display = "none";
-            }
+            // Step the beat box through the PLAYING phrase's row (over its full play-
+            // out, ghost cells included) and box that row's number; hide every other
+            // row's box. The single strength field cycles its cells in step.
+            this._phraseFields.forEach((pf, i) => {
+                pf.numberEl.classList.toggle("playing", i === playing);
+                if (i === playing) {
+                    this._positionBeatHighlight(pf.field, pf.highlight, within, pf.playout);
+                } else if (pf.highlight) {
+                    pf.highlight.style.display = "none";
+                }
+            });
+            this._positionBeatHighlight(this._beatStrengthField, this._beatStrengthHighlight, within);
             return;
         }
         // Euclidean / Auto (no tabs): box the cell at the wrapped global index.
@@ -299,11 +297,14 @@ export class Inspector {
         this._positionBeatHighlight(this._beatStrengthField, this._beatStrengthHighlight, pathIndex);
     }
 
-    /** Hide both beat highlights and any playing-tab box (on stop / no target). */
+    /** Hide all beat highlights and any playing-phrase number box (on stop / no target). */
     clearBeatHighlight() {
         if (this._activeBeatsHighlight) this._activeBeatsHighlight.style.display = "none";
         if (this._beatStrengthHighlight) this._beatStrengthHighlight.style.display = "none";
-        if (this._phraseTabs) this._phraseTabs.forEach((t) => t.classList.remove("playing"));
+        if (this._phraseFields) this._phraseFields.forEach((pf) => {
+            if (pf.highlight) pf.highlight.style.display = "none";
+            pf.numberEl.classList.remove("playing");
+        });
     }
 
     /** Position one highlight box over the displayed cell for `pathIndex`, mapped
@@ -565,12 +566,11 @@ export class Inspector {
         this._activeBeatsHighlight = null;
         this._beatStrengthField = null;
         this._beatStrengthHighlight = null;
-        // Manual per-phrase highlight refs: the selected tab's full play-out string
-        // (typed + ghost, for ghost-aware box positioning), the tab buttons (so the
-        // currently-playing phrase's number can be boxed), and which tab is selected.
-        this._activeBeatsPlayout = null;
-        this._phraseTabs = null;
-        this._phraseSelected = 0;
+        // Manual per-phrase highlight refs: one entry per phrase row, each carrying
+        // the row's pattern field, its highlight box, its full play-out string (typed
+        // + ghost, for ghost-aware box positioning), and its number element (boxed
+        // when that phrase is the one playing).
+        this._phraseFields = null;
         // Strudel measure-box token highlight refs (re-captured by the Rhythm
         // band for a single selected object); the overlay element is reused.
         this._measureBoxes = null;

@@ -487,144 +487,123 @@ export const bandExtraMethods = {
         // generated result, and Beat Strength still sets per-beat
         // velocity. Both strings loop.
         if (gridMode && mode === "normal") {
-            // Manual: a PER-PHRASE editor. One tab per Phrase; the selected tab's
-            // beat pattern (in-place measure grid) and Beat Strength (free-length)
-            // stack in one two-line field. Phrase 1 is phrasePatterns[0] (falling
-            // back to the legacy activeBeats); phrases 2+ start empty. Playback of
-            // phrases 2+ lands in the next milestone.
+            // Manual: every PHRASE's beat-pattern field stacked in ONE box — a phrase
+            // number + vertical divider at the left of each row, horizontal rules
+            // between rows. Phrase 1 is phrasePatterns[0] (falling back to the legacy
+            // activeBeats); later phrases start empty and fill-forward (inherit) at
+            // play time. Beat Strength is a SINGLE field below — one strength repeats
+            // across every phrase. (Dice/vary is hidden for now.)
             const phrasesAgg = aggregateString(bpObjs, "phrases");
             const phrasesNum = (() => {
                 const n = Number(phrasesAgg);
                 return (Number.isFinite(n) && n >= 1) ? Math.min(8, Math.floor(n)) : 1;
             })();
-            const selected = Math.min(Math.max(this._patternTab || 0, 0), phrasesNum - 1);
             const patAgg = aggregateString(bpObjs, "phrasePatterns");
-            const strAgg = aggregateString(bpObjs, "phraseStrengths");
             const abAgg = aggregateString(bpObjs, "activeBeats");
             const stAgg = aggregateString(bpObjs, "strength");
+            const single = bpObjs.length === 1 && typeof bpObjs[0].id === "string";
             // Pull phrase k's segment from a comma-joined aggregate; phrase 0 falls
-            // back to the legacy single field. "varies" / missing → blank.
+            // back to the legacy activeBeats. "varies" / missing → blank.
             const seg = (agg, k, fallback) => {
                 if (agg === "varies") return "";
                 const parts = (typeof agg === "string" && agg !== "") ? agg.split(",") : [];
                 const v = (k < parts.length) ? parts[k] : "";
                 return (v === "" && k === 0) ? (fallback === "varies" ? "" : fallback) : v;
             };
-
-            // Up = previous tab, Down = next tab (from inside either field).
-            const switchTab = (delta) => {
-                this._patternTab = Math.min(Math.max(selected + delta, 0), phrasesNum - 1);
-                this._render();
-            };
-
-            // One control: a CSS grid where the two-line labels sit in front (left
-            // column) and the two fields share a single bordered box (right column)
-            // split by a horizontal rule, with the tab strip attached to the box top.
-            const control = document.createElement("div");
-            control.className = "insp-repeat-control" + (active ? "" : " disabled");
-
-            // Random-variation controls sit to the LEFT of the tabs, on the same row.
-            const varCell = makeDiceVary();
-            varCell.classList.add("insp-repeat-var");
-            control.appendChild(varCell);
-
-            const tabStrip = document.createElement("div");
-            tabStrip.className = "insp-repeat-tabs";
-            /** @type {HTMLButtonElement[]} */
-            const tabButtons = [];
-            for (let r = 0; r < phrasesNum; r++) {
-                const tab = document.createElement("button");
-                tab.type = "button";
-                tab.className = "insp-repeat-tab" + (r === selected ? " active" : "");
-                tab.textContent = String(r + 1);
-                if (active) tab.addEventListener("click", () => { this._patternTab = r; this._render(); });
-                else tab.disabled = true;
-                tabStrip.appendChild(tab);
-                tabButtons.push(tab);
-            }
-            control.appendChild(tabStrip);
-
-            // Ghost preview for the selected phrase: its RESOLVED pattern (its own,
-            // or the inherited one if this phrase is empty) looped to the full cycle
-            // (cycleDur cells) and barized. The field renders, in a lighter font, the
-            // part of this beyond what's typed — recycled fill / inherited beats.
-            const ghostPattern = (() => {
+            // phrase r's RESOLVED play-out (its own pattern, or the inherited one if
+            // empty) looped to the full cycle (cycleDur cells) and barized — the ghost
+            // the row shows in a lighter font beyond what's typed.
+            const ghostFor = (r) => {
                 const patFF = patAgg === "varies" ? "" : patAgg;
                 const abFF = abAgg === "varies" ? "" : abAgg;
-                const resolved = fillForwardPhrases(patFF, selected + 1, abFF)[selected] || "";
+                const resolved = fillForwardPhrases(patFF, r + 1, abFF)[r] || "";
                 let cells = resolved.replace(/\|/g, "");
                 if (cells === "" || !(cycleDur > 0)) return "";
-                // Pad a partial last measure to a whole one, exactly as the field does
-                // on display, so the looped ghost's prefix matches the typed value.
                 const rem = cells.length % bpbForBars;
-                if (rem !== 0) cells += ".".repeat(bpbForBars - rem);
+                if (rem !== 0) cells += ".".repeat(bpbForBars - rem);   // pad to a whole measure
                 let out = "";
                 for (let i = 0; i < cycleDur; i++) {
                     out += cells[i % cells.length];
-                    if ((i + 1) % bpbForBars === 0) out += "|";   // bar divider, trailing included
+                    if ((i + 1) % bpbForBars === 0) out += "|";
                 }
                 return out;
-            })();
-            const patLbl = mkLabel("Beat Pattern", { width: W.beatStrengthLabel, disabled: !active });
-            patLbl.classList.add("insp-repeat-lbl-pat");
-            control.appendChild(patLbl);
-            const patCell = document.createElement("div");
-            patCell.className = "insp-repeat-cell-top";
-            const patField = this._buildBeatStringField({
-                value: seg(patAgg, selected, abAgg),
-                width: W.repeatField,
-                editable: active,
-                fixedGrid: true,
-                cellsPerBar: bpbForBars,
-                maxCells: cycleDur,
-                allowEmpty: selected > 0,
-                kind: "pattern",
-                ghost: ghostPattern,
-                editKind: "setPhrasePattern",
-                onCommit: (v) => this._emitEdit({ kind: "setPhrasePattern", value: v, index: selected }),
-                onArrowTab: switchTab,
-                ariaLabel: `Phrase ${selected + 1} Active Beats`,
-            });
-            const patWrap = wrapBeatField(patField);
-            patCell.appendChild(patWrap);
-            control.appendChild(patCell);
+            };
 
-            const strLbl = mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active });
-            strLbl.classList.add("insp-repeat-lbl-str");
-            control.appendChild(strLbl);
-            const strCell = document.createElement("div");
-            strCell.className = "insp-repeat-cell-bottom";
+            const box = document.createElement("div");
+            box.className = "insp-phrase-box" + (active ? "" : " disabled");
+            /** @type {Array<{field: any, highlight: Element|null, playout: string, numberEl: HTMLElement}>} */
+            const phraseFields = [];
+            // Up/Down move the caret between phrase rows (the field commits first).
+            const moveRow = (r, delta) => {
+                const next = phraseFields[r + delta];
+                if (next) next.field.focus();
+            };
+            for (let r = 0; r < phrasesNum; r++) {
+                const row = document.createElement("div");
+                row.className = "insp-phrase-row";
+                const numEl = document.createElement("div");
+                numEl.className = "insp-phrase-num";
+                numEl.textContent = String(r + 1);
+                row.appendChild(numEl);
+                const ghost = ghostFor(r);
+                const field = this._buildBeatStringField({
+                    value: seg(patAgg, r, abAgg),
+                    width: W.repeatField,
+                    editable: active,
+                    fixedGrid: true,
+                    cellsPerBar: bpbForBars,
+                    maxCells: cycleDur,
+                    allowEmpty: r > 0,
+                    kind: "pattern",
+                    ghost,
+                    editKind: `setPhrasePattern:${r}`,   // unique per row (focus restore)
+                    onCommit: (v) => this._emitEdit({ kind: "setPhrasePattern", value: v, index: r }),
+                    onArrowTab: (delta) => moveRow(r, delta),
+                    ariaLabel: `Phrase ${r + 1} Beat Pattern`,
+                });
+                const wrap = wrapBeatField(field);
+                row.appendChild(wrap);
+                box.appendChild(row);
+                phraseFields.push({ field, highlight: wrap.querySelector(".insp-beat-hl"), playout: ghost, numberEl: numEl });
+            }
+            // "Active Beats" label in front of the phrase box.
+            const abRow = mkRow();
+            abRow.classList.add("insp-phrase-ab-row");
+            abRow.appendChild(mkLabel("Active Beats", { width: W.beatStrengthLabel, disabled: !active }));
+            abRow.appendChild(box);
+
+            // Beat Strength: ONE field; repeats across every phrase. Gets the same
+            // stepping highlight box while playing.
+            const sRow = mkRow();
+            sRow.classList.add("insp-phrase-strength-row");
+            sRow.appendChild(mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active }));
             const strField = this._buildBeatStringField({
-                value: seg(strAgg, selected, stAgg),
+                value: stAgg === "varies" ? "" : stAgg,
                 width: W.repeatField,
                 editable: active,
                 beatsPerBar: bpbForBars,
                 kind: "strength",
-                editKind: "setPhraseStrength",
-                onCommit: (v) => this._emitEdit({ kind: "setPhraseStrength", value: v, index: selected }),
-                onArrowTab: switchTab,
-                ariaLabel: `Phrase ${selected + 1} Beat Strength`,
+                editKind: "setStrength",
+                ariaLabel: "Beat Strength",
             });
             const strWrap = wrapBeatField(strField);
-            strCell.appendChild(strWrap);
-            control.appendChild(strCell);
+            sRow.appendChild(strWrap);
+
+            // Both rows carry the same-width label, so the Active Beats box and the
+            // Beat Strength field share a left edge (vertically aligned).
+            band.appendChild(abRow);
+            band.appendChild(sRow);
 
             // Playing-beat highlight wiring (single beat-points object only). main.js
-            // calls setBeatHighlight each frame with the global beat index; the boxes
-            // step the selected tab's pattern (over the full play-out, ghost included)
-            // and strength, and the playing phrase's tab number lights up.
-            if (bpObjs.length === 1 && typeof bpObjs[0].id === "string") {
-                this._activeBeatsField = patField;
+            // calls setBeatHighlight each frame with the global beat index; the box
+            // steps the PLAYING phrase's row (over its full play-out, ghost included),
+            // that row's number lights up, and the strength box cycles in step.
+            if (single) {
+                this._phraseFields = phraseFields;
                 this._activeBeatsObjectId = bpObjs[0].id;
-                this._activeBeatsHighlight = patWrap.querySelector(".insp-beat-hl");
-                this._activeBeatsPlayout = ghostPattern;
                 this._beatStrengthField = strField;
                 this._beatStrengthHighlight = strWrap.querySelector(".insp-beat-hl");
-                this._phraseTabs = tabButtons;
-                this._phraseSelected = selected;
             }
-
-            band.appendChild(control);
         } else if (gridMode) {
             // Euclidean / Auto: the generated Active Beats (read-only) + Beat
             // Strength, as two rows. Both strings loop.

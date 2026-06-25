@@ -685,9 +685,9 @@ export function deriveCurveBeatPoints(curve) {
         const ab = (mode === "normal")
             ? fillForwardPhrases(curve.phrasePatterns, reps, curve.activeBeats)
             : curve.activeBeats;
-        const st = (mode === "normal")
-            ? fillForwardPhrases(curve.phraseStrengths, reps, curve.strength)
-            : curve.strength;
+        // Beat Strength is a SINGLE value that repeats across every phrase (no longer
+        // per-phrase) — one looped string for all phrases.
+        const st = curve.strength;
         return deriveNormalLooped(
             ab, st, curve.beatsPerCycle, reps,
             curve.vary, curve.varySeed, curve.beatsPerBar);
