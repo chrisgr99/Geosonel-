@@ -1051,10 +1051,14 @@ export const fieldMethods = {
                 return rem === 0 ? s : s + ".".repeat(cpb - rem);
             };
             const minCells = opts.allowEmpty ? 0 : cpb;     // smallest the pattern may shrink to
-            // Map a typed character to a cell: ONLY the dot key enters a rest and
-            // ONLY x/X enters an active beat. Every other key (space, digits, other
-            // letters) does nothing — those are reserved for future uses.
-            const cellChar = (ch) => (ch === "." ? "." : (ch === "x" || ch === "X" ? "x" : null));
+            // Map a typed character to a cell. A rest: the dot key OR the SPACE bar
+            // (space is the natural "rest" key while tapping in a rhythm, and from a
+            // field it no longer toggles transport — that's canvas-only now). An
+            // active beat: x/X OR the COMMA key — comma sits right next to the dot,
+            // so a beat pattern can be tapped in one-handed (comma = beat, dot =
+            // rest). Every other key (digits, other letters) does nothing — those are
+            // reserved for future uses.
+            const cellChar = (ch) => (ch === "." || ch === " " ? "." : (ch === "x" || ch === "X" || ch === "," ? "x" : null));
             // Display with a bar divider after EVERY complete measure — INCLUDING a
             // trailing one — so a finished measure visibly shows it's complete.
             const gridBarize = (cells) => {
@@ -1077,7 +1081,9 @@ export const fieldMethods = {
                 input.value = disp;
                 let off;
                 if (caret >= cells.length) {
-                    off = disp.length;                       // at/after the end (past the trailing |)
+                    // Land just BEFORE the trailing bar divider (the gap at the end of
+                    // the last measure), so typing here appends a new measure.
+                    off = (disp.length > 0 && disp[disp.length - 1] === "|") ? disp.length - 1 : disp.length;
                 } else {
                     off = disp.length; let count = 0;
                     for (let i = 0; i <= disp.length; i++) {
@@ -1088,11 +1094,15 @@ export const fieldMethods = {
                 input.setSelectionRange(off, off);
             };
 
+            // Commit IMMEDIATELY on each edit (the beforeinput handler calls commit()
+            // after every change), so the pattern applies live — no Enter needed.
+            // `dirty` only guards a no-op commit (a focus/blur or rejected keystroke
+            // that changed nothing) from re-emitting and re-running the scene; it's
+            // set by each real edit and cleared once that edit is sent.
             let dirty = false;
-            let committed = false;
             const commit = () => {
-                if (committed || !dirty) return;
-                committed = true;
+                if (!dirty) return;
+                dirty = false;
                 // Commit the no-trailing-pipe form (matches sceneEditor's repipe).
                 const v = barizeBeatString(cellsOf(input.value), cpb);
                 if (typeof opts.onCommit === "function") opts.onCommit(v);
@@ -1101,7 +1111,6 @@ export const fieldMethods = {
             const reset = () => {
                 input.value = gridBarize(normalize(cellsOf(opts.value)));
                 dirty = false;
-                committed = false;
             };
             reset();
 
@@ -1115,28 +1124,29 @@ export const fieldMethods = {
                 const t = e.inputType;
                 let cells = cellsOf(input.value);
                 const L = logicalCaret();
-                // "Past the end" is the caret sitting AFTER the trailing bar divider
-                // (the very end of the display) — reachable only by Right-arrow or a
-                // click beyond. The end-of-the-last-cell spot (before the trailing
-                // `|`) is still INSIDE the last measure, so typing there overwrites
-                // the last cell rather than appending a new measure.
+                // "Past the end" = the caret at or beyond the last cell (the gap
+                // before the trailing `|`, or after it). atEnd governs the delete
+                // branches' remove-last-measure; the insert branch decides per
+                // character from `pos` instead, so a caret that advances into that
+                // gap appends the next measure.
                 const atEnd = (input.selectionStart ?? input.value.length) >= input.value.length;
                 if (t === "insertText" || t === "insertFromPaste" || t === "insertReplacementText") {
                     e.preventDefault();
                     let pos = L;
-                    let append = atEnd;
                     for (const raw of (e.data ?? "")) {
                         const ch = cellChar(raw);
                         if (ch === null) continue;
-                        if (append) {
+                        if (pos >= cells.length) {
+                            // Caret is in the gap past the last cell: start a NEW
+                            // measure (its first cell is the typed beat), unless that
+                            // would exceed the cap (Measures × cells-per-bar).
                             if (cells.length + cpb > maxCells) continue;                  // at the cycle cap — reject
                             cells = cells + ch + ".".repeat(cpb - 1);                     // new measure
-                            pos = Math.min(cells.length - cpb + 1, cells.length - 1);     // its next beat
-                            append = false;
+                            pos = cells.length - cpb + 1;                                 // caret after the typed beat
                         } else {
-                            const p = Math.min(pos, cells.length - 1);                    // never past the last cell
-                            cells = cells.slice(0, p) + ch + cells.slice(p + 1);          // overwrite
-                            pos = Math.min(p + 1, cells.length - 1);
+                            cells = cells.slice(0, pos) + ch + cells.slice(pos + 1);      // overwrite the cell
+                            pos = pos + 1;                                                // ALWAYS advance — may reach
+                            //                                                              cells.length (the gap before |)
                         }
                     }
                     dirty = true; render(cells, pos);
@@ -1151,6 +1161,8 @@ export const fieldMethods = {
                 } else if (t.startsWith("insert")) {
                     e.preventDefault();                      // block newlines / other inserts
                 }
+                // Apply the edit live — no Enter/blur required.
+                commit();
             });
             input.addEventListener("keydown", (e) => {
                 if (e.key === "Enter") { e.preventDefault(); commit(); input.blur(); return; }
@@ -1254,11 +1266,16 @@ export const fieldMethods = {
         // varied cycle that differs from the stored base — without this, merely
         // clicking in and out would bake that variation. (Harmless elsewhere: a
         // no-change commit was already a no-op.)
+        // Commit IMMEDIATELY on each edit (the dirty-flag beforeinput listener below
+        // calls commit() right after the editing handler has applied the change), so
+        // the field applies live — no Enter needed. `dirty` is reset on focus and set
+        // by each real edit, so a focus/blur with no keystroke never commits — which
+        // also keeps the live variation PREVIEW from baking, since the per-frame loop
+        // writes the field WITHOUT a beforeinput (dirty stays false).
         let dirty = false;
-        let committed = false;
         const commit = () => {
-            if (committed || !dirty) return;
-            committed = true;
+            if (!dirty) return;
+            dirty = false;
             if (typeof opts.onCommit === "function") opts.onCommit(input.value);
             else this._emitEdit({ kind: opts.editKind, value: input.value });
         };
@@ -1269,9 +1286,10 @@ export const fieldMethods = {
             // their value already equals opts.value.)
             input.value = opts.value ?? "";
             dirty = false;
-            committed = false;
         });
-        input.addEventListener("beforeinput", () => { dirty = true; });
+        // Registered AFTER the editing beforeinput handler above, so by the time this
+        // runs the value is already updated; mark the edit and apply it live.
+        input.addEventListener("beforeinput", () => { dirty = true; commit(); });
         input.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 e.preventDefault();

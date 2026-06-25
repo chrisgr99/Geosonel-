@@ -4908,12 +4908,14 @@ async function main() {
     // above via the toggleTransport edit) all collapse to the
     // same toggle: start if stopped, stop if playing.
     //
-    // Spacebar follows the universal music-app convention.
-    // Active globally EXCEPT when focus is in a text-input
-    // context (CodeMirror editor, input/textarea element, or
-    // contenteditable region) so typing into the Script tab
-    // still inserts space characters naturally. The text-
-    // context check mirrors the Delete-key handler below.
+    // Spacebar follows the universal music-app convention, gated SOLELY
+    // by pointer position: it toggles transport while the pointer is over
+    // the canvas, and is left alone anywhere else — so Space types a
+    // character into a focused field (Script tab, Beat Points, any input)
+    // while the pointer is over the sidebar, yet the SAME keypress toggles
+    // playback once the pointer moves over the canvas, even if that field
+    // still holds focus. The pointer-over-canvas gate mirrors the Delete-
+    // key handler below.
     //
     // Cmd-Period is the always-active alternative. Works
     // everywhere including inside the Script tab and Properties
@@ -4942,24 +4944,21 @@ async function main() {
             return;
         }
         if (e.key === " " || e.code === "Space") {
-            // Skip text-input contexts so Space still types
-            // a space character there. The check matches
-            // CodeMirror editors, plain inputs, textareas,
-            // and contenteditable regions; everywhere else
-            // (canvas, inspector buttons, menu bar, message
-            // area, body itself), Space toggles transport.
-            const target = e.target;
-            if (target instanceof HTMLElement) {
-                if (target.closest(".cm-editor") !== null) return;
-                if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-                if (target.isContentEditable) return;
-            }
-            // Prevent the default space-scrolls-page behaviour
-            // and the spurious activate-focused-button click
-            // that some browsers fire on Space.
+            // Pointer position is the SOLE gate, and it OVERRIDES focus. While the
+            // pointer is over the canvas, Space toggles transport even if a text
+            // field (Beat Points, the Script tab, any input) still holds focus.
+            // Anywhere else (the right-side inspector, menu bar, body) Space is left
+            // alone, so it types a character into a focused field as usual. The same
+            // keypress therefore enters a rest in a focused pattern field while the
+            // pointer is over the sidebar, yet toggles playback once the pointer is
+            // over the canvas. Mirrors the Delete-key handler below; a null element
+            // counts as not-over-canvas so a missing canvas never hijacks typing
+            // (Cmd-Period stays the always-available toggle).
+            if (canvasAreaEl === null || !canvasAreaEl.matches(":hover")) return;
+            // Prevent the default space-scrolls-page behaviour and the spurious
+            // activate-focused-button click that some browsers fire on Space.
             e.preventDefault();
-            // Same engine-loaded gate as the Cmd-Period
-            // and dblclick paths.
+            // Same engine-loaded gate as the Cmd-Period and dblclick paths.
             if (strudelRuntime.status !== "loaded") return;
             transport.toggle();
         }
