@@ -232,13 +232,20 @@ export function variedCycleAt(activeBeats, vary, varySeed, cycleIndex, beatsPerB
  * @param {unknown} phrases
  * @returns {BeatPoints}
  */
-function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary, varySeed, beatsPerBar) {
+function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary, varySeed, beatsPerBar, phraseSlots) {
     // Phrases lays whole copies of a base pattern end-to-end around the path: N
     // copies → N × beat points, the cursor sweeping them in one traversal. The
     // pattern (and strength) may be PER PHRASE — an array entry per phrase (Manual,
     // fill-forward resolved by the caller) — or a single string used for every
     // phrase (Euclidean/Auto, one generated pattern). Each phrase loops its own
     // pattern/strength to fill its cycle independently.
+    //
+    // Phrases are normally all the same `beatsPerCycle` slots (uniform tiling).
+    // `phraseSlots`, when given (chart-following), is a per-phrase slot count, so
+    // the phrases are VARIABLE length — phrase k spans phraseSlots[k] slots. Each
+    // phrase still loops its own pattern + strength to fill its OWN length, and
+    // the ghost/fill-forward the caller resolved per phrase is unchanged; only the
+    // phrase boundaries move. The total slot count n is their sum.
     const r = Number(phrases);
     const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
     const patAt = (k) => bareString(Array.isArray(activeBeats)
@@ -249,7 +256,12 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary,
     const phraseStrs = Array.from({ length: reps }, (_, k) => strAt(k));
     const bpc = Number(beatsPerCycle);
     const base = (Number.isFinite(bpc) && bpc >= 1) ? Math.floor(bpc) : phrasePats[0].length;
-    const n = base * reps;
+    // Per-phrase slot counts: the explicit variable list (clamped to >= 1, falling
+    // back to `base` for a bad entry) or a uniform `base` for every phrase.
+    const slotsPer = (Array.isArray(phraseSlots) && phraseSlots.length === reps)
+        ? phraseSlots.map((s) => { const v = Math.floor(Number(s)); return Number.isFinite(v) && v >= 1 ? v : base; })
+        : Array.from({ length: reps }, () => base);
+    const n = slotsPer.reduce((a, b) => a + b, 0) || 1;
     // Variation: `vary` = max notes flipped PER CYCLE. Each phrase (cycle) gets its
     // OWN variation — a delta from THAT phrase's pattern (non-cumulative), seeded by
     // the phrase index so phrases differ; the varied pattern then LOOPS to fill the
@@ -265,28 +277,82 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary,
     const out = [];
     /** @type {number[]} */
     const inactivePositions = [];
-    for (let i = 0; i < n; i++) {
-        const k = Math.floor(i / base);          // which phrase this slot is in
-        const slot = i % base;                   // slot within the phrase
+    let i = 0;                                    // running global slot index
+    for (let k = 0; k < reps; k++) {              // each phrase, in order
         const pat = cyclePats[k];
-        const ch = pat[slot % pat.length];
-        const count = beatCountForSlot(ch);
-        if (count > 0) {
-            const strs = phraseStrs[k];
-            const d = strs[slot % strs.length];  // strength loops WITHIN the phrase
-            const strengthVal = (d !== undefined && isDigit(d))
-                ? Number(d) : DEFAULT_STRENGTH;
-            // A digit slot is a ratchet: `count` evenly-spaced sub-hits
-            // across the slot's interval, all at the slot's strength.
-            for (let j = 0; j < count; j++) {
-                positions.push((i + j / count) / n);
-                out.push(strengthVal);
+        const strs = phraseStrs[k];
+        const slots = slotsPer[k];
+        for (let slot = 0; slot < slots; slot++) {  // slots within THIS phrase
+            const ch = pat[slot % pat.length];
+            const count = beatCountForSlot(ch);
+            if (count > 0) {
+                const d = strs[slot % strs.length];  // strength loops WITHIN the phrase
+                const strengthVal = (d !== undefined && isDigit(d))
+                    ? Number(d) : DEFAULT_STRENGTH;
+                // A digit slot is a ratchet: `count` evenly-spaced sub-hits
+                // across the slot's interval, all at the slot's strength.
+                for (let j = 0; j < count; j++) {
+                    positions.push((i + j / count) / n);
+                    out.push(strengthVal);
+                }
+            } else {
+                inactivePositions.push(i / n);
             }
-        } else {
-            inactivePositions.push(i / n);
+            i += 1;
         }
     }
     return { positions, strengths: out, inactivePositions };
+}
+
+/**
+ * Resolve a comma-segmented per-MEASURE field into a length-`count` array with
+ * GHOSTED-MODULE fill: the most recent run of consecutive typed measures forms a
+ * "module" that LOOPS forward into the blanks that follow it, until the next typed
+ * measure starts a fresh module. So typing one measure repeats it every bar
+ * (`A→A A A A`); typing two repeats the pair (`A B→A B A B`); typing a new pattern
+ * later begins a new loop there. This is the chart-mirror fill — each measure
+ * plays its own or the looped-module pattern, ghosted in the editor. (Distinct
+ * from fillForwardPhrases' inherit-nearest, which holds the last value instead of
+ * looping the module.)
+ * @param {unknown} agg  comma-joined per-measure patterns, or ""/non-string.
+ * @param {number} count  number of measures.
+ * @param {unknown} fallback  the legacy single value for measure 0 if it's blank.
+ * @returns {string[]}
+ */
+export function moduleLoopFill(agg, count, fallback) {
+    const parts = (typeof agg === "string" && agg !== "") ? agg.split(",") : [];
+    const typed = (k) => {
+        const v = (k < parts.length && typeof parts[k] === "string") ? parts[k] : "";
+        return (v === "" && k === 0 && typeof fallback === "string") ? fallback : v;
+    };
+    const REST = ".";                                       // a blank/pad measure = a rest bar
+    const out = [];
+    let moduleStart = -1;
+    /** @type {string[]} */ let run = [];                   // the typed run, while collecting
+    /** @type {string[] | null} */ let cycle = null;        // run snapped + rest-padded, once a blank ends it
+    for (let i = 0; i < count; i += 1) {
+        const t = typed(i);
+        if (t !== "") {
+            // A typed measure right after a blank (or the first one) starts a fresh
+            // module; otherwise it extends the current run.
+            if (run.length === 0 || typed(i - 1) === "") { moduleStart = i; run = [t]; cycle = null; }
+            else run.push(t);
+            out.push(t);
+        } else if (run.length > 0) {
+            // First blank after the run fixes the loop length: snap it to the 4-bar
+            // grid (1,2 keep their length; 3+ round up to a multiple of 4) and pad the
+            // shortfall with REST bars, so e.g. 3 typed → "A B C ." looped every 4.
+            if (cycle === null) {
+                const len = run.length <= 2 ? run.length : Math.ceil(run.length / 4) * 4;
+                cycle = run.slice();
+                while (cycle.length < len) cycle.push(REST);
+            }
+            out.push(cycle[(i - moduleStart) % cycle.length]);
+        } else {
+            out.push(REST);                                 // nothing typed yet → rest
+        }
+    }
+    return out;
 }
 
 /**
@@ -661,6 +727,91 @@ function deriveStrudelMeasures(beatPattern, measures, phrases) {
 }
 
 /**
+ * Total phrases tiled around the path for a beat-points object: the three-level
+ * model's middle × outer levels, `phrases` (per section) × `sections`. Each
+ * coerces to an integer >= 1 (default 1), so a curve with no `sections` field is
+ * the legacy two-level model (sections = 1 → reps = phrases). The SINGLE source
+ * of this product, shared by the canvas/firing derivation (deriveCurveBeatPoints)
+ * and the path-length computation (simulation.effectiveBeatsPerCycle), so the two
+ * can never disagree on how long the baked path is.
+ * @param {any} obj
+ * @returns {number}
+ */
+export function totalPhrases(obj) {
+    const p = Number(obj == null ? NaN : obj.phrases);
+    const perSection = (Number.isFinite(p) && p >= 1) ? Math.floor(p) : 1;
+    const s = Number(obj == null ? NaN : obj.sections);
+    const sections = (Number.isFinite(s) && s >= 1) ? Math.floor(s) : 1;
+    return perSection * sections;
+}
+
+/**
+ * The explicit per-phrase slot counts for a CHART-FOLLOWING object, or null when
+ * the object tiles uniformly. `phraseBars` is the list of chart phrase lengths in
+ * BARS (one entry per chart phrase, filled on chart load); each becomes
+ * phraseBars[i] × cells-per-bar slots, so the object's phrases are variable
+ * length and track the chart's phrase structure exactly. cells-per-bar is the
+ * object's master-derived `beatsPerBar`. Shared by deriveCurveBeatPoints and the
+ * firing path length (simulation.effectiveBeatsPerCycle) so they agree.
+ * @param {any} obj
+ * @returns {number[] | null}
+ */
+export function chartPhraseSlots(obj) {
+    const bars = obj == null ? null : obj.phraseBars;
+    if (!Array.isArray(bars) || bars.length === 0) return null;
+    const c = Number(obj.beatsPerBar);
+    const cellsPerBar = (Number.isFinite(c) && c >= 1) ? Math.floor(c) : 1;
+    return bars.map((b) => {
+        const n = Math.floor(Number(b) * cellsPerBar);
+        return Number.isFinite(n) && n >= 1 ? n : cellsPerBar;
+    });
+}
+
+/**
+ * Chart-mirror derivation (beatPointsMode "chart"): the object plays the chart's
+ * UNFOLDED played-bar timeline — `curve.chartBarSeq`, the folded-measure index
+ * sounding at each played position, filled from the loaded chart by the run
+ * pipeline. Each played bar emits its FOLDED measure's beat pattern (resolved
+ * across the folded measures by the ghosted-module fill), looped within that one
+ * bar's cells. So a repeated group replays its measures' patterns and a coda jump
+ * follows the chart — the object tracks the chart bar for bar. cells-per-bar is
+ * the object's master-derived `beatsPerBar`; the path is one cell-group per played
+ * bar.
+ * @param {any} curve
+ * @returns {BeatPoints}
+ */
+function deriveChartMirror(curve) {
+    const seq = curve.chartBarSeq;
+    const c = Number(curve.beatsPerBar);
+    const cpb = (Number.isFinite(c) && c >= 1) ? Math.floor(c) : 1;
+    const rowOf = Array.isArray(curve.chartBarRow) ? curve.chartBarRow : null;
+    const posOf = Array.isArray(curve.chartBarPos) ? curve.chartBarPos : null;
+    const rc = Number(curve.chartRowCount);
+    const rowCount = (Number.isFinite(rc) && rc >= 1) ? Math.floor(rc) : 1;
+    // Per-ROW patterns (the Manual model): each chart row is one stored pattern,
+    // fill-forward across rows (a blank row inherits the one above), looping to fill
+    // its bars. Each PLAYED bar emits its bar's slice of its row's looped pattern.
+    const rowPats = fillForwardPhrases(curve.phrasePatterns, rowCount, curve.activeBeats);
+    const rowCells = (ri) => {
+        const p = String(rowPats[Math.min(ri, rowPats.length - 1)] || "").replace(/\|/g, "");
+        return p === "" ? "x" : p;
+    };
+    const ab = seq.map((fi) => {
+        const i = Number(fi);
+        const ri = rowOf ? (Number(rowOf[i]) || 0) : 0;
+        const pos = posOf ? (Number(posOf[i]) || 0) : 0;
+        const rp = rowCells(ri);
+        let out = "";
+        for (let j = 0; j < cpb; j += 1) out += rp[(pos * cpb + j) % rp.length];
+        return out;
+    });
+    const slots = seq.map(() => cpb);
+    return deriveNormalLooped(
+        ab, curve.strength, curve.beatsPerCycle, ab.length,
+        curve.vary, curve.varySeed, cpb, slots);
+}
+
+/**
  * Derive the beat points of a curve from its Beat Points band
  * fields. The single entry point used by the canvas (drawing) and
  * the simulation (firing). The result is fixed for the object — it bakes the
@@ -673,16 +824,24 @@ export function deriveCurveBeatPoints(curve) {
     const mode = curve !== null && typeof curve.beatPointsMode === "string"
         ? curve.beatPointsMode
         : "none";
-    if (mode === "normal" || mode === "auto" || mode === "euclidean") {
+    // Chart-mirror: follow the loaded chart's played-bar timeline. (With no chart
+    // yet, chartBarSeq is absent and chart mode falls through to the grid path.)
+    if (mode === "chart" && Array.isArray(curve.chartBarSeq) && curve.chartBarSeq.length > 0) {
+        return deriveChartMirror(curve);
+    }
+    if (mode === "normal" || mode === "auto" || mode === "euclidean" || mode === "chart") {
         // Manual / Euclidean grid: one looped derivation, Phrases multiplying the
         // beat-point count. Manual resolves a pattern (and strength) PER PHRASE with
         // fill-forward — a phrase with no pattern of its own inherits the nearest
         // preceding phrase that has one, phrase 1 falling back to the legacy
         // activeBeats/strength. Euclidean/Auto have no per-phrase tabs, so their one
         // generated activeBeats/strength tiles across every phrase.
-        const r = Number(curve.phrases);
-        const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
-        const ab = (mode === "normal")
+        // Phrase count + per-phrase lengths. Chart-following objects carry an
+        // explicit variable-length list (one phrase per chart phrase); otherwise
+        // reps = phrases (per section) × sections, all the same length.
+        const variable = chartPhraseSlots(curve);
+        const reps = variable ? variable.length : totalPhrases(curve);
+        const ab = (mode === "normal" || mode === "chart")
             ? fillForwardPhrases(curve.phrasePatterns, reps, curve.activeBeats)
             : curve.activeBeats;
         // Beat Strength is a SINGLE value that repeats across every phrase (no longer
@@ -690,13 +849,13 @@ export function deriveCurveBeatPoints(curve) {
         const st = curve.strength;
         return deriveNormalLooped(
             ab, st, curve.beatsPerCycle, reps,
-            curve.vary, curve.varySeed, curve.beatsPerBar);
+            curve.vary, curve.varySeed, curve.beatsPerBar, variable);
     }
     if (mode === "strudel") {
         // Measure-based phrase: M measures × R phrases around the path; slice s
         // takes measure (s mod M) sampled at Strudel cycle s (see
         // deriveStrudelMeasures and design/measure-patterns.md).
-        return deriveStrudelMeasures(curve.beatPattern, curve.measures, curve.phrases);
+        return deriveStrudelMeasures(curve.beatPattern, curve.measures, totalPhrases(curve));
     }
     return { positions: [], strengths: [], inactivePositions: [] };
 }

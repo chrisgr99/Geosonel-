@@ -2135,8 +2135,16 @@ async function main() {
         const tRaw = simulation.getCurveCursorT(varyPreviewId);   // 0 when stopped / rewound
         const t = (typeof tRaw === "number" && Number.isFinite(tRaw)) ? tRaw : 0;
         const beatsPerCycle = Math.max(1, Math.round(Number(obj.beatsPerCycle ?? 16)) || 1);
-        const reps = Math.max(1, Math.round(Number(obj.phrases ?? 1)) || 1);
-        const n = beatsPerCycle * reps;
+        // Total cells along the path. Chart-mirror plays the UNFOLDED timeline
+        // (played bars × cells-per-bar); every other mode is one phrase's
+        // beatsPerCycle × the phrase tilings.
+        let n;
+        if (obj.beatPointsMode === "chart" && Array.isArray(obj.chartBarSeq) && obj.chartBarSeq.length > 0) {
+            n = obj.chartBarSeq.length * Math.max(1, Math.round(Number(obj.beatsPerBar)) || 1);
+        } else {
+            const reps = Math.max(1, Math.round(Number(obj.phrases ?? 1)) || 1);
+            n = beatsPerCycle * reps;
+        }
         const pathIndex = Math.min(n - 1, Math.max(0, Math.floor(t * n)));
         // Playing-beat highlight only while playing (no "current beat" at rest).
         // beatsPerCycle (one phrase's length) lets the inspector split pathIndex into
@@ -2782,7 +2790,7 @@ async function main() {
             && selection.curves.length === 1
             && selection.sprites.length === 0 && selection.triggers.length === 0) {
             const c = currentScene.curves[selection.curves[0]];
-            if (c !== undefined && (c.beatPointsMode === "normal" || c.beatPointsMode === "euclidean" || c.beatPointsMode === "auto")) {
+            if (c !== undefined && (c.beatPointsMode === "normal" || c.beatPointsMode === "euclidean" || c.beatPointsMode === "auto" || c.beatPointsMode === "chart")) {
                 varyPreviewId = typeof c.id === "string" ? c.id : null;
             }
             if (c !== undefined && c.beatPointsMode === "strudel" && typeof c.id === "string") {

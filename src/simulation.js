@@ -251,7 +251,8 @@ import {
 import { imageSignalsFromOKLCh } from "./strudel/signals.js";
 import { DEFAULT_KINEMATICS } from "./scene.js";
 import { computeOffset } from "./seed/seedOffset.js";
-import { deriveCurveBeatPoints } from "./beatPoints.js";
+import { deriveCurveBeatPoints, totalPhrases, chartPhraseSlots } from "./beatPoints.js";
+import { chartBarSequence } from "./chartFollow.js";
 import { buildNoteSpec, buildSoundSpec } from "./emitters.js";
 import {
     VoiceRegistry,
@@ -670,10 +671,18 @@ function effectiveBeatsPerCycle(obj) {
     const base = obj ? obj.beatsPerCycle : undefined;
     if (typeof base !== "number" || !Number.isFinite(base) || base <= 0) return base;
     const mode = obj.beatPointsMode;
-    if (mode !== "normal" && mode !== "euclidean" && mode !== "auto" && mode !== "strudel") return base;
-    const r = Number(obj.phrases);
-    const reps = (Number.isFinite(r) && r >= 1) ? Math.floor(r) : 1;
-    return base * reps;
+    if (mode !== "normal" && mode !== "euclidean" && mode !== "auto" && mode !== "strudel" && mode !== "chart") return base;
+    // Chart-mirror objects play one cell-group per PLAYED bar at the master meter,
+    // so the path is the played-bar count × cells-per-bar.
+    if (mode === "chart" && Array.isArray(obj.chartBarSeq) && obj.chartBarSeq.length > 0) {
+        const cpb = Number(obj.beatsPerBar);
+        return obj.chartBarSeq.length * ((Number.isFinite(cpb) && cpb >= 1) ? Math.floor(cpb) : 1);
+    }
+    // Variable-length phrases sum their slot counts; otherwise a uniform `base` per
+    // phrase × the total tilings (phrases × sections).
+    const variable = chartPhraseSlots(obj);
+    if (variable) return variable.reduce((a, b) => a + b, 0);
+    return base * totalPhrases(obj);
 }
 
 /**
@@ -702,14 +711,36 @@ export function deriveStrudelCycleLengths(scene) {
         for (const obj of group) {
             if (!obj) continue;
             const mode = obj.beatPointsMode;
-            if (mode !== "strudel" && mode !== "normal" && mode !== "euclidean") continue;
+            if (mode !== "strudel" && mode !== "normal" && mode !== "euclidean" && mode !== "chart") continue;
             const m = Number(obj.measures);
             const M = (Number.isFinite(m) && m >= 1) ? Math.floor(m) : 1;
             const entry = getBeatIntervalEntry(effectiveBeatInterval(obj));
             const q = (entry && entry.quarterNotes > 0) ? entry.quarterNotes : 1;
             const cellsPerBar = Math.max(1, Math.round(masterBeats / q));
             obj.beatsPerCycle = M * cellsPerBar;
-            if (mode === "normal" || mode === "euclidean") obj.beatsPerBar = cellsPerBar;
+            if (mode === "normal" || mode === "euclidean" || mode === "chart") obj.beatsPerBar = cellsPerBar;
+            // CHART-MIRROR: a "chart" object follows the loaded chord chart's played-bar
+            // timeline (folded-measure index per played bar) + its folded measure count,
+            // re-derived here every run so a freshly loaded chart retimes it. With no
+            // chart loaded the sequence is cleared and it falls back to the grid path.
+            if (mode === "chart") {
+                const seq = chartBarSequence(scene.harmony);
+                if (seq) {
+                    obj.chartBarSeq = seq.order;
+                    obj.foldedBarCount = seq.foldedCount;
+                    obj.chartBarBeats = seq.barBeats;   // per-folded-bar beat count (meter)
+                    obj.chartBarRow = seq.barRow;       // per-folded-bar row index
+                    obj.chartBarPos = seq.barPos;       // per-folded-bar position within its row
+                    obj.chartRowCount = seq.rowCount;   // number of rows (per-row patterns)
+                } else {
+                    delete obj.chartBarSeq;
+                    delete obj.foldedBarCount;
+                    delete obj.chartBarBeats;
+                    delete obj.chartBarRow;
+                    delete obj.chartBarPos;
+                    delete obj.chartRowCount;
+                }
+            }
         }
     }
 }

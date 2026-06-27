@@ -777,8 +777,10 @@ export class Curve {
         this.activeBeatsCount = opts.activeBeatsCount ?? 0;
         /** @type {number} Euclidean: rotational shift in slots. */
         this.beatShift = opts.beatShift ?? 0;
-        /** @type {number} Phrase count: the phrase is tiled this many times around the path. */
+        /** @type {number} Phrase count: phrases per SECTION (tiled this many times within a section). */
         this.phrases = opts.phrases ?? 1;
+        /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
+        this.sections = opts.sections ?? 1;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
@@ -977,8 +979,10 @@ export class Trigger {
         this.activeBeatsCount = opts.activeBeatsCount ?? 0;
         /** @type {number} Euclidean: rotational shift in slots. */
         this.beatShift = opts.beatShift ?? 0;
-        /** @type {number} Phrase count: the phrase is tiled this many times around the path. */
+        /** @type {number} Phrase count: phrases per SECTION (tiled this many times within a section). */
         this.phrases = opts.phrases ?? 1;
+        /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
+        this.sections = opts.sections ?? 1;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
@@ -1225,8 +1229,10 @@ export class Sprite {
         this.activeBeatsCount = opts.activeBeatsCount ?? 0;
         /** @type {number} Euclidean: rotational shift in slots. */
         this.beatShift = opts.beatShift ?? 0;
-        /** @type {number} Phrase count: the phrase is tiled this many times around the path. */
+        /** @type {number} Phrase count: phrases per SECTION (tiled this many times within a section). */
         this.phrases = opts.phrases ?? 1;
+        /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
+        this.sections = opts.sections ?? 1;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */

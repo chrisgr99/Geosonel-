@@ -389,6 +389,11 @@
 /* Field border removed inside the box, so drop the ghost overlay's matching border
  * too — keeps the ghost text aligned with the typed text. */
 .insp-phrase-box .insp-beat-ghost { border: none; }
+/* Harmony-driven (chart-mirror): MANY per-measure fields per row, so zero their
+ * left margin and the ghost's left offset — the measures then sit flush, divided
+ * only by their bar lines, reading as one continuous control (like the chart). */
+.insp-chart-grid .insp-beat-field { margin-left: 0; padding: 0 1px; }
+.insp-chart-grid .insp-beat-ghost { left: 0; padding: 0 1px; }
 /* The single Beat Strength field, below the phrase box. */
 .insp-phrase-strength-row { margin-top: 4px; }
 /* "Active Beats" label aligns with the box's FIRST row, not its vertical centre. */

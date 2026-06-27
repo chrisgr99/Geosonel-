@@ -123,7 +123,7 @@ const CALLBACK_SLOT_FIELDS = [
     // longer selectable in the inspector, though the enum and their
     // derivation/runtime paths remain for any score that still uses
     // them. An empty beatPattern means no beats (what "none" expressed).
-    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "normal", enumValues: ["none", "normal", "euclidean", "auto", "strudel"] },
+    { key: "beatPointsMode", label: "Beat Points", type: "enum", default: "normal", enumValues: ["none", "normal", "euclidean", "auto", "strudel", "chart"] },
     // Auto-mode RHYTHM style (by name): the generator reads this to weight the
     // generated Active Beats / Beat Strength pattern. A rhythm-style-library name
     // (built-in straight/syncopated or a user style); "" = default. (Stored as a
@@ -186,6 +186,11 @@ const CALLBACK_SLOT_FIELDS = [
     { key: "activeBeatsCount", label: "Active Beats Count", type: "integer", default: 0, min: 0 },
     { key: "beatShift", label: "Beat Shift", type: "integer", default: 0 },
     { key: "phrases", label: "Phrases", type: "integer", default: 1, min: 1 },
+    // Section count (outer grouping of the three-level phrase model): total
+    // phrases tiled around the path = phrases (per section) × sections. Default 1
+    // collapses to the legacy two-level (phrase × phrases) model. In the
+    // chart-driven beat mode these are filled from the loaded chart's sections.
+    { key: "sections", label: "Sections", type: "integer", default: 1, min: 1 },
     // Pattern variation: `vary` = the number of notes flipped per cycle (each cycle
     // flips this many beats x<->., as a delta from the ORIGINAL activeBeats — never
     // cumulative). Applied when beat points are derived, per repeat (cycle), seeded

@@ -270,14 +270,40 @@ export class Inspector {
      */
     setBeatHighlight(objectId, pathIndex, beatsPerCycle) {
         if (this._activeBeatsObjectId !== objectId) { this.clearBeatHighlight(); return; }
+        // Chart-mirror (Harmony-driven): the editor shows the FOLDED rows but playback
+        // runs the UNFOLDED timeline. Map the played cell → played bar → its folded ROW
+        // + cell-in-row, so the box cycles through a repeated group as the cursor moves.
+        if (this._chartHl && this._phraseFields && this._phraseFields.length) {
+            const { seq, row, pos, cpb } = this._chartHl;
+            if (Array.isArray(seq) && seq.length > 0 && cpb >= 1) {
+                const total = seq.length * cpb;
+                const p = ((pathIndex % total) + total) % total;
+                const playedBar = Math.floor(p / cpb) % seq.length;
+                const cellInBar = p % cpb;
+                const fb = Number(seq[playedBar]) || 0;
+                const ri = Math.min(this._phraseFields.length - 1, Math.max(0, Number(row[fb]) || 0));
+                const cellInRow = (Number(pos[fb]) || 0) * cpb + cellInBar;
+                this._phraseFields.forEach((pf, i) => {
+                    if (i === ri) this._positionBeatHighlight(pf.field, pf.highlight, cellInRow, pf.playout);
+                    else if (pf.highlight) pf.highlight.style.display = "none";
+                });
+                this._positionBeatHighlight(this._beatStrengthField, this._beatStrengthHighlight, cellInBar);
+                return;
+            }
+        }
         if (this._phraseFields && this._phraseFields.length) {
-            // Manual per-phrase (all phrases on screen): pathIndex is the GLOBAL beat
-            // index. Split it into which phrase is sounding and the beat within it.
-            const bpc = (Number.isFinite(beatsPerCycle) && beatsPerCycle >= 1)
-                ? Math.floor(beatsPerCycle) : 1;
-            const count = this._phraseFields.length;
-            const playing = Math.floor(pathIndex / bpc) % count;
-            const within = ((pathIndex % bpc) + bpc) % bpc;
+            // Per-phrase rows on screen: pathIndex is the GLOBAL beat index. Find which
+            // phrase is sounding and the beat within it by walking the phrases'
+            // ACTUAL cell lengths (each row's play-out, pipes excluded) — so it's
+            // correct for Harmony-driven VARIABLE-length phrases, and identical to the
+            // old uniform division when every phrase is the same length.
+            const cellLen = (s) => { let n = 0; for (let i = 0; i < s.length; i++) if (s[i] !== "|") n++; return n; };
+            const lens = this._phraseFields.map((pf) => Math.max(1, cellLen(pf.playout || "")));
+            const total = lens.reduce((a, b) => a + b, 0) || 1;
+            let g = ((pathIndex % total) + total) % total;
+            let playing = 0;
+            while (playing < lens.length - 1 && g >= lens[playing]) { g -= lens[playing]; playing += 1; }
+            const within = g;
             // Step the beat box through the PLAYING phrase's row (over its full play-
             // out, ghost cells included) and box that row's number; hide every other
             // row's box. The single strength field cycles its cells in step.
@@ -303,7 +329,7 @@ export class Inspector {
         if (this._beatStrengthHighlight) this._beatStrengthHighlight.style.display = "none";
         if (this._phraseFields) this._phraseFields.forEach((pf) => {
             if (pf.highlight) pf.highlight.style.display = "none";
-            pf.numberEl.classList.remove("playing");
+            if (pf.numberEl) pf.numberEl.classList.remove("playing");   // chart rows have no number
         });
     }
 

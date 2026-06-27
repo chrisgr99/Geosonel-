@@ -29,7 +29,8 @@ import {
 } from "./curveFieldValidation.js";
 import { listStyles } from "./styleStore.js";
 import { getBankSoundNames } from "./drumMachineSounds.js";
-import { splitMeasures, resolveMeasures, deriveCurveBeatPoints, fillForwardPhrases } from "./beatPoints.js";
+import { splitMeasures, resolveMeasures, deriveCurveBeatPoints, fillForwardPhrases, moduleLoopFill } from "./beatPoints.js";
+import { layoutChart, groupRows } from "./harmonyChartLayout.js";
 
 /** Wrap a beat-string input in a positioned span carrying the playing-beat
  *  highlight overlay, so the box can sit over the cell under the cursor. */
@@ -48,12 +49,15 @@ function wrapBeatField(input) {
 
 /** Beat-pattern type options for the Rhythm band's mode picker. "normal" is the
  *  Manual grid (type the active-beats + strength strings); Euclidean generates
- *  the pattern from a k-of-n count; Strudel authors a mini-notation pattern. The
- *  deprecated "none"/"auto" modes are not offered. */
+ *  the pattern from a k-of-n count; Strudel authors a mini-notation pattern;
+ *  "Harmony driven" (chart) follows the loaded chord chart's phrases — one
+ *  variable-length phrase row per chart phrase, structure locked to the chart.
+ *  The deprecated "none"/"auto" modes are not offered. */
 const BEAT_POINTS_MODE_OPTIONS = [
     { value: "normal", label: "Manual" },
     { value: "euclidean", label: "Euclidean" },
     { value: "strudel", label: "Strudel" },
+    { value: "chart", label: "Harmony driven" },
 ];
 
 /** Pan-mode options for the Canvas to Sound Drivers Pan row. Collision L/R is
@@ -339,6 +343,19 @@ export const bandExtraMethods = {
         // pattern + Repeats. (Auto is on hold and not offered by the picker.)
         const gridMode = mode === "normal" || mode === "euclidean" || mode === "auto";
         const isStrudel = mode === "strudel";
+        // Clear any prior chart-mode highlight map; only the chart branch re-sets it,
+        // so the Manual/Euclidean highlight path isn't fed a stale chart mapping.
+        this._chartHl = null;
+        // Harmony-driven (chart-mirror): the rhythm editor shows the LOADED chart's
+        // measures, laid out like the Harmony tab (4 per row, folded repeats), each an
+        // editable beat field. The structure comes from the chart, not the
+        // Measures/Phrases fields. Single-select only; needs a loaded harmony.
+        const chartMode = mode === "chart";
+        const chartHarmony = (chartMode && bpObjs.length === 1
+            && this._scene && this._scene.harmony
+            && Array.isArray(this._scene.harmony.progression)
+            && this._scene.harmony.progression.length > 0)
+            ? this._scene.harmony : null;
 
         // Master meter: beats (quarter notes) per measure = the scene time-
         // signature numerator (default 4).
@@ -497,6 +514,7 @@ export const bandExtraMethods = {
                 const n = Number(phrasesAgg);
                 return (Number.isFinite(n) && n >= 1) ? Math.min(8, Math.floor(n)) : 1;
             })();
+            const rowCells = () => cycleDur;
             const patAgg = aggregateString(bpObjs, "phrasePatterns");
             const abAgg = aggregateString(bpObjs, "activeBeats");
             const stAgg = aggregateString(bpObjs, "strength");
@@ -513,15 +531,16 @@ export const bandExtraMethods = {
             // empty) looped to the full cycle (cycleDur cells) and barized — the ghost
             // the row shows in a lighter font beyond what's typed.
             const ghostFor = (r) => {
+                const cyc = rowCells(r);                              // phrase r's length in cells
                 const patFF = patAgg === "varies" ? "" : patAgg;
                 const abFF = abAgg === "varies" ? "" : abAgg;
                 const resolved = fillForwardPhrases(patFF, r + 1, abFF)[r] || "";
                 let cells = resolved.replace(/\|/g, "");
-                if (cells === "" || !(cycleDur > 0)) return "";
+                if (cells === "" || !(cyc > 0)) return "";
                 const rem = cells.length % bpbForBars;
                 if (rem !== 0) cells += ".".repeat(bpbForBars - rem);   // pad to a whole measure
                 let out = "";
-                for (let i = 0; i < cycleDur; i++) {
+                for (let i = 0; i < cyc; i++) {
                     out += cells[i % cells.length];
                     if ((i + 1) % bpbForBars === 0) out += "|";
                 }
@@ -551,7 +570,7 @@ export const bandExtraMethods = {
                     editable: active,
                     fixedGrid: true,
                     cellsPerBar: bpbForBars,
-                    maxCells: cycleDur,
+                    maxCells: rowCells(r),
                     allowEmpty: r > 0,
                     kind: "pattern",
                     ghost,
@@ -697,6 +716,155 @@ export const bandExtraMethods = {
                 this._activeBeatsObjectId = bpObjs[0].id;
                 this._beatStrengthField = stField;
                 this._beatStrengthHighlight = stWrap.querySelector(".insp-beat-hl");
+            }
+        }
+
+        // Chart-mirror editor (Harmony-driven): the loaded chart's measures laid out
+        // like the Harmony tab — rows of measures — where each ROW is ONE Manual-style
+        // beat field (caret flows across, typing carries into the next measure, pipes
+        // divide the bars). Storage is PER ROW: a row's pattern loops to fill its bars
+        // and fills forward to the next row. The object plays the chart's UNFOLDED
+        // timeline, mapping each played bar onto its row's pattern. (Variable bar
+        // widths for mid-tune meter changes, per-group unfold, and the played-bar
+        // highlight are the remaining pieces.)
+        if (chartMode) {
+            const single = bpObjs.length === 1 && typeof bpObjs[0].id === "string";
+            /** @type {Array<{field: any, highlight: Element | null, playout: string}>} */
+            const phraseFields = [];   // one per row, for the playing-beat highlight
+
+            const abRow = mkRow();
+            abRow.appendChild(mkLabel("Active Beats", { width: W.beatStrengthLabel, disabled: !active }));
+            const box = document.createElement("div");
+            box.className = "insp-phrase-box" + (active ? "" : " disabled");
+
+            if (chartHarmony === null) {
+                const hint = document.createElement("div");
+                hint.style.padding = "4px 8px";
+                hint.style.opacity = "0.7";
+                hint.style.fontSize = "11px";
+                hint.textContent = (bpObjs.length !== 1)
+                    ? "Select a single object to edit its chart rhythm."
+                    : "Load a chord chart in the Harmony tab — its measures appear here to fill in.";
+                box.appendChild(hint);
+            } else {
+                const ts = Array.isArray(this._scene.timeSignature) ? this._scene.timeSignature : [masterBeats, 4];
+                const bars = layoutChart(chartHarmony.progression, chartHarmony.key, "letter", ts);
+                const rows = groupRows(bars, 4);
+                const patAgg = aggregateString(bpObjs, "phrasePatterns");
+                const abAgg = aggregateString(bpObjs, "activeBeats");
+                const patFF = patAgg === "varies" ? "" : patAgg;
+                const abFF = abAgg === "varies" ? "" : abAgg;
+                const parts = patFF !== "" ? patFF.split(",") : [];
+                // Row r's TYPED pattern (row 0 falls back to the legacy activeBeats).
+                const seg = (r) => {
+                    const v = (r < parts.length) ? parts[r] : "";
+                    return (v === "" && r === 0) ? abFF : v;
+                };
+                // Bars in each row (excluding alignment padding) → its cell length.
+                const rowBars = rows.map((row) => row.filter((c) => !(c && c.empty === true)).length);
+                // Row r's RESOLVED play-out: its own (or inherited) pattern looped to the
+                // row's cells, barized — the ghost the row shows beyond what's typed. When
+                // NOTHING is defined yet it falls back to RESTS, so the empty measure grid
+                // (dots + bar lines, full width) is always visible — the structure shows
+                // before any beats are typed.
+                const ghostFor = (r) => {
+                    const resolved = fillForwardPhrases(patFF, r + 1, abFF)[r] || "";
+                    let cells = resolved.replace(/\|/g, "");
+                    const total = Math.max(bpbForBars, rowBars[r] * bpbForBars);
+                    if (total <= 0) return "";
+                    if (cells === "") cells = ".";          // empty → show the rest grid
+                    const rem = cells.length % bpbForBars;
+                    if (rem !== 0) cells += ".".repeat(bpbForBars - rem);
+                    let out = "";
+                    for (let i = 0; i < total; i += 1) {
+                        out += cells[i % cells.length];
+                        if ((i + 1) % bpbForBars === 0) out += "|";
+                    }
+                    return out;
+                };
+                for (let r = 0; r < rows.length; r += 1) {
+                    const rowEl = document.createElement("div");
+                    rowEl.className = "insp-phrase-row";
+                    const total = Math.max(bpbForBars, rowBars[r] * bpbForBars);
+                    const playout = ghostFor(r);          // full row play-out (positions the highlight)
+                    const field = this._buildBeatStringField({
+                        value: seg(r),
+                        width: 0,                         // real width set below to fit the row
+                        editable: active,
+                        fixedGrid: true,
+                        cellsPerBar: bpbForBars,
+                        maxCells: total,
+                        allowEmpty: true,                 // empty rows show the grid (ghost), not a default beat
+                        kind: "pattern",
+                        ghost: playout,
+                        editKind: `setPhrasePattern:${r}`,
+                        onCommit: (v) => this._emitEdit({ kind: "setPhrasePattern", value: v, index: r }),
+                        ariaLabel: `Row ${r + 1} beat pattern`,
+                    });
+                    // Fit the whole row: its cells + one bar line each + the field padding.
+                    // Size BOTH the input and its ghost overlay (which defaults to the
+                    // passed width=0), so an un-typed row's ghosted grid isn't clipped.
+                    const rowW = `calc(${total + rowBars[r] + 1}ch + 14px)`;
+                    field.style.width = rowW;
+                    if (field._ghostEl) field._ghostEl.style.width = rowW;
+                    const wrap = wrapBeatField(field);
+                    rowEl.appendChild(wrap);
+                    box.appendChild(rowEl);
+                    phraseFields.push({ field, highlight: wrap.querySelector(".insp-beat-hl"), playout });
+                }
+            }
+            abRow.appendChild(box);
+            band.appendChild(abRow);
+
+            // Beat Strength — one field, looped across every bar (as in Manual mode).
+            const sRow = mkRow();
+            sRow.appendChild(mkLabel("Beat Strength", { width: W.beatStrengthLabel, disabled: !active }));
+            const stAgg = aggregateString(bpObjs, "strength");
+            const strField = this._buildBeatStringField({
+                value: stAgg === "varies" ? "" : stAgg,
+                width: W.repeatField,
+                editable: active,
+                beatsPerBar: bpbForBars,
+                kind: "strength",
+                editKind: "setStrength",
+                ariaLabel: "Beat Strength",
+            });
+            const strWrap = wrapBeatField(strField);
+            sRow.appendChild(strWrap);
+            band.appendChild(sRow);
+
+            // Playing-beat highlight (single object, chart loaded): the white box steps
+            // through the PLAYED (unfolded) timeline, mapping each played bar back to its
+            // folded ROW + cell, so it cycles through a repeated group as the cursor
+            // advances — like the chord-chart cursor. setBeatHighlight reads this map.
+            if (single && chartHarmony !== null) {
+                this._phraseFields = phraseFields;
+                this._activeBeatsObjectId = bpObjs[0].id;
+                this._beatStrengthField = strField;
+                this._beatStrengthHighlight = strWrap.querySelector(".insp-beat-hl");
+                const o = bpObjs[0];
+                this._chartHl = {
+                    seq: Array.isArray(o.chartBarSeq) ? o.chartBarSeq : [],
+                    row: Array.isArray(o.chartBarRow) ? o.chartBarRow : [],
+                    pos: Array.isArray(o.chartBarPos) ? o.chartBarPos : [],
+                    cpb: Math.max(1, Math.floor(Number(bpbForBars)) || 1),
+                };
+            } else {
+                this._activeBeatsObjectId = null;
+            }
+
+            // Readout of what's being followed.
+            if (chartHarmony !== null) {
+                const fc = Number(bpObjs[0].foldedBarCount) || 0;
+                const played = Array.isArray(bpObjs[0].chartBarSeq) ? bpObjs[0].chartBarSeq.length : 0;
+                const note = mkRow();
+                const n = document.createElement("div");
+                n.style.opacity = "0.7";
+                n.style.fontSize = "11px";
+                n.textContent = `Following chart — ${fc} measure${fc === 1 ? "" : "s"}`
+                    + (played && played !== fc ? `, ${played} played (repeats unfolded).` : ".");
+                note.appendChild(n);
+                band.appendChild(note);
             }
         }
 
