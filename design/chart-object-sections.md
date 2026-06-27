@@ -85,13 +85,15 @@ occurrence's measures) instead of the whole form — fewer rows, fewer beats.
 
 A transient loop for working on a stretch of bars, set in the **beat editor**:
 
-- A **loop-icon toggle button** at the top of the beat editor. Armed (button lit,
-  cursor changed), **drag across measures** to set the loop; the bars highlight in
-  iReal's **olive**.
+- **Select measures** in the beat editor (drag a row-major run, or shift-click to
+  extend — the same selection Delete uses), then press the **square ⟲ button** that
+  sits just right of the Pattern Type menu. The looped span highlights in iReal's
+  **olive** and the button lights.
 - While set the **transport plays only that range** — **global** (every playing
   object loops with it, each per its assignment); start/stop stays inside it;
   **rewind goes to the loop's first bar**.
-- Pressing the button again **releases it and clears** the highlight.
+- A new selection + press **replaces** the loop. Pressing with **nothing selected
+  clears** it and removes the highlight.
 - The same olive highlight **mirrors on the Harmony-tab chord chart**.
 - **Transient** — not saved with the score.
 
@@ -105,8 +107,9 @@ The practice loop is the one place sub-section bar ranges are still selectable
 2. **Form-gated playback** — the object plays only while the form is inside its
    section, re-tracing in time (one section-bar per played bar, beat-locked).
    *(built)*
-3. **Practice loop** — the beat-editor loop toggle + olive range + global
-   transport loop + rewind-to-loop-start + chord-chart mirror. *(built)*
+3. **Practice loop** — select measures in the beat editor, press Loop → olive
+   range + global transport loop + rewind-to-loop-start + chord-chart mirror.
+   *(built)*
 4. **By-label assignment** — assignment becomes a section *label*; it resolves to
    every occurrence; the orange line lights them all; the picker is section-only
    (drag retired). The object plays each occurrence as a pass. *(built)*

@@ -373,10 +373,12 @@
     border: 2px solid #789678;
     border-radius: 3px;
     height: 22px;
-    padding: 0 10px;
+    width: 22px;
+    padding: 0;
     color: #ffffff;
     font-family: inherit;
-    font-size: 10pt;
+    font-size: 13pt;
+    line-height: 1;
     cursor: pointer;
     white-space: nowrap;
 }
@@ -409,9 +411,7 @@
     border-radius: 2px;
     pointer-events: none;
 }
-/* Armed: segments capture the drag and show a crosshair; selected ones get the
- * iReal-style olive wash. */
-.insp-phrase-box.loop-armed .insp-loop-seg { pointer-events: auto; cursor: crosshair; }
+/* Looped measures get the iReal-style olive wash. */
 .insp-loop-seg.selected { background-color: rgba(179, 161, 74, 0.45); }
 /* Measure SELECTION (drag-select): a blue text-selection-style wash over the
  * chosen measures. While a drag is in progress, suppress native text selection. */

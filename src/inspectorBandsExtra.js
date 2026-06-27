@@ -393,6 +393,28 @@ export const bandExtraMethods = {
             editKind: "setBeatPointsMode",
         }));
 
+        // In chart mode the practice-loop button rides on this row, just right of
+        // the Pattern Type menu — a small square ⟲ toggle (no label, no row of its
+        // own). Select measures below, press to loop that span; press with nothing
+        // selected to clear. Wired further down, once the measure box + segments
+        // exist (the chartMode block below).
+        let loopBtn = null;
+        if (chartMode && chartHarmony !== null
+            && bpObjs.length === 1 && typeof bpObjs[0].id === "string") {
+            loopBtn = document.createElement("button");
+            loopBtn.type = "button";
+            const looping = Array.isArray(this._loopRange);
+            loopBtn.className = "insp-loop-btn" + (looping ? " active" : "");
+            loopBtn.textContent = "⟲";
+            loopBtn.title = "Select measures below (drag or shift-click), then press to loop just that span. "
+                + "The transport plays only it; rewind goes to its first bar. Press with nothing selected to clear.";
+            loopBtn.disabled = !active;
+            loopBtn.setAttribute("aria-pressed", looping ? "true" : "false");
+            loopBtn.style.marginLeft = "7px";
+            loopBtn.setAttribute("aria-label", "Practice loop");
+            r1.appendChild(loopBtn);
+        }
+
         // Measures — the pattern length in bars; × cells-per-bar gives the cycle
         // length the pattern loops to fill. Sits between Pattern Type and Beat
         // Interval, for every mode (each bar is one master-meter measure).
@@ -747,25 +769,8 @@ export const bandExtraMethods = {
                 this._mselKeyBound = true;
             }
 
-            // Practice-loop tool: a loop-icon toggle at the top of the editor. Armed,
-            // you drag across measures to set a transient GLOBAL loop (olive,
-            // iReal-style); the transport then plays only that span and rewind lands
-            // at its first bar. Clicking again clears it. (Wired after the box below.)
-            let loopBtn = null;
-            if (chartHarmony !== null && single) {
-                const loopRow = mkRow();
-                loopRow.appendChild(mkLabel("Practice Loop", { width: W.beatStrengthLabel, disabled: !active }));
-                loopBtn = document.createElement("button");
-                loopBtn.type = "button";
-                loopBtn.className = "insp-loop-btn" + (this._loopArmed ? " active" : "");
-                loopBtn.textContent = "⟲ Loop";
-                loopBtn.title = "Arm, then drag across measures to loop just that range. "
-                    + "The transport plays only it; rewind goes to its first bar. Click again to clear.";
-                loopBtn.disabled = !active;
-                loopBtn.setAttribute("aria-pressed", this._loopArmed ? "true" : "false");
-                loopRow.appendChild(loopBtn);
-                band.appendChild(loopRow);
-            }
+            // (The practice-loop button was built up on the Pattern Type row and is
+            // wired below, once the measure box + segments exist.)
 
             const abRow = mkRow();
             abRow.appendChild(mkLabel("Active Beats", { width: W.beatStrengthLabel, disabled: !active }));
@@ -882,10 +887,11 @@ export const bandExtraMethods = {
                     if (field._ghostEl) field._ghostEl.style.width = rowW;
                     const wrap = wrapBeatField(field);
                     rowEl.appendChild(wrap);
-                    // Practice-loop drag layer: one segment per measure, over the
-                    // field. Inert until the loop tool is armed (the box gets a
-                    // `loop-armed` class); then a drag across segments paints the
-                    // olive range. Each segment carries its ABSOLUTE folded bar.
+                    // Per-measure overlay: one segment per measure, over the field.
+                    // These are the hit-test targets for measure selection and carry
+                    // the olive loop highlight; each holds its ABSOLUTE folded bar
+                    // plus its row/col for clearing. The segments themselves are
+                    // pointer-transparent — the box catches the drag.
                     const overlay = document.createElement("div");
                     overlay.className = "insp-loop-overlay";
                     for (let m = 0; m < rowBars[r]; m += 1) {
@@ -898,7 +904,6 @@ export const bandExtraMethods = {
                         seg.dataset.bar = String(absBase + barsBefore + m);
                         seg.dataset.row = String(r);     // for measure-selection clear
                         seg.dataset.col = String(m);
-                        seg.addEventListener("mousedown", (e) => this._onLoopSegDown(e, seg));
                         overlay.appendChild(seg);
                         this._loopSegs.push(seg);
                     }
@@ -911,22 +916,28 @@ export const bandExtraMethods = {
             abRow.appendChild(box);
             band.appendChild(abRow);
 
-            // Wire the practice-loop tool now the box + segments exist.
+            // Wire the practice-loop tool now the box + segments exist. Pressing it
+            // loops the current measure selection (replacing any active loop) and
+            // consumes the selection; with nothing selected it clears the loop.
             if (loopBtn !== null) {
                 this._loopBox = box;
-                box.classList.toggle("loop-armed", this._loopArmed === true);
                 loopBtn.addEventListener("click", () => {
-                    this._loopArmed = !this._loopArmed;
-                    loopBtn.classList.toggle("active", this._loopArmed);
-                    loopBtn.setAttribute("aria-pressed", this._loopArmed ? "true" : "false");
-                    box.classList.toggle("loop-armed", this._loopArmed);
-                    if (!this._loopArmed) {            // releasing clears the loop
+                    const bars = this._selectionBarRange();
+                    if (bars !== null) {               // selection → loop it
+                        this._loopRange = bars;
+                        this._emitEdit({ kind: "setPracticeLoop", range: [bars[0], bars[1]] });
+                        this._mselRange = null;        // the selection becomes the loop
+                        this._paintMsel();
+                    } else if (Array.isArray(this._loopRange)) {  // nothing selected → clear
                         this._loopRange = null;
                         this._emitEdit({ kind: "clearPracticeLoop" });
                     }
+                    const on = Array.isArray(this._loopRange);
+                    loopBtn.classList.toggle("active", on);
+                    loopBtn.setAttribute("aria-pressed", on ? "true" : "false");
                     this._paintLoopSegs();
                 });
-                this._paintLoopSegs();                 // reflect any existing range
+                this._paintLoopSegs();                 // reflect any existing loop
             }
 
             // Measure SELECTION drag (text-like, row-major). When the loop tool is
@@ -1486,47 +1497,32 @@ export const bandExtraMethods = {
      * @param {MouseEvent} e
      * @param {HTMLElement} seg
      */
-    _onLoopSegDown(e, seg) {
-        if (this._loopArmed !== true) return;          // inert until armed
-        e.preventDefault();
-        const bar = Number(seg.dataset.bar);
-        if (!Number.isFinite(bar)) return;
-        this._loopDragAnchor = bar;
-        this._loopRange = [bar, bar];
-        this._paintLoopSegs();
-        const move = (ev) => {
-            const el = document.elementFromPoint(ev.clientX, ev.clientY);
-            const s = el && el.closest ? el.closest(".insp-loop-seg") : null;
-            if (s === null) return;
-            const b = Number(/** @type {HTMLElement} */ (s).dataset.bar);
-            if (!Number.isFinite(b)) return;
-            this._loopRange = [Math.min(this._loopDragAnchor, b), Math.max(this._loopDragAnchor, b)];
-            this._paintLoopSegs();
-        };
-        const up = () => {
-            document.removeEventListener("mousemove", move);
-            document.removeEventListener("mouseup", up);
-            this._commitLoop();
-        };
-        document.addEventListener("mousemove", move);
-        document.addEventListener("mouseup", up);
+    /** The current measure selection as a folded-bar range [lo, hi], or null when
+     *  nothing is selected. The selection is contiguous in reading order, so its
+     *  bars are too — take the min/max of the selected segments' bars. */
+    _selectionBarRange() {
+        const segs = Array.isArray(this._loopSegs) ? this._loopSegs : [];
+        const r = this._mselRange;
+        if (!Array.isArray(r)) return null;
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (let i = r[0]; i <= r[1] && i < segs.length; i += 1) {
+            const b = Number(segs[i].dataset.bar);
+            if (!Number.isFinite(b)) continue;
+            if (b < lo) lo = b;
+            if (b > hi) hi = b;
+        }
+        return lo <= hi ? [lo, hi] : null;
     },
 
     /** Paint the olive highlight on every segment whose bar is in the loop range. */
     _paintLoopSegs() {
         const segs = Array.isArray(this._loopSegs) ? this._loopSegs : [];
-        const r = (this._loopArmed === true && Array.isArray(this._loopRange)) ? this._loopRange : null;
+        const r = Array.isArray(this._loopRange) ? this._loopRange : null;
         for (const seg of segs) {
             const bar = Number(seg.dataset.bar);
             const on = r !== null && bar >= r[0] && bar <= r[1];
             seg.classList.toggle("selected", on);
-        }
-    },
-
-    /** Push the committed loop range out as a transient practice-loop edit. */
-    _commitLoop() {
-        if (Array.isArray(this._loopRange)) {
-            this._emitEdit({ kind: "setPracticeLoop", range: [this._loopRange[0], this._loopRange[1]] });
         }
     },
 
@@ -1558,14 +1554,14 @@ export const bandExtraMethods = {
     },
 
     /**
-     * Mouse-down in the chart-mirror box (loop tool NOT armed): a drag selects a
-     * contiguous, text-like run of measures across rows; a plain click clears the
-     * selection and leaves the underlying field to place the caret.
+     * Mouse-down in the chart-mirror box: a drag selects a contiguous, text-like
+     * run of measures across rows; a plain click clears the selection and leaves
+     * the underlying field to place the caret. The selection then feeds both
+     * Delete (blank measures) and the Loop button (loop the span).
      * @param {MouseEvent} e
      * @param {HTMLElement} box
      */
     _onMselDown(e, box) {
-        if (this._loopArmed === true) return;          // loop drag owns the segments
         const idx = this._mselHitTest(e.clientX, e.clientY);
         if (idx < 0) return;
         // Shift-click EXTENDS the run from the anchor (the last plain click / caret)
