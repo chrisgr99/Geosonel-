@@ -19,7 +19,7 @@
 
 // @ts-check
 
-import { layoutChart, buildBarPlayback, groupRows } from "./harmonyChartLayout.js";
+import { layoutChart, buildBarPlayback, groupRows, sectionLabelFor, rangesForLabel, chartSections } from "./harmonyChartLayout.js";
 
 /** Bars per displayed row (mirrors the Harmony tab's chart layout). */
 const BARS_PER_ROW = 4;
@@ -179,4 +179,238 @@ export function sectionFormWindows(harmony, range) {
     if (cur !== null) windows.push(cur);
     if (windows.length === 0) return null;
     return { formBeats: totalBeats, windows };
+}
+
+/**
+ * @typedef {Object} SectionFormBars
+ * @property {number} formBeats     total beats of one whole-form pass (the form clock period)
+ * @property {number} sectionBars   the section's folded bar count (its cycle length, in bars)
+ * @property {Array<{startBeat: number, endBeat: number}>} segs
+ *   one entry per IN-SECTION PLAYED bar, in form order, with its form-beat span.
+ *   Consecutive entries are adjacent in the played form; a jump between an entry's
+ *   endBeat and the next's startBeat is an out-of-section gap.
+ */
+
+/**
+ * The per-played-bar map a form-gated object steps through. Unlike
+ * {@link sectionFormWindows} (which merges a contiguous in-section run into one
+ * span — wrong for the cursor when the form repeats the section's bars, smearing
+ * the rhythm), this lists EACH in-section played bar separately. The engine then
+ * advances the cursor one section-bar per played bar, so the rhythm stays locked
+ * to the beat clock and re-traces every `sectionBars` regardless of how the form
+ * repeats the section.
+ *
+ * Accepts ONE or SEVERAL bar ranges (an object assigned a label owns every
+ * section bearing it). `sectionBars` is the FIRST range's bar count — the object
+ * edits/curves against its first occurrence; later occurrences re-trace it.
+ *
+ * @param {import("./harmonyScene.js").SceneHarmony | null | undefined} harmony
+ * @param {Array<[number, number]> | [number, number] | null} ranges  one range or a list
+ * @returns {SectionFormBars | null}  null when there's no range / nothing playable
+ */
+export function sectionFormBars(harmony, ranges) {
+    // Accept a bare [start,end] or a list of them.
+    const list = Array.isArray(ranges) && ranges.length > 0 && Array.isArray(ranges[0])
+        ? /** @type {Array<[number, number]>} */ (ranges)
+        : (Array.isArray(ranges) && ranges.length === 2 && typeof ranges[0] === "number"
+            ? [/** @type {[number, number]} */ (ranges)] : null);
+    if (list === null || list.length === 0) return null;
+    if (harmony == null || !Array.isArray(harmony.progression)) return null;
+    const ts = Array.isArray(harmony.timeSignature)
+        ? /** @type {[number, number]} */ (harmony.timeSignature) : [4, 4];
+    const bars = layoutChart(
+        /** @type {any} */ (harmony.progression),
+        /** @type {any} */ (harmony.key || DEFAULT_KEY),
+        "letter",
+        ts,
+    );
+    if (bars.length === 0) return null;
+    // Clamp each range to the chart; keep only valid ones.
+    const clamped = list
+        .map((r) => [Math.max(0, Math.floor(Number(r[0])) || 0), Math.min(bars.length - 1, Math.floor(Number(r[1])))])
+        .filter((r) => r[1] >= r[0]);
+    if (clamped.length === 0) return null;
+    const inAny = (i) => clamped.some((r) => i >= r[0] && i <= r[1]);
+
+    const { timeline, totalBeats } = buildBarPlayback(bars);
+    if (timeline.length === 0) return null;
+
+    /** @type {Array<{startBeat: number, endBeat: number}>} */
+    const segs = [];
+    for (const seg of timeline) {
+        if (inAny(seg.index)) segs.push({ startBeat: seg.startBeat, endBeat: seg.endBeat });
+    }
+    if (segs.length === 0) return null;
+    return { formBeats: totalBeats, sectionBars: clamped[0][1] - clamped[0][0] + 1, segs };
+}
+
+/**
+ * @typedef {Object} FormMap
+ * @property {number} chartTotal       whole-chart unfolded length, in beats
+ * @property {number} compressedTotal  the kept (assigned) length, in beats
+ * @property {Array<{ chartStart: number, compStart: number, len: number }>} segments
+ *   the kept runs: a compressed beat in [compStart, compStart+len) maps to chart
+ *   beat chartStart + (c - compStart). Sorted by compStart.
+ */
+
+/**
+ * The COMPRESSED form: the chart's played timeline with every bar NOT in an
+ * assigned section dropped, so the shared form clock spends no time on unassigned
+ * sections (no dead air). Returns a piecewise map from compressed-form beats to
+ * real chart beats, or null when nothing is assigned OR nothing is dropped (the
+ * form is then just the whole chart — identity, no compression needed).
+ *
+ * @param {import("./harmonyScene.js").SceneHarmony | null | undefined} harmony
+ * @param {Array<[number, number]>} assignedRanges  union of all assigned section ranges
+ * @returns {FormMap | null}
+ */
+export function compressedForm(harmony, assignedRanges) {
+    if (harmony == null || !Array.isArray(harmony.progression)) return null;
+    if (!Array.isArray(assignedRanges) || assignedRanges.length === 0) return null;
+    const ts = Array.isArray(harmony.timeSignature)
+        ? /** @type {[number, number]} */ (harmony.timeSignature) : [4, 4];
+    const bars = layoutChart(
+        /** @type {any} */ (harmony.progression),
+        /** @type {any} */ (harmony.key || DEFAULT_KEY),
+        "letter",
+        ts,
+    );
+    if (bars.length === 0) return null;
+    const inAny = (i) => assignedRanges.some((r) => i >= r[0] && i <= r[1]);
+
+    const { timeline, totalBeats } = buildBarPlayback(bars);
+    if (timeline.length === 0) return null;
+
+    // Contiguous runs of KEPT played bars, in chart-beat space.
+    /** @type {Array<{ chartStart: number, chartEnd: number }>} */
+    const runs = [];
+    let cur = null;
+    for (const seg of timeline) {
+        if (inAny(seg.index)) {
+            if (cur === null) cur = { chartStart: seg.startBeat, chartEnd: seg.endBeat };
+            else cur.chartEnd = seg.endBeat;
+        } else if (cur !== null) { runs.push(cur); cur = null; }
+    }
+    if (cur !== null) runs.push(cur);
+    if (runs.length === 0) return null;
+
+    let comp = 0;
+    const segments = runs.map((r) => {
+        const len = r.chartEnd - r.chartStart;
+        const out = { chartStart: r.chartStart, compStart: comp, len };
+        comp += len;
+        return out;
+    });
+    // Nothing dropped → no compression (the whole chart is the form).
+    if (Math.abs(comp - totalBeats) < 1e-9) return null;
+    return { chartTotal: totalBeats, compressedTotal: comp, segments };
+}
+
+/**
+ * @typedef {Object} UnassignedChartData
+ * @property {number[]} order        editor played-bar order (identity over the concatenation)
+ * @property {number} foldedCount    total bars across all active sections (the editor grid)
+ * @property {number[]} barBeats     per-concatenated-bar beat count
+ * @property {number[]} barRow       per-concatenated-bar editor row
+ * @property {number[]} barPos       per-concatenated-bar position within its row
+ * @property {number} rowCount       editor rows (across all active sections)
+ * @property {number[]} sectionBars  bar count of each active section, in concat order
+ * @property {Array<{startBeat:number,endBeat:number,sec:number,barInSec:number,occ:number}>} segs
+ *   every played bar of the compressed form, tagged with its active-section index,
+ *   bar-within-occurrence, and a global occurrence counter (re-trace boundary).
+ */
+
+/**
+ * The chart data for an UNASSIGNED object under a compressed form: it plays EVERY
+ * assigned section, re-tracing per occurrence. The editor shows the active
+ * sections concatenated (each label's first occurrence, in chart order) so beats
+ * can be authored per section; `segs` drives playback, tagging each played bar
+ * with which section it belongs to and which occurrence (so the object restarts
+ * its section's pattern each time that section comes round).
+ *
+ * @param {import("./harmonyScene.js").SceneHarmony | null | undefined} harmony
+ * @param {string[]} assignedLabels  labels assigned to some object
+ * @returns {UnassignedChartData | null}
+ */
+export function unassignedChartData(harmony, assignedLabels) {
+    if (harmony == null || !Array.isArray(harmony.progression)) return null;
+    if (!Array.isArray(assignedLabels) || assignedLabels.length === 0) return null;
+    const ts = Array.isArray(harmony.timeSignature)
+        ? /** @type {[number, number]} */ (harmony.timeSignature) : [4, 4];
+    const bars = layoutChart(
+        /** @type {any} */ (harmony.progression),
+        /** @type {any} */ (harmony.key || DEFAULT_KEY),
+        "letter",
+        ts,
+    );
+    if (bars.length === 0) return null;
+
+    const secs = chartSections(bars);                 // every occurrence {label, range}
+    // Active sections: unique assigned labels, FIRST occurrence, in chart order.
+    const firstByLabel = new Map();
+    for (const s of secs) {
+        if (assignedLabels.includes(s.label) && !firstByLabel.has(s.label)) {
+            firstByLabel.set(s.label, s.range);
+        }
+    }
+    const active = [...firstByLabel.entries()].map(([label, range]) => ({ label, range }));
+    if (active.length === 0) return null;
+    const labelIdx = new Map(active.map((a, i) => [a.label, i]));
+
+    // Editor concatenation: each active section's first-occurrence bars, in order.
+    /** @type {any[]} */
+    const concat = [];
+    for (const a of active) for (let i = a.range[0]; i <= a.range[1]; i += 1) concat.push(bars[i]);
+    const sectionBars = active.map((a) => a.range[1] - a.range[0] + 1);
+
+    // Form segs: every played bar in an active section, tagged sec/barInSec/occ.
+    const { timeline } = buildBarPlayback(bars);
+    /** @type {Array<{startBeat:number,endBeat:number,sec:number,barInSec:number,occ:number}>} */
+    const segs = [];
+    let occ = -1; let prevSec = -1; let prevBarInSec = -1;
+    for (const t of timeline) {
+        const f = t.index;
+        const occRange = secs.find((s) => s.range[0] <= f && f <= s.range[1] && labelIdx.has(s.label));
+        if (!occRange) continue;                       // not an active section → dropped
+        const sec = /** @type {number} */ (labelIdx.get(occRange.label));
+        const barInSec = f - occRange.range[0];
+        if (sec !== prevSec || barInSec !== prevBarInSec + 1) occ += 1;   // new occurrence
+        segs.push({ startBeat: t.startBeat, endBeat: t.endBeat, sec, barInSec, occ });
+        prevSec = sec; prevBarInSec = barInSec;
+    }
+    if (segs.length === 0) return null;
+
+    return {
+        order: concat.map((_, i) => i),
+        foldedCount: concat.length,
+        barBeats: concat.map(beatsOf),
+        ...rowsOf(concat),
+        sectionBars,
+        segs,
+    };
+}
+
+/**
+ * Resolve an object's stored `chartSection` (a section LABEL, or a legacy
+ * `[start,end]` range) to the label and ALL its bar ranges in chart order.
+ * @param {import("./harmonyScene.js").SceneHarmony | null | undefined} harmony
+ * @param {unknown} chartSection
+ * @returns {{ label: string, ranges: Array<[number, number]> } | null}
+ */
+export function objectSectionRanges(harmony, chartSection) {
+    if (harmony == null || !Array.isArray(harmony.progression)) return null;
+    const ts = Array.isArray(harmony.timeSignature)
+        ? /** @type {[number, number]} */ (harmony.timeSignature) : [4, 4];
+    const bars = layoutChart(
+        /** @type {any} */ (harmony.progression),
+        /** @type {any} */ (harmony.key || DEFAULT_KEY),
+        "letter",
+        ts,
+    );
+    if (bars.length === 0) return null;
+    const label = sectionLabelFor(bars, chartSection);
+    if (label === null) return null;
+    const ranges = rangesForLabel(bars, label);
+    if (ranges.length === 0) return null;
+    return { label, ranges };
 }

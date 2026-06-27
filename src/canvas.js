@@ -1360,8 +1360,10 @@ export class Canvas {
         // while playing; send one null on the stop transition so the chart
         // clears. Independent of the active-beat sink below.
         if (this._harmonyBeatSink !== null) {
+            // formBeats (not elapsedBeats) so the chart cursor follows the looped
+            // musical position when a practice loop's offset is set.
             const beat = playing && this._transport !== null
-                ? this._transport.elapsedBeats : null;
+                ? this._transport.formBeats : null;
             if (playing && typeof beat === "number" && Number.isFinite(beat)) {
                 this._harmonyBeatSink(beat);
                 this._harmonyBeatCleared = false;

@@ -252,7 +252,7 @@ import { imageSignalsFromOKLCh } from "./strudel/signals.js";
 import { DEFAULT_KINEMATICS } from "./scene.js";
 import { computeOffset } from "./seed/seedOffset.js";
 import { deriveCurveBeatPoints, totalPhrases, chartPhraseSlots } from "./beatPoints.js";
-import { chartBarSequence, sectionFormWindows } from "./chartFollow.js";
+import { chartBarSequence, sectionFormBars, objectSectionRanges, compressedForm, unassignedChartData } from "./chartFollow.js";
 import { buildNoteSpec, buildSoundSpec } from "./emitters.js";
 import {
     VoiceRegistry,
@@ -705,6 +705,18 @@ export function deriveStrudelCycleLengths(scene) {
     if (scene === null || typeof scene !== "object") return;
     const ts = Array.isArray(scene.timeSignature) ? Number(scene.timeSignature[0]) : NaN;
     const masterBeats = (Number.isFinite(ts) && ts >= 1) ? Math.floor(ts) : 4;
+    // Section LABELS assigned to some chart object: the active sections. An
+    // UNASSIGNED chart object plays all of these (see unassignedChartData).
+    /** @type {string[]} */
+    const assignedLabels = [];
+    if (scene.harmony && Array.isArray(scene.curves)) {
+        for (const c of scene.curves) {
+            if (c && c.beatPointsMode === "chart") {
+                const r = objectSectionRanges(scene.harmony, c.chartSection);
+                if (r && !assignedLabels.includes(r.label)) assignedLabels.push(r.label);
+            }
+        }
+    }
     const groups = [scene.curves, scene.sprites, scene.triggers];
     for (const group of groups) {
         if (!Array.isArray(group)) continue;
@@ -724,17 +736,24 @@ export function deriveStrudelCycleLengths(scene) {
             // re-derived here every run so a freshly loaded chart retimes it. With no
             // chart loaded the sequence is cleared and it falls back to the grid path.
             if (mode === "chart") {
-                // chartSection [start,end] (folded bars) scopes the object to its
-                // assigned section; null = the whole form.
-                const seq = chartBarSequence(scene.harmony,
-                    Array.isArray(obj.chartSection) ? obj.chartSection : null);
-                if (seq) {
-                    obj.chartBarSeq = seq.order;
-                    obj.foldedBarCount = seq.foldedCount;
-                    obj.chartBarBeats = seq.barBeats;   // per-folded-bar beat count (meter)
-                    obj.chartBarRow = seq.barRow;       // per-folded-bar row index
-                    obj.chartBarPos = seq.barPos;       // per-folded-bar position within its row
-                    obj.chartRowCount = seq.rowCount;   // number of rows (per-row patterns)
+                // chartSection is a section LABEL (or legacy [start,end]); resolve it
+                // to ALL bar ranges bearing that label — an ASSIGNED object owns every
+                // occurrence. An UNASSIGNED object, when other objects ARE assigned,
+                // plays EVERY assigned section (multi-section) instead of the whole
+                // form. No assignment anywhere → the whole chart (legacy).
+                const res = objectSectionRanges(scene.harmony, obj.chartSection);
+                const multi = res === null
+                    ? unassignedChartData(scene.harmony, assignedLabels) : null;
+                // Editor + curve baking: assigned → its first occurrence; unassigned
+                // multi → all active sections concatenated; else → the whole chart.
+                const editor = multi || chartBarSequence(scene.harmony, res ? res.ranges[0] : null);
+                if (editor) {
+                    obj.chartBarSeq = editor.order;
+                    obj.foldedBarCount = editor.foldedCount;
+                    obj.chartBarBeats = editor.barBeats;
+                    obj.chartBarRow = editor.barRow;
+                    obj.chartBarPos = editor.barPos;
+                    obj.chartRowCount = editor.rowCount;
                 } else {
                     delete obj.chartBarSeq;
                     delete obj.foldedBarCount;
@@ -743,19 +762,32 @@ export function deriveStrudelCycleLengths(scene) {
                     delete obj.chartBarPos;
                     delete obj.chartRowCount;
                 }
-                // FORM-GATED playback: a scoped object plays only while the shared
-                // form clock is inside its section's bars. Store the section's
-                // sounding windows (form-beat space); _stepCurve drives the cursor
-                // from these instead of free-running. No section → no windows
-                // (the object plays the whole form continuously, as before).
-                const fw = Array.isArray(obj.chartSection)
-                    ? sectionFormWindows(scene.harmony, obj.chartSection) : null;
-                if (fw) {
-                    obj.chartFormWindows = fw.windows;
-                    obj.chartFormBeats = fw.formBeats;
-                } else {
-                    delete obj.chartFormWindows;
+                if (multi) {
+                    // MULTI-SECTION: plays every active section, re-tracing each
+                    // occurrence with that section's own beats (split per section in
+                    // _applyCurveBeatPoints; driven by segs in _stepCurveFormGated).
+                    obj.chartMulti = true;
+                    obj.chartMultiSegs = multi.segs;
+                    obj.chartMultiSectionBars = multi.sectionBars;
+                    delete obj.chartFormSegs;
                     delete obj.chartFormBeats;
+                    delete obj.chartSectionBars;
+                } else {
+                    delete obj.chartMulti;
+                    delete obj.chartMultiSegs;
+                    delete obj.chartMultiSectionBars;
+                    // FORM-GATED (single label): plays only its label's sections, one
+                    // section-bar per played bar, re-tracing each occurrence.
+                    const fb = res ? sectionFormBars(scene.harmony, res.ranges) : null;
+                    if (fb) {
+                        obj.chartFormSegs = fb.segs;
+                        obj.chartFormBeats = fb.formBeats;
+                        obj.chartSectionBars = fb.sectionBars;
+                    } else {
+                        delete obj.chartFormSegs;
+                        delete obj.chartFormBeats;
+                        delete obj.chartSectionBars;
+                    }
                 }
             }
         }
@@ -815,6 +847,38 @@ function parseCycleSpeeds(str) {
     }
     if (result.length === 0) return [1];
     return result;
+}
+
+/**
+ * Split beat points baked over CONCATENATED sections into one array per section,
+ * each rescaled to its own [0,1]. A section's bars occupy a contiguous fraction
+ * of the concatenation, so its beats are the positions in that g-range.
+ * @param {{positions:number[],strengths:any[],ranges?:number[],drops?:number[]}} bp
+ * @param {number[]} sectionBars  bar count per section, in concat order
+ * @returns {Array<{positions:number[],strengths:any[],ranges:number[],drops:number[]}>}
+ */
+function splitMultiSectionBeats(bp, sectionBars) {
+    const total = sectionBars.reduce((a, b) => a + b, 0) || 1;
+    const out = [];
+    let cum = 0;
+    for (const sb of sectionBars) {
+        const g0 = cum / total;
+        const g1 = (cum + sb) / total;
+        const span = g1 - g0;
+        const positions = []; const strengths = []; const ranges = []; const drops = [];
+        for (let i = 0; i < bp.positions.length; i += 1) {
+            const p = bp.positions[i];
+            if (p >= g0 - 1e-9 && p < g1 - 1e-9) {
+                positions.push(span > 0 ? Math.min(0.999999, Math.max(0, (p - g0) / span)) : 0);
+                strengths.push(bp.strengths[i]);
+                ranges.push((bp.ranges || [])[i] || 0);
+                drops.push((bp.drops || [])[i] || 0);
+            }
+        }
+        out.push({ positions, strengths, ranges, drops });
+        cum += sb;
+    }
+    return out;
 }
 
 /**
@@ -1436,6 +1500,26 @@ export class Simulation {
          * @type {number | null}
          */
         this._syncLoopBeats = null;
+        /**
+         * PRACTICE LOOP (transient, global). When non-null, the form clock loops
+         * over just this many beats instead of the whole chart — the transport
+         * physically runs [0, _practiceLoopBeats) (so audio time stays monotonic
+         * and rewind lands at the loop start), while a transport loop OFFSET
+         * shifts the musical position to the loop's first bar. Set via
+         * setPracticeLoop from the beat-editor loop tool; overrides _syncLoopBeats
+         * while active. Not persisted with the score.
+         * @type {number | null}
+         */
+        this._practiceLoopBeats = null;
+        /**
+         * COMPRESSED FORM map (chartFollow.FormMap) or null. When non-null the
+         * shared form is the union of assigned sections — unassigned sections are
+         * dropped — and this converts a compressed form beat to the real chart beat
+         * (for the gating, the chord cursor, and the harmony context). Rebuilt in
+         * setScene from the objects' assignments. Null = whole chart (identity).
+         * @type {import("./chartFollow.js").FormMap | null}
+         */
+        this._formMap = null;
         /**
          * Master-beat metronome. _metronomeBeatHandler, when set, is
          * called once each time the transport's elapsed beats cross a
@@ -2264,6 +2348,22 @@ export class Simulation {
      */
     _applyCurveBeatPoints(curve, state) {
         const bp = deriveCurveBeatPoints(curve);
+        // MULTI-SECTION (unassigned object): the beats are baked over the active
+        // sections CONCATENATED; split them per section (each rescaled to its own
+        // [0,1]) so each section re-traces with just its beats. _stepCurveFormGated
+        // swaps the active array per section occurrence.
+        if (curve.chartMulti === true && Array.isArray(curve.chartMultiSectionBars)) {
+            state._chartMultiBeats = splitMultiSectionBeats(bp, curve.chartMultiSectionBars);
+            state._activeSec = -1;                 // force a swap on the first step
+            const first = state._chartMultiBeats[0] || { positions: [], strengths: [], ranges: [], drops: [] };
+            state._beatFractions = first.positions;
+            state._beatStrengths = first.strengths;
+            state._beatRanges = first.ranges;
+            state._beatDrops = first.drops;
+            state._beatOrder = null;
+            return;
+        }
+        state._chartMultiBeats = null;
         state._beatFractions = bp.positions;
         state._beatStrengths = bp.strengths;
         state._beatRanges = bp.ranges || [];   // canvas swing per beat (0 = fixed)
@@ -2342,7 +2442,9 @@ export class Simulation {
         // (and phrase state) for the moment is looked up at the global beat. The
         // whole ensemble rewinds at the chart wrap (see the tick() loop), so the
         // progression is the top-level form without slaving any object's groove.
-        const h = this._harmonyContextAt(beat);
+        // Under a compressed form, expand the form beat to the chart beat so the
+        // chord is the one actually sounding (skipping dropped sections).
+        const h = this._harmonyContextAt(this.formBeatToChartBeat(beat));
         ctx.chord = h ? chordStructure(h.chord, h.key) : null;
         ctx.nextChord = h ? chordStructure(h.next, h.key) : null;
         ctx.beatsToNext = h ? h.beatsToNext : null;
@@ -2966,6 +3068,14 @@ export class Simulation {
             && (scene.harmonyLoop !== false);
         this._syncLoopBeats = (harmonyLoops && this._harmonyBaseCycleBeats > 0)
             ? this._harmonyBaseCycleBeats : null;
+        // COMPRESSED FORM: if any object is assigned a section, the shared form is
+        // the union of assigned sections (unassigned dropped). The transport then
+        // wraps at the compressed length, and formBeatToChartBeat expands a form
+        // beat back to the chart for the cursor / gating / chords.
+        this._formMap = this._buildFormMap(scene);
+        if (this._formMap !== null && this._syncLoopBeats !== null) {
+            this._syncLoopBeats = this._formMap.compressedTotal;
+        }
         if (scene === null) {
             this._curveState.clear();
             this._triggerState.clear();
@@ -3220,11 +3330,14 @@ export class Simulation {
         // MIDI panics), so the wrap doesn't abruptly cut sounding notes. Deferred
         // while auditioning (the two loops are exclusive). Like the audition
         // boundary, return after the rewind so the next frame starts cleanly.
-        if (this._syncLoopBeats !== null
+        // A practice loop overrides the whole-chart wrap with its shorter span.
+        const activeLoopBeats = this._practiceLoopBeats !== null
+            ? this._practiceLoopBeats : this._syncLoopBeats;
+        if (activeLoopBeats !== null
             && this._auditionBoundaryBeats === null
             && this._transport.isPlaying) {
             const loopBeats = this._transport.elapsedBeats;
-            if (loopBeats !== null && loopBeats >= this._syncLoopBeats) {
+            if (loopBeats !== null && loopBeats >= activeLoopBeats) {
                 this._transport.rewind();
                 return;
             }
@@ -3264,10 +3377,10 @@ export class Simulation {
         // step target to the boundary defers that downbeat to the post-rewind
         // pass, so it fires exactly once. Only while the chart-wrap loop is the
         // active one (an armed audition boundary owns the loop instead).
-        if (this._syncLoopBeats !== null && this._auditionBoundaryBeats === null) {
+        if (activeLoopBeats !== null && this._auditionBoundaryBeats === null) {
             const bpm = this._transport.bpm;
             if (typeof bpm === "number" && bpm > 0) {
-                const loopBoundarySec = (this._syncLoopBeats * 60) / bpm;
+                const loopBoundarySec = (activeLoopBeats * 60) / bpm;
                 if (loopBoundarySec > 0 && loopBoundarySec < target) {
                     target = loopBoundarySec;
                 }
@@ -3868,8 +3981,10 @@ export class Simulation {
         // tracing its curve once per occurrence (cursor 0→1 across each sounding
         // window) and freezing — parked at the section start, no beats — between.
         // Driven straight off the master form clock, bypassing the accumulator.
-        if (Array.isArray(curve.chartFormWindows) && curve.chartFormWindows.length > 0
-            && Number(curve.chartFormBeats) > 0) {
+        if ((Array.isArray(curve.chartFormSegs) && curve.chartFormSegs.length > 0
+            && Number(curve.chartFormBeats) > 0)
+            || (curve.chartMulti === true && Array.isArray(curve.chartMultiSegs)
+                && curve.chartMultiSegs.length > 0)) {
             this._stepCurveFormGated(curve, state, dt);
             return;
         }
@@ -3986,51 +4101,64 @@ export class Simulation {
 
     /**
      * Step a FORM-GATED chart object: its cursor + beats are driven by the shared
-     * chord-chart form clock, not its own accumulator. The object plays only
-     * while the played form is inside its section (one `chartFormWindows` entry
-     * per occurrence). Inside a window the cursor sweeps 0→1 across that window's
-     * beats, firing the section's pattern; outside, it parks at the start (t=0)
-     * and fires nothing. Each occurrence is one cycle (cycleCount = its window
-     * index across form passes), so the beat-fire re-arm runs the section afresh
-     * each time it returns.
+     * chord-chart form clock, not its own accumulator. The object plays only while
+     * the played form is inside its section.
+     *
+     * The cursor advances ONE section-bar per PLAYED bar (chartFormSegs lists each
+     * in-section played bar), so cycleProgress = (streaming in-section bar index) /
+     * sectionBars. That keeps the rhythm locked to the beat clock and re-tracing
+     * every `sectionBars` no matter how the form repeats the section — the fix for
+     * the variable-speed bug a uniform stretch over a merged window caused. Outside
+     * the section it parks (t=0, no beats); each section-length traversal is one
+     * cycle, so the beat-fire re-arm runs the pattern afresh each pass.
      * @param {any} curve
      * @param {CurveRuntimeState} state
      * @param {number} dt
      */
     _stepCurveFormGated(curve, state, dt) {
+        if (curve.chartMulti === true) { this._stepCurveMultiSection(curve, state, dt); return; }
         const formBeats = Number(curve.chartFormBeats);
-        const windows = curve.chartFormWindows;
+        const segs = curve.chartFormSegs;
+        const sectionBars = Math.max(1, Math.floor(Number(curve.chartSectionBars)) || 1);
         // Physics still advances (a moving curve keeps moving); only the cursor
         // and beat firing are gated.
         this._stepCurvePhysics(curve, state, dt);
 
-        // NB: never set state.halted here — the main step loop skips halted
-        // curves entirely (a parked object must keep being stepped so it can
-        // wake when its section returns). "Parked" is just cursor t=0, no beats.
-        const beat = this._transport.elapsedBeats;
+        // NB: never set state.halted here — the main step loop skips halted curves
+        // entirely (a parked object must keep being stepped so it can wake when its
+        // section returns). "Parked" is just cursor t=0, no beats. formBeats (not
+        // elapsedBeats) so a practice loop's offset gates the looped position;
+        // formBeatToChartBeat expands the compressed form back to the chart so the
+        // object gates against its chart-beat segments.
+        const beat = this.formBeatToChartBeat(this._transport.formBeats);
         if (beat === null || !Number.isFinite(beat) || formBeats <= 0) {
             state.cycleProgress = 0; state.t = 0; state.halted = false;
             state._beatOrder = null;
             return;
         }
+        const cyclesPerPass = Math.ceil(segs.length / sectionBars);
         const pass = Math.floor(beat / formBeats);       // which whole-form pass
         const fb = beat - pass * formBeats;              // form-beat within this pass
-        const W = windows.length;
 
-        // Which sounding window contains the form beat?
-        let active = -1;
-        for (let k = 0; k < W; k += 1) {
-            if (fb >= windows[k].startBeat && fb < windows[k].endBeat) { active = k; break; }
+        // Locate the in-section played bar (segment) sounding at fb: the last
+        // segment that has started, if the form beat is still within it.
+        let lo = 0;
+        let hi = segs.length - 1;
+        let found = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (segs[mid].startBeat <= fb) { found = mid; lo = mid + 1; }
+            else hi = mid - 1;
         }
+        const i = (found >= 0 && fb < segs[found].endBeat) ? found : -1;
 
-        if (active < 0) {
-            // Between occurrences: park at the section start, fire nothing, and
-            // drop the beat order so the next occurrence re-arms cleanly (no stale
-            // tail beats bleed across the gap). cycleCount points at the next
-            // window so re-entry reads as a new cycle.
+        if (i < 0) {
+            // Parked (between in-section bars). Point cycleCount at the traversal
+            // the next in-section bar belongs to and drop the beat order, so the
+            // section re-arms cleanly (no stale tail beats bleed across the gap).
             let next = 0;
-            while (next < W && fb >= windows[next].endBeat) next += 1;
-            state.cycleCount = pass * W + next;
+            while (next < segs.length && fb >= segs[next].endBeat) next += 1;
+            state.cycleCount = pass * cyclesPerPass + Math.floor(next / sectionBars);
             state.cycleProgress = 0;
             state.t = 0;
             state.halted = false;
@@ -4038,18 +4166,73 @@ export class Simulation {
             return;
         }
 
-        const w = windows[active];
-        const span = w.endBeat - w.startBeat;
-        const prog = span > 0 ? (fb - w.startBeat) / span : 0;
-        state.cycleCount = pass * W + active;
-        state.cycleProgress = Math.max(0, Math.min(0.999999, prog));
+        const seg = segs[i];
+        const span = seg.endBeat - seg.startBeat;
+        const frac = span > 0 ? (fb - seg.startBeat) / span : 0;
+        const cellFloat = i + frac;                      // streaming in-section bar index
+        const cyc = Math.floor(cellFloat / sectionBars);
+        state.cycleCount = pass * cyclesPerPass + cyc;
+        state.cycleProgress = Math.max(0, Math.min(0.999999, cellFloat / sectionBars - cyc));
         state.halted = false;
         const loopLen = cycleSpeedsLoopLength(state.speedList);
         const sp = loopLen > 0 ? state.speedList[state.cycleCount % loopLen] : 1;
         state.t = sp < 0 ? 1 - state.cycleProgress : state.cycleProgress;
 
         // Fire the section's crossed beats. The re-arm (keyed on cycleCount, with
-        // _beatOrder nulled between windows) rebuilds the order at each occurrence.
+        // _beatOrder nulled between traversals) rebuilds the order each pass.
+        this._detectActiveBeatCrossings(curve, state);
+    }
+
+    /**
+     * Step an UNASSIGNED chart object (chartMulti): it plays EVERY active section,
+     * re-tracing per occurrence with that section's OWN beats. chartMultiSegs tags
+     * each played bar with its section index, bar-within-occurrence, and a global
+     * occurrence counter; the active beat array swaps to the current section's
+     * split (so the right pattern + chords sound) and each occurrence is one cycle.
+     * @param {any} curve
+     * @param {CurveRuntimeState} state
+     * @param {number} dt
+     */
+    _stepCurveMultiSection(curve, state, dt) {
+        const segs = curve.chartMultiSegs;
+        const sectionBars = curve.chartMultiSectionBars;
+        this._stepCurvePhysics(curve, state, dt);
+
+        const beat = this.formBeatToChartBeat(this._transport.formBeats);
+        if (beat === null || !Number.isFinite(beat)) {
+            state.cycleProgress = 0; state.t = 0; state.halted = false; state._beatOrder = null;
+            return;
+        }
+        // Locate the played bar sounding at the chart beat (segs sorted by start).
+        let lo = 0; let hi = segs.length - 1; let found = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (segs[mid].startBeat <= beat) { found = mid; lo = mid + 1; } else hi = mid - 1;
+        }
+        const i = (found >= 0 && beat < segs[found].endBeat) ? found : -1;
+        if (i < 0) {                                   // between active sections (rare)
+            state.cycleProgress = 0; state.t = 0; state.halted = false; state._beatOrder = null;
+            return;
+        }
+        const seg = segs[i];
+        const sec = seg.sec;
+        const sbars = Math.max(1, Math.floor(Number(sectionBars[sec])) || 1);
+        const span = seg.endBeat - seg.startBeat;
+        const frac = span > 0 ? (beat - seg.startBeat) / span : 0;
+        // Swap to this section's beats when the section changes (fresh array → re-arm).
+        if (state._activeSec !== sec && Array.isArray(state._chartMultiBeats)) {
+            const a = state._chartMultiBeats[sec] || { positions: [], strengths: [], ranges: [], drops: [] };
+            state._beatFractions = a.positions;
+            state._beatStrengths = a.strengths;
+            state._beatRanges = a.ranges;
+            state._beatDrops = a.drops;
+            state._activeSec = sec;
+            state._beatOrder = null;
+        }
+        state.cycleCount = seg.occ;                    // each occurrence is one cycle
+        state.cycleProgress = Math.max(0, Math.min(0.999999, (seg.barInSec + frac) / sbars));
+        state.halted = false;
+        state.t = state.cycleProgress;                 // chart objects trace forward
         this._detectActiveBeatCrossings(curve, state);
     }
 
@@ -4199,6 +4382,69 @@ export class Simulation {
         const state = this._curveState.get(curveId);
         if (state === undefined) return 0;
         return state.t;
+    }
+
+    /**
+     * Arm a PRACTICE LOOP over a span of the chord-chart form: the transport
+     * loops just these beats instead of the whole chart, with the musical
+     * position offset to the loop's first bar. Global — every form-following
+     * object loops with it (each per its own section). Transient (not saved).
+     * A non-positive length clears the loop.
+     * @param {number} offsetBeats  the loop's first bar in form-beat space
+     * @param {number} lengthBeats  the loop's length in beats
+     */
+    setPracticeLoop(offsetBeats, lengthBeats) {
+        if (!(Number.isFinite(lengthBeats) && lengthBeats > 0)) { this.clearPracticeLoop(); return; }
+        this._practiceLoopBeats = lengthBeats;
+        this._transport.setLoopOffsetBeats(Number(offsetBeats) || 0);
+    }
+
+    /** Release the practice loop, restoring whole-chart playback. */
+    clearPracticeLoop() {
+        this._practiceLoopBeats = null;
+        this._transport.setLoopOffsetBeats(0);
+    }
+
+    /**
+     * Build the compressed-form map from a scene: the union of every chart object's
+     * assigned section ranges. Null when nothing is assigned (or nothing is
+     * dropped) → the form is the whole chart.
+     * @param {any} scene
+     * @returns {import("./chartFollow.js").FormMap | null}
+     */
+    _buildFormMap(scene) {
+        if (scene === null || !scene.harmony || !Array.isArray(scene.curves)) return null;
+        /** @type {Array<[number, number]>} */
+        const ranges = [];
+        for (const c of scene.curves) {
+            if (c && c.beatPointsMode === "chart") {
+                const res = objectSectionRanges(scene.harmony, c.chartSection);
+                if (res) for (const r of res.ranges) ranges.push(r);
+            }
+        }
+        if (ranges.length === 0) return null;
+        return compressedForm(scene.harmony, ranges);
+    }
+
+    /**
+     * Convert a COMPRESSED form beat to the real chart beat. Identity when no
+     * compression is active. A compressed form skips unassigned sections, so the
+     * chart beat jumps over them; the cursor, the gating, and the harmony context
+     * all read the chart through this.
+     * @param {number} c  a form beat (0 .. compressedTotal)
+     * @returns {number}  the chart beat
+     */
+    formBeatToChartBeat(c) {
+        const map = this._formMap;
+        if (map === null || !Number.isFinite(c)) return c;
+        let cc = c;
+        if (cc < 0) cc = 0;
+        else if (cc >= map.compressedTotal) cc %= map.compressedTotal;   // safety wrap
+        const segs = map.segments;
+        for (let i = segs.length - 1; i >= 0; i -= 1) {
+            if (cc >= segs[i].compStart) return segs[i].chartStart + (cc - segs[i].compStart);
+        }
+        return cc;
     }
 
     /**

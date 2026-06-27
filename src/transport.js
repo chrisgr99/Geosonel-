@@ -67,6 +67,18 @@ export class Transport {
         this._playStartContextTime = 0;
 
         /**
+         * @type {number}
+         * Musical-position offset in beats, added to elapsedBeats to give the
+         * FORM beat (the chord-chart / harmony position) without touching the
+         * physical clock. A practice loop sets this to its first bar so the
+         * transport can physically run [0, loopLen) — monotonic audio time,
+         * rewind lands at the loop start — while the chart cursor and
+         * harmony-following objects read [loopStart, loopEnd). 0 = no offset
+         * (formBeats === elapsedBeats), the default.
+         */
+        this._loopOffsetBeats = 0;
+
+        /**
          * @type {number | null}
          * Beats per minute. null means the piece is time-based
          * and has no notion of beats.
@@ -226,6 +238,26 @@ export class Transport {
     get elapsedBeats() {
         if (this._bpm === null) return null;
         return (this.elapsedSeconds * this._bpm) / 60;
+    }
+
+    /**
+     * The FORM beat — the musical position the chord chart and harmony-following
+     * objects read: elapsedBeats plus the loop offset. Equals elapsedBeats when
+     * no practice loop is set. Null when the piece is time-based.
+     * @returns {number | null}
+     */
+    get formBeats() {
+        const eb = this.elapsedBeats;
+        return eb === null ? null : eb + this._loopOffsetBeats;
+    }
+
+    /**
+     * Set the musical-position offset (beats) added to give formBeats. Used by
+     * the practice loop; 0 clears it. Does not touch the physical clock.
+     * @param {number} beats
+     */
+    setLoopOffsetBeats(beats) {
+        this._loopOffsetBeats = (typeof beats === "number" && Number.isFinite(beats)) ? beats : 0;
     }
 
     // --- BPM ---

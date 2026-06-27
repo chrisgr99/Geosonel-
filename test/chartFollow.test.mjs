@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { chartBarSequence, sectionFormWindows } from "../src/chartFollow.js";
+import { chartBarSequence, sectionFormWindows, compressedForm } from "../src/chartFollow.js";
 import { TEST_PROGRESSIONS } from "../src/samples/testProgressions.js";
 
 /** A chord cell at a diatonic degree. */
@@ -74,6 +74,29 @@ test("form windows: null range / no harmony → null", () => {
     const blues = TEST_PROGRESSIONS.find((p) => p.title === "12-Bar Blues");
     assert.equal(sectionFormWindows(blues, null), null);
     assert.equal(sectionFormWindows(null, [0, 1]), null);
+});
+
+test("compressedForm: drops unassigned sections, keeping assigned in chart order", () => {
+    const bar = { type: "bar", barStyle: "single" };
+    const cells = [];
+    for (let i = 0; i < 8; i += 1) { cells.push(chord(1)); if (i < 7) cells.push(bar); }
+    cells.push({ type: "end" });
+    const harmony = { key: { tonicPitchClass: 0, mode: "major" }, timeSignature: [4, 4], progression: cells };
+    // 8 bars × 4 = 32 beats. Keep bars 2-5, drop 0-1 and 6-7 → one 16-beat run.
+    const map = compressedForm(harmony, [[2, 3], [4, 5]]);
+    assert.equal(map.chartTotal, 32);
+    assert.equal(map.compressedTotal, 16);
+    assert.deepEqual(map.segments, [{ chartStart: 8, compStart: 0, len: 16 }]);
+
+    // Interior gap: keep bars 0-1 and 4-5 (drop 2-3 between) → two runs.
+    const gap = compressedForm(harmony, [[0, 1], [4, 5]]);
+    assert.deepEqual(gap.segments, [
+        { chartStart: 0, compStart: 0, len: 8 },
+        { chartStart: 16, compStart: 8, len: 8 },
+    ]);
+
+    assert.equal(compressedForm(harmony, [[0, 7]]), null);   // nothing dropped → no compression
+    assert.equal(compressedForm(harmony, []), null);         // nothing assigned → none
 });
 
 test("null / empty harmony → null", () => {

@@ -27,15 +27,72 @@ test("chart-mode object takes the played-bar timeline + cells-per-bar from the c
     assert.equal(deriveCurveBeatPoints(obj).positions.length, 12);
 });
 
-test("chartSection scopes the object to its bar range (fewer beat points, re-traced)", () => {
-    const harmony = TEST_PROGRESSIONS.find((p) => p.title === "12-Bar Blues");
-    const obj = { id: "C1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x...", strength: "5", chartSection: [4, 7] };
+const sec = (label) => ({ type: "sectionOpen", label });
+const bar1 = { type: "bar", barStyle: "single" };
+
+test("a chartSection LABEL scopes the object to that section (first occurrence)", () => {
+    // *A 4 bars  *B 4 bars — assigning "A" scopes the curve to A's 4 bars.
+    const harmony = {
+        key: { tonicPitchClass: 0, mode: "major" }, timeSignature: [4, 4],
+        progression: [
+            sec("A"), chord(1), bar1, chord(2), bar1, chord(3), bar1, chord(4), bar1,
+            sec("B"), chord(5), bar1, chord(6), bar1, chord(1), bar1, chord(2), bar1,
+            { type: "end" },
+        ],
+    };
+    const obj = { id: "C1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x...", strength: "5", chartSection: "A" };
     deriveStrudelCycleLengths({ timeSignature: [4, 4], harmony, curves: [obj], sprites: [], triggers: [] });
 
-    assert.equal(obj.foldedBarCount, 4);                  // just the assigned 4-bar section
-    assert.deepEqual(obj.chartBarSeq, [0, 1, 2, 3]);      // 0-based sub-chart, played once (loops)
-    // "x..." → one hit per bar → 4 points, not the whole form's 12.
+    assert.equal(obj.foldedBarCount, 4);                  // A is 4 bars
+    assert.deepEqual(obj.chartBarSeq, [0, 1, 2, 3]);
+    assert.equal(obj.chartSectionBars, 4);
+    // "x..." → one hit per bar → 4 points, not the whole form's 8.
     assert.equal(deriveCurveBeatPoints(obj).positions.length, 4);
+});
+
+test("an unassigned object plays every assigned section (multi-section)", () => {
+    // *A 2 · *B 2 · *C 2 — B and C assigned to objects, A to nobody.
+    const harmony = {
+        key: { tonicPitchClass: 0, mode: "major" }, timeSignature: [4, 4],
+        progression: [
+            sec("A"), chord(1), bar1, chord(2), bar1,
+            sec("B"), chord(3), bar1, chord(4), bar1,
+            sec("C"), chord(5), bar1, chord(6), bar1,
+            { type: "end" },
+        ],
+    };
+    const objB = { id: "B1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x.", strength: "5", chartSection: "B" };
+    const objC = { id: "C1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x.", strength: "5", chartSection: "C" };
+    const objU = { id: "U1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x.,x.", strength: "5" };  // no chartSection
+    deriveStrudelCycleLengths({ timeSignature: [4, 4], harmony, curves: [objB, objC, objU], sprites: [], triggers: [] });
+
+    assert.equal(objU.chartMulti, true);
+    assert.deepEqual(objU.chartMultiSectionBars, [2, 2]);   // B 2 bars, C 2 bars
+    assert.equal(objU.foldedBarCount, 4);                   // editor = B + C concatenated
+    assert.equal(objU.chartRowCount, 2);                    // B's row, C's row
+    const secs = [...new Set(objU.chartMultiSegs.map((s) => s.sec))].sort();
+    assert.deepEqual(secs, [0, 1]);                         // plays both B and C (A dropped)
+    // assigned objects stay single-section.
+    assert.equal(objB.chartMulti, undefined);
+    assert.equal(objB.chartSectionBars, 2);
+});
+
+test("a recurring label plays at every occurrence (each its own pass)", () => {
+    // *A 2 · *B 2 · *A 2 — assigning "A" binds BOTH A sections.
+    const harmony = {
+        key: { tonicPitchClass: 0, mode: "major" }, timeSignature: [4, 4],
+        progression: [
+            sec("A"), chord(1), bar1, chord(2), bar1,
+            sec("B"), chord(5), bar1, chord(6), bar1,
+            sec("A"), chord(1), bar1, chord(2), bar1,
+            { type: "end" },
+        ],
+    };
+    const obj = { id: "C1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x.", strength: "5", chartSection: "A" };
+    deriveStrudelCycleLengths({ timeSignature: [4, 4], harmony, curves: [obj], sprites: [], triggers: [] });
+
+    assert.equal(obj.chartSectionBars, 2);                // the cycle = first A (2 bars)
+    assert.equal(obj.chartFormSegs.length, 4);            // both A's: 2 + 2 in-section played bars
 });
 
 test("a repeated group replays its per-measure pattern (played order, not folded)", () => {
