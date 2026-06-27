@@ -731,8 +731,21 @@ export const bandExtraMethods = {
             const single = bpObjs.length === 1 && typeof bpObjs[0].id === "string";
             /** @type {Array<{field: any, highlight: Element | null, playout: string}>} */
             const phraseFields = [];   // one per row, for the playing-beat highlight
-            /** @type {HTMLElement[]} segment overlays for the practice-loop drag-select */
+            /** @type {HTMLElement[]} per-measure segments (reading order) for the
+             * practice-loop drag and the measure SELECTION (drag-select + Delete). */
             this._loopSegs = [];
+            // Measure selection (text-like, row-major run): a [startIdx, endIdx]
+            // into _loopSegs, or null. Rebuilt each render, so drop a stale one.
+            this._mselRange = null;
+            // Anchor measure (the last plain click / caret) a shift-click extends
+            // from. Kept across renders so a shift-click after a re-run still works.
+            if (!Number.isFinite(this._mselAnchor)) this._mselAnchor = null;
+            this._mselCpb = bpbForBars;          // cells-per-bar, for clearing
+            // Bind the Delete-to-clear key handler once.
+            if (!this._mselKeyBound) {
+                document.addEventListener("keydown", (e) => this._onMselKey(e));
+                this._mselKeyBound = true;
+            }
 
             // Practice-loop tool: a loop-icon toggle at the top of the editor. Armed,
             // you drag across measures to set a transient GLOBAL loop (olive,
@@ -883,6 +896,8 @@ export const bandExtraMethods = {
                         seg.style.left = `calc(11px + ${m * (bpbForBars + 1)}ch)`;
                         seg.style.width = `${bpbForBars}ch`;
                         seg.dataset.bar = String(absBase + barsBefore + m);
+                        seg.dataset.row = String(r);     // for measure-selection clear
+                        seg.dataset.col = String(m);
                         seg.addEventListener("mousedown", (e) => this._onLoopSegDown(e, seg));
                         overlay.appendChild(seg);
                         this._loopSegs.push(seg);
@@ -913,6 +928,13 @@ export const bandExtraMethods = {
                 });
                 this._paintLoopSegs();                 // reflect any existing range
             }
+
+            // Measure SELECTION drag (text-like, row-major). When the loop tool is
+            // NOT armed, dragging across the measures selects a contiguous run
+            // (down a row → to its end → on into the next row); a plain click
+            // clears the selection and falls through to the field for the caret.
+            // Delete/Backspace then blanks the selected measures' beats.
+            if (active) box.addEventListener("mousedown", (e) => this._onMselDown(e, box));
 
             // Beat Strength — one field, looped across every bar (as in Manual mode).
             const sRow = mkRow();
@@ -1506,5 +1528,132 @@ export const bandExtraMethods = {
         if (Array.isArray(this._loopRange)) {
             this._emitEdit({ kind: "setPracticeLoop", range: [this._loopRange[0], this._loopRange[1]] });
         }
+    },
+
+    // --- Measure selection (drag-select + Delete) — chart-mirror editor ---
+
+    /** The selectable measure nearest a viewport point: its index into _loopSegs
+     *  (reading order), row-first then horizontal. -1 when there are no segments. */
+    _mselHitTest(clientX, clientY) {
+        const segs = Array.isArray(this._loopSegs) ? this._loopSegs : [];
+        let best = -1;
+        let bestScore = Infinity;
+        for (let i = 0; i < segs.length; i += 1) {
+            const r = segs[i].getBoundingClientRect();
+            const dy = clientY < r.top ? r.top - clientY : clientY > r.bottom ? clientY - r.bottom : 0;
+            const dx = clientX < r.left ? r.left - clientX : clientX > r.right ? clientX - r.right : 0;
+            const score = dy * 10000 + dx;     // row dominates, then x within it
+            if (score < bestScore) { bestScore = score; best = i; }
+        }
+        return best;
+    },
+
+    /** Paint the measure-selection highlight over the segments in _mselRange. */
+    _paintMsel() {
+        const segs = Array.isArray(this._loopSegs) ? this._loopSegs : [];
+        const r = Array.isArray(this._mselRange) ? this._mselRange : null;
+        for (let i = 0; i < segs.length; i += 1) {
+            segs[i].classList.toggle("msel", r !== null && i >= r[0] && i <= r[1]);
+        }
+    },
+
+    /**
+     * Mouse-down in the chart-mirror box (loop tool NOT armed): a drag selects a
+     * contiguous, text-like run of measures across rows; a plain click clears the
+     * selection and leaves the underlying field to place the caret.
+     * @param {MouseEvent} e
+     * @param {HTMLElement} box
+     */
+    _onMselDown(e, box) {
+        if (this._loopArmed === true) return;          // loop drag owns the segments
+        const idx = this._mselHitTest(e.clientX, e.clientY);
+        if (idx < 0) return;
+        // Shift-click EXTENDS the run from the anchor (the last plain click / caret)
+        // to here — no drag, no native text selection. Delete then acts on it.
+        if (e.shiftKey) {
+            e.preventDefault();
+            const a = Number.isFinite(this._mselAnchor) ? this._mselAnchor : idx;
+            this._mselRange = [Math.min(a, idx), Math.max(a, idx)];
+            this._paintMsel();
+            const fae = document.activeElement;
+            if (fae && typeof (/** @type {any} */ (fae).blur) === "function") (/** @type {any} */ (fae)).blur();
+            return;
+        }
+        // A fresh plain click → this measure becomes the anchor for a later
+        // shift-click (the click also drops the text caret here for typing).
+        this._mselAnchor = idx;
+        const anchor = idx;
+        const startX = e.clientX;
+        const startY = e.clientY;
+        let dragging = false;
+        const move = (ev) => {
+            if (!dragging) {
+                if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;
+                dragging = true;
+                // Take over from native text selection.
+                const ae = document.activeElement;
+                if (ae && typeof (/** @type {any} */ (ae).blur) === "function") (/** @type {any} */ (ae)).blur();
+                const sel = window.getSelection && window.getSelection();
+                if (sel && sel.removeAllRanges) sel.removeAllRanges();
+                box.classList.add("msel-dragging");    // suppress text selection while dragging
+            }
+            const cur = this._mselHitTest(ev.clientX, ev.clientY);
+            if (cur < 0) return;
+            this._mselRange = [Math.min(anchor, cur), Math.max(anchor, cur)];
+            this._paintMsel();
+        };
+        const up = () => {
+            document.removeEventListener("mousemove", move);
+            document.removeEventListener("mouseup", up);
+            box.classList.remove("msel-dragging");
+            if (!dragging) {                            // a click → clear, let the field take the caret
+                this._mselRange = null;
+                this._paintMsel();
+            }
+        };
+        document.addEventListener("mousemove", move);
+        document.addEventListener("mouseup", up);
+    },
+
+    /** Delete/Backspace with a measure selection (and not typing) blanks the
+     *  selected measures' beats. */
+    _onMselKey(e) {
+        if (!Array.isArray(this._mselRange)) return;
+        if (e.key !== "Delete" && e.key !== "Backspace") return;
+        const ae = document.activeElement;
+        if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;   // typing
+        e.preventDefault();
+        this._clearSelectedMeasures();
+    },
+
+    /** Clear (blank to rests) every selected measure, one setPhrasePattern edit
+     *  per affected row. */
+    _clearSelectedMeasures() {
+        const segs = Array.isArray(this._loopSegs) ? this._loopSegs : [];
+        const range = this._mselRange;
+        const fields = Array.isArray(this._phraseFields) ? this._phraseFields : [];
+        const cpb = Math.max(1, Math.floor(Number(this._mselCpb)) || 1);
+        if (!Array.isArray(range)) return;
+        /** @type {Map<number, Set<number>>} row → cols to clear */
+        const byRow = new Map();
+        for (let i = range[0]; i <= range[1] && i < segs.length; i += 1) {
+            const row = Number(segs[i].dataset.row);
+            const col = Number(segs[i].dataset.col);
+            if (!Number.isFinite(row) || !Number.isFinite(col)) continue;
+            if (!byRow.has(row)) byRow.set(row, new Set());
+            byRow.get(row).add(col);
+        }
+        const dots = ".".repeat(cpb);
+        for (const [row, cols] of byRow) {
+            const f = fields[row] && fields[row].field;
+            if (!f) continue;
+            const measures = String(f.value || "").split("|");
+            const maxCol = Math.max(...cols);
+            while (measures.length <= maxCol) measures.push(dots);
+            for (const c of cols) measures[c] = dots;
+            this._emitEdit({ kind: "setPhrasePattern", value: measures.join("|"), index: row });
+        }
+        this._mselRange = null;
+        this._paintMsel();
     },
 };

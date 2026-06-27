@@ -396,6 +396,11 @@
     height: 100%;
     width: 100%;
     pointer-events: none;
+    /* The segments are positioned in `ch`, so they MUST resolve `ch` against the
+     * SAME font as the beat field (monospace, 11pt) or they won't line up with the
+     * measure cells. */
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 11pt;
 }
 .insp-loop-seg {
     position: absolute;
@@ -408,6 +413,10 @@
  * iReal-style olive wash. */
 .insp-phrase-box.loop-armed .insp-loop-seg { pointer-events: auto; cursor: crosshair; }
 .insp-loop-seg.selected { background-color: rgba(179, 161, 74, 0.45); }
+/* Measure SELECTION (drag-select): a blue text-selection-style wash over the
+ * chosen measures. While a drag is in progress, suppress native text selection. */
+.insp-loop-seg.msel { background-color: rgba(96, 152, 230, 0.40); }
+.insp-phrase-box.msel-dragging { user-select: none; -webkit-user-select: none; }
 .insp-phrase-num {
     display: flex;
     align-items: center;
