@@ -287,7 +287,10 @@ export class Inspector {
                     if (i === ri) this._positionBeatHighlight(pf.field, pf.highlight, cellInRow, pf.playout);
                     else if (pf.highlight) pf.highlight.style.display = "none";
                 });
-                this._positionBeatHighlight(this._beatStrengthField, this._beatStrengthHighlight, cellInBar);
+                // Strength is its own free-standing groove (looped over the whole
+                // played timeline at its typed length), so step it by the running
+                // played-cell index — not cellInBar, which would trap it in bar 1.
+                this._positionBeatHighlight(this._beatStrengthField, this._beatStrengthHighlight, p);
                 return;
             }
         }

@@ -113,6 +113,21 @@ test("a repeated group replays its per-measure pattern (played order, not folded
     assert.equal(deriveCurveBeatPoints(obj).positions.length, 4);
 });
 
+test("chart strength runs its full typed length across bars (not reset per bar)", () => {
+    // Two bars, every quarter active (phrasePatterns "x"); an 8-cell strength
+    // spans BOTH bars rather than restarting at bar 2 — the bug was that each
+    // played bar is its own phrase, so strength was capped at one bar (4 cells).
+    const harmony = {
+        key: { tonicPitchClass: 0, mode: "major" }, timeSignature: [4, 4],
+        progression: [chord(1), bar1, chord(4), bar1, { type: "end" }],
+    };
+    const obj = { id: "C1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x", strength: "98765432" };
+    deriveStrudelCycleLengths({ timeSignature: [4, 4], harmony, curves: [obj], sprites: [], triggers: [] });
+
+    const pts = deriveCurveBeatPoints(obj);
+    assert.deepEqual(pts.strengths, [9, 8, 7, 6, 5, 4, 3, 2]);
+});
+
 test("meter change: bar beats are captured; per-row playback is currently uniform", () => {
     const bar = { type: "bar", barStyle: "single" };
     const harmony = {

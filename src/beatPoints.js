@@ -286,7 +286,7 @@ function deriveNormalLooped(activeBeats, strength, beatsPerCycle, phrases, vary,
             const ch = pat[slot % pat.length];
             const count = beatCountForSlot(ch);
             if (count > 0) {
-                const d = strs[slot % strs.length];  // strength loops WITHIN the phrase
+                const d = strs[i % strs.length];  // strength loops over the whole timeline (its own typed length)
                 const strengthVal = (d !== undefined && isDigit(d))
                     ? Number(d) : DEFAULT_STRENGTH;
                 // A digit slot is a ratchet: `count` evenly-spaced sub-hits
