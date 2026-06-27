@@ -23,3 +23,7 @@ _ireal_validate.mjs
 node_modules/
 dist/
 out/
+
+# nav validation script (local, uses gitignored chart libraries)
+_nav_validate.mjs
+_nav_show.mjs

@@ -27,6 +27,8 @@
 
 // @ts-check
 
+import { classifyNavComment, sequenceBars, stripEndingSpacers } from "./harmonyNavigation.js";
+
 /**
  * @typedef {import("./harmonyModel.js").ProgressionCell} ProgressionCell
  * @typedef {import("./irealChord.js").Chord} Chord
@@ -168,9 +170,17 @@ function groupIntoBars(progression, beatsPerBar) {
         out.push({ kind: "marker", cell });
         break;
       }
+      case "coda":
+        // A coda sign (§Q). Whether the TO-CODA jump PLAYS this bar depends on where
+        // the sign sits relative to the bar's chords: AFTER them (`C §Q |` — iReal's
+        // common case, the sign at the bar END → play the bar, then jump) vs BEFORE
+        // any content (`§Q C |` — the sign at the bar START → jump before playing).
+        // `afterContent` records which, for sequenceBars to honour.
+        out.push({ kind: "marker", cell, afterContent: barHasContent });
+        break;
       default:
-        // comment, segno, coda and anything else: no timing effect here.
-        // (segno/coda nav is noted by the expansion pass, not the grouper.)
+        // comment, segno and anything else: no timing effect here.
+        // (segno nav is noted by the expansion pass, not the grouper.)
         out.push({ kind: "marker", cell });
         break;
     }
@@ -324,171 +334,159 @@ function emitRanges(spans, ranges, barStartBeat, beatsPerBar) {
  * is internal to playback.
  *
  * Repeat handling: a `{ … }` block (repeatOpen … repeatClose) plays for the
- * specified number of passes (iReal does not store a pass count in the cell
- * model, so default 2). First/second endings (N1, N2 …) select which tail
- * plays on which pass: a bar after an `ending: k` marker plays only on pass
- * k (and, for the highest-numbered ending, on any later pass). A
- * `repeatBar`/`repeatTwoBars`/`repeatLastBar` simile duplicates the
- * referenced bar(s).
+ * specified number of passes (default 2, or a `<Nx>` override). First/second
+ * endings (N1, N2 …) select which tail plays on which pass. A
+ * `repeatBar`/`repeatTwoBars`/`repeatLastBar` simile duplicates the referenced
+ * bar(s).
  *
- * Unmodelled navigation (segno/coda/D.S./D.C.) is noted in `notes` and
- * otherwise skipped — expansion never crashes on it.
+ * Navigation (segno / coda / D.C. / D.S. / Fine, encoded in iReal comment text)
+ * is honoured: the chart expands to its FULL authored length. The play ORDER —
+ * repeats, endings AND jumps — is computed by the shared {@link sequenceBars}
+ * engine, the same one the chart cursor drives, so sound and highlight agree.
+ *
+ * Meter may change mid-tune (a `timeSignature` marker); each bar carries its own
+ * beat count, mirroring the chart layout so the two stay beat-for-beat aligned.
  *
  * @param {ProgressionCell[]} progression
  * @param {[number, number]} timeSignature
  * @returns {ExpandedHarmony}
  */
 export function expandProgression(progression, timeSignature) {
-  const beatsPerBar = Math.max(1, Math.round(timeSignature[0]) || 4);
-  const events = groupIntoBars(progression, beatsPerBar);
+  // Drop iReal's 2nd-ending alignment spacer up front (shared with the chart
+  // layout) so audio and the displayed/cursored chart see the same bars.
+  const { structBars, foldedBars, barBeats, sections } =
+    collectFoldedBars(stripEndingSpacers(progression), timeSignature);
 
-  /** @type {ChordSpan[]} */
-  const spans = [];
   /** @type {string[]} */
   const notes = [];
+
+  // Play order through repeats, endings and navigation (shared engine).
+  const seq = sequenceBars(structBars);
+  for (const m of seq.notes) notes.push(m);
+
+  // Emit chord spans in play order, advancing the absolute beat cursor with each
+  // bar's own meter; `history` lets similes duplicate the previously-played bar.
+  /** @type {ChordSpan[]} */
+  const spans = [];
   /** @type {Array<Array<{cell: ChordCellLite, start: number, end: number}>>} */
   const history = [];
   let beat = 0;
-
-  // We process the event list with a manual index so a repeatClose can rewind
-  // to its matching repeatOpen for additional passes.
-  /**
-   * A pending repeat frame: where the block started (event index just after
-   * repeatOpen), how many passes total, and which pass we are on.
-   * @type {Array<{ openIndex: number, totalPasses: number, pass: number }>}
-   */
-  const repeatStack = [];
-  // The pass number of the most recently CLOSED repeat block. Endings that
-  // live AFTER a repeatClose (e.g. a second ending N2) have no active frame,
-  // so they read this to know which pass just finished.
-  let lastClosedPass = 1;
-  // A section label awaiting the next bar (mirrors the layout's pending model),
-  // so the unwind can recover the song's sections from the played span list.
-  /** @type {string | null} */
-  let pendingSection = null;
-
-  let i = 0;
-  let guard = 0;
-  while (i < events.length) {
-    if (++guard > 1_000_000) {
-      notes.push("expansion guard tripped (pathological repeat nesting)");
-      break;
-    }
-    const ev = events[i];
-
-    if (ev.kind === "marker") {
-      const cell = ev.cell;
-      switch (cell.type) {
-        case "repeatOpen": {
-          repeatStack.push({ openIndex: i + 1, totalPasses: 2, pass: 1 });
-          break;
-        }
-        case "repeatClose": {
-          const frame = repeatStack[repeatStack.length - 1];
-          if (frame && frame.pass < frame.totalPasses) {
-            frame.pass += 1;
-            i = frame.openIndex;
-            continue;
-          }
-          if (frame) {
-            lastClosedPass = frame.pass;
-            repeatStack.pop();
-          }
-          break;
-        }
-        case "ending": {
-          // An ending marker: the bars that FOLLOW it belong to ending k.
-          // If the current repeat pass doesn't match this ending, skip
-          // forward past its bars (up to the next ending / repeatClose).
-          // Inside the braces the active frame's pass governs; a trailing
-          // ending after the close reads the just-closed pass.
-          const frame = repeatStack[repeatStack.length - 1];
-          const currentPass = frame ? frame.pass : lastClosedPass;
-          const k = typeof cell.ending === "number" ? cell.ending : 1;
-          if (!endingPlaysOnPass(k, currentPass, events, i)) {
-            i = skipEndingBlock(events, i + 1);
-            continue;
-          }
-          break;
-        }
-        case "segno":
-        case "coda": {
-          notes.push(`navigation marker '${cell.type}' not modelled; ignored`);
-          break;
-        }
-        case "sectionOpen": {
-          pendingSection = typeof cell.label === "string" ? cell.label : null;
-          break;
-        }
-        case "end":
-        case "bar":
-        case "timeSignature":
-        default:
-          break;
-      }
-      i += 1;
-      continue;
-    }
-
-    // A bar. Attach any pending section label to its first span, then clear it.
-    beat = emitBar(spans, ev.bar, beat, beatsPerBar, history, pendingSection);
-    pendingSection = null;
-    i += 1;
+  for (const idx of seq.order) {
+    beat = emitBar(spans, foldedBars[idx], beat, barBeats[idx], history, sections[idx]);
   }
 
   return { spans, totalBeats: beat, notes };
 }
 
 /**
- * Whether ending `k` plays on the given repeat pass. The straightforward rule:
- * ending k plays on pass k. The HIGHEST-numbered ending in the block also
- * plays on any pass beyond it (so a 2-ending block: N1 on pass 1, N2 on pass
- * 2 and any later pass).
+ * Group a folded progression into bars and, in one pass, derive the parallel
+ * arrays the sequencer + emitter need: structural flags per bar (for play
+ * order, via the shared {@link sequenceBars}), the FoldedBar payload, the
+ * per-bar beat count (meter can change mid-tune), and the section label (for
+ * the unwind's section recovery).
  *
- * @param {number} k
- * @param {number} pass
- * @param {Array<{kind:"bar", bar: FoldedBar} | {kind:"marker", cell: ProgressionCell}>} events
- * @param {number} endingIndex  index of this ending marker
- * @returns {boolean}
+ * The bar GROUPING and the pending-decoration model here mirror
+ * harmonyChartLayout.layoutChart exactly, so the audio bar list and the chart
+ * bar list line up one-for-one — the precondition for the cursor and the sound
+ * to agree.
+ *
+ * @param {ProgressionCell[]} progression
+ * @param {[number, number]} timeSignature
+ * @returns {{ structBars: import("./harmonyNavigation.js").StructBar[], foldedBars: FoldedBar[], barBeats: number[], sections: Array<string | null> }}
  */
-function endingPlaysOnPass(k, pass, events, endingIndex) {
-  if (k === pass) return true;
-  // The highest-numbered ending in this ending-group is the final
-  // destination; it also plays on any pass beyond its own number (covers a
-  // repeat played more times than there are endings). The group spans
-  // forward across the enclosing repeatClose (a second ending N2 lives AFTER
-  // the `}`), stopping at the next repeatOpen or the end of the chart.
-  let maxEnding = k;
-  for (let j = endingIndex + 1; j < events.length; j++) {
-    const e = events[j];
-    if (e.kind === "marker") {
-      if (e.cell.type === "repeatOpen") break;
-      if (e.cell.type === "ending" && typeof e.cell.ending === "number") {
-        if (e.cell.ending > maxEnding) maxEnding = e.cell.ending;
-      }
-    }
-  }
-  return k === maxEnding && pass > k;
-}
+export function collectFoldedBars(progression, timeSignature) {
+  const startBeats = Math.max(1, Math.round(timeSignature[0]) || 4);
+  const events = groupIntoBars(progression, startBeats);
 
-/**
- * Skip past an ending block's bars: advance from `from` to the next ending
- * marker or repeatClose (exclusive), returning that index.
- * @param {Array<{kind:"bar", bar: FoldedBar} | {kind:"marker", cell: ProgressionCell}>} events
- * @param {number} from
- * @returns {number}
- */
-function skipEndingBlock(events, from) {
-  let j = from;
-  while (j < events.length) {
-    const e = events[j];
-    if (e.kind === "marker"
-      && (e.cell.type === "ending" || e.cell.type === "repeatClose")) {
-      return j;
+  /** @type {import("./harmonyNavigation.js").StructBar[]} */
+  const structBars = [];
+  /** @type {FoldedBar[]} */
+  const foldedBars = [];
+  /** @type {number[]} */
+  const barBeats = [];
+  /** @type {Array<string | null>} */
+  const sections = [];
+
+  let runningBeats = startBeats;
+  /**
+   * Decorations awaiting the next bar that flushes (mirrors the layout's
+   * pending model so the two bar lists line up).
+   * @type {{ repeatOpen?: boolean, ending?: number, segno?: boolean, coda?: boolean, fine?: boolean, nav?: any, section?: string | null, passes?: number }}
+   */
+  let pending = {};
+  /** structBars indices of currently-open repeat blocks, for `<Nx>` counts. */
+  /** @type {number[]} */
+  const openRepeats = [];
+
+  for (const ev of events) {
+    if (ev.kind === "bar") {
+      /** @type {import("./harmonyNavigation.js").StructBar} */
+      const flags = {};
+      if (pending.repeatOpen) flags.repeatOpen = true;
+      if (pending.ending !== undefined) flags.ending = pending.ending;
+      if (pending.segno) flags.segno = true;
+      if (pending.coda) flags.coda = true;
+      if (pending.codaAfter) flags.codaAfter = true;
+      if (pending.fine) flags.fine = true;
+      if (pending.nav) flags.nav = pending.nav;
+      // A `<Nx>` seen before this repeat-open bar flushed (e.g. a one-bar
+      // `{ … <6x> }`) was stashed as pending.passes; apply it to the opening bar.
+      if (pending.passes !== undefined && flags.repeatOpen) flags.passes = pending.passes;
+      structBars.push(flags);
+      foldedBars.push(ev.bar);
+      barBeats.push(runningBeats);
+      sections.push(pending.section !== undefined ? pending.section : null);
+      if (flags.repeatOpen) openRepeats.push(structBars.length - 1);
+      pending = {};
+      continue;
     }
-    j += 1;
+
+    const cell = ev.cell;
+    switch (cell.type) {
+      case "repeatOpen": pending.repeatOpen = true; break;
+      case "ending": pending.ending = typeof cell.ending === "number" ? cell.ending : 1; break;
+      case "segno": pending.segno = true; break;
+      case "coda":
+        pending.coda = true;
+        // Sign at the bar END (chords already in the bar) → its bar is played before
+        // the To-Coda jump; sign at the bar START → jump before playing it.
+        if (ev.afterContent) pending.codaAfter = true;
+        break;
+      case "sectionOpen":
+        pending.section = typeof cell.label === "string" ? cell.label : null;
+        break;
+      case "timeSignature": {
+        const ts = cell.timeSignature;
+        const n = Array.isArray(ts) ? ts[0] : NaN;
+        runningBeats = Number.isFinite(n) && n > 0 ? Math.round(n) : runningBeats;
+        break;
+      }
+      case "repeatClose":
+        if (structBars.length > 0) structBars[structBars.length - 1].repeatClose = true;
+        openRepeats.pop();
+        break;
+      case "comment": {
+        const nav = classifyNavComment(cell.text || "");
+        if (nav) {
+          if (nav.kind === "jump") pending.nav = { from: nav.from, target: nav.target };
+          else if (nav.kind === "fine") pending.fine = true;
+          else if (nav.kind === "repeat") {
+            // Attach to the enclosing open repeat if its bar has flushed; else
+            // stash for the repeat-open bar still being accumulated (a `<Nx>`
+            // sitting between `{` and the bar's first barline).
+            const oi = openRepeats[openRepeats.length - 1];
+            if (oi !== undefined) structBars[oi].passes = nav.times;
+            else pending.passes = nav.times;
+          }
+        }
+        break;
+      }
+      default:
+        break; // end, bar — no structural effect here
+    }
   }
-  return j;
+
+  return { structBars, foldedBars, barBeats, sections };
 }
 
 /**

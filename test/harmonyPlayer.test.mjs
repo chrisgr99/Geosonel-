@@ -147,14 +147,39 @@ test("expandProgression: repeatTwoBars (r) duplicates the previous two bars", ()
   ]);
 });
 
-// --- expandProgression: unmodelled navigation -----------------------------
+// --- expandProgression: navigation ----------------------------------------
 
-test("expandProgression: segno/coda navigation is noted, never crashes", () => {
+test("expandProgression: bare segno/coda (no jump) just play through", () => {
+  // Segno + coda signs with no D.S./D.C. instruction to pair them: they carry
+  // no navigation, so the chart plays straight through with no notes.
   const exp = expandProgression(build("SC|GQ Z"), [4, 4]);
-  // Both bars still expand; a note records the unmodelled markers.
-  assert.equal(exp.spans.length, 2);
-  assert.ok(exp.notes.some((n) => /segno/.test(n)));
-  assert.ok(exp.notes.some((n) => /coda/.test(n)));
+  assert.deepEqual(describe(exp.spans), ["[0,4)1", "[4,8)5"]);
+  assert.equal(exp.notes.length, 0);
+});
+
+test("expandProgression: D.S. al Coda jumps segno→toCoda→Coda", () => {
+  // S C | G | (toCoda)Q F | <D.S. al Coda> A- ‖   (coda) Q D- | E
+  // Normal: C G F A- ; D.S. → from segno C G, hit To-Coda, jump to Coda: D- E.
+  const exp = expandProgression(build("SC|G|QF|<D.S. al Coda>A- Z QD-|E Z"), [4, 4]);
+  assert.deepEqual(describe(exp.spans), [
+    "[0,4)1",    // C   (segno)
+    "[4,8)5",    // G
+    "[8,12)4",   // F   (To-Coda sign)
+    "[12,16)6-", // Am  (D.S. al Coda fires after this bar)
+    "[16,20)1",  // C   return from segno
+    "[20,24)5",  // G   → To-Coda → jump to Coda
+    "[24,28)2-", // Dm  (Coda)
+    "[28,32)3",  // E
+  ]);
+});
+
+test("expandProgression: D.C. al Fine returns to top and stops at Fine", () => {
+  // C | <Fine> G | F | <D.C. al Fine> A-   → C G F A- , then C G (stop at Fine).
+  const exp = expandProgression(build("C|<Fine>G|F|<D.C. al Fine>A- Z"), [4, 4]);
+  assert.deepEqual(describe(exp.spans), [
+    "[0,4)1", "[4,8)5", "[8,12)4", "[12,16)6-",
+    "[16,20)1", "[20,24)5",
+  ]);
 });
 
 // --- harmonyAt: current / next / beatsToNext ------------------------------

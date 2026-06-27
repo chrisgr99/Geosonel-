@@ -31,6 +31,7 @@
 // @ts-check
 
 import { chordToLetter, chordToRoman } from "./irealChord.js";
+import { classifyNavComment, sequenceBars, stripEndingSpacers } from "./harmonyNavigation.js";
 
 /**
  * @typedef {import("./harmonyModel.js").ProgressionCell} ProgressionCell
@@ -64,6 +65,14 @@ import { chordToLetter, chordToRoman } from "./irealChord.js";
  * @property {boolean} [doubleRight] A double barline `‖` at this bar's right edge
  *                                   (a section boundary that isn't the final bar).
  * @property {[number, number]} [timeSignature]  A meter change announced at this bar.
+ * @property {boolean} [segno]       A segno (`S`) sits at this bar.
+ * @property {boolean} [coda]        A coda sign (`Q`) sits at this bar.
+ * @property {boolean} [codaAfter]   The coda sign sits at this bar's END (after its
+ *   chords) rather than its start — drives the To-Coda jump's play-then-jump.
+ * @property {boolean} [fine]        A Fine marker sits at this bar.
+ * @property {number}  [passes]      Repeat-count override (`<Nx>`) for the repeat opened here.
+ * @property {{ from: "DC" | "DS", target: { type: "coda" | "fine" | "end" } | { type: "ending", n: number } }} [nav]
+ *                                   A D.C./D.S. jump that fires AFTER this bar.
  */
 
 /**
@@ -76,6 +85,9 @@ import { chordToLetter, chordToRoman } from "./irealChord.js";
  * @returns {ChartBar[]}
  */
 export function layoutChart(progression, key, mode, timeSignature) {
+    // Drop iReal's 2nd-ending alignment spacer up front (shared with the player) so
+    // the displayed chart and the audio agree on the bars.
+    progression = stripEndingSpacers(progression);
     /** @type {ChartBar[]} */
     const bars = [];
 
@@ -84,8 +96,12 @@ export function layoutChart(progression, key, mode, timeSignature) {
     let barIndex = 0;
 
     // Decorations waiting to attach to the next bar that gets content.
-    /** @type {{ section?: string, repeatOpen?: boolean, ending?: number, timeSignature?: [number, number] }} */
+    /** @type {{ section?: string, repeatOpen?: boolean, ending?: number, timeSignature?: [number, number], segno?: boolean, coda?: boolean, fine?: boolean, nav?: ChartBar["nav"], passes?: number }} */
     let pending = {};
+    // Bars (refs) of currently-open repeat blocks, so a `<Nx>` count attaches to
+    // the bar that opened the enclosing repeat.
+    /** @type {ChartBar[]} */
+    const openRepeats = [];
     // Does a `:}` mark belong on the bar we just closed?
     let closeRepeatPending = false;
     let endPending = false;
@@ -108,7 +124,15 @@ export function layoutChart(progression, key, mode, timeSignature) {
         if (pending.repeatOpen) current.repeatOpen = true;
         if (pending.ending !== undefined) current.ending = pending.ending;
         if (pending.timeSignature !== undefined) current.timeSignature = pending.timeSignature;
+        if (pending.segno) current.segno = true;
+        if (pending.coda) current.coda = true;
+        if (pending.fine) current.fine = true;
+        if (pending.nav !== undefined) current.nav = pending.nav;
+        // A `<Nx>` seen before this bar's first content (e.g. `{ <4x> … }`) was
+        // stashed; apply it to the repeat-open bar it belongs to.
+        if (pending.passes !== undefined && current.repeatOpen) current.passes = pending.passes;
         pending = {};
+        if (current.repeatOpen) openRepeats.push(current);
     };
 
     /** Close the current bar: push it, advance the beat cursor + index. */
@@ -128,7 +152,7 @@ export function layoutChart(progression, key, mode, timeSignature) {
             current = null;
             return;
         }
-        if (closeRepeatPending) { current.repeatClose = true; closeRepeatPending = false; }
+        if (closeRepeatPending) { current.repeatClose = true; closeRepeatPending = false; openRepeats.pop(); }
         if (endPending) { current.end = true; endPending = false; }
         if (doubleRightPending) { current.doubleRight = true; doubleRightPending = false; }
         bars.push(current);
@@ -233,10 +257,22 @@ export function layoutChart(progression, key, mode, timeSignature) {
             }
 
             case "repeatClose":
-                // Close the current bar with a :} on its right edge, then the
-                // close also acts as a barline (the next content starts fresh).
-                closeRepeatPending = true;
-                closeBar();
+                if (current === null) {
+                    // `}` after an empty tail (e.g. `… r|  <Fine>  }`): there is no
+                    // open bar to cap, so the repeat closes on the PREVIOUS content
+                    // bar — matching the audio grouping (which attaches the close to
+                    // the last flushed bar). Deferring it onto the NEXT bar would
+                    // wrongly fold that bar into the repeat.
+                    if (bars.length > 0) {
+                        bars[bars.length - 1].repeatClose = true;
+                        openRepeats.pop();
+                    }
+                } else {
+                    // Close the current bar with a :} on its right edge, then the
+                    // close also acts as a barline (the next content starts fresh).
+                    closeRepeatPending = true;
+                    closeBar();
+                }
                 break;
 
             case "bar":
@@ -248,10 +284,41 @@ export function layoutChart(progression, key, mode, timeSignature) {
                 closeBar();
                 break;
 
-            // Non-harmonic markers carried by the model but not drawn here.
-            case "comment":
             case "segno":
+                // Segno sign: opens (or marks) the bar it precedes. Attach to the
+                // open bar if one is in progress, else to the next bar.
+                if (current !== null) current.segno = true; else pending.segno = true;
+                break;
+
             case "coda":
+                // A coda sign on an in-progress bar sits AFTER its chords (bar END →
+                // codaAfter, the To-Coda bar is played before the jump); with no
+                // current bar it's at the next bar's START. Mirrors groupIntoBars in
+                // harmonyPlayer.js so the cursor and the audio sequence identically.
+                if (current !== null) { current.coda = true; current.codaAfter = true; }
+                else pending.coda = true;
+                break;
+
+            case "comment": {
+                // iReal hides D.C./D.S./Fine and `<Nx>` repeat counts in comment
+                // text. Classify and attach so the cursor's play order (built from
+                // these bars) matches the audio's. A jump/Fine rides the bar it
+                // sits in (open bar, else the next); a count sets the enclosing
+                // repeat's pass total.
+                const nav = classifyNavComment(cell.text || "");
+                if (nav && nav.kind === "jump") {
+                    if (current !== null) current.nav = { from: nav.from, target: nav.target };
+                    else pending.nav = { from: nav.from, target: nav.target };
+                } else if (nav && nav.kind === "fine") {
+                    if (current !== null) current.fine = true; else pending.fine = true;
+                } else if (nav && nav.kind === "repeat") {
+                    const open = openRepeats[openRepeats.length - 1];
+                    if (open !== undefined) open.passes = nav.times;
+                    else pending.passes = nav.times;
+                }
+                break;
+            }
+
             default:
                 break;
         }
@@ -274,34 +341,13 @@ export function layoutChart(progression, key, mode, timeSignature) {
  */
 
 /**
- * Find the bar where an ending block starting at `s` ends. The layout tags
- * only the FIRST bar of an ending with `ending`; the block runs until the
- * next ending/section bar, or through a `repeatClose`/`end` bar (inclusive).
- * @param {ChartBar[]} bars
- * @param {number} s  index of the ending's first bar
- * @returns {{ endExclusive: number, hadClose: boolean }}
- */
-function endingBlockEnd(bars, s) {
-    let j = s;
-    let hadClose = false;
-    while (j < bars.length) {
-        const b = bars[j];
-        if (j > s && (b.ending !== undefined || b.section !== undefined)) break;
-        if (b.repeatClose) { hadClose = true; j += 1; break; }
-        if (b.end) { j += 1; break; }
-        j += 1;
-    }
-    return { endExclusive: j, hadClose };
-}
-
-/**
- * Unroll laid-out bars into the PLAYED order, honouring `{ }` repeats (2
- * passes — matching the player's expandProgression default) and standard
- * 1st/2nd endings, assigning each played bar an expanded beat range. The
- * `index` on each entry points back to the displayed bar, so a now-playing
- * cursor maps a global beat → the exact displayed bar even when a section
- * repeats. Best-effort for exotic structures (nested repeats, two-bar
- * similes); plain bars, splits, repeats and N1/N2 endings are exact.
+ * Unroll laid-out bars into the PLAYED order, assigning each played bar an
+ * expanded beat range. Honours `{ }` repeats (2 passes, or a `<Nx>` override),
+ * 1st/2nd endings, AND the segno/coda/D.C./D.S./Fine navigation — by driving the
+ * SAME {@link sequenceBars} engine that harmonyPlayer.expandProgression drives.
+ * Because both walk structurally-equivalent bars through one engine, the
+ * now-playing cursor lands on the exact displayed bar the audio is sounding,
+ * jumps and all. The `index` on each entry points back to the displayed bar.
  *
  * @param {ChartBar[]} bars
  * @returns {{ timeline: PlaybackBar[], totalBeats: number }}
@@ -313,60 +359,35 @@ export function buildBarPlayback(bars) {
         return { timeline, totalBeats: 0 };
     }
 
+    // Project each displayed bar onto the sequencer's structural view.
+    const struct = bars.map((b) => {
+        /** @type {import("./harmonyNavigation.js").StructBar} */
+        const s = {};
+        if (b.repeatOpen) s.repeatOpen = true;
+        if (b.repeatClose) s.repeatClose = true;
+        if (b.ending !== undefined) s.ending = b.ending;
+        if (b.segno) s.segno = true;
+        if (b.coda) s.coda = true;
+        if (b.codaAfter) s.codaAfter = true;
+        if (b.fine) s.fine = true;
+        if (b.nav !== undefined) s.nav = b.nav;
+        if (b.passes !== undefined) s.passes = b.passes;
+        return s;
+    });
+
+    const { order } = sequenceBars(struct);
     let beat = 0;
-    let i = 0;
-    let guard = 0;
-    /** @type {Array<{ openIndex: number, passes: number, pass: number }>} */
-    const stack = [];
-    let lastClosedPass = 1;
-
-    while (i < bars.length) {
-        if (++guard > 100000) break; // pathological-structure backstop
+    for (const i of order) {
         const bar = bars[i];
-
-        // Open a repeat frame the first time we reach its opening bar (not on
-        // the jump-back, where the top frame already covers this openIndex).
-        if (bar.repeatOpen &&
-            (stack.length === 0 || stack[stack.length - 1].openIndex !== i)) {
-            stack.push({ openIndex: i, passes: 2, pass: 1 });
-        }
-
-        // Ending selection: an ending bar plays only on its matching pass.
-        if (bar.ending !== undefined) {
-            const frame = stack[stack.length - 1];
-            const pass = frame ? frame.pass : lastClosedPass;
-            if (bar.ending !== pass) {
-                const { endExclusive, hadClose } = endingBlockEnd(bars, i);
-                if (hadClose && frame) {
-                    lastClosedPass = frame.pass;
-                    stack.pop();
-                }
-                i = endExclusive;
-                continue;
-            }
-        }
-
-        // Play this bar.
-        timeline.push({ index: bar.index, startBeat: beat, endBeat: beat + bar.beats });
-        beat += bar.beats;
-
-        // Repeat close: loop back if passes remain, else close the frame.
-        if (bar.repeatClose) {
-            const frame = stack[stack.length - 1];
-            if (frame && frame.pass < frame.passes) {
-                frame.pass += 1;
-                i = frame.openIndex;
-                continue;
-            }
-            if (frame) {
-                lastClosedPass = frame.pass;
-                stack.pop();
-            }
-        }
-
-        i += 1;
+        // A two-bar simile (`%%`, repeatTwoBars) is ONE displayed bar but stands
+        // for TWO bars of music — the audio emits both — so it occupies 2× beats
+        // on the timeline. The highlight then stays on the `%%` bar for its full
+        // (doubled) duration, in step with the sound.
+        const span = bar.slots && bar.slots.some((s) => s.simile === "double")
+            ? bar.beats * 2 : bar.beats;
+        timeline.push({ index: bar.index, startBeat: beat, endBeat: beat + span });
+        beat += span;
     }
-
     return { timeline, totalBeats: beat };
 }
 
