@@ -15,7 +15,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { layoutChart } from "../src/harmonyChartLayout.js";
+import { layoutChart, sectionBarRange } from "../src/harmonyChartLayout.js";
 
 const KEY = { tonicPitchClass: 0, mode: "major" };
 const TS = /** @type {[number, number]} */ ([4, 4]);
@@ -53,6 +53,23 @@ test("layoutChart: the final barline lands on the standalone repeat bar", () => 
     assert.equal(bars.length, 2);
     assert.deepEqual(slotsOf(bars[1]), ["SIM:last"]);
     assert.equal(bars[1].end, true);
+});
+
+test("sectionBarRange: a section stops before a trailing tag, not at the chart end", () => {
+    // *A a | b | *B c | d }   { e | f }   — A then B, B's repeat closes, then a
+    // separate "tag" repeat block. Clicking B must select just B's two bars; the
+    // tag block (and any spacer) is excluded — mirrors the "repeat and fade" tag.
+    const bars = layoutChart([
+        { type: "sectionOpen", label: "A" }, chord("a"), barline(), chord("b"), barline(),
+        { type: "sectionOpen", label: "B" }, chord("c"), barline(), chord("d"), { type: "repeatClose" },
+        { type: "repeatOpen" }, chord("e"), barline(), chord("f"), { type: "repeatClose" },
+    ], KEY, "letter", TS);
+    const aBar = bars.find((b) => b.section === "A").index;
+    const bBar = bars.find((b) => b.section === "B").index;
+    const bClose = bars.find((b) => b.repeatClose && b.index > bBar).index;
+    assert.deepEqual(sectionBarRange(bars, aBar), [aBar, bBar - 1]);   // A → just up to B
+    assert.deepEqual(sectionBarRange(bars, bBar), [bBar, bClose]);     // B → ends at its close, no tag
+    assert.ok(bClose < bars.length - 1);                              // the tag is real, beyond B
 });
 
 test("layoutChart: a section ending in a repeat keeps its full bar count", () => {

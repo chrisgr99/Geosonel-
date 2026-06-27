@@ -391,6 +391,96 @@ export function buildBarPlayback(bars) {
     return { timeline, totalBeats: beat };
 }
 
+/** A bar with no chord content (an iReal spacer / blank padding cell). */
+function isBlankBar(b) {
+    return b == null || !Array.isArray(b.slots) || b.slots.length === 0
+        || b.slots.every((s) => s && s.empty === true);
+}
+
+/**
+ * The folded bar range [start, end] a section spans, given the bar where it
+ * opens. The section runs to the bar before the next STRUCTURAL boundary —
+ * another section's start, or a fresh repeat block opening after this section's
+ * repeat has already closed (a trailing tag / "repeat and fade" coda) — or the
+ * chart end, whichever comes first; trailing blank spacer bars are trimmed.
+ *
+ * So clicking a section label selects just that section, not a trailing tag the
+ * label happens to precede. (A section's OWN internal `{ }` repeat doesn't end
+ * it — only a new block opened after the section's content has closed does.)
+ *
+ * @param {ChartBar[]} bars
+ * @param {number} startIndex  folded bar where the section opens
+ * @returns {[number, number] | null}
+ */
+export function sectionBarRange(bars, startIndex) {
+    const n = bars.length;
+    if (n === 0) return null;
+    const start = Math.max(0, Math.min(n - 1, Math.floor(Number(startIndex)) || 0));
+    let end = n - 1;
+    let closed = false;
+    for (let i = start + 1; i < n; i += 1) {
+        const b = bars[i];
+        if (b.section !== undefined) { end = i - 1; break; }   // the next section starts
+        if (b.repeatOpen && closed) { end = i - 1; break; }    // a fresh (tag) repeat block
+        if (b.repeatClose) closed = true;
+    }
+    while (end > start && isBlankBar(bars[end])) end -= 1;      // trim trailing spacers
+    return [start, end];
+}
+
+/**
+ * Every label-bearing section in the chart, in order: its label and bar range
+ * (via {@link sectionBarRange}). Unlabeled trailing material (tags, pickups) is
+ * not a section and is omitted.
+ * @param {ChartBar[]} bars
+ * @returns {Array<{ label: string, range: [number, number] }>}
+ */
+export function chartSections(bars) {
+    /** @type {Array<{ label: string, range: [number, number] }>} */
+    const out = [];
+    for (let i = 0; i < bars.length; i += 1) {
+        if (bars[i].section !== undefined) {
+            const range = sectionBarRange(bars, i);
+            if (range) out.push({ label: /** @type {string} */ (bars[i].section), range });
+        }
+    }
+    return out;
+}
+
+/**
+ * Every bar range whose section carries `label`, in chart order — a label can
+ * recur (an AABA-type form), and an object assigned that label owns them all.
+ * @param {ChartBar[]} bars
+ * @param {string} label
+ * @returns {Array<[number, number]>}
+ */
+export function rangesForLabel(bars, label) {
+    return chartSections(bars).filter((s) => s.label === label).map((s) => s.range);
+}
+
+/**
+ * The section LABEL an object's stored assignment refers to. A string is the
+ * label itself; a legacy `[start,end]` range is migrated to the label of the
+ * section containing its start bar. Returns null when nothing resolves.
+ * @param {ChartBar[]} bars
+ * @param {unknown} chartSection  the object's stored `chartSection`
+ * @returns {string | null}
+ */
+export function sectionLabelFor(bars, chartSection) {
+    if (typeof chartSection === "string" && chartSection !== "") {
+        return rangesForLabel(bars, chartSection).length > 0 ? chartSection : null;
+    }
+    if (Array.isArray(chartSection) && chartSection.length === 2) {
+        const start = Math.floor(Number(chartSection[0]));
+        let label = null;
+        for (const s of chartSections(bars)) {
+            if (s.range[0] <= start && start <= s.range[1]) label = s.label;
+        }
+        return label;
+    }
+    return null;
+}
+
 /**
  * A cell in a laid-out ROW: either a real {@link ChartBar} or an EMPTY
  * placeholder used for left-padding (a section's short final row, or an
