@@ -1388,6 +1388,27 @@ class SpriteRuntimeState {
         this._lastCycleSpeedsString =
             typeof sprite.cycleSpeeds === "string" ? sprite.cycleSpeeds : "1";
 
+        // --- Active-beat firing ---
+        // A sprite plays beat points exactly as a curve does: the same baked
+        // cycle-fraction positions, fired by _detectActiveBeatCrossings as the
+        // shared cycle clock crosses them. The sprite has no geometry, so a beat
+        // fires at the sprite's CURRENT position (sampling the pixel under it).
+        // Mirrors CurveRuntimeState's fields; populated by _applyCurveBeatPoints.
+        /** @type {number[]} */
+        this._beatFractions = [];
+        /** @type {number[]} */
+        this._beatStrengths = [];
+        /** @type {number[]} */
+        this._beatRanges = [];
+        /** @type {Array<{g: number, f: number, strength: number, index: number}> | null} */
+        this._beatOrder = null;
+        /** @type {number} */
+        this._beatOrderSign = 0;
+        /** @type {number} */
+        this._lastBeatCycle = -1;
+        /** @type {number} */
+        this._beatNextIdx = 0;
+
         // Deterministic per-sprite RNG for the anti-trap
         // agitation. _rngSeed is derived from the id (stable
         // across runs); _rngState advances each sub-step the
@@ -2388,6 +2409,12 @@ export class Simulation {
             const state = this._curveState.get(c.id);
             if (state !== undefined) this._applyCurveBeatPoints(c, state);
         }
+        // Sprites play beat points too (same bake, fired from _stepSprites).
+        for (const s of this._scene.sprites) {
+            if (typeof s.id !== "string") continue;
+            const state = this._spriteState.get(s.id);
+            if (state !== undefined) this._applyCurveBeatPoints(s, state);
+        }
     }
 
     /**
@@ -2500,16 +2527,16 @@ export class Simulation {
      * @param {any} curve
      * @param {CurveRuntimeState} state
      */
-    _detectActiveBeatCrossings(curve, state) {
+    _detectActiveBeatCrossings(obj, state, kind = "curve") {
         if (state._beatFractions.length === 0) return;
         if (this._scene === null) return;
-        if (curve.state !== "active") return;
-        if (curve.canActiveBeat !== true) return;
-        const fnName = resolveOnActiveBeatName(curve);
+        if (obj.state !== "active") return;
+        if (obj.canActiveBeat !== true) return;
+        const fnName = resolveOnActiveBeatName(obj);
         if (fnName === "") return;
         const fn = this._scene.functionMap[fnName];
         if (typeof fn !== "function") return;
-        const disableKey = "onActiveBeat:" + curve.id;
+        const disableKey = "onActiveBeat:" + obj.id;
         if (this._activeBeatDisabled.has(disableKey)) return;
 
         const loopLen = cycleSpeedsLoopLength(state.speedList);
@@ -2571,7 +2598,7 @@ export class Simulation {
             // (all reached by progress 1), then build the incoming cycle.
             while (state._beatNextIdx < state._beatOrder.length) {
                 const b = state._beatOrder[state._beatNextIdx++];
-                this._runOnActiveBeat(curve, state, fn, disableKey, b.index, state._beatOrder.length, b.strength, b.f, b.range, b.drop);
+                this._runOnActiveBeat(obj, state, fn, disableKey, b.index, state._beatOrder.length, b.strength, b.f, b.range, b.drop, kind);
             }
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
@@ -2594,7 +2621,7 @@ export class Simulation {
         const prog = state.cycleProgress;
         while (state._beatNextIdx < order.length && order[state._beatNextIdx].g <= prog) {
             const b = order[state._beatNextIdx++];
-            this._runOnActiveBeat(curve, state, fn, disableKey, b.index, order.length, b.strength, b.f, b.range, b.drop);
+            this._runOnActiveBeat(obj, state, fn, disableKey, b.index, order.length, b.strength, b.f, b.range, b.drop, kind);
         }
     }
 
@@ -2617,29 +2644,40 @@ export class Simulation {
      * @param {number} strength
      * @param {number} fraction  The beat's cycle-fraction (for the flash).
      */
-    _runOnActiveBeat(curve, state, fn, disableKey, beatIndex, beatCount, strength, fraction, range, drop) {
+    _runOnActiveBeat(curve, state, fn, disableKey, beatIndex, beatCount, strength, fraction, range, drop, kind = "curve") {
         const self = this;
-        const selfId = curve.id;
+        const obj = curve;                     // may be a curve OR a sprite
+        const selfId = obj.id;
         const simTime = this._simTime;
         const bpm = this._transport.bpm;
         const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
         const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
 
-        // Colour beneath the BEAT POINT — the pixel under the cursor as
-        // it crosses this beat, NOT the curve centre — so the author
-        // can map the colour behind each beat to its note (e.g. pitch
-        // from this.col.r). The beat point sits on the curve at
-        // parameter `fraction`, shifted by the curve's runtime offset
-        // (state.dx/dy) exactly as the diamond draws. Same ten signals
-        // as the onTick reads, via the same sampler; all zero with no
-        // canvas/image.
-        const sample = sampleCurve(curve.shape, fraction);
-        const oklch = (sample !== null
-            && this._canvas !== null
-            && typeof this._canvas.sampleImageOKLCh === "function")
-            ? this._canvas.sampleImageOKLCh(sample.x + state.dx, sample.y + state.dy)
-            : null;
-        const px = imageSignalsFromOKLCh(oklch);
+        // Firing point + the colour beneath it (this.x/this.y, this.col). A CURVE
+        // samples at the BEAT POINT along its geometry (parameter `fraction`,
+        // runtime-offset like the diamond). A SPRITE has no geometry — the beat
+        // fires at the sprite's CURRENT position, sampling the pixel under it (the
+        // same per-kind helpers the collision path uses), so colour/context vary
+        // along the sprite's motion and repeat each cycle.
+        let fireX = 0;
+        let fireY = 0;
+        let px;
+        if (kind === "sprite") {
+            const fp = this._objectFiringPosition(obj, "sprite");
+            fireX = fp.x;
+            fireY = fp.y;
+            px = this._sampleColorUnderObject(obj, "sprite");
+        } else {
+            const sample = sampleCurve(obj.shape, fraction);
+            fireX = sample !== null ? sample.x + state.dx : 0;
+            fireY = sample !== null ? sample.y + state.dy : 0;
+            const oklch = (sample !== null
+                && this._canvas !== null
+                && typeof this._canvas.sampleImageOKLCh === "function")
+                ? this._canvas.sampleImageOKLCh(sample.x + state.dx, sample.y + state.dy)
+                : null;
+            px = imageSignalsFromOKLCh(oklch);
+        }
         const col = colFromSignals(px);
         // Canvas-driven DROP (the third positional digit, SVD). A drop level
         // 1..9 silences this beat where the object's Drop-from-Canvas channel
@@ -2681,16 +2719,9 @@ export class Simulation {
             effStrength = lo + cv * (hi - lo);
         }
         const vel = effStrength / 9;
-        // Firing point (this.x/this.y): the beat point's canvas
-        // position — the sampled point on the curve plus the runtime
-        // offset, the same coordinates `col` was read from. Zero when
-        // the shape is degenerate (no sample).
-        const fireX = sample !== null ? sample.x + state.dx : 0;
-        const fireY = sample !== null ? sample.y + state.dy : 0;
-        // Object centre (this.centerX/centerY): the curve's own centre
-        // plus the runtime offset — NOT the beat point, which moves
-        // along the curve.
-        const center = this._objectCenter(curve, "curve");
+        // Object centre (this.centerX/centerY): the object's own centre, per kind
+        // (the beat point moved along the curve, or the sprite's current centre).
+        const center = this._objectCenter(curve, kind);
         // The curve's OWN authored colour as signals (this.ownColor.*),
         // distinct from `col` (the image colour beneath the beat point).
         const color = colorSignalsFromHex(curve.color);
@@ -2735,7 +2766,7 @@ export class Simulation {
         // voice; playSound from its sound bank. Velocity defaults to vel.
         const ctx = {
             id: selfId,
-            kind: "curve",
+            kind,
             beatIndex,
             beatCount,
             // The crossed beat's accent (the Beat Strength digit 0-9)
@@ -3220,6 +3251,7 @@ export class Simulation {
                 newState.baseVy = newState._authVy * speed;
                 newState.vx = newState.baseVx;
                 newState.vy = newState.baseVy;
+                this._applyCurveBeatPoints(s, newState);   // bake the sprite's beat points
                 this._spriteState.set(s.id, newState);
                 continue;
             }
@@ -3264,6 +3296,9 @@ export class Simulation {
                 existing._lastCycleSpeedsString = newCycleSpeedsStr;
                 existing.speedList = parseCycleSpeeds(newCycleSpeedsStr);
             }
+            // Re-bake the sprite's beat points each run (a beat-points edit
+            // re-applies), mirroring the curve path.
+            this._applyCurveBeatPoints(s, existing);
         }
         for (const id of [...this._spriteState.keys()]) {
             if (!seenSpriteIds.has(id)) this._spriteState.delete(id);
@@ -3487,7 +3522,8 @@ export class Simulation {
             if (cd <= 0) continue;
             if (state._lastCycleDuration <= 0) continue;
             if (state._lastCycleDuration === cd) continue;
-            const phase = computeCyclePhaseFromGlobalTime(simTime, cd, [1]);
+            // Real speedList so cycleSpeeds scales the cycle rate (as for a curve).
+            const phase = computeCyclePhaseFromGlobalTime(simTime, cd, state.speedList);
             state.cycleCount = phase.cycleCount;
             state.cycleProgress = phase.cycleProgress;
             state._lastCycleDuration = cd;
@@ -5453,88 +5489,45 @@ export class Simulation {
             //    sprite never wraps.
             const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(sprite), effectiveBeatInterval(sprite));
             if (cd <= 0) continue;
-            // Timing-edit snap. Mirrors _stepCurve's snap
-            // with the cursor and direction branches removed
-            // since sprites have no t and no cycleSpeeds.
-            // Physics state (x/y/vx/vy) is intentionally
-            // left alone here: a timing edit is about cycle
-            // phase, not about position; resetting physics
-            // on every timing change would be more
-            // disruptive than the cursor jump on curves, and
-            // the next regular cycle wrap snaps physics
-            // home anyway under the per-cycle home-return
-            // semantics. Passing [1] as speedList reduces
-            // the closed-form walk to a single division.
-            if (state._lastCycleDuration > 0
-                && state._lastCycleDuration !== cd) {
-                const phase = computeCyclePhaseFromGlobalTime(
-                    this._simTime, cd, [1],
-                );
-                state.cycleCount = phase.cycleCount;
-                state.cycleProgress = phase.cycleProgress;
-            }
+            // Cycle phase straight from the MASTER clock (transport.formBeats) —
+            // NOT an accumulator. The chart objects read the same clock, so the
+            // sprite's beats stay exactly tempo-locked to them with no
+            // accumulation drift. computeCyclePhaseFromGlobalTime walks the real
+            // speedList, so cycleSpeeds scales the cycle RATE (each cycle lasts
+            // cd/|speed|), and a cd change (BPM / Measures edit) re-derives the
+            // phase automatically. Falls back to the sim clock if the piece has no
+            // beat clock (no BPM).
+            const fb = this._transport.formBeats;
+            const masterTime = (Number.isFinite(fb) && bpm > 0) ? (fb * 60) / bpm : this._simTime;
+            const phase = computeCyclePhaseFromGlobalTime(masterTime, cd, state.speedList);
             state._lastCycleDuration = cd;
-            state.cycleProgress += dt / cd;
-            // 5. On wrap, snap the sprite home and advance
-            //    the counter. Multiple wraps in one step are
-            //    possible at very short cycle durations; the
-            //    loop handles that.
-            while (state.cycleProgress >= 1) {
-                state.cycleProgress -= 1;
-                const prevSpeed = this._spriteCycleSpeed(
-                    state, state.cycleCount,
-                ).speed;
-                state.cycleCount++;
-                const { speed, teleport } = this._spriteCycleSpeed(
-                    state, state.cycleCount,
-                );
-                if (teleport) {
-                    // Loop restart on a zero-terminated list:
-                    // a fresh launch identical to a rewind's.
-                    // Home position (authored plus the seeded
-                    // offset, both zero by default), base
-                    // re-derived from authored times this cycle's
-                    // speed plus the seeded velocity offset, the
-                    // impulse layer zeroed (vx/vy set equal to
-                    // base), and the flip signs reset.
-                    state.x = state._authX + state._seedDx;
-                    state.y = state._authY + state._seedDy;
-                    state.baseVx = state._authVx * speed + state._seedVx;
-                    state.baseVy = state._authVy * speed + state._seedVy;
-                    state.vx = state.baseVx;
-                    state.vy = state.baseVy;
-                    state.flipX = 1;
-                    state.flipY = 1;
-                    state._rngState = state._rngSeed;
-                    state._lastAudioFireTime = -Infinity;
-                } else {
-                    // Continuous wrap: scale only the BASE
-                    // layer by the ratio of this cycle's speed
-                    // to the previous cycle's, leaving the
-                    // impulse layer (the implicit vx - baseVx)
-                    // untouched so a force field's accumulated
-                    // effect rides through the boundary. The
-                    // effective velocity moves by the base
-                    // delta: new vx = old vx + baseVx*(ratio-1),
-                    // computed BEFORE baseVx is itself rescaled.
-                    // With no impulse (vx == baseVx) this
-                    // reduces to the old vx *= ratio. A same-
-                    // speed list ("1") gives ratio 1 and changes
-                    // nothing; "1 -1" flips direction; "1 2"
-                    // rescales speed. The product of ratios
-                    // telescopes over a loop so base magnitude
-                    // stays |authored| times this cycle's speed.
-                    // The impulse is relaxed each step by
-                    // damping, not by the wrap; base stays
-                    // pristine.
-                    const ratio = prevSpeed !== 0 ? speed / prevSpeed : 0;
-                    state.vx += state.baseVx * (ratio - 1);
-                    state.vy += state.baseVy * (ratio - 1);
-                    state.baseVx *= ratio;
-                    state.baseVy *= ratio;
-                }
-                logCycleWrap("sprite", sprite, state.cycleCount);
+            // On a cycle boundary, the sprite ALWAYS returns home and relaunches:
+            // position back to its authored x/y (plus the seeded offset), velocity
+            // to its authored launch × this cycle's speed, the impulse layer
+            // cleared, flips and jitter RNG reset. So a sprite cycle is its motion
+            // repeating from its initial conditions — the analogue of a curve
+            // looping its path — every cycle, unconditionally. (One snap covers any
+            // number of crossed cycles; home is the same each time.)
+            if (phase.cycleCount !== state.cycleCount) {
+                const { speed } = this._spriteCycleSpeed(state, phase.cycleCount);
+                state.x = state._authX + state._seedDx;
+                state.y = state._authY + state._seedDy;
+                state.baseVx = state._authVx * speed + state._seedVx;
+                state.baseVy = state._authVy * speed + state._seedVy;
+                state.vx = state.baseVx;
+                state.vy = state.baseVy;
+                state.flipX = 1;
+                state.flipY = 1;
+                state._rngState = state._rngSeed;
+                state._lastAudioFireTime = -Infinity;
+                logCycleWrap("sprite", sprite, phase.cycleCount);
             }
+            state.cycleCount = phase.cycleCount;
+            state.cycleProgress = phase.cycleProgress;
+            // Fire onActiveBeat for any beats the shared cycle clock crossed this
+            // step — identical timing to a curve. The sprite's position is current
+            // (integrated above), so each beat sounds at where the sprite is.
+            this._detectActiveBeatCrossings(sprite, state, "sprite");
         }
     }
 }
