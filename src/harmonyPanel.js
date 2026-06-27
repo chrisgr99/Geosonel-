@@ -34,6 +34,7 @@ import {
     searchSongs,
     getSong,
 } from "./harmonyLibrary.js";
+import { TEST_PROGRESSIONS } from "./samples/testProgressions.js";
 import { layoutChart, groupRows, formatChordParts, buildBarPlayback } from "./harmonyChartLayout.js";
 import { applyUnwind, sanitiseUnwind } from "./harmonyUnwind.js";
 import { expandProgression } from "./harmonyPlayer.js";
@@ -45,6 +46,10 @@ import {
 } from "./harmonyPhraseGeometry.js";
 
 const SCOPE_ALL = "all";
+// Built-in "Default Charts" scope: the bundled test progressions
+// (src/samples/testProgressions.js), always available with no import. A pseudo-
+// playlist that lives only in the picker, never in the localStorage library.
+const SCOPE_DEFAULT = "default-charts";
 
 /** Bars per chart row before wrapping. */
 const BARS_PER_ROW = 4;
@@ -417,25 +422,25 @@ export class HarmonyPanel {
 
         const playlists = listPlaylists();
         if (playlists.length === 0) {
+            // No imported library yet — but the built-in Default Charts are always
+            // available, so render the picker pinned to that scope (with a hint),
+            // rather than bailing out to a placeholder.
             const hint = document.createElement("p");
             hint.className = "harmony-placeholder-hint";
             hint.textContent =
-                "Import a chart from File → Import iReal Pro Chart…, then choose a song.";
+                "No imported charts yet — pick a Default Chart below, or File → Import iReal Pro Chart…";
             this.container.appendChild(hint);
-            // No library, but the scene may still carry a stored harmony
-            // (a saved score opened on a machine without the source
-            // playlist). Show its chart (titled with the song) anyway.
-            this._buildChartSection();
-            this._renderChart();
-            return;
+            this._scope = SCOPE_DEFAULT;
         }
 
-        // Keep the scope valid against the current library.
-        if (this._scope !== SCOPE_ALL &&
+        // Keep the scope valid against the current library. SCOPE_ALL and the
+        // built-in SCOPE_DEFAULT are always valid (not library playlists).
+        if (this._scope !== SCOPE_ALL && this._scope !== SCOPE_DEFAULT &&
             !playlists.some((p) => p.id === this._scope)) {
             this._scope = playlists[0].id;
         }
-        if (this._scope === SCOPE_ALL && this._query === "" && this._results.length === 0) {
+        if (this._scope === SCOPE_ALL && this._query === "" && this._results.length === 0
+            && playlists.length > 0) {
             // Default to the first playlist on a fresh mount, but never
             // override a user's explicit "All" choice once they've typed.
             this._scope = playlists[0].id;
@@ -457,9 +462,14 @@ export class HarmonyPanel {
         this._count = count;
         grid.appendChild(count);
 
-        // Playlist dropdown.
+        // Playlist dropdown. "Default Charts" leads — the built-in progressions,
+        // always available — then the imported playlists, then "All".
         const select = document.createElement("select");
         select.className = "harmony-playlist-select";
+        const defaultOpt = document.createElement("option");
+        defaultOpt.value = SCOPE_DEFAULT;
+        defaultOpt.textContent = `Default Charts (${TEST_PROGRESSIONS.length})`;
+        select.appendChild(defaultOpt);
         for (const p of playlists) {
             const opt = document.createElement("option");
             opt.value = p.id;
@@ -557,7 +567,14 @@ export class HarmonyPanel {
     _recomputeResults() {
         const needle = this._query.trim().toLowerCase();
 
-        if (this._scope === SCOPE_ALL) {
+        if (this._scope === SCOPE_DEFAULT) {
+            // Built-in Default Charts: filtered by the query, selected directly
+            // (their SceneHarmony rides on the result; _select bypasses getSong).
+            this._scopeTotal = TEST_PROGRESSIONS.length;
+            this._results = TEST_PROGRESSIONS
+                .filter((s) => needle === "" || s.title.toLowerCase().includes(needle))
+                .map((s) => ({ builtin: true, song: s, title: s.title, playlistName: "Default Charts", supported: true }));
+        } else if (this._scope === SCOPE_ALL) {
             // Total across all playlists.
             const playlists = listPlaylists();
             this._scopeTotal = playlists.reduce((n, p) => n + p.songCount, 0);
@@ -1738,7 +1755,9 @@ export class HarmonyPanel {
     _select(i) {
         const r = this._results[i];
         if (!r) return;
-        const song = getSong(r.playlistId, r.index);
+        // Built-in Default Charts carry their SceneHarmony inline; library songs
+        // are fetched by playlist + index.
+        const song = r.builtin ? r.song : getSong(r.playlistId, r.index);
         if (song === null) return;
 
         this._chosen = {
