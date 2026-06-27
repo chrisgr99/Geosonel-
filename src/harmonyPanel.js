@@ -35,7 +35,7 @@ import {
     getSong,
 } from "./harmonyLibrary.js";
 import { TEST_PROGRESSIONS } from "./samples/testProgressions.js";
-import { layoutChart, groupRows, formatChordParts, buildBarPlayback } from "./harmonyChartLayout.js";
+import { layoutChart, groupRows, formatChordParts, buildBarPlayback, chartSections, rangesForLabel } from "./harmonyChartLayout.js";
 import { applyUnwind, sanitiseUnwind } from "./harmonyUnwind.js";
 import { expandProgression } from "./harmonyPlayer.js";
 
@@ -275,20 +275,19 @@ export class HarmonyPanel {
         /** The object whose section the orange line edits, or null. @type {string | null} */
         this._sectionObjectId = null;
         /**
-         * The selected object's working section: an inclusive FOLDED chart-bar
-         * range [start, end], or null for the whole form. Pushed in by main.js
-         * via setSectionObject and edited live by the line. @type {[number, number] | null}
+         * The selected object's assigned section LABEL (e.g. "A"), or null for the
+         * whole form. The label can occur several times; the object owns them all.
+         * Pushed in by main.js via setSectionObject. @type {string | null}
          */
-        this._sectionRange = null;
-        /** Whether the section-editing tool is armed. */
-        this._phraseTool = false;
+        this._sectionLabel = null;
         /**
-         * Active end drag: which edge is moving, or null. "create" is a fresh
-         * drag-out begun on an empty bar. @type {"start" | "end" | "create" | null}
+         * Practice-loop mirror: the folded bar range [start, end] the beat editor
+         * is looping, shown as an olive wash on the chart, or null. Transient.
+         * @type {[number, number] | null}
          */
-        this._sectionDrag = null;
-        /** The fixed end (folded bar) during a drag — the edge that stays put. */
-        this._sectionDragAnchor = 0;
+        this._loopBars = null;
+        /** Whether the section-assigning tool is armed. */
+        this._phraseTool = false;
         /** The section-tool toggle button. @type {HTMLButtonElement | null} */
         this._phraseToolBtn = null;
 
@@ -319,7 +318,7 @@ export class HarmonyPanel {
         // while the tool is armed. Ignored when typing in a field (the filter
         // input) so it can't eat a backspace meant for text.
         this._onDocKeyDown = (/** @type {KeyboardEvent} */ e) => {
-            if (!this._phraseTool || this._sectionRange === null) return;
+            if (!this._phraseTool || this._sectionLabel === null) return;
             if (e.key !== "Delete" && e.key !== "Backspace") return;
             const ae = document.activeElement;
             if (ae !== null && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
@@ -356,27 +355,63 @@ export class HarmonyPanel {
 
     /**
      * Wire the section-edit callback (main.js owns the scene edit + re-run).
-     * @param {(objectId: string, range: [number, number] | null) => void} cb
+     * @param {(objectId: string, label: string | null) => void} cb
      */
     onEditSection(cb) {
         this._onEditSection = cb;
     }
 
     /**
-     * Point the orange line at a beat-points object: it now marks (and, when the
-     * tool is armed, edits) that object's assigned folded chart-bar range. Called
-     * by main.js on every selection change. `id === null` (no single chart-mode
-     * object selected) hides the line and disables the tool.
+     * Point the orange line at a beat-points object: it marks (and, armed, edits)
+     * that object's assigned section LABEL — drawn over EVERY section bearing that
+     * label. Called by main.js on every selection change. `id === null` (no single
+     * chart-mode object selected) hides the line and disables the tool.
      * @param {string | null} id
-     * @param {[number, number] | null} range  the object's stored chartSection, or null
+     * @param {string | null} label  the object's stored chartSection label, or null
      */
-    setSectionObject(id, range) {
+    setSectionObject(id, label) {
         this._sectionObjectId = typeof id === "string" ? id : null;
-        this._sectionRange = (this._sectionObjectId !== null && Array.isArray(range) && range.length === 2)
-            ? [Number(range[0]), Number(range[1])] : null;
+        this._sectionLabel = (this._sectionObjectId !== null && typeof label === "string" && label !== "")
+            ? label : null;
         if (this._sectionObjectId === null) this._phraseTool = false;
         this._syncPhraseToolBtn();
         this._renderSection();
+    }
+
+    /** All folded bar ranges of the currently-assigned label, or [] if none. */
+    _sectionRanges() {
+        if (this._harmony === null || this._sectionLabel === null) return [];
+        const ts = Array.isArray(this._harmony.timeSignature) ? this._harmony.timeSignature : [4, 4];
+        const bars = layoutChart(this._harmony.progression, this._harmony.key, "letter", ts);
+        return rangesForLabel(bars, this._sectionLabel);
+    }
+
+    /**
+     * Mirror the beat editor's practice loop on the chart: an olive wash over the
+     * looped folded bars [start, end]. A null start clears it. Transient — main.js
+     * calls this as the loop is armed/cleared.
+     * @param {number | null} start
+     * @param {number | null} end
+     */
+    setLoopBars(start, end) {
+        this._loopBars = (typeof start === "number" && typeof end === "number" && end >= start)
+            ? [start, end] : null;
+        this._renderLoopBars();
+    }
+
+    /** Paint the olive practice-loop wash over the chart's looped bars. */
+    _renderLoopBars() {
+        const chart = this._chartEl;
+        if (chart === null) return;
+        for (const cell of chart.querySelectorAll(".harmony-bar.loop-range")) {
+            cell.classList.remove("loop-range");
+        }
+        if (this._loopBars === null) return;
+        const [a, b] = this._loopBars;
+        for (let i = a; i <= b; i += 1) {
+            const cell = chart.querySelector(`.harmony-bar[data-bar-index="${i}"]`);
+            if (cell !== null) cell.classList.add("loop-range");
+        }
     }
 
     /**
@@ -390,13 +425,12 @@ export class HarmonyPanel {
      * @param {boolean} [loop=true]  whether playback loops (cursor wrap)
      */
     setHarmony(harmony, loop = true) {
-        // A DIFFERENT chart invalidates the section line: its bar ranges index the
-        // old chart (main.js clears the objects' chartSection in tandem), so drop
-        // the working range. A same-chart re-run keeps it (it's per-object, pushed
-        // by setSectionObject, so a plain re-render mustn't reset it).
+        // A DIFFERENT chart invalidates the section assignment (main.js clears the
+        // objects' chartSection in tandem), so drop the working label. A same-chart
+        // re-run keeps it (it's per-object, pushed by setSectionObject).
         const prevTitle = this._harmony ? this._harmony.title : null;
         const newTitle = harmony ? harmony.title : null;
-        if (newTitle !== prevTitle) this._sectionRange = null;
+        if (newTitle !== prevTitle) this._sectionLabel = null;
         this._harmony = harmony || null;
         this._loop = loop !== false;
         // The section range is per-OBJECT (pushed in by setSectionObject), not a
@@ -1136,6 +1170,7 @@ export class HarmonyPanel {
         // Paint the section overlay (the orange line) and reflect the tool's
         // armed state onto the chart.
         this._renderSection();
+        this._renderLoopBars();          // the practice-loop olive mirror
         chart.classList.toggle("phrase-tool-active", this._phraseTool);
 
         // Re-light the cursor onto the freshly built DOM if a beat is current.
@@ -1143,65 +1178,34 @@ export class HarmonyPanel {
     }
 
     /**
-     * Paint the section overlay: the orange line spanning the selected object's
-     * assigned folded chart-bar range. Each covered bar gets a full-width rule
-     * (so the line rides the grid's row-wrapping for free), with downturned caps
-     * on the range's true start and end. When the tool is armed, drag HANDLES
-     * grow at the two ends. No range → no line (the object plays the whole form).
+     * Paint the section overlay: the orange line over EVERY section bearing the
+     * selected object's assigned label (a label can recur — the object owns them
+     * all). Each covered bar gets a full-width rule with downturned caps on each
+     * range's true ends, so all occurrences glow at once. No label → no line (the
+     * object plays the whole form).
      */
     _renderSection() {
         const chart = this._chartEl;
         if (chart === null) return;
-        // Clear any prior overlay pieces (the grid cells persist).
-        for (const old of chart.querySelectorAll(".harmony-phrase-line, .harmony-phrase-handle")) {
-            old.remove();
-        }
-        const range = this._sectionRange;
-        if (range === null) return;
-        const [a, b] = range;
-        for (let i = a; i <= b; i += 1) {
-            const cell = chart.querySelector(`.harmony-bar[data-bar-index="${i}"]`);
-            if (cell === null) continue;
-            const line = document.createElement("div");
-            line.className = "harmony-phrase-line";
-            if (i === a) line.classList.add("start-cap");
-            if (i === b) line.classList.add("end-cap");
-            line.style.left = "0";
-            line.style.width = "100%";
-            cell.appendChild(line);
-        }
-        if (this._phraseTool) {
-            this._placeBarHandle(a, "start");
-            this._placeBarHandle(b, "end");
+        for (const old of chart.querySelectorAll(".harmony-phrase-line")) old.remove();
+        for (const [a, b] of this._sectionRanges()) {
+            for (let i = a; i <= b; i += 1) {
+                const cell = chart.querySelector(`.harmony-bar[data-bar-index="${i}"]`);
+                if (cell === null) continue;
+                const line = document.createElement("div");
+                line.className = "harmony-phrase-line";
+                if (i === a) line.classList.add("start-cap");
+                if (i === b) line.classList.add("end-cap");
+                line.style.left = "0";
+                line.style.width = "100%";
+                cell.appendChild(line);
+            }
         }
     }
 
-    /**
-     * Place a drag handle at a folded bar's left ("start") or right ("end") edge.
-     * @param {number} barIndex
-     * @param {"start" | "end"} edge
-     */
-    _placeBarHandle(barIndex, edge) {
-        const chart = this._chartEl;
-        if (chart === null) return;
-        const cell = chart.querySelector(`.harmony-bar[data-bar-index="${barIndex}"]`);
-        if (cell === null) return;
-        const handle = document.createElement("div");
-        handle.className = `harmony-phrase-handle ${edge}`;
-        handle.style.left = edge === "start" ? "0" : "100%";
-        handle.dataset.edge = edge;
-        handle.addEventListener("mousedown", (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            this._beginEdgeDrag(edge);
-        });
-        cell.appendChild(handle);
-    }
-
-    /** Toggle the section-editing tool on/off, ending any in-progress drag. */
+    /** Toggle the section-assigning tool on/off. */
     _togglePhraseTool() {
         this._phraseTool = !this._phraseTool;
-        this._sectionDrag = null;
         this._syncPhraseToolBtn();
         if (this._chartEl !== null) {
             this._chartEl.classList.toggle("phrase-tool-active", this._phraseTool);
@@ -1221,163 +1225,49 @@ export class HarmonyPanel {
     }
 
     /**
-     * Chart mousedown while the tool is armed: snap to a clicked section label,
-     * or begin a drag-out from the clicked bar to define a new range. Handle
-     * drags are caught earlier (they stopPropagation).
+     * Chart mousedown while the tool is armed: assign (or clear) the LABEL of the
+     * clicked section to the selected object. Assignment is always a whole section
+     * — there is no free-range drag.
      * @param {MouseEvent} e
      */
     _onChartMouseDown(e) {
-        if (!this._phraseTool || this._sectionObjectId === null) return;
+        if (!this._phraseTool || this._sectionObjectId === null || this._harmony === null) return;
         const target = /** @type {Element} */ (e.target);
-        // Click a section label → snap the line to that whole section.
-        const label = target.closest ? target.closest(".harmony-bar-section") : null;
-        if (label !== null) {
-            const lcell = label.closest(".harmony-bar[data-bar-index]");
-            if (lcell !== null) this._snapToSection(Number(lcell.dataset.barIndex));
-            return;
-        }
         const cell = target.closest ? target.closest(".harmony-bar[data-bar-index]") : null;
         if (cell === null) return;
         const bar = Number(/** @type {HTMLElement} */ (cell).dataset.barIndex);
         if (!Number.isFinite(bar)) return;
-        this._beginCreateDrag(bar);
-    }
-
-    /** Snap the range to the section opening at folded bar `start` (label click). */
-    _snapToSection(start) {
-        if (!Number.isFinite(start)) return;
-        const starts = this._sectionStarts();
-        let end = this._maxBarIndex();
-        for (const st of starts) { if (st > start) { end = st - 1; break; } }
-        if (end < start) return;
-        this._sectionRange = [start, end];
-        this._commitSection();
-    }
-
-    /** The folded bar indices where a section opens, ascending (read from DOM). */
-    _sectionStarts() {
-        const chart = this._chartEl;
-        if (chart === null) return [];
-        /** @type {number[]} */
-        const out = [];
-        for (const sec of chart.querySelectorAll(".harmony-bar-section")) {
-            const cell = sec.closest(".harmony-bar[data-bar-index]");
-            if (cell === null) continue;
-            const i = Number(/** @type {HTMLElement} */ (cell).dataset.barIndex);
-            if (Number.isFinite(i)) out.push(i);
-        }
-        out.sort((x, y) => x - y);
-        return out;
-    }
-
-    /** The largest folded bar index in the chart, or -1 when empty. */
-    _maxBarIndex() {
-        const chart = this._chartEl;
-        if (chart === null) return -1;
-        let max = -1;
-        for (const cell of chart.querySelectorAll(".harmony-bar[data-bar-index]")) {
-            const i = Number(/** @type {HTMLElement} */ (cell).dataset.barIndex);
-            if (Number.isFinite(i) && i > max) max = i;
-        }
-        return max;
-    }
-
-    /** Begin a fresh drag-out from bar `anchor` (a 1-bar range, grows with the drag). */
-    _beginCreateDrag(anchor) {
-        this._sectionDrag = "create";
-        this._sectionDragAnchor = anchor;
-        this._sectionRange = [anchor, anchor];
-        this._attachSectionDrag();
-        this._renderSection();
-    }
-
-    /** Begin dragging one fixed-anchored end of the current range. */
-    _beginEdgeDrag(edge) {
-        if (this._sectionRange === null) return;
-        this._sectionDrag = edge;
-        // The OTHER end stays put.
-        this._sectionDragAnchor = edge === "start" ? this._sectionRange[1] : this._sectionRange[0];
-        this._attachSectionDrag();
-    }
-
-    /** Wire the document-level move/up listeners for an active section drag. */
-    _attachSectionDrag() {
-        this._onDragMove = (/** @type {MouseEvent} */ ev) => this._handleDragMove(ev);
-        this._onDragUp = () => this._endSectionDrag();
-        document.addEventListener("mousemove", this._onDragMove);
-        document.addEventListener("mouseup", this._onDragUp);
+        this._assignSectionAt(bar);
     }
 
     /**
-     * The bar cell nearest a viewport point, scanning every bar's rect. Unlike
-     * elementFromPoint, this works when the pointer sits in the ROW GAP above
-     * the bars (where the drag handles live): it picks the vertically-closest
-     * row, then the bar in it whose horizontal span contains (or is nearest)
-     * the x. Returns the cell element, or null when there are no bars.
-     * @param {number} clientX
-     * @param {number} clientY
-     * @returns {HTMLElement | null}
+     * Assign the label of the section containing folded bar `bar` to the object.
+     * Clicking the already-assigned label clears it (back to the whole form).
+     * @param {number} bar
      */
-    _barCellAtPoint(clientX, clientY) {
-        const chart = this._chartEl;
-        if (chart === null) return null;
-        const cells = chart.querySelectorAll(".harmony-bar[data-bar-index]");
-        let best = null;
-        let bestScore = Infinity;
-        for (const cell of cells) {
-            const r = cell.getBoundingClientRect();
-            const dy = clientY < r.top ? r.top - clientY
-                : clientY > r.bottom ? clientY - r.bottom : 0;
-            const dx = clientX < r.left ? r.left - clientX
-                : clientX > r.right ? clientX - r.right : 0;
-            // Row first (dy dominates), then horizontal within the row.
-            const score = dy * 10000 + dx;
-            if (score < bestScore) { bestScore = score; best = cell; }
+    _assignSectionAt(bar) {
+        const ts = Array.isArray(this._harmony.timeSignature) ? this._harmony.timeSignature : [4, 4];
+        const bars = layoutChart(this._harmony.progression, this._harmony.key, "letter", ts);
+        let label = null;
+        for (const s of chartSections(bars)) {
+            if (s.range[0] <= bar && bar <= s.range[1]) label = s.label;
         }
-        return /** @type {HTMLElement | null} */ (best);
-    }
-
-    /** Live-update the moving end of the range to the bar under the pointer. */
-    _handleDragMove(e) {
-        if (this._sectionDrag === null || this._sectionRange === null) return;
-        const cell = this._barCellAtPoint(e.clientX, e.clientY);
-        if (cell === null) return;
-        const bar = Number(cell.dataset.barIndex);
-        if (!Number.isFinite(bar)) return;
-        const max = this._maxBarIndex();
-        const at = Math.max(0, Math.min(max, bar));
-        const anchor = this._sectionDragAnchor;
-        if (this._sectionDrag === "start") {
-            // The end is fixed at `anchor`; the start can't pass it.
-            this._sectionRange = [Math.min(at, anchor), anchor];
-        } else if (this._sectionDrag === "end") {
-            this._sectionRange = [anchor, Math.max(at, anchor)];
-        } else {                                  // "create": grows either way
-            this._sectionRange = [Math.min(anchor, at), Math.max(anchor, at)];
-        }
-        this._renderSection();
-    }
-
-    /** Finish a section drag and commit. */
-    _endSectionDrag() {
-        if (this._onDragMove) document.removeEventListener("mousemove", this._onDragMove);
-        if (this._onDragUp) document.removeEventListener("mouseup", this._onDragUp);
-        this._sectionDrag = null;
+        if (label === null) return;                              // clicked outside any section
+        this._sectionLabel = (label === this._sectionLabel) ? null : label;   // toggle
         this._commitSection();
     }
 
-    /** Clear the range (object reverts to the whole form) and commit. */
+    /** Clear the assignment (object reverts to the whole form) and commit. */
     _clearSection() {
-        this._sectionRange = null;
+        this._sectionLabel = null;
         this._commitSection();
     }
 
-    /** Repaint the line and push the new range out to main.js. */
+    /** Repaint the line and push the new label out to main.js. */
     _commitSection() {
         this._renderSection();
         if (this._onEditSection !== null && this._sectionObjectId !== null) {
-            const r = this._sectionRange;
-            this._onEditSection(this._sectionObjectId, r === null ? null : [r[0], r[1]]);
+            this._onEditSection(this._sectionObjectId, this._sectionLabel);
         }
     }
 

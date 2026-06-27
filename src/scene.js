@@ -781,7 +781,7 @@ export class Curve {
         this.phrases = opts.phrases ?? 1;
         /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
         this.sections = opts.sections ?? 1;
-        /** @type {[number, number] | null} Harmony-driven section: the folded chart bar range [start, end] (inclusive) this object plays, or null for the whole form. */
+        /** @type {string | null} Harmony-driven section: the section LABEL (e.g. "A") this object plays — every occurrence of it — or null for the whole form. (Legacy scenes may carry a [start,end] range, migrated to the label at load.) */
         this.chartSection = opts.chartSection ?? null;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
@@ -985,7 +985,7 @@ export class Trigger {
         this.phrases = opts.phrases ?? 1;
         /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
         this.sections = opts.sections ?? 1;
-        /** @type {[number, number] | null} Harmony-driven section: the folded chart bar range [start, end] (inclusive) this object plays, or null for the whole form. */
+        /** @type {string | null} Harmony-driven section: the section LABEL (e.g. "A") this object plays — every occurrence of it — or null for the whole form. (Legacy scenes may carry a [start,end] range, migrated to the label at load.) */
         this.chartSection = opts.chartSection ?? null;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
@@ -1237,7 +1237,7 @@ export class Sprite {
         this.phrases = opts.phrases ?? 1;
         /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
         this.sections = opts.sections ?? 1;
-        /** @type {[number, number] | null} Harmony-driven section: the folded chart bar range [start, end] (inclusive) this object plays, or null for the whole form. */
+        /** @type {string | null} Harmony-driven section: the section LABEL (e.g. "A") this object plays — every occurrence of it — or null for the whole form. (Legacy scenes may carry a [start,end] range, migrated to the label at load.) */
         this.chartSection = opts.chartSection ?? null;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;

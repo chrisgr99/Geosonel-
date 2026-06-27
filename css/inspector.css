@@ -360,10 +360,54 @@
 .insp-phrase-row {
     display: flex;
     align-items: stretch;
+    position: relative;                 /* anchors the practice-loop overlay */
 }
 .insp-phrase-row:not(:last-child) {
     border-bottom: 2px solid #6f8f6f;   /* divider between phrases */
 }
+
+/* Practice-loop tool: the loop-icon toggle button (matches the harmony phrase
+ * tool button), and the per-measure drag-select overlay. */
+.insp-loop-btn {
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    height: 22px;
+    padding: 0 10px;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 10pt;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.insp-loop-btn:hover { border-color: #9ec79e; }
+.insp-loop-btn:disabled { opacity: 0.45; cursor: default; }
+/* Armed: olive, matching the range it paints. */
+.insp-loop-btn.active {
+    background-color: #5c5526;
+    border-color: #b3a14a;
+    color: #f0e6b8;
+}
+/* The drag layer over a row of measures: inert until the box is armed. */
+.insp-loop-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 100%;
+    pointer-events: none;
+}
+.insp-loop-seg {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    border-radius: 2px;
+    pointer-events: none;
+}
+/* Armed: segments capture the drag and show a crosshair; selected ones get the
+ * iReal-style olive wash. */
+.insp-phrase-box.loop-armed .insp-loop-seg { pointer-events: auto; cursor: crosshair; }
+.insp-loop-seg.selected { background-color: rgba(179, 161, 74, 0.45); }
 .insp-phrase-num {
     display: flex;
     align-items: center;
@@ -1792,6 +1836,12 @@
     background-color: rgba(158, 199, 158, 0.20);
     box-shadow: inset 0 0 0 2px #9ec79e;
     border-radius: 2px;
+}
+
+/* Practice-loop mirror: an olive wash over the bars the beat editor is looping
+ * (iReal-style), riding under the now-playing cursor. */
+.harmony-bar.loop-range {
+    background-color: rgba(179, 161, 74, 0.28);
 }
 
 /* ---- Phrase overlay + drawing tool ---------------------------------- */

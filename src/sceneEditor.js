@@ -2113,24 +2113,19 @@ export function setPhrasePatternOnSelection(data, selection, value, index) {
 }
 
 /**
- * Set (or clear) a beat-points object's Harmony-driven SECTION — the folded
- * chart-bar range [start, end] it plays — found by id across all object arrays.
- * The orange line on the chart edits this. A null/invalid range DELETES the
- * field, reverting the object to the whole form. Sanitised to integers with
- * 0 <= start <= end. Mutates `data`.
+ * Set (or clear) a beat-points object's Harmony-driven SECTION assignment — a
+ * section LABEL (e.g. "A"), found by id across all object arrays. The object
+ * then owns every section bearing that label. The orange line on the chart edits
+ * this; an empty/invalid label DELETES the field, reverting the object to the
+ * whole form. Mutates `data`.
  * @param {any} data
  * @param {string} objectId
- * @param {[number, number] | null} range
+ * @param {string | null} label
  */
-export function setObjectChartSection(data, objectId, range) {
+export function setObjectChartSection(data, objectId, label) {
     if (data === null || typeof data !== "object" || Array.isArray(data)) return;
     if (typeof objectId !== "string" || objectId === "") return;
-    let clean = null;
-    if (Array.isArray(range) && range.length === 2) {
-        const a = Math.max(0, Math.floor(Number(range[0])));
-        const b = Math.floor(Number(range[1]));
-        if (Number.isFinite(a) && Number.isFinite(b) && b >= a) clean = [a, b];
-    }
+    const clean = (typeof label === "string" && label !== "") ? label : null;
     for (const key of ["curves", "sprites", "triggers"]) {
         const arr = data[key];
         if (!Array.isArray(arr)) continue;

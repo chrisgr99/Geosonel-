@@ -67,6 +67,7 @@ import {
 import { TabbedEditor } from "./src/editor.js";
 import { Transport } from "./src/transport.js";
 import { Simulation, deriveStrudelCycleLengths } from "./src/simulation.js";
+import { sectionFormWindows } from "./src/chartFollow.js";
 import { TransportBarView } from "./src/transportBar.js";
 import { StrudelRuntime } from "./src/strudel/runtime.js";
 import { MIDISender } from "./src/strudel/midiSender.js";
@@ -684,7 +685,9 @@ async function main() {
     // sounding bar.
     canvas.setHarmonyBeatSink((beat) => {
         if (!editor.harmonyPanel) return;
-        editor.harmonyPanel.setPlayhead(beat);
+        // The canvas hands the (compressed) form beat; expand it to the real chart
+        // beat so the cursor skips unassigned sections under a compressed form.
+        editor.harmonyPanel.setPlayhead(beat === null ? null : simulation.formBeatToChartBeat(beat));
     });
 
     // Inspector hover-preview sink. As the pointer hovers an object on
@@ -2064,13 +2067,13 @@ async function main() {
             transport.rewind();
         });
 
-        // Section assignment: the orange line on the chart sets which folded
-        // chart-bar range the selected chart-following object plays. Commit
-        // writes that object's chartSection and re-runs so its curve + beat
-        // editor re-scope live. No rewind — a non-structural edit.
-        editor.harmonyPanel.onEditSection(async (objectId, range) => {
+        // Section assignment: the orange line on the chart sets which section
+        // LABEL the selected chart-following object plays (every occurrence of
+        // that label). Commit writes the object's chartSection label and re-runs
+        // so its curve + beat editor re-scope live. No rewind — non-structural.
+        editor.harmonyPanel.onEditSection(async (objectId, label) => {
             await applySceneEdit((data) => {
-                setObjectChartSection(data, objectId, range);
+                setObjectChartSection(data, objectId, label);
             });
         });
 
@@ -2806,17 +2809,19 @@ async function main() {
         // non-chart object, none, or a multi-selection clears it.
         if (editor.harmonyPanel) {
             let secId = null;
-            let secRange = null;
+            let secLabel = null;
             if (currentScene !== null
                 && selection.curves.length === 1
                 && selection.sprites.length === 0 && selection.triggers.length === 0) {
                 const c = currentScene.curves[selection.curves[0]];
                 if (c !== undefined && c.beatPointsMode === "chart" && typeof c.id === "string") {
                     secId = c.id;
-                    secRange = Array.isArray(c.chartSection) ? c.chartSection : null;
+                    // chartSection is now a section LABEL; legacy [start,end] scenes
+                    // show no line until re-assigned (the engine still migrates them).
+                    secLabel = typeof c.chartSection === "string" ? c.chartSection : null;
                 }
             }
-            editor.harmonyPanel.setSectionObject(secId, secRange);
+            editor.harmonyPanel.setSectionObject(secId, secLabel);
         }
         // Push the same id set into the firing engine's
         // play-selected gate so the Play Selected toolbar
@@ -4340,6 +4345,23 @@ async function main() {
                 await applySceneEdit((data) =>
                     setActiveBeatsOnSelection(data, edit.selection, edit.value),
                 );
+            } else if (edit.kind === "setPracticeLoop") {
+                // Transient global practice loop — NOT a scene edit (no persist /
+                // re-run). Map the looped folded-bar range to its first form-clock
+                // window and arm the loop; mirror the olive range on the chart.
+                const fw = (currentScene !== null && currentScene.harmony && Array.isArray(edit.range))
+                    ? sectionFormWindows(currentScene.harmony, edit.range) : null;
+                if (fw && fw.windows.length > 0) {
+                    const w = fw.windows[0];
+                    simulation.setPracticeLoop(w.startBeat, w.endBeat - w.startBeat);
+                    if (editor.harmonyPanel) editor.harmonyPanel.setLoopBars(edit.range[0], edit.range[1]);
+                } else {
+                    simulation.clearPracticeLoop();
+                    if (editor.harmonyPanel) editor.harmonyPanel.setLoopBars(null, null);
+                }
+            } else if (edit.kind === "clearPracticeLoop") {
+                simulation.clearPracticeLoop();
+                if (editor.harmonyPanel) editor.harmonyPanel.setLoopBars(null, null);
             } else if (edit.kind === "setPhrasePattern") {
                 await applySceneEdit((data) =>
                     setPhrasePatternOnSelection(data, edit.selection, edit.value, edit.index),

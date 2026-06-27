@@ -30,7 +30,7 @@ import {
 import { listStyles } from "./styleStore.js";
 import { getBankSoundNames } from "./drumMachineSounds.js";
 import { splitMeasures, resolveMeasures, deriveCurveBeatPoints, fillForwardPhrases, moduleLoopFill } from "./beatPoints.js";
-import { layoutChart, groupRows } from "./harmonyChartLayout.js";
+import { layoutChart, groupRows, sectionLabelFor, rangesForLabel, chartSections } from "./harmonyChartLayout.js";
 
 /** Wrap a beat-string input in a positioned span carrying the playing-beat
  *  highlight overlay, so the box can sit over the cell under the cursor. */
@@ -731,6 +731,28 @@ export const bandExtraMethods = {
             const single = bpObjs.length === 1 && typeof bpObjs[0].id === "string";
             /** @type {Array<{field: any, highlight: Element | null, playout: string}>} */
             const phraseFields = [];   // one per row, for the playing-beat highlight
+            /** @type {HTMLElement[]} segment overlays for the practice-loop drag-select */
+            this._loopSegs = [];
+
+            // Practice-loop tool: a loop-icon toggle at the top of the editor. Armed,
+            // you drag across measures to set a transient GLOBAL loop (olive,
+            // iReal-style); the transport then plays only that span and rewind lands
+            // at its first bar. Clicking again clears it. (Wired after the box below.)
+            let loopBtn = null;
+            if (chartHarmony !== null && single) {
+                const loopRow = mkRow();
+                loopRow.appendChild(mkLabel("Practice Loop", { width: W.beatStrengthLabel, disabled: !active }));
+                loopBtn = document.createElement("button");
+                loopBtn.type = "button";
+                loopBtn.className = "insp-loop-btn" + (this._loopArmed ? " active" : "");
+                loopBtn.textContent = "⟲ Loop";
+                loopBtn.title = "Arm, then drag across measures to loop just that range. "
+                    + "The transport plays only it; rewind goes to its first bar. Click again to clear.";
+                loopBtn.disabled = !active;
+                loopBtn.setAttribute("aria-pressed", this._loopArmed ? "true" : "false");
+                loopRow.appendChild(loopBtn);
+                band.appendChild(loopRow);
+            }
 
             const abRow = mkRow();
             abRow.appendChild(mkLabel("Active Beats", { width: W.beatStrengthLabel, disabled: !active }));
@@ -749,13 +771,36 @@ export const bandExtraMethods = {
             } else {
                 const ts = Array.isArray(this._scene.timeSignature) ? this._scene.timeSignature : [masterBeats, 4];
                 const allBars = layoutChart(chartHarmony.progression, chartHarmony.key, "letter", ts);
-                // Scope the grid to the object's assigned section (folded-bar range),
-                // mirroring chartBarSequence — so the editor shows only the measures
-                // this object plays. No section → the whole chart (legacy).
-                const range = (single && Array.isArray(bpObjs[0].chartSection)) ? bpObjs[0].chartSection : null;
-                const bars = range
-                    ? allBars.slice(Math.max(0, range[0]), Math.min(allBars.length - 1, range[1]) + 1)
-                    : allBars;
+                // Scope the grid. ASSIGNED → its label's FIRST occurrence (later
+                // occurrences re-trace this same pattern). UNASSIGNED, when other
+                // objects are assigned → all the active sections concatenated (so
+                // beats can be authored per section). Else → the whole chart.
+                const secLabel = single ? sectionLabelFor(allBars, bpObjs[0].chartSection) : null;
+                const secRanges = secLabel ? rangesForLabel(allBars, secLabel) : [];
+                const range = secRanges.length > 0 ? secRanges[0] : null;
+                let bars;
+                if (range) {
+                    bars = allBars.slice(Math.max(0, range[0]), Math.min(allBars.length - 1, range[1]) + 1);
+                } else if (single) {
+                    const assigned = new Set();
+                    for (const c of (Array.isArray(this._scene.curves) ? this._scene.curves : [])) {
+                        if (c && c.beatPointsMode === "chart") {
+                            const l = sectionLabelFor(allBars, c.chartSection);
+                            if (l) assigned.add(l);
+                        }
+                    }
+                    bars = [];
+                    const seen = new Set();
+                    for (const s of chartSections(allBars)) {
+                        if (assigned.has(s.label) && !seen.has(s.label)) {
+                            seen.add(s.label);
+                            for (let i = s.range[0]; i <= s.range[1]; i += 1) bars.push(allBars[i]);
+                        }
+                    }
+                    if (bars.length === 0) bars = allBars;     // nothing assigned → whole chart
+                } else {
+                    bars = allBars;
+                }
                 const rows = groupRows(bars, 4);
                 const patAgg = aggregateString(bpObjs, "phrasePatterns");
                 const abAgg = aggregateString(bpObjs, "activeBeats");
@@ -769,6 +814,12 @@ export const bandExtraMethods = {
                 };
                 // Bars in each row (excluding alignment padding) → its cell length.
                 const rowBars = rows.map((row) => row.filter((c) => !(c && c.empty === true)).length);
+                // The displayed grid starts at this ABSOLUTE folded bar (the section's
+                // first bar, or 0 for the whole form) — so a loop range maps back to
+                // the whole chart's bars for the form-clock window.
+                const absBase = range ? Math.max(0, range[0]) : 0;
+                // Running count of bars before each row, to number measures across rows.
+                let barsBefore = 0;
                 // Row r's RESOLVED play-out: its own (or inherited) pattern looped to the
                 // row's cells, barized — the ghost the row shows beyond what's typed. When
                 // NOTHING is defined yet it falls back to RESTS, so the empty measure grid
@@ -816,12 +867,50 @@ export const bandExtraMethods = {
                     if (field._ghostEl) field._ghostEl.style.width = rowW;
                     const wrap = wrapBeatField(field);
                     rowEl.appendChild(wrap);
+                    // Practice-loop drag layer: one segment per measure, over the
+                    // field. Inert until the loop tool is armed (the box gets a
+                    // `loop-armed` class); then a drag across segments paints the
+                    // olive range. Each segment carries its ABSOLUTE folded bar.
+                    const overlay = document.createElement("div");
+                    overlay.className = "insp-loop-overlay";
+                    for (let m = 0; m < rowBars[r]; m += 1) {
+                        const seg = document.createElement("div");
+                        seg.className = "insp-loop-seg";
+                        // The field inside the box has no border, so its cells start
+                        // at 11px (5px field margin + 6px padding).
+                        seg.style.left = `calc(11px + ${m * (bpbForBars + 1)}ch)`;
+                        seg.style.width = `${bpbForBars}ch`;
+                        seg.dataset.bar = String(absBase + barsBefore + m);
+                        seg.addEventListener("mousedown", (e) => this._onLoopSegDown(e, seg));
+                        overlay.appendChild(seg);
+                        this._loopSegs.push(seg);
+                    }
+                    rowEl.appendChild(overlay);
                     box.appendChild(rowEl);
                     phraseFields.push({ field, highlight: wrap.querySelector(".insp-beat-hl"), playout });
+                    barsBefore += rowBars[r];
                 }
             }
             abRow.appendChild(box);
             band.appendChild(abRow);
+
+            // Wire the practice-loop tool now the box + segments exist.
+            if (loopBtn !== null) {
+                this._loopBox = box;
+                box.classList.toggle("loop-armed", this._loopArmed === true);
+                loopBtn.addEventListener("click", () => {
+                    this._loopArmed = !this._loopArmed;
+                    loopBtn.classList.toggle("active", this._loopArmed);
+                    loopBtn.setAttribute("aria-pressed", this._loopArmed ? "true" : "false");
+                    box.classList.toggle("loop-armed", this._loopArmed);
+                    if (!this._loopArmed) {            // releasing clears the loop
+                        this._loopRange = null;
+                        this._emitEdit({ kind: "clearPracticeLoop" });
+                    }
+                    this._paintLoopSegs();
+                });
+                this._paintLoopSegs();                 // reflect any existing range
+            }
 
             // Beat Strength — one field, looped across every bar (as in Manual mode).
             const sRow = mkRow();
@@ -1363,5 +1452,57 @@ export const bandExtraMethods = {
         }
 
         return band;
+    },
+
+    // --- Practice-loop drag-select (Harmony-driven beat editor) ---
+
+    /**
+     * Mouse-down on a measure segment while the loop tool is armed: begin a
+     * drag, anchoring the range at this bar. Document listeners extend it.
+     * @param {MouseEvent} e
+     * @param {HTMLElement} seg
+     */
+    _onLoopSegDown(e, seg) {
+        if (this._loopArmed !== true) return;          // inert until armed
+        e.preventDefault();
+        const bar = Number(seg.dataset.bar);
+        if (!Number.isFinite(bar)) return;
+        this._loopDragAnchor = bar;
+        this._loopRange = [bar, bar];
+        this._paintLoopSegs();
+        const move = (ev) => {
+            const el = document.elementFromPoint(ev.clientX, ev.clientY);
+            const s = el && el.closest ? el.closest(".insp-loop-seg") : null;
+            if (s === null) return;
+            const b = Number(/** @type {HTMLElement} */ (s).dataset.bar);
+            if (!Number.isFinite(b)) return;
+            this._loopRange = [Math.min(this._loopDragAnchor, b), Math.max(this._loopDragAnchor, b)];
+            this._paintLoopSegs();
+        };
+        const up = () => {
+            document.removeEventListener("mousemove", move);
+            document.removeEventListener("mouseup", up);
+            this._commitLoop();
+        };
+        document.addEventListener("mousemove", move);
+        document.addEventListener("mouseup", up);
+    },
+
+    /** Paint the olive highlight on every segment whose bar is in the loop range. */
+    _paintLoopSegs() {
+        const segs = Array.isArray(this._loopSegs) ? this._loopSegs : [];
+        const r = (this._loopArmed === true && Array.isArray(this._loopRange)) ? this._loopRange : null;
+        for (const seg of segs) {
+            const bar = Number(seg.dataset.bar);
+            const on = r !== null && bar >= r[0] && bar <= r[1];
+            seg.classList.toggle("selected", on);
+        }
+    },
+
+    /** Push the committed loop range out as a transient practice-loop edit. */
+    _commitLoop() {
+        if (Array.isArray(this._loopRange)) {
+            this._emitEdit({ kind: "setPracticeLoop", range: [this._loopRange[0], this._loopRange[1]] });
+        }
     },
 };

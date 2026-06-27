@@ -5,80 +5,116 @@ beat-points object follows a loaded chord chart and its rhythm editor mirrors th
 chart's measures (`src/chartFollow.js`, `beatPoints.deriveChartMirror`, the
 inspector chart-mirror grid).
 
-## Problem
+## The model
 
-A chart-following object plays the **whole unfolded form**, so its rhythm editor
-shows every measure (many rows, a large number of beat points to author) and its
-curve traverses the entire form once — repeated sections land at different points
-on the curve, so the user never sees or hears a phrase loop back over the same
-region of the canvas.
+A chart is a set of **sections** — the label-bearing regions of the chart
+(`i`, `A`, `B`, …). A section's bar extent runs from its label to the next
+structural boundary (the next section, or a fresh repeat block that opens after
+this section's repeat has closed — a trailing tag / "repeat and fade" coda),
+trimming blank spacers (`harmonyChartLayout.sectionBarRange`). Unlabeled trailing
+material (tags, pickups) is **not** a section.
 
-## Sections per object
+Each chart-following object is assigned **one section label** (or none). The
+assignment is the *label*, not a bar-range: a label can occur several times in a
+chart (a real AABA-type form has two or three A's — whether written as separate
+`A` sections or produced by a repeat), and the object owns **every** occurrence.
 
-Each chart-following object can be assigned **one contiguous range of folded
-(displayed) chart bars** — *its section*. Objects divide the chart among
-themselves (object A → the A section, B → the B section, …).
+- The object's **curve is the section's bars**: few beat points, and the curve
+  **re-traces** once per occurrence of its label.
+- Playback is **form-gated**: the object plays only while the form is inside one
+  of its label's sections, and **freezes** (cursor parked at the section start)
+  otherwise.
+- **No label assigned** → the object plays **every assigned section** (the whole
+  compressed form). Its beat editor shows the active sections **concatenated**
+  (each label's first occurrence, in chart order) so beats can be authored per
+  section; at playback it re-traces at each section boundary, firing that
+  section's own beats with that section's chords. So with B and C assigned and an
+  unassigned object, the form B·C·B·C has the unassigned object play B-beats,
+  C-beats, B-beats, C-beats. (If nothing is assigned anywhere it plays the whole
+  chart, ungated.)
 
-- The object's **curve is just that range's bars**: far fewer beat points, and the
-  curve **re-traces** each time the section comes round.
-- Playback is **form-gated**: the object plays only while the form's clock is
-  inside its range, **halts** (cursor frozen) otherwise, and re-traces in time as
-  its section returns — so on the canvas the user sees objects waiting, then
-  springing to life when their section plays.
-- **Default**: no range assigned → the object plays the whole form (today's
-  behavior). Backward-compatible.
+## Compressed form — unassigned sections are dropped
 
-The range is over **folded** bars (the displayed measures), so a section that
-repeats in the form replays the object's curve each pass.
+The shared form is the **union of all assigned sections, in chart order**, looped
+— **not** the whole chart. Any section assigned to no object (an unwanted intro,
+a trailing tag) is **omitted entirely**, as though it were not in the score, so
+there is no dead air while nothing is assigned.
 
-## Assignment UI — the repurposed orange line
+Concretely: walk the chart's unfolded played timeline (repeats / navigation
+honoured, `buildBarPlayback`) and keep only the played bars whose folded bar
+belongs to an assigned section; that filtered timeline is the form clock the
+whole ensemble shares. The chord-chart cursor follows it (skipping the dropped
+bars), `_syncLoopBeats` is its length, and each object gates on its own label's
+bars within it.
 
-Done on the **Harmony chart**, where chords, repeats, and section labels are
-visible and recognizable.
+Because the filter runs over the *unfolded* timeline, a label that recurs — by
+repeat or by a second same-labeled section — yields one form occurrence per
+recurrence, and the object plays each as its own pass. With objX→A, objY→B and a
+chart that plays A·B·A, the form is A·B·A: objX laps, objY laps, objX laps again,
+then loop.
 
-- Reuses the existing **phrase-overlay line** (the orange line above the
-  measures). User editing of musical **phrases is deprecated** — auto-phrasing
-  still runs internally for the melodic line, but the line is no longer a phrase
-  editor.
-- The line now marks the **selected object's** assigned range. Selecting a
-  different object shows that object's range.
-- **Drag** the line's ends to set the range; **click a section label** to snap the
-  line to that whole section.
-- The line is always the current **orange** (not the object's colour).
-- No line for an object → it plays the whole form; line over a range → only those
-  bars. One contiguous range per object.
+### Substantially-identical occurrences
+
+An object has a single beat layout (the pattern around its curve), edited against
+the **first** occurrence of its label. That pattern plays over **every**
+occurrence; the chart cursor and the chords (`this.chord`) track whichever bars
+are actually sounding. If a later occurrence differs in length the pattern loops
+/ truncates to fit — same-length occurrences (the normal case) are seamless.
+
+## Assignment UI — the orange line, by label
+
+Done on the **Harmony chart**, where sections are visible.
+
+- Reuses the **phrase-overlay line** (orange). User editing of musical *phrases*
+  is deprecated — auto-phrasing still runs internally for the melodic line.
+- **Click a section** → assign that section's **label** to the selected object.
+  The orange line is then drawn over **every** section bearing that label, so all
+  the object's occurrences glow at once. Clicking again clears the assignment.
+- The line is always **orange** (not the object's colour). Selecting a different
+  object shows that object's label.
+- There is **no free-range drag**: assignment is always a complete section (the
+  ad-hoc drag-create / end-drag is retired). Sub-bar selection survives only in
+  the transient practice loop (below).
 
 ## Beat editor scoping
 
-The inspector's rhythm grid shows **only the object's assigned measures** (with
-the **chord symbol** above each bar so sections are recognizable), instead of the
-whole form — fewer rows, fewer beats.
+The inspector's rhythm grid shows **only the object's section** (the first
+occurrence's measures) instead of the whole form — fewer rows, fewer beats.
 
 ## Practice loop
 
-A transient loop for working on a stretch of bars, set in the **beat editor**
-(where the user edits and listens):
+A transient loop for working on a stretch of bars, set in the **beat editor**:
 
-- A **loop-icon toggle button** at the top of the beat editor. Pressing it arms
-  loop mode (button stays lit, cursor changes); **drag across a range of measures**
-  to set the loop; the bars highlight in iReal's **olive** colour.
-- While set, the **transport plays only that range** — it is **global** (every
-  playing object loops with it, each per its own assignment); start/stop stays
-  inside it; **rewind goes to the loop's first bar**.
-- Pressing the button again **releases it and clears** the highlight, back to
-  full-form playback.
-- The loop is **within the object's scoped section** (generally the editor only
-  shows that section anyway).
-- The same olive highlight **mirrors on the Harmony-tab chord chart** while active.
+- A **loop-icon toggle button** at the top of the beat editor. Armed (button lit,
+  cursor changed), **drag across measures** to set the loop; the bars highlight in
+  iReal's **olive**.
+- While set the **transport plays only that range** — **global** (every playing
+  object loops with it, each per its assignment); start/stop stays inside it;
+  **rewind goes to the loop's first bar**.
+- Pressing the button again **releases it and clears** the highlight.
+- The same olive highlight **mirrors on the Harmony-tab chord chart**.
 - **Transient** — not saved with the score.
+
+The practice loop is the one place sub-section bar ranges are still selectable
+(for focused practice); it does not change a section assignment.
 
 ## Milestones
 
-1. **Section assignment + scoping** — the orange line repurposed per-object,
-   phrase editing deprecated, the per-object range stored, and the beat editor +
-   the object's curve scoped to the range. (The object loops its range; form-sync
-   is M2.)
-2. **Form-gated playback** — a shared form clock; the object plays only while the
-   form is inside its range, halts otherwise, and re-traces in time.
-3. **Practice loop** — the beat-editor loop toggle + olive range + transport loop
-   + rewind-to-loop-start + the chord-chart mirror.
+1. **Section assignment + scoping** — the orange line repurposed, phrase editing
+   deprecated, the beat editor + curve scoped. *(built)*
+2. **Form-gated playback** — the object plays only while the form is inside its
+   section, re-tracing in time (one section-bar per played bar, beat-locked).
+   *(built)*
+3. **Practice loop** — the beat-editor loop toggle + olive range + global
+   transport loop + rewind-to-loop-start + chord-chart mirror. *(built)*
+4. **By-label assignment** — assignment becomes a section *label*; it resolves to
+   every occurrence; the orange line lights them all; the picker is section-only
+   (drag retired). The object plays each occurrence as a pass. *(built)*
+5. **Compressed form** — the shared form is the union of assigned sections in
+   chart order; unassigned sections are dropped from the form clock (a piecewise
+   compressed→chart beat map), the cursor, and the harmony context, so nothing
+   plays them. *(built)*
+6. **Unassigned-object playback** — an object with no label plays *every* assigned
+   section, with a per-section beat layout (its editor concatenates the active
+   sections); the active beat array swaps per section occurrence, re-tracing each.
+   *(built)*
