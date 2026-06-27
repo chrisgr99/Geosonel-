@@ -51,6 +51,19 @@ const SCOPE_ALL = "all";
 // playlist that lives only in the picker, never in the localStorage library.
 const SCOPE_DEFAULT = "default-charts";
 
+// The picker's chosen scope (playlist id, SCOPE_ALL, or SCOPE_DEFAULT) is a UI
+// preference persisted across sessions in localStorage, so reopening the app
+// returns to the playlist you last browsed rather than the first in the list.
+const SCOPE_STORAGE_KEY = "gxw.harmony.scope";
+/** @returns {string | null} the stored scope, or null if none/unavailable. */
+function loadStoredScope() {
+    try { return window.localStorage.getItem(SCOPE_STORAGE_KEY); } catch { return null; }
+}
+/** @param {string} scope */
+function saveStoredScope(scope) {
+    try { window.localStorage.setItem(SCOPE_STORAGE_KEY, scope); } catch { /* storage unavailable */ }
+}
+
 /** Bars per chart row before wrapping. */
 const BARS_PER_ROW = 4;
 
@@ -170,8 +183,9 @@ export class HarmonyPanel {
 
         // --- Picker state ---
 
-        /** Selected playlist id, or SCOPE_ALL. */
-        this._scope = SCOPE_ALL;
+        /** Selected playlist id, or SCOPE_ALL — restored from last session if stored. */
+        this._scopePersisted = loadStoredScope();
+        this._scope = this._scopePersisted || SCOPE_ALL;
         /** Current filter text. */
         this._query = "";
         /** Index of the keyboard-highlighted result, or -1. */
@@ -439,10 +453,11 @@ export class HarmonyPanel {
             !playlists.some((p) => p.id === this._scope)) {
             this._scope = playlists[0].id;
         }
-        if (this._scope === SCOPE_ALL && this._query === "" && this._results.length === 0
+        if (this._scopePersisted === null && this._scope === SCOPE_ALL
+            && this._query === "" && this._results.length === 0
             && playlists.length > 0) {
-            // Default to the first playlist on a fresh mount, but never
-            // override a user's explicit "All" choice once they've typed.
+            // Default to the first playlist on a fresh mount — but only when nothing
+            // was stored, so a restored "All" (or any saved choice) is respected.
             this._scope = playlists[0].id;
         }
 
@@ -483,6 +498,8 @@ export class HarmonyPanel {
         select.value = this._scope;
         select.addEventListener("change", () => {
             this._scope = select.value;
+            this._scopePersisted = select.value;   // remember this choice for next session
+            saveStoredScope(select.value);
             this._recomputeResults();
             this._renderList();
         });
