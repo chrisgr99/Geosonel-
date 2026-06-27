@@ -389,11 +389,6 @@
 /* Field border removed inside the box, so drop the ghost overlay's matching border
  * too — keeps the ghost text aligned with the typed text. */
 .insp-phrase-box .insp-beat-ghost { border: none; }
-/* Harmony-driven (chart-mirror): MANY per-measure fields per row, so zero their
- * left margin and the ghost's left offset — the measures then sit flush, divided
- * only by their bar lines, reading as one continuous control (like the chart). */
-.insp-chart-grid .insp-beat-field { margin-left: 0; padding: 0 1px; }
-.insp-chart-grid .insp-beat-ghost { left: 0; padding: 0 1px; }
 /* The single Beat Strength field, below the phrase box. */
 .insp-phrase-strength-row { margin-top: 4px; }
 /* "Active Beats" label aligns with the box's FIRST row, not its vertical centre. */
@@ -1856,14 +1851,8 @@
     border-radius: 2px;
     pointer-events: none;
 }
-/* Clickable (for selection) only while the tool is armed. */
-.harmony-chart.phrase-tool-active .harmony-phrase-line { pointer-events: auto; }
-.harmony-phrase-line.selected {
-    background-color: #ffa64d;
-    box-shadow: 0 0 4px rgba(255, 166, 77, 0.9);
-    height: 5px;
-    top: -7.5px;
-}
+/* The line is decorative — clicks pass through to the bars (drag-out to redraw)
+ * and to its end-handles; resizing is via the handles, not the line itself. */
 
 /* Downturned end-caps: a short stub dropping from the line at the phrase's TRUE
  * start / end, so a segment that just runs off the row edge (a continuation)
@@ -1978,7 +1967,9 @@
  * the barline (iReal's boxed A / B). */
 .harmony-bar-section {
     position: absolute;
-    top: -16px;
+    /* Raised clear of the orange section line (top:-7px): the letter sits in the
+     * upper part of the inter-row gap so the line never overwrites it. */
+    top: -24px;
     left: -1px;
     min-width: 15px;
     height: 15px;

@@ -781,6 +781,8 @@ export class Curve {
         this.phrases = opts.phrases ?? 1;
         /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
         this.sections = opts.sections ?? 1;
+        /** @type {[number, number] | null} Harmony-driven section: the folded chart bar range [start, end] (inclusive) this object plays, or null for the whole form. */
+        this.chartSection = opts.chartSection ?? null;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
@@ -983,6 +985,8 @@ export class Trigger {
         this.phrases = opts.phrases ?? 1;
         /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
         this.sections = opts.sections ?? 1;
+        /** @type {[number, number] | null} Harmony-driven section: the folded chart bar range [start, end] (inclusive) this object plays, or null for the whole form. */
+        this.chartSection = opts.chartSection ?? null;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */
@@ -1233,6 +1237,8 @@ export class Sprite {
         this.phrases = opts.phrases ?? 1;
         /** @type {number} Section count (outer grouping): total phrases = phrases × sections. Default 1 = legacy two-level model. */
         this.sections = opts.sections ?? 1;
+        /** @type {[number, number] | null} Harmony-driven section: the folded chart bar range [start, end] (inclusive) this object plays, or null for the whole form. */
+        this.chartSection = opts.chartSection ?? null;
         /** @type {number} Pattern variation: per-slot x<->. flip probability (0 = off). */
         this.vary = opts.vary ?? 0;
         /** @type {number} The seed the current variation rolled (the dice button re-rolls it). */

@@ -32,6 +32,20 @@ test("a repeated group replays its folded bars (order loops, grid shown once)", 
     assert.deepEqual(seq.order, [0, 1, 0, 1]);  // played twice
 });
 
+test("a section range scopes the timeline to that bar slice (0-based sub-chart)", () => {
+    const blues = TEST_PROGRESSIONS.find((p) => p.title === "12-Bar Blues");
+    assert.equal(chartBarSequence(blues, null).foldedCount, 12);   // whole form
+    const scoped = chartBarSequence(blues, [4, 7]);                 // bars 5-8 (0-based 4..7)
+    assert.equal(scoped.foldedCount, 4);
+    assert.deepEqual(scoped.order, [0, 1, 2, 3]);                   // played once, the object loops it
+    assert.deepEqual(scoped.barBeats, [4, 4, 4, 4]);
+});
+
+test("an end-before-start range → null", () => {
+    const blues = TEST_PROGRESSIONS.find((p) => p.title === "12-Bar Blues");
+    assert.equal(chartBarSequence(blues, [7, 4]), null);
+});
+
 test("null / empty harmony → null", () => {
     assert.equal(chartBarSequence(null), null);
     assert.equal(chartBarSequence({}), null);

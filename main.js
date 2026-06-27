@@ -152,6 +152,7 @@ import {
     setAutoStyleOnSelection,
     setActiveBeatsOnSelection,
     setPhrasePatternOnSelection,
+    setObjectChartSection,
     setPhraseStrengthOnSelection,
     setStrengthOnSelection,
     setBeatPatternOnSelection,
@@ -203,7 +204,6 @@ import {
     setSceneBpm,
     setSceneTimeSignature,
     setSceneHarmony,
-    setScenePhrases,
     setSceneEngine,
     setSceneVoiceSuperdoughSound,
     setSceneVoiceSuperdoughBank,
@@ -2060,13 +2060,13 @@ async function main() {
             transport.rewind();
         });
 
-        // Phrase editing: the drawing tool commits the whole phrase-span array
-        // (base-cycle beats). Write it onto scene.harmony.phrases and re-run so
-        // the line re-phrases live. No rewind — phrasing is a non-structural
-        // edit, so playback keeps its position.
-        editor.harmonyPanel.onEditPhrases(async (phrases) => {
+        // Section assignment: the orange line on the chart sets which folded
+        // chart-bar range the selected chart-following object plays. Commit
+        // writes that object's chartSection and re-runs so its curve + beat
+        // editor re-scope live. No rewind — a non-structural edit.
+        editor.harmonyPanel.onEditSection(async (objectId, range) => {
             await applySceneEdit((data) => {
-                setScenePhrases(data, phrases);
+                setObjectChartSection(data, objectId, range);
             });
         });
 
@@ -2796,6 +2796,23 @@ async function main() {
             if (c !== undefined && c.beatPointsMode === "strudel" && typeof c.id === "string") {
                 measureHighlightId = c.id;
             }
+        }
+        // Point the Harmony panel's orange line at the selected chart-following
+        // object, so it marks (and, armed, edits) that object's section. A
+        // non-chart object, none, or a multi-selection clears it.
+        if (editor.harmonyPanel) {
+            let secId = null;
+            let secRange = null;
+            if (currentScene !== null
+                && selection.curves.length === 1
+                && selection.sprites.length === 0 && selection.triggers.length === 0) {
+                const c = currentScene.curves[selection.curves[0]];
+                if (c !== undefined && c.beatPointsMode === "chart" && typeof c.id === "string") {
+                    secId = c.id;
+                    secRange = Array.isArray(c.chartSection) ? c.chartSection : null;
+                }
+            }
+            editor.harmonyPanel.setSectionObject(secId, secRange);
         }
         // Push the same id set into the firing engine's
         // play-selected gate so the Play Selected toolbar

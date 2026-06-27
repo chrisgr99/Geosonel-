@@ -748,7 +748,14 @@ export const bandExtraMethods = {
                 box.appendChild(hint);
             } else {
                 const ts = Array.isArray(this._scene.timeSignature) ? this._scene.timeSignature : [masterBeats, 4];
-                const bars = layoutChart(chartHarmony.progression, chartHarmony.key, "letter", ts);
+                const allBars = layoutChart(chartHarmony.progression, chartHarmony.key, "letter", ts);
+                // Scope the grid to the object's assigned section (folded-bar range),
+                // mirroring chartBarSequence — so the editor shows only the measures
+                // this object plays. No section → the whole chart (legacy).
+                const range = (single && Array.isArray(bpObjs[0].chartSection)) ? bpObjs[0].chartSection : null;
+                const bars = range
+                    ? allBars.slice(Math.max(0, range[0]), Math.min(allBars.length - 1, range[1]) + 1)
+                    : allBars;
                 const rows = groupRows(bars, 4);
                 const patAgg = aggregateString(bpObjs, "phrasePatterns");
                 const abAgg = aggregateString(bpObjs, "activeBeats");

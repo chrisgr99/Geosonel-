@@ -724,7 +724,10 @@ export function deriveStrudelCycleLengths(scene) {
             // re-derived here every run so a freshly loaded chart retimes it. With no
             // chart loaded the sequence is cleared and it falls back to the grid path.
             if (mode === "chart") {
-                const seq = chartBarSequence(scene.harmony);
+                // chartSection [start,end] (folded bars) scopes the object to its
+                // assigned section; null = the whole form.
+                const seq = chartBarSequence(scene.harmony,
+                    Array.isArray(obj.chartSection) ? obj.chartSection : null);
                 if (seq) {
                     obj.chartBarSeq = seq.order;
                     obj.foldedBarCount = seq.foldedCount;

@@ -2112,6 +2112,38 @@ export function setPhrasePatternOnSelection(data, selection, value, index) {
     });
 }
 
+/**
+ * Set (or clear) a beat-points object's Harmony-driven SECTION — the folded
+ * chart-bar range [start, end] it plays — found by id across all object arrays.
+ * The orange line on the chart edits this. A null/invalid range DELETES the
+ * field, reverting the object to the whole form. Sanitised to integers with
+ * 0 <= start <= end. Mutates `data`.
+ * @param {any} data
+ * @param {string} objectId
+ * @param {[number, number] | null} range
+ */
+export function setObjectChartSection(data, objectId, range) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    if (typeof objectId !== "string" || objectId === "") return;
+    let clean = null;
+    if (Array.isArray(range) && range.length === 2) {
+        const a = Math.max(0, Math.floor(Number(range[0])));
+        const b = Math.floor(Number(range[1]));
+        if (Number.isFinite(a) && Number.isFinite(b) && b >= a) clean = [a, b];
+    }
+    for (const key of ["curves", "sprites", "triggers"]) {
+        const arr = data[key];
+        if (!Array.isArray(arr)) continue;
+        for (const e of arr) {
+            if (e && typeof e === "object" && !Array.isArray(e) && e.id === objectId) {
+                if (clean !== null) e.chartSection = clean;
+                else delete e.chartSection;
+                return;
+            }
+        }
+    }
+}
+
 /** Set phrase `index`'s Beat Strength string (per-phrase tabs). Mutates `data`. */
 export function setPhraseStrengthOnSelection(data, selection, value, index) {
     const k = Math.max(0, Math.round(Number(index)) || 0);

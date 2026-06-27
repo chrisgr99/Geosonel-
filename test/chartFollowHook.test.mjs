@@ -27,6 +27,17 @@ test("chart-mode object takes the played-bar timeline + cells-per-bar from the c
     assert.equal(deriveCurveBeatPoints(obj).positions.length, 12);
 });
 
+test("chartSection scopes the object to its bar range (fewer beat points, re-traced)", () => {
+    const harmony = TEST_PROGRESSIONS.find((p) => p.title === "12-Bar Blues");
+    const obj = { id: "C1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x...", strength: "5", chartSection: [4, 7] };
+    deriveStrudelCycleLengths({ timeSignature: [4, 4], harmony, curves: [obj], sprites: [], triggers: [] });
+
+    assert.equal(obj.foldedBarCount, 4);                  // just the assigned 4-bar section
+    assert.deepEqual(obj.chartBarSeq, [0, 1, 2, 3]);      // 0-based sub-chart, played once (loops)
+    // "x..." → one hit per bar → 4 points, not the whole form's 12.
+    assert.equal(deriveCurveBeatPoints(obj).positions.length, 4);
+});
+
 test("a repeated group replays its per-measure pattern (played order, not folded)", () => {
     const harmony = {
         key: { tonicPitchClass: 0, mode: "major" }, timeSignature: [4, 4],

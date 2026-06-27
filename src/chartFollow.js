@@ -36,19 +36,53 @@ const BARS_PER_ROW = 4;
 
 const DEFAULT_KEY = { tonicPitchClass: 0, mode: "major" };
 
+/** A bar's beat count (meter numerator), clamped to >= 1. */
+const beatsOf = (bar) => Math.max(1, Math.floor(Number(bar.beats)) || 1);
+
 /**
- * The played-bar timeline for a chart, or null when there is nothing playable.
- * `order[k]` is the FOLDED (displayed) bar index sounding at played position k;
- * `foldedCount` is the number of displayed measures (the editor's grid size);
- * `barBeats[i]` is folded measure i's BEAT count (its meter numerator), so a
- * mid-tune meter change (e.g. a 2/4 bar) carries through to the groove and editor
- * rather than being forced to the master meter. A repeated 8-bar group of folded
- * bars [0..7] played twice yields an order of [0..7, 0..7] over foldedCount 8.
+ * Per-bar row index + position-within-row, indexed by each bar's POSITION in the
+ * given `bars` array (0-based) — so it works for both the whole chart and a
+ * re-indexed section slice. Groups exactly as the chart display does.
+ * @param {any[]} bars
+ * @returns {{ barRow: number[], barPos: number[], rowCount: number }}
+ */
+function rowsOf(bars) {
+    const rows = groupRows(bars, BARS_PER_ROW);
+    const at = new Map();
+    bars.forEach((bar, i) => at.set(bar, i));        // bar object → its index in `bars`
+    const barRow = new Array(bars.length).fill(0);
+    const barPos = new Array(bars.length).fill(0);
+    rows.forEach((row, ri) => {
+        let pos = 0;
+        for (const cell of row) {
+            if (cell && cell.empty === true) continue;   // alignment padding, not a real bar
+            const i = at.get(cell);
+            if (i !== undefined) { barRow[i] = ri; barPos[i] = pos; }
+            pos += 1;
+        }
+    });
+    return { barRow, barPos, rowCount: rows.length };
+}
+
+/**
+ * The played-bar timeline a chart-following object mirrors, or null when there is
+ * nothing playable.
+ *
+ * With no `range`, it's the WHOLE chart's unfolded timeline (repeats / navigation
+ * expanded): `order[k]` is the folded bar sounding at played position k, so a
+ * repeated 8-bar group [0..7] played twice gives order [0..7, 0..7] over
+ * foldedCount 8.
+ *
+ * With a `range` [start, end] of folded bar indices (the object's assigned
+ * SECTION), it's instead just those displayed bars as a fresh 0-based sub-chart,
+ * played ONCE — the object loops its section (form-syncing comes later). barBeats
+ * carries each bar's meter; barRow/barPos/rowCount describe the editor's rows.
  *
  * @param {import("./harmonyScene.js").SceneHarmony | null | undefined} harmony
+ * @param {[number, number] | null} [range]  inclusive folded bar range, or null for the whole form
  * @returns {ChartBarSequence | null}
  */
-export function chartBarSequence(harmony) {
+export function chartBarSequence(harmony, range) {
     if (harmony == null || !Array.isArray(harmony.progression)) return null;
     const ts = Array.isArray(harmony.timeSignature)
         ? /** @type {[number, number]} */ (harmony.timeSignature) : [4, 4];
@@ -61,31 +95,28 @@ export function chartBarSequence(harmony) {
     );
     if (bars.length === 0) return null;
 
+    // SCOPED to a section: the object's chart is just the bar slice, played once
+    // (it loops its section), re-indexed to a 0-based sub-chart.
+    if (Array.isArray(range) && range.length === 2) {
+        const a = Math.max(0, Math.floor(Number(range[0])) || 0);
+        const b = Math.min(bars.length - 1, Math.floor(Number(range[1])));
+        if (!(b >= a)) return null;
+        const slice = bars.slice(a, b + 1);
+        return {
+            order: slice.map((_, i) => i),
+            foldedCount: slice.length,
+            barBeats: slice.map(beatsOf),
+            ...rowsOf(slice),
+        };
+    }
+
+    // WHOLE FORM: the unfolded played timeline.
     const { timeline } = buildBarPlayback(bars);
     if (timeline.length === 0) return null;
-
-    // Group the bars into rows exactly as the chart display does, and record each
-    // folded bar's row + position so the editor can show one field per row and the
-    // engine can map a played bar onto that row's pattern.
-    const rows = groupRows(bars, BARS_PER_ROW);
-    const barRow = new Array(bars.length).fill(0);
-    const barPos = new Array(bars.length).fill(0);
-    rows.forEach((row, ri) => {
-        let pos = 0;
-        for (const cell of row) {
-            if (cell && cell.empty === true) continue;       // alignment padding, not a real bar
-            const bi = /** @type {any} */ (cell).index;
-            if (bi >= 0 && bi < bars.length) { barRow[bi] = ri; barPos[bi] = pos; }
-            pos += 1;
-        }
-    });
-
     return {
         order: timeline.map((t) => t.index),
         foldedCount: bars.length,
-        barBeats: bars.map((b) => Math.max(1, Math.floor(Number(b.beats)) || 1)),
-        barRow,
-        barPos,
-        rowCount: rows.length,
+        barBeats: bars.map(beatsOf),
+        ...rowsOf(bars),
     };
 }
