@@ -390,11 +390,18 @@ export class HarmonyPanel {
      * @param {boolean} [loop=true]  whether playback loops (cursor wrap)
      */
     setHarmony(harmony, loop = true) {
+        // A DIFFERENT chart invalidates the section line: its bar ranges index the
+        // old chart (main.js clears the objects' chartSection in tandem), so drop
+        // the working range. A same-chart re-run keeps it (it's per-object, pushed
+        // by setSectionObject, so a plain re-render mustn't reset it).
+        const prevTitle = this._harmony ? this._harmony.title : null;
+        const newTitle = harmony ? harmony.title : null;
+        if (newTitle !== prevTitle) this._sectionRange = null;
         this._harmony = harmony || null;
         this._loop = loop !== false;
         // The section range is per-OBJECT (pushed in by setSectionObject), not a
-        // property of the harmony, so a chart re-render doesn't reset it. A drag
-        // mid-flight stays authoritative; otherwise the freshly-built chart
+        // property of the harmony, so a same-chart re-render doesn't reset it. A
+        // drag mid-flight stays authoritative; otherwise the freshly-built chart
         // re-paints the current range below.
         // Keep the chart title in sync even when the chart isn't visible
         // (no library imported yet → picker is the placeholder hint, but a

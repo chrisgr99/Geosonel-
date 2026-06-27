@@ -153,6 +153,7 @@ import {
     setActiveBeatsOnSelection,
     setPhrasePatternOnSelection,
     setObjectChartSection,
+    clearAllChartSections,
     setPhraseStrengthOnSelection,
     setStrengthOnSelection,
     setBeatPatternOnSelection,
@@ -2024,6 +2025,9 @@ async function main() {
                     progression: song.progression,
                 });
                 setSceneTimeSignature(data, song.timeSignature);
+                // A different chart's bars don't match the old section ranges —
+                // clear every object's section so they revert to the whole form.
+                clearAllChartSections(data);
             });
             // A new chart starts the piece over: rewind to the top so the
             // chord chart and the music begin together. rewind() keeps

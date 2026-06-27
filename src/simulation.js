@@ -252,7 +252,7 @@ import { imageSignalsFromOKLCh } from "./strudel/signals.js";
 import { DEFAULT_KINEMATICS } from "./scene.js";
 import { computeOffset } from "./seed/seedOffset.js";
 import { deriveCurveBeatPoints, totalPhrases, chartPhraseSlots } from "./beatPoints.js";
-import { chartBarSequence } from "./chartFollow.js";
+import { chartBarSequence, sectionFormWindows } from "./chartFollow.js";
 import { buildNoteSpec, buildSoundSpec } from "./emitters.js";
 import {
     VoiceRegistry,
@@ -742,6 +742,20 @@ export function deriveStrudelCycleLengths(scene) {
                     delete obj.chartBarRow;
                     delete obj.chartBarPos;
                     delete obj.chartRowCount;
+                }
+                // FORM-GATED playback: a scoped object plays only while the shared
+                // form clock is inside its section's bars. Store the section's
+                // sounding windows (form-beat space); _stepCurve drives the cursor
+                // from these instead of free-running. No section → no windows
+                // (the object plays the whole form continuously, as before).
+                const fw = Array.isArray(obj.chartSection)
+                    ? sectionFormWindows(scene.harmony, obj.chartSection) : null;
+                if (fw) {
+                    obj.chartFormWindows = fw.windows;
+                    obj.chartFormBeats = fw.formBeats;
+                } else {
+                    delete obj.chartFormWindows;
+                    delete obj.chartFormBeats;
                 }
             }
         }
@@ -3849,6 +3863,16 @@ export class Simulation {
         if (cycleDuration <= 0) return;
         const speedList = state.speedList;
         if (speedList.length === 0) return;
+        // FORM-GATED (chart section): a scoped chart object doesn't free-run. It
+        // plays only while the shared form clock is inside its section's bars,
+        // tracing its curve once per occurrence (cursor 0→1 across each sounding
+        // window) and freezing — parked at the section start, no beats — between.
+        // Driven straight off the master form clock, bypassing the accumulator.
+        if (Array.isArray(curve.chartFormWindows) && curve.chartFormWindows.length > 0
+            && Number(curve.chartFormBeats) > 0) {
+            this._stepCurveFormGated(curve, state, dt);
+            return;
+        }
         // Timing-edit snap. When the authored cycleDuration
         // has changed since the previous step (because BPM,
         // beatsPerCycle, beatInterval, patternRepeats, or
@@ -3957,6 +3981,75 @@ export class Simulation {
 
         // Fire onActiveBeat for any of this curve's own active
         // beats the cursor crossed this step (§3.1b).
+        this._detectActiveBeatCrossings(curve, state);
+    }
+
+    /**
+     * Step a FORM-GATED chart object: its cursor + beats are driven by the shared
+     * chord-chart form clock, not its own accumulator. The object plays only
+     * while the played form is inside its section (one `chartFormWindows` entry
+     * per occurrence). Inside a window the cursor sweeps 0→1 across that window's
+     * beats, firing the section's pattern; outside, it parks at the start (t=0)
+     * and fires nothing. Each occurrence is one cycle (cycleCount = its window
+     * index across form passes), so the beat-fire re-arm runs the section afresh
+     * each time it returns.
+     * @param {any} curve
+     * @param {CurveRuntimeState} state
+     * @param {number} dt
+     */
+    _stepCurveFormGated(curve, state, dt) {
+        const formBeats = Number(curve.chartFormBeats);
+        const windows = curve.chartFormWindows;
+        // Physics still advances (a moving curve keeps moving); only the cursor
+        // and beat firing are gated.
+        this._stepCurvePhysics(curve, state, dt);
+
+        // NB: never set state.halted here — the main step loop skips halted
+        // curves entirely (a parked object must keep being stepped so it can
+        // wake when its section returns). "Parked" is just cursor t=0, no beats.
+        const beat = this._transport.elapsedBeats;
+        if (beat === null || !Number.isFinite(beat) || formBeats <= 0) {
+            state.cycleProgress = 0; state.t = 0; state.halted = false;
+            state._beatOrder = null;
+            return;
+        }
+        const pass = Math.floor(beat / formBeats);       // which whole-form pass
+        const fb = beat - pass * formBeats;              // form-beat within this pass
+        const W = windows.length;
+
+        // Which sounding window contains the form beat?
+        let active = -1;
+        for (let k = 0; k < W; k += 1) {
+            if (fb >= windows[k].startBeat && fb < windows[k].endBeat) { active = k; break; }
+        }
+
+        if (active < 0) {
+            // Between occurrences: park at the section start, fire nothing, and
+            // drop the beat order so the next occurrence re-arms cleanly (no stale
+            // tail beats bleed across the gap). cycleCount points at the next
+            // window so re-entry reads as a new cycle.
+            let next = 0;
+            while (next < W && fb >= windows[next].endBeat) next += 1;
+            state.cycleCount = pass * W + next;
+            state.cycleProgress = 0;
+            state.t = 0;
+            state.halted = false;
+            state._beatOrder = null;
+            return;
+        }
+
+        const w = windows[active];
+        const span = w.endBeat - w.startBeat;
+        const prog = span > 0 ? (fb - w.startBeat) / span : 0;
+        state.cycleCount = pass * W + active;
+        state.cycleProgress = Math.max(0, Math.min(0.999999, prog));
+        state.halted = false;
+        const loopLen = cycleSpeedsLoopLength(state.speedList);
+        const sp = loopLen > 0 ? state.speedList[state.cycleCount % loopLen] : 1;
+        state.t = sp < 0 ? 1 - state.cycleProgress : state.cycleProgress;
+
+        // Fire the section's crossed beats. The re-arm (keyed on cycleCount, with
+        // _beatOrder nulled between windows) rebuilds the order at each occurrence.
         this._detectActiveBeatCrossings(curve, state);
     }
 

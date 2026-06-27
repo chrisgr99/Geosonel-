@@ -2144,6 +2144,24 @@ export function setObjectChartSection(data, objectId, range) {
     }
 }
 
+/**
+ * Drop every object's chartSection (across all object arrays). Called when a new
+ * chord chart is loaded: the stored bar ranges index the OLD chart, so they're
+ * meaningless against a different one — clear them so each object reverts to the
+ * whole form. Mutates `data`.
+ * @param {any} data
+ */
+export function clearAllChartSections(data) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    for (const key of ["curves", "sprites", "triggers"]) {
+        const arr = data[key];
+        if (!Array.isArray(arr)) continue;
+        for (const e of arr) {
+            if (e && typeof e === "object" && !Array.isArray(e)) delete e.chartSection;
+        }
+    }
+}
+
 /** Set phrase `index`'s Beat Strength string (per-phrase tabs). Mutates `data`. */
 export function setPhraseStrengthOnSelection(data, selection, value, index) {
     const k = Math.max(0, Math.round(Number(index)) || 0);

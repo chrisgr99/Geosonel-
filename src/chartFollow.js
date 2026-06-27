@@ -120,3 +120,63 @@ export function chartBarSequence(harmony, range) {
         ...rowsOf(bars),
     };
 }
+
+/**
+ * @typedef {Object} SectionFormWindows
+ * @property {number} formBeats   total beats of one whole-form pass (the form clock period)
+ * @property {Array<{startBeat: number, endBeat: number}>} windows
+ *   the spans, in form-beat space, where the played form is inside the section —
+ *   one per contiguous occurrence (so a section that repeats yields one window
+ *   per pass). Half-open [startBeat, endBeat).
+ */
+
+/**
+ * Where, on the shared form clock, an object's assigned section is SOUNDING.
+ * Form-gated playback uses this to let a scoped object play only while the chord
+ * chart is inside its bars, tracing its curve once per occurrence and freezing
+ * between. Walks the WHOLE-form unfolded timeline and collects each maximal
+ * contiguous run of played bars whose folded index is in `range`.
+ *
+ * (A section that itself contains an internal repeat plays its run back-to-back,
+ * which this reports as one longer window — matching chartBarSequence's
+ * range-slice-plays-once model; sections are normally repeat-free blocks.)
+ *
+ * @param {import("./harmonyScene.js").SceneHarmony | null | undefined} harmony
+ * @param {[number, number] | null} range  inclusive folded bar range, or null
+ * @returns {SectionFormWindows | null}  null when there's no range / nothing playable
+ */
+export function sectionFormWindows(harmony, range) {
+    if (!Array.isArray(range) || range.length !== 2) return null;
+    if (harmony == null || !Array.isArray(harmony.progression)) return null;
+    const ts = Array.isArray(harmony.timeSignature)
+        ? /** @type {[number, number]} */ (harmony.timeSignature) : [4, 4];
+    const bars = layoutChart(
+        /** @type {any} */ (harmony.progression),
+        /** @type {any} */ (harmony.key || DEFAULT_KEY),
+        "letter",
+        ts,
+    );
+    if (bars.length === 0) return null;
+    const a = Math.max(0, Math.floor(Number(range[0])) || 0);
+    const b = Math.min(bars.length - 1, Math.floor(Number(range[1])));
+    if (!(b >= a)) return null;
+
+    const { timeline, totalBeats } = buildBarPlayback(bars);
+    if (timeline.length === 0) return null;
+
+    /** @type {Array<{startBeat: number, endBeat: number}>} */
+    const windows = [];
+    let cur = null;
+    for (const seg of timeline) {
+        if (seg.index >= a && seg.index <= b) {
+            if (cur === null) cur = { startBeat: seg.startBeat, endBeat: seg.endBeat };
+            else cur.endBeat = seg.endBeat;
+        } else if (cur !== null) {
+            windows.push(cur);
+            cur = null;
+        }
+    }
+    if (cur !== null) windows.push(cur);
+    if (windows.length === 0) return null;
+    return { formBeats: totalBeats, windows };
+}
