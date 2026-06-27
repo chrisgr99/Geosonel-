@@ -2140,6 +2140,36 @@ export function setObjectChartSection(data, objectId, label) {
 }
 
 /**
+ * Toggle a section LABEL across several objects (found by id): if EVERY one
+ * already carries that label, clear them all (back to the whole form); otherwise
+ * set them all to it. Drives the chord-chart letter click, which assigns to the
+ * whole selection at once. Mutates `data`.
+ * @param {any} data
+ * @param {string[]} objectIds
+ * @param {string} label
+ */
+export function toggleObjectsChartSection(data, objectIds, label) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    if (!Array.isArray(objectIds) || objectIds.length === 0 || typeof label !== "string" || label === "") return;
+    const ids = new Set(objectIds);
+    /** @type {any[]} */
+    const objs = [];
+    for (const key of ["curves", "sprites", "triggers"]) {
+        const arr = data[key];
+        if (!Array.isArray(arr)) continue;
+        for (const e of arr) {
+            if (e && typeof e === "object" && !Array.isArray(e) && ids.has(e.id)) objs.push(e);
+        }
+    }
+    if (objs.length === 0) return;
+    const allHave = objs.every((e) => e.chartSection === label);
+    for (const e of objs) {
+        if (allHave) delete e.chartSection;     // toggle off
+        else e.chartSection = label;            // assign to all
+    }
+}
+
+/**
  * Drop every object's chartSection (across all object arrays). Called when a new
  * chord chart is loaded: the stored bar ranges index the OLD chart, so they're
  * meaningless against a different one — clear them so each object reverts to the

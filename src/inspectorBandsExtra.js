@@ -783,10 +783,12 @@ export const bandExtraMethods = {
                     bars = allBars.slice(Math.max(0, range[0]), Math.min(allBars.length - 1, range[1]) + 1);
                 } else if (single) {
                     const assigned = new Set();
-                    for (const c of (Array.isArray(this._scene.curves) ? this._scene.curves : [])) {
-                        if (c && c.beatPointsMode === "chart") {
-                            const l = sectionLabelFor(allBars, c.chartSection);
-                            if (l) assigned.add(l);
+                    for (const arr of [this._scene.curves, this._scene.sprites, this._scene.triggers]) {
+                        for (const c of (Array.isArray(arr) ? arr : [])) {
+                            if (c && c.beatPointsMode === "chart") {
+                                const l = sectionLabelFor(allBars, c.chartSection);
+                                if (l) assigned.add(l);
+                            }
                         }
                     }
                     bars = [];

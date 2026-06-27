@@ -153,7 +153,7 @@ import {
     setAutoStyleOnSelection,
     setActiveBeatsOnSelection,
     setPhrasePatternOnSelection,
-    setObjectChartSection,
+    toggleObjectsChartSection,
     clearAllChartSections,
     setPhraseStrengthOnSelection,
     setStrengthOnSelection,
@@ -491,6 +491,10 @@ async function main() {
     // The single selected STRUDEL curve whose measure boxes get the playing-token
     // highlight, or null. Separate from varyPreviewId (which is grid-mode only).
     let measureHighlightId = null;
+    // Ids of the selected chart-following objects — clicking a chord-chart section
+    // letter assigns/clears that label across all of them. Updated on selection.
+    /** @type {string[]} */
+    let harmonySectionIds = [];
 
     const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, harmonyAreaEl, stylesAreaEl, bundle, {
         onDirtyChange: (dirty) => {
@@ -2067,14 +2071,25 @@ async function main() {
             transport.rewind();
         });
 
-        // Section assignment: the orange line on the chart sets which section
-        // LABEL the selected chart-following object plays (every occurrence of
-        // that label). Commit writes the object's chartSection label and re-runs
-        // so its curve + beat editor re-scope live. No rewind — non-structural.
-        editor.harmonyPanel.onEditSection(async (objectId, label) => {
+        // Section assignment: clicking a section letter toggles that label across
+        // every selected chart-following object (assign to all, or clear if all
+        // already have it). Re-runs so their curves + beat editors re-scope live.
+        // No rewind — non-structural.
+        editor.harmonyPanel.onEditSection(async (label) => {
             await applySceneEdit((data) => {
-                setObjectChartSection(data, objectId, label);
+                toggleObjectsChartSection(data, harmonySectionIds, label);
             });
+            // Re-paint the orange line from the now-current assignments.
+            if (currentScene !== null && editor.harmonyPanel) {
+                const ids = new Set(harmonySectionIds);
+                const labels = new Set();
+                for (const arr of [currentScene.curves, currentScene.sprites, currentScene.triggers]) {
+                    for (const o of (arr || [])) {
+                        if (o && ids.has(o.id) && typeof o.chartSection === "string") labels.add(o.chartSection);
+                    }
+                }
+                editor.harmonyPanel.setSectionObjects(harmonySectionIds, [...labels]);
+            }
         });
 
     }
@@ -2804,24 +2819,28 @@ async function main() {
                 measureHighlightId = c.id;
             }
         }
-        // Point the Harmony panel's orange line at the selected chart-following
-        // object, so it marks (and, armed, edits) that object's section. A
-        // non-chart object, none, or a multi-selection clears it.
-        if (editor.harmonyPanel) {
-            let secId = null;
-            let secLabel = null;
-            if (currentScene !== null
-                && selection.curves.length === 1
-                && selection.sprites.length === 0 && selection.triggers.length === 0) {
-                const c = currentScene.curves[selection.curves[0]];
-                if (c !== undefined && c.beatPointsMode === "chart" && typeof c.id === "string") {
-                    secId = c.id;
-                    // chartSection is now a section LABEL; legacy [start,end] scenes
-                    // show no line until re-assigned (the engine still migrates them).
-                    secLabel = typeof c.chartSection === "string" ? c.chartSection : null;
+        // Point the Harmony chart at ALL selected chart-following objects: clicking
+        // a section letter assigns its label to every one of them. The orange line
+        // lights every label they carry. (Section assignment lives on curves,
+        // sprites and triggers alike.)
+        harmonySectionIds = [];
+        const secLabels = new Set();
+        if (currentScene !== null) {
+            const pick = (idxs, arr) => {
+                for (const i of (idxs || [])) {
+                    const o = arr[i];
+                    if (o !== undefined && o.beatPointsMode === "chart" && typeof o.id === "string") {
+                        harmonySectionIds.push(o.id);
+                        if (typeof o.chartSection === "string") secLabels.add(o.chartSection);
+                    }
                 }
-            }
-            editor.harmonyPanel.setSectionObject(secId, secLabel);
+            };
+            pick(selection.curves, currentScene.curves);
+            pick(selection.sprites, currentScene.sprites);
+            pick(selection.triggers, currentScene.triggers);
+        }
+        if (editor.harmonyPanel) {
+            editor.harmonyPanel.setSectionObjects(harmonySectionIds, [...secLabels]);
         }
         // Push the same id set into the firing engine's
         // play-selected gate so the Play Selected toolbar

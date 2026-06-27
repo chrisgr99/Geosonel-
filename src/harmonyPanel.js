@@ -35,7 +35,7 @@ import {
     getSong,
 } from "./harmonyLibrary.js";
 import { TEST_PROGRESSIONS } from "./samples/testProgressions.js";
-import { layoutChart, groupRows, formatChordParts, buildBarPlayback, chartSections, rangesForLabel } from "./harmonyChartLayout.js";
+import { layoutChart, groupRows, formatChordParts, buildBarPlayback, rangesForLabel } from "./harmonyChartLayout.js";
 import { applyUnwind, sanitiseUnwind } from "./harmonyUnwind.js";
 import { expandProgression } from "./harmonyPlayer.js";
 
@@ -272,24 +272,25 @@ export class HarmonyPanel {
          * Rebuilt by _renderChart; retained for the playback-fold math.
          */
         this._baseCycle = 0;
-        /** The object whose section the orange line edits, or null. @type {string | null} */
-        this._sectionObjectId = null;
         /**
-         * The selected object's assigned section LABEL (e.g. "A"), or null for the
-         * whole form. The label can occur several times; the object owns them all.
-         * Pushed in by main.js via setSectionObject. @type {string | null}
+         * The selected chart-following objects whose section the chart edits.
+         * Clicking a section letter assigns its label to ALL of them. Empty when
+         * no chart object is selected. Pushed by main.js via setSectionObjects.
+         * @type {string[]}
          */
-        this._sectionLabel = null;
+        this._sectionObjectIds = [];
+        /**
+         * The section LABELS currently assigned across the selected objects — the
+         * orange line lights every occurrence of each. (Usually one; a set only
+         * while a multi-selection's assignments differ.) @type {string[]}
+         */
+        this._sectionLabels = [];
         /**
          * Practice-loop mirror: the folded bar range [start, end] the beat editor
          * is looping, shown as an olive wash on the chart, or null. Transient.
          * @type {[number, number] | null}
          */
         this._loopBars = null;
-        /** Whether the section-assigning tool is armed. */
-        this._phraseTool = false;
-        /** The section-tool toggle button. @type {HTMLButtonElement | null} */
-        this._phraseToolBtn = null;
 
         this._render();
 
@@ -313,19 +314,6 @@ export class HarmonyPanel {
             }
         };
         document.addEventListener("mousedown", this._onDocMouseDown);
-
-        // Delete/Backspace clears the section (object reverts to the whole form)
-        // while the tool is armed. Ignored when typing in a field (the filter
-        // input) so it can't eat a backspace meant for text.
-        this._onDocKeyDown = (/** @type {KeyboardEvent} */ e) => {
-            if (!this._phraseTool || this._sectionLabel === null) return;
-            if (e.key !== "Delete" && e.key !== "Backspace") return;
-            const ae = document.activeElement;
-            if (ae !== null && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
-            e.preventDefault();
-            this._clearSection();
-        };
-        document.addEventListener("keydown", this._onDocKeyDown);
     }
 
     /**
@@ -354,36 +342,38 @@ export class HarmonyPanel {
     }
 
     /**
-     * Wire the section-edit callback (main.js owns the scene edit + re-run).
-     * @param {(objectId: string, label: string | null) => void} cb
+     * Wire the section-edit callback (main.js owns the toggle + scene edit). The
+     * panel reports the LABEL the user clicked; main.js assigns/clears it across
+     * the whole selection.
+     * @param {(label: string) => void} cb
      */
     onEditSection(cb) {
         this._onEditSection = cb;
     }
 
     /**
-     * Point the orange line at a beat-points object: it marks (and, armed, edits)
-     * that object's assigned section LABEL — drawn over EVERY section bearing that
-     * label. Called by main.js on every selection change. `id === null` (no single
-     * chart-mode object selected) hides the line and disables the tool.
-     * @param {string | null} id
-     * @param {string | null} label  the object's stored chartSection label, or null
+     * Tell the chart which chart-following objects are selected and which section
+     * labels they carry. Clicking a section letter then assigns that label to all
+     * of `ids`; the orange line lights every occurrence of each label in `labels`.
+     * An empty `ids` makes the chart inert (no assignment on click).
+     * @param {string[]} ids
+     * @param {string[]} labels
      */
-    setSectionObject(id, label) {
-        this._sectionObjectId = typeof id === "string" ? id : null;
-        this._sectionLabel = (this._sectionObjectId !== null && typeof label === "string" && label !== "")
-            ? label : null;
-        if (this._sectionObjectId === null) this._phraseTool = false;
-        this._syncPhraseToolBtn();
+    setSectionObjects(ids, labels) {
+        this._sectionObjectIds = Array.isArray(ids) ? ids.filter((x) => typeof x === "string") : [];
+        this._sectionLabels = Array.isArray(labels) ? labels.filter((x) => typeof x === "string" && x !== "") : [];
         this._renderSection();
     }
 
-    /** All folded bar ranges of the currently-assigned label, or [] if none. */
+    /** All folded bar ranges of every currently-assigned label, or [] if none. */
     _sectionRanges() {
-        if (this._harmony === null || this._sectionLabel === null) return [];
+        if (this._harmony === null || this._sectionLabels.length === 0) return [];
         const ts = Array.isArray(this._harmony.timeSignature) ? this._harmony.timeSignature : [4, 4];
         const bars = layoutChart(this._harmony.progression, this._harmony.key, "letter", ts);
-        return rangesForLabel(bars, this._sectionLabel);
+        /** @type {Array<[number, number]>} */
+        const out = [];
+        for (const label of this._sectionLabels) out.push(...rangesForLabel(bars, label));
+        return out;
     }
 
     /**
@@ -426,17 +416,13 @@ export class HarmonyPanel {
      */
     setHarmony(harmony, loop = true) {
         // A DIFFERENT chart invalidates the section assignment (main.js clears the
-        // objects' chartSection in tandem), so drop the working label. A same-chart
-        // re-run keeps it (it's per-object, pushed by setSectionObject).
+        // objects' chartSection in tandem), so drop the highlighted labels. A
+        // same-chart re-run keeps them (they're pushed per selection).
         const prevTitle = this._harmony ? this._harmony.title : null;
         const newTitle = harmony ? harmony.title : null;
-        if (newTitle !== prevTitle) this._sectionLabel = null;
+        if (newTitle !== prevTitle) this._sectionLabels = [];
         this._harmony = harmony || null;
         this._loop = loop !== false;
-        // The section range is per-OBJECT (pushed in by setSectionObject), not a
-        // property of the harmony, so a same-chart re-render doesn't reset it. A
-        // drag mid-flight stays authoritative; otherwise the freshly-built chart
-        // re-paints the current range below.
         // Keep the chart title in sync even when the chart isn't visible
         // (no library imported yet → picker is the placeholder hint, but a
         // stored harmony should still announce itself).
@@ -450,7 +436,6 @@ export class HarmonyPanel {
         this._renderChartTitle();
         this._renderChart();
         this._syncMenuState();
-        this._syncPhraseToolBtn();
     }
 
     /**
@@ -804,8 +789,9 @@ export class HarmonyPanel {
      * DOM handles. The Letter/Roman toggle lives in the picker grid above.
      */
     _buildChartSection() {
-        // Header row: the song title on the left, and on the right the phrase-
-        // tool toggle (which arms the light-orange phrase drawing tool).
+        // Header row: just the song title. Section assignment is always live —
+        // with chart-following objects selected, clicking a section letter assigns
+        // it (no arm button).
         const header = document.createElement("div");
         header.className = "harmony-chart-header";
 
@@ -814,28 +800,8 @@ export class HarmonyPanel {
         this._chartTitle = title;
         header.appendChild(title);
 
-        const controls = document.createElement("div");
-        controls.className = "harmony-chart-controls";
-
-        const phraseBtn = document.createElement("button");
-        phraseBtn.type = "button";
-        phraseBtn.className = "harmony-phrase-tool-btn";
-        phraseBtn.textContent = "◧ Section";
-        phraseBtn.title = "Assign the selected object a chart section: click a section "
-            + "label to snap, or drag across bars. Drag the line's ends to adjust; "
-            + "press Delete to clear (whole form). Select a chart-following object first.";
-        phraseBtn.setAttribute("aria-pressed", "false");
-        phraseBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            this._togglePhraseTool();
-        });
-        this._phraseToolBtn = phraseBtn;
-        controls.appendChild(phraseBtn);
-        header.appendChild(controls);
-
         this.container.appendChild(header);
         this._renderChartTitle();
-        this._syncPhraseToolBtn();
 
         const chart = document.createElement("div");
         chart.className = "harmony-chart";
@@ -1167,11 +1133,9 @@ export class HarmonyPanel {
         }
         chart.appendChild(grid);
 
-        // Paint the section overlay (the orange line) and reflect the tool's
-        // armed state onto the chart.
+        // Paint the section overlay (the orange line) + the practice-loop mirror.
         this._renderSection();
-        this._renderLoopBars();          // the practice-loop olive mirror
-        chart.classList.toggle("phrase-tool-active", this._phraseTool);
+        this._renderLoopBars();
 
         // Re-light the cursor onto the freshly built DOM if a beat is current.
         if (this._lastBeat !== null) this.setPlayhead(this._lastBeat);
@@ -1203,72 +1167,20 @@ export class HarmonyPanel {
         }
     }
 
-    /** Toggle the section-assigning tool on/off. */
-    _togglePhraseTool() {
-        this._phraseTool = !this._phraseTool;
-        this._syncPhraseToolBtn();
-        if (this._chartEl !== null) {
-            this._chartEl.classList.toggle("phrase-tool-active", this._phraseTool);
-        }
-        this._renderSection();
-    }
-
-    /** Reflect the tool's armed/disabled state onto its toggle button. */
-    _syncPhraseToolBtn() {
-        const btn = this._phraseToolBtn;
-        if (btn === null) return;
-        btn.classList.toggle("active", this._phraseTool);
-        btn.setAttribute("aria-pressed", this._phraseTool ? "true" : "false");
-        // Enabled only when a chart is loaded AND a single chart-mode object is
-        // selected (the object whose section the line edits).
-        btn.disabled = this._harmony === null || this._sectionObjectId === null;
-    }
-
     /**
-     * Chart mousedown while the tool is armed: assign (or clear) the LABEL of the
-     * clicked section to the selected object. Assignment is always a whole section
-     * — there is no free-range drag.
+     * Chart mousedown: clicking a section LETTER assigns that section's label to
+     * every selected chart-following object (main.js owns the assign/clear toggle
+     * across the selection). Inert when no chart object is selected; only the
+     * letter is a hit target, so ordinary chart clicks do nothing.
      * @param {MouseEvent} e
      */
     _onChartMouseDown(e) {
-        if (!this._phraseTool || this._sectionObjectId === null || this._harmony === null) return;
+        if (this._sectionObjectIds.length === 0 || this._onEditSection === null) return;
         const target = /** @type {Element} */ (e.target);
-        const cell = target.closest ? target.closest(".harmony-bar[data-bar-index]") : null;
-        if (cell === null) return;
-        const bar = Number(/** @type {HTMLElement} */ (cell).dataset.barIndex);
-        if (!Number.isFinite(bar)) return;
-        this._assignSectionAt(bar);
-    }
-
-    /**
-     * Assign the label of the section containing folded bar `bar` to the object.
-     * Clicking the already-assigned label clears it (back to the whole form).
-     * @param {number} bar
-     */
-    _assignSectionAt(bar) {
-        const ts = Array.isArray(this._harmony.timeSignature) ? this._harmony.timeSignature : [4, 4];
-        const bars = layoutChart(this._harmony.progression, this._harmony.key, "letter", ts);
-        let label = null;
-        for (const s of chartSections(bars)) {
-            if (s.range[0] <= bar && bar <= s.range[1]) label = s.label;
-        }
-        if (label === null) return;                              // clicked outside any section
-        this._sectionLabel = (label === this._sectionLabel) ? null : label;   // toggle
-        this._commitSection();
-    }
-
-    /** Clear the assignment (object reverts to the whole form) and commit. */
-    _clearSection() {
-        this._sectionLabel = null;
-        this._commitSection();
-    }
-
-    /** Repaint the line and push the new label out to main.js. */
-    _commitSection() {
-        this._renderSection();
-        if (this._onEditSection !== null && this._sectionObjectId !== null) {
-            this._onEditSection(this._sectionObjectId, this._sectionLabel);
-        }
+        const letter = target.closest ? target.closest(".harmony-bar-section") : null;
+        if (letter === null) return;
+        const label = (letter.textContent || "").trim();
+        if (label !== "") this._onEditSection(label);
     }
 
     /**

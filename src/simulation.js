@@ -709,11 +709,14 @@ export function deriveStrudelCycleLengths(scene) {
     // UNASSIGNED chart object plays all of these (see unassignedChartData).
     /** @type {string[]} */
     const assignedLabels = [];
-    if (scene.harmony && Array.isArray(scene.curves)) {
-        for (const c of scene.curves) {
-            if (c && c.beatPointsMode === "chart") {
-                const r = objectSectionRanges(scene.harmony, c.chartSection);
-                if (r && !assignedLabels.includes(r.label)) assignedLabels.push(r.label);
+    if (scene.harmony) {
+        for (const arr of [scene.curves, scene.sprites, scene.triggers]) {
+            if (!Array.isArray(arr)) continue;
+            for (const c of arr) {
+                if (c && c.beatPointsMode === "chart") {
+                    const r = objectSectionRanges(scene.harmony, c.chartSection);
+                    if (r && !assignedLabels.includes(r.label)) assignedLabels.push(r.label);
+                }
             }
         }
     }
@@ -4413,13 +4416,16 @@ export class Simulation {
      * @returns {import("./chartFollow.js").FormMap | null}
      */
     _buildFormMap(scene) {
-        if (scene === null || !scene.harmony || !Array.isArray(scene.curves)) return null;
+        if (scene === null || !scene.harmony) return null;
         /** @type {Array<[number, number]>} */
         const ranges = [];
-        for (const c of scene.curves) {
-            if (c && c.beatPointsMode === "chart") {
-                const res = objectSectionRanges(scene.harmony, c.chartSection);
-                if (res) for (const r of res.ranges) ranges.push(r);
+        for (const arr of [scene.curves, scene.sprites, scene.triggers]) {
+            if (!Array.isArray(arr)) continue;
+            for (const c of arr) {
+                if (c && c.beatPointsMode === "chart") {
+                    const res = objectSectionRanges(scene.harmony, c.chartSection);
+                    if (res) for (const r of res.ranges) ranges.push(r);
+                }
             }
         }
         if (ranges.length === 0) return null;

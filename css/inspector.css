@@ -2033,7 +2033,9 @@
     font-size: 8pt;
     font-weight: 700;
     line-height: 1;
+    cursor: pointer;                    /* click to assign this section to the selection */
 }
+.harmony-bar-section:hover { border-color: #ffb266; color: #ffd9b3; }
 
 /* Ending bracket: a horizontal rule over the top of the bar, dropping a
  * short tick on the left, with the number ("1." / "2.") at its left. */
