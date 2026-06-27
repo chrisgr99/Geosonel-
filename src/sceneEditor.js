@@ -577,11 +577,31 @@ export function stripObsoleteFields(data) {
 }
 
 /**
+ * The voice + active-beat defaults stamped onto a freshly created curve or
+ * sprite (canvas creation only). A new object plays a pleasant sound with no
+ * scripting: a piano instrument voice, active-beat firing enabled, and the
+ * onActiveBeat_<id> binding to the default stub the caller scaffolds into
+ * script.js. The voice carries an explicit `source: "instrument"` so the
+ * inspector's Instrument/Beatbox radio reads Instrument (matching the piano
+ * sound) rather than relying on an absent source defaulting that way.
+ * @param {string} id
+ * @returns {{ voice: object, canActiveBeat: boolean, onActiveBeatFunction: string }}
+ */
+function newObjectSoundDefaults(id) {
+    return {
+        voice: { superdough: { source: "instrument", sound: "piano" } },
+        canActiveBeat: true,
+        onActiveBeatFunction: "onActiveBeat_" + id,
+    };
+}
+
+/**
  * Add a sprite to the parsed scene at canvas position (x, y).
- * The sprite gets a freshly generated id, x, y, and vx/vy=0.
- * Other fields fall through to the constructor defaults (no
- * step/auto, default displayDiameter). Mutates `data` in
- * place.
+ * The sprite gets a freshly generated id, x, y, vx/vy=0, and the
+ * new-object sound defaults (piano voice + active-beat firing wired
+ * to a default onActiveBeat stub). Other fields fall through to the
+ * constructor defaults (no step/auto, default displayDiameter).
+ * Mutates `data` in place.
  * @param {any} data
  * @param {number} x
  * @param {number} y
@@ -599,6 +619,7 @@ export function addSpriteAt(data, x, y) {
         y: roundCoord(y),
         vx: 0,
         vy: 0,
+        ...newObjectSoundDefaults(id),
     });
 }
 
@@ -641,7 +662,11 @@ export function addTriggerAt(data, x, y) {
  * fields. The caller is responsible for supplying a shape
  * consistent with one of the supported types (line /
  * ellipse / piste); the toolbar's curve creation tool
- * produces ellipse shapes.
+ * produces ellipse shapes. The new-object sound defaults
+ * (piano voice + active-beat firing wired to a default
+ * onActiveBeat stub) are stamped on too; curveThickness and
+ * the remaining callback slots fall through to the Curve
+ * constructor defaults.
  *
  * Cursor extents are set explicitly here rather than left
  * to the schema's natural-zero default so newly-created
@@ -702,6 +727,7 @@ export function addCurveAt(data, shape) {
         cursorR: 1,
         cursorL: 1,
         activeBeats: oneMeasure,
+        ...newObjectSoundDefaults(id),
     });
 }
 

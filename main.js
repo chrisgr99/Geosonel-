@@ -4056,9 +4056,33 @@ async function main() {
         );
     };
 
+    // A freshly created curve/sprite is seeded (in addCurveAt/addSpriteAt) with a
+    // piano voice, active-beat firing on, and an onActiveBeat_<id> binding. Mirror
+    // that here by scaffolding the matching default onActiveBeat stub into
+    // script.js — the SAME stub the inspector's Create button writes — so the new
+    // object sounds immediately and the user never has to open the script. Reruns
+    // so functionMap picks the new function up. No-op when a like-named function
+    // already exists (e.g. re-creating a recycled id) or there's no script.js.
+    const seedNewObjectCallback = async (arrayKey) => {
+        const arr = currentScene !== null ? currentScene[arrayKey] : null;
+        if (!Array.isArray(arr) || arr.length === 0) return;
+        const last = arr[arr.length - 1];
+        const id = last !== null && last !== undefined ? last.id : null;
+        if (typeof id !== "string" || id === "") return;
+        const scriptFile = session.bundle.getFile("script.js");
+        if (scriptFile === null) return;
+        const { newContent, alreadyExists } = scaffoldCallbackSlotFunction(
+            scriptFile.content, "onActiveBeat_" + id, "onActiveBeat",
+        );
+        if (alreadyExists) return;
+        session.bundle.updateContent("script.js", newContent);
+        await runScene();
+    };
+
     canvas.setEditCallback(async (edit) => {
         if (edit.kind === "addSprite") {
             await applyCanvasEdit((data) => addSpriteAt(data, edit.x, edit.y));
+            await seedNewObjectCallback("sprites");
             // Leave the just-placed sprite selected so the
             // user can immediately edit it — drag, tweak
             // via the inspector, or hit Delete to undo.
@@ -4100,6 +4124,7 @@ async function main() {
             // appends, so the new curve is the last entry
             // after the scene reloads.
             await applyCanvasEdit((data) => addCurveAt(data, edit.shape));
+            await seedNewObjectCallback("curves");
             if (currentScene !== null && currentScene.curves.length > 0) {
                 canvas.setSelection({
                     sprites: [],
