@@ -831,7 +831,13 @@ export const bandExtraMethods = {
                 const wrap = wrapBeatField(field);
                 row.appendChild(wrap);
                 box.appendChild(row);
-                phraseFields.push({ field, highlight: wrap.querySelector(".insp-beat-hl"), playout: "", numberEl: numEl });
+                // playout is the row's full sounding pattern — every Euclidean phrase
+                // plays the same generated pattern. The playing-beat highlight maps the
+                // global beat index through each row's playout cell-count, so an empty
+                // playout collapses the row to one cell and the box only ever lands on
+                // each row's first beat (cycling the rows). genValue gives the real per-
+                // row length so the box steps along the beats.
+                phraseFields.push({ field, highlight: wrap.querySelector(".insp-beat-hl"), playout: genValue, numberEl: numEl });
             }
 
             const abRow = mkRow();

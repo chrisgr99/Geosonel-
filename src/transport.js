@@ -127,7 +127,19 @@ export class Transport {
     _emit(event) {
         const set = this._listeners.get(event);
         if (set === undefined) return;
-        for (const cb of set) cb();
+        // Isolate listeners: a throw in one MUST NOT starve the others. The set
+        // includes the disc-mirror's flush/runtime push (critical for debugging)
+        // and the canvas/transport-bar/audition handlers; before this guard, a
+        // throw in an earlier-subscribed listener (e.g. the canvas) silently
+        // aborted the loop and froze every later listener, including the mirror.
+        // Snapshot first so an unsubscribe during dispatch can't disturb iteration.
+        for (const cb of [...set]) {
+            try {
+                cb();
+            } catch (err) {
+                console.warn(`GXW: transport "${event}" listener threw:`, err);
+            }
+        }
     }
 
     // --- Play state ---

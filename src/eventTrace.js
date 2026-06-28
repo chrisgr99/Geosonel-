@@ -25,7 +25,7 @@
  * anything changed since its last flush and skip a redundant write.
  */
 
-export const EVENT_TRACE_CAPACITY = 64;
+export const EVENT_TRACE_CAPACITY = 512;
 
 export class EventTrace {
     /**

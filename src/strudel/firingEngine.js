@@ -770,8 +770,15 @@ export class PatternFiringEngine {
      * @param {number} fireTime  The scheduled audio-context time.
      * @returns {boolean}
      */
-    _suppressDuplicatePitch(note, fireTime) {
-        const key = String(note);
+    _suppressDuplicatePitch(sourceId, note, fireTime) {
+        // Keyed on SOURCE + pitch, not pitch alone: this only collapses a single
+        // source's own coincident same-pitch fire (the cycle-boundary double-fire,
+        // or one object's callback landing twice in the window). It must NOT let
+        // one object suppress another — two objects on the same pitch (e.g. a
+        // blank image makes every note the same pitch) are independent voices and
+        // both must sound, so a steady stream from one object never drops beats
+        // because a second object happens to share its pitch.
+        const key = String(sourceId) + "|" + String(note);
         const last = this._recentPitchFireTimes.get(key);
         if (last !== undefined
             && Math.abs(fireTime - last) < SAME_PITCH_SUPPRESS_WINDOW_SECONDS) {
@@ -1012,13 +1019,12 @@ export class PatternFiringEngine {
             value.pan = spec.pan;
         }
 
-        // Same-pitch coincidence suppression. If a note of this pitch
-        // is already scheduled within the window, drop THIS one's audio
-        // — two identical pitches together sum constructively and clip
-        // (and on MIDI the second note-on steals the first). The visual
-        // beat-point flash below still fires, so the beat is still shown
-        // even though its duplicate audio was suppressed.
-        const suppressed = this._suppressDuplicatePitch(noteField, fireTime);
+        // Same-pitch coincidence suppression, PER SOURCE: drop only a repeat of
+        // this source's OWN pitch within the window (a cycle-boundary double-fire),
+        // never a different object that happens to share the pitch. The visual
+        // beat-point flash below still fires, so the beat is still shown even when
+        // its own duplicate audio was suppressed.
+        const suppressed = this._suppressDuplicatePitch(sourceId, noteField, fireTime);
 
         if (!suppressed && this._outputMode === "superdough") {
             // An early gate (articulation shorter than the
