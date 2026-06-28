@@ -40,6 +40,20 @@ test("an unassigned chart object (nothing assigned anywhere) is FORM-GATED over 
     assert.ok(!obj.chartMulti);                     // not the multi-section path
 });
 
+test("a MANUAL object is form-gated over its pattern (measures × phrases), so a loop offset reaches it", () => {
+    // Manual objects free-run otherwise and ignore the practice-loop offset.
+    // Form: 2 measures × 3 phrases = 6 measures, played once (no inner re-trace),
+    // each 4 quarter-beats → a 24-beat form, sectionBars = 6.
+    const obj = { id: "C1", beatPointsMode: "normal", beatInterval: "Qtr", measures: 2, phrases: 3, activeBeats: "x...", strength: "5" };
+    deriveStrudelCycleLengths({ timeSignature: [4, 4], harmony: null, curves: [obj], sprites: [], triggers: [] });
+
+    assert.equal(obj.patternForm, true);
+    assert.equal(obj.chartFormSegs.length, 6);
+    assert.equal(obj.chartSectionBars, 6);
+    assert.equal(obj.chartFormBeats, 24);
+    assert.equal(Math.ceil(obj.chartFormSegs.length / obj.chartSectionBars), 1);
+});
+
 test("whole-chart form-gating spans the PLAYED bars, so a repeat doesn't re-trace mid-chart", () => {
     // A repeat: 2 folded bars played 4 times. The whole chart plays once per form
     // pass (no inner re-trace), so chartSectionBars must be the PLAYED count (4) —

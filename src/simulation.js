@@ -807,6 +807,32 @@ export function deriveStrudelCycleLengths(scene) {
                         delete obj.chartSectionBars;
                     }
                 }
+            } else if (mode === "normal") {
+                // Form-gate MANUAL so a practice-loop offset reaches it (it would
+                // free-run otherwise, ignoring the offset). Its "form" is its own
+                // pattern: M measures × phrases, each cellsPerBar quarter-beats,
+                // played once per cursor traversal — so sectionBars is the full
+                // measure count (no inner re-trace) and patternForm makes the
+                // stepper read raw formBeats instead of mapping through a chart.
+                const total = Math.max(1, M * totalPhrases(obj));
+                const segs = [];
+                for (let i = 0; i < total; i += 1) {
+                    segs.push({ startBeat: i * cellsPerBar, endBeat: (i + 1) * cellsPerBar });
+                }
+                obj.chartFormSegs = segs;
+                obj.chartFormBeats = total * cellsPerBar;
+                obj.chartSectionBars = total;
+                obj.patternForm = true;
+                delete obj.chartMulti;
+                delete obj.chartBarSeq;
+            } else {
+                // Euclidean / Strudel free-run — no form gating.
+                delete obj.chartFormSegs;
+                delete obj.chartFormBeats;
+                delete obj.chartSectionBars;
+                delete obj.patternForm;
+                delete obj.chartMulti;
+                delete obj.chartBarSeq;
             }
         }
     }
@@ -4202,7 +4228,13 @@ export class Simulation {
         // elapsedBeats) so a practice loop's offset gates the looped position;
         // formBeatToChartBeat expands the compressed form back to the chart so the
         // object gates against its chart-beat segments.
-        const beat = this.formBeatToChartBeat(this._transport.formBeats);
+        // A chart object reads its position through formBeatToChartBeat (which
+        // unfolds the compressed chart form). A MANUAL object (patternForm) IS its
+        // own form — its segs are its pattern measures in raw beat space — so it
+        // reads formBeats directly, which still carries a practice-loop offset.
+        const beat = curve.patternForm === true
+            ? this._transport.formBeats
+            : this.formBeatToChartBeat(this._transport.formBeats);
         if (beat === null || !Number.isFinite(beat) || formBeats <= 0) {
             state.cycleProgress = 0; state.t = 0; state.halted = false;
             state._beatOrder = null;

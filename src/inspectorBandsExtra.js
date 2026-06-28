@@ -377,6 +377,7 @@ export const bandExtraMethods = {
         // Euclidean Active-Beats count below.
         const cycleDur = measuresNum * cellsPerBar;
         const bpbForBars = cellsPerBar;
+        this._mselCpb = bpbForBars;     // cells-per-bar, for measure-clear (rest padding)
 
         // Row 1: the Pattern Type picker leads, then the per-mode fields.
         const r1 = mkRow();
@@ -392,6 +393,63 @@ export const bandExtraMethods = {
             editable: active,
             editKind: "setBeatPointsMode",
         }));
+
+        // Transport controls in the beat editor: a Rewind (rewind + stop) and a
+        // Play/Pause that mirror the top transport bar, on the Pattern Type row.
+        // Shown in chart mode (between the menu and the chart loop button) AND in
+        // the Manual / Euclidean / Auto grid modes. They emit transient transport
+        // edits and act on the GLOBAL transport (independent of the object's active
+        // state); main.js keeps the play glyph in sync via its transport listener.
+        if (chartMode || gridMode) {
+            const mkTransportBtn = (glyph, label, kind, extraClass) => {
+                const b = document.createElement("button");
+                b.type = "button";
+                b.className = "insp-transport-btn" + (extraClass ? " " + extraClass : "");
+                b.textContent = glyph;
+                b.title = label;
+                b.setAttribute("aria-label", label);
+                b.addEventListener("click", () => this._emitEdit({ kind }));
+                return b;
+            };
+            // Rewind glyph ⏮ (U+23EE), Play ▶ (U+25B6) — main.js swaps to ⏸ (U+23F8).
+            r1.appendChild(mkTransportBtn("⏮", "Rewind to start and stop", "transportRewind"));
+            r1.appendChild(mkTransportBtn("▶", "Play / Pause", "transportPlayToggle", "insp-transport-play"));
+
+            // Loop button — MANUAL only (Euclidean drops looping). Like chart mode:
+            // select measures below (drag across measures/lines), press to loop just
+            // that span; press with nothing selected to clear. The selection's
+            // measure range maps straight to transport beats (measure × cells-per-
+            // bar), and Manual objects are form-gated so the offset reaches them.
+            if (mode === "normal") {
+                const mloop = document.createElement("button");
+                mloop.type = "button";
+                mloop.className = "insp-loop-btn" + (Array.isArray(this._loopRange) ? " active" : "");
+                mloop.textContent = "⟲";
+                mloop.title = "Select measures below, then press to loop just that span; "
+                    + "press with nothing selected to clear.";
+                mloop.setAttribute("aria-label", "Loop selected measures");
+                mloop.style.marginLeft = "4px";
+                mloop.addEventListener("click", () => {
+                    const sel = this._selectionBarRange();   // [a, b] measure indices
+                    if (sel !== null) {
+                        this._loopRange = sel;
+                        this._emitEdit({
+                            kind: "setBeatsLoop",
+                            offsetBeats: sel[0] * bpbForBars,
+                            lengthBeats: (sel[1] - sel[0] + 1) * bpbForBars,
+                        });
+                        this._mselRange = null;
+                        this._paintMsel();
+                    } else if (Array.isArray(this._loopRange)) {
+                        this._loopRange = null;
+                        this._emitEdit({ kind: "clearPracticeLoop" });
+                    }
+                    mloop.classList.toggle("active", Array.isArray(this._loopRange));
+                    this._paintLoopSegs();
+                });
+                r1.appendChild(mloop);
+            }
+        }
 
         // In chart mode the practice-loop button rides on this row, just right of
         // the Pattern Type menu — a small square ⟲ toggle (no label, no row of its
@@ -610,6 +668,15 @@ export const bandExtraMethods = {
                 const next = phraseFields[r + delta];
                 if (next) next.field.focus();
             };
+            // Measure-selection state (cross-line drag-select for Delete + loop),
+            // shared with the chart editor's selection methods.
+            this._loopSegs = [];
+            this._mselRange = null;
+            if (!Number.isFinite(this._mselAnchor)) this._mselAnchor = null;
+            if (!this._mselKeyBound) {
+                document.addEventListener("keydown", (e) => this._onMselKey(e));
+                this._mselKeyBound = true;
+            }
             for (let r = 0; r < phrasesNum; r++) {
                 const row = document.createElement("div");
                 row.className = "insp-phrase-row";
@@ -625,7 +692,12 @@ export const bandExtraMethods = {
                     fixedGrid: true,
                     cellsPerBar: bpbForBars,
                     maxCells: rowCells(r),
-                    allowEmpty: r > 0,
+                    // Every phrase may be fully empty — a cleared phrase shows blank
+                    // and ghosts forward. Phrase 0 falls back to the legacy
+                    // activeBeats, so it only reads blank once that's cleared too
+                    // (see _clearSelectedMeasures); a brand-new object keeps its
+                    // default beat because activeBeats still holds it.
+                    allowEmpty: true,
                     kind: "pattern",
                     ghost,
                     editKind: `setPhrasePattern:${r}`,   // unique per row (focus restore)
@@ -635,9 +707,28 @@ export const bandExtraMethods = {
                 });
                 const wrap = wrapBeatField(field);
                 row.appendChild(wrap);
+                // Per-measure selection overlay (mirrors the chart editor) → cross-
+                // line drag-select for Delete + loop. Appended to the WRAP so the
+                // ch-positioned segs align with the field past the row's number cell.
+                const overlay = document.createElement("div");
+                overlay.className = "insp-loop-overlay";
+                for (let mm = 0; mm < measuresNum; mm += 1) {
+                    const segEl = document.createElement("div");
+                    segEl.className = "insp-loop-seg";
+                    segEl.style.left = `calc(11px + ${mm * (bpbForBars + 1)}ch)`;
+                    segEl.style.width = `${bpbForBars}ch`;
+                    segEl.dataset.bar = String(r * measuresNum + mm);   // absolute measure index
+                    segEl.dataset.row = String(r);
+                    segEl.dataset.col = String(mm);
+                    overlay.appendChild(segEl);
+                    this._loopSegs.push(segEl);
+                }
+                wrap.appendChild(overlay);
                 box.appendChild(row);
                 phraseFields.push({ field, highlight: wrap.querySelector(".insp-beat-hl"), playout: ghost, numberEl: numEl });
             }
+            if (active) box.addEventListener("mousedown", (e) => this._onMselDown(e, box));
+            this._paintLoopSegs();                 // reflect any active loop (olive)
             // "Active Beats" label in front of the phrase box.
             const abRow = mkRow();
             abRow.classList.add("insp-phrase-ab-row");
@@ -1653,16 +1744,27 @@ export const bandExtraMethods = {
         this._clearSelectedMeasures();
     },
 
-    /** Clear every selected measure to BLANK (not rest-dots), one setPhrasePattern
-     *  edit per affected row. Blank measures let the ghost/fill show through: a
-     *  shorter row value loops its earlier pattern across the cleared tail, and a
-     *  fully cleared row inherits the row above — rest-dots ("....") would instead
-     *  pin explicit silence and block both. */
+    /** Clear the selected measures back to the BLANK state — the same empty
+     *  phrase a fresh repeat adds: it shows blank and ghosts the previous pattern
+     *  forward (and reads truly empty when there's nothing before it). One
+     *  setPhrasePattern edit per affected row.
+     *
+     *  A TRAILING run of cleared measures is dropped from the row value (so it
+     *  ghosts forward / a whole-row clear becomes ""). An INTERIOR cleared measure
+     *  can't be blank — the value is one cell-string and an empty "||" segment
+     *  collapses on save — so it falls back to explicit rests ("...."), staying a
+     *  silent bar in place.
+     *
+     *  Phrase 0 falls back to the legacy activeBeats, so when row 0 ends up fully
+     *  empty its activeBeats is cleared too — otherwise the stale (often Euclidean)
+     *  pattern ghosts back through instead of reading blank. */
     _clearSelectedMeasures() {
         const segs = Array.isArray(this._loopSegs) ? this._loopSegs : [];
         const range = this._mselRange;
         const fields = Array.isArray(this._phraseFields) ? this._phraseFields : [];
         if (!Array.isArray(range)) return;
+        const cpb = Math.max(1, Math.round(Number(this._mselCpb)) || 1);
+        const rests = ".".repeat(cpb);
         /** @type {Map<number, Set<number>>} row → cols to clear */
         const byRow = new Map();
         for (let i = range[0]; i <= range[1] && i < segs.length; i += 1) {
@@ -1675,14 +1777,19 @@ export const bandExtraMethods = {
         for (const [row, cols] of byRow) {
             const f = fields[row] && fields[row].field;
             if (!f) continue;
+            // TYPED measures only — split the live (barized) value, dropping the
+            // empty the display's trailing bar-line leaves behind.
             const measures = String(f.value || "").split("|");
-            const maxCol = Math.max(...cols);
-            while (measures.length <= maxCol) measures.push("");   // pad with blanks, not dots
-            for (const c of cols) measures[c] = "";                // clear to blank → ghost shows through
-            // Drop trailing blanks so the row value is the shortest form that
-            // ghosts the tail (and an all-cleared row becomes "" → inherits above).
             while (measures.length > 0 && measures[measures.length - 1] === "") measures.pop();
-            this._emitEdit({ kind: "setPhrasePattern", value: measures.join("|"), index: row });
+            for (const c of cols) if (c >= 0 && c < measures.length) measures[c] = "";   // clear → blank
+            // Trailing blanks drop off → the tail ghosts forward (a fully cleared
+            // row becomes "" and inherits/blank like a fresh phrase).
+            while (measures.length > 0 && measures[measures.length - 1] === "") measures.pop();
+            // Interior blanks can't survive the cell-string → explicit rests.
+            for (let i = 0; i < measures.length; i += 1) if (measures[i] === "") measures[i] = rests;
+            const value = measures.join("|");
+            this._emitEdit({ kind: "setPhrasePattern", value, index: row });
+            if (row === 0 && value === "") this._emitEdit({ kind: "setActiveBeats", value: "" });
         }
         this._mselRange = null;
         this._paintMsel();

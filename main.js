@@ -2795,6 +2795,10 @@ async function main() {
             firingEngine.setSeamBoundary(null);
             auditionBar.setPlaying(false);
         }
+        // Keep the beat editor's Play/Pause glyph in sync with the top bar.
+        for (const el of document.querySelectorAll(".insp-transport-play")) {
+            el.textContent = transport.isPlaying ? "⏸" : "▶";
+        }
     });
 
     /**
@@ -4438,6 +4442,24 @@ async function main() {
                 }
             } else if (edit.kind === "clearPracticeLoop") {
                 simulation.clearPracticeLoop();
+                if (editor.harmonyPanel) editor.harmonyPanel.setLoopBars(null, null);
+            } else if (edit.kind === "transportRewind") {
+                // Beat-editor Rewind: rewind AND stop (same as the top bar).
+                transport.rewindAndStop();
+            } else if (edit.kind === "transportPlayToggle") {
+                transport.toggle();
+            } else if (edit.kind === "setBeatsLoop") {
+                // Manual-mode loop: loop a direct beat window [offset, offset+length)
+                // (from the selected measures × cells-per-bar). Manual objects are
+                // form-gated so the offset positions them. No chart range → clear
+                // the chord-chart loop mirror.
+                const off = Number(edit.offsetBeats);
+                const len = Number(edit.lengthBeats);
+                if (Number.isFinite(len) && len > 0) {
+                    simulation.setPracticeLoop(Number.isFinite(off) ? off : 0, len);
+                } else {
+                    simulation.clearPracticeLoop();
+                }
                 if (editor.harmonyPanel) editor.harmonyPanel.setLoopBars(null, null);
             } else if (edit.kind === "setChordGuideGain") {
                 // UI-only monitor volume (0 = off). Transient: update the live

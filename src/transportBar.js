@@ -122,7 +122,8 @@ export class TransportBarView {
             !this.timeSignatureInput) return;
 
         this.playBtn.addEventListener("click", () => this.transport.toggle());
-        this.rewindBtn.addEventListener("click", () => this.transport.rewind());
+        // Rewind also STOPS the transport (rewind + pause), here and on the R key.
+        this.rewindBtn.addEventListener("click", () => this.transport.rewindAndStop());
 
         // BPM field edits flow into the Transport. We commit on
         // "change" (focus loss / Enter) rather than every
@@ -183,7 +184,7 @@ export class TransportBarView {
             if (this._isTypingTarget(e.target)) return;
             if (e.key === "r" || e.key === "R") {
                 e.preventDefault();
-                this.transport.rewind();
+                this.transport.rewindAndStop();
             }
         });
 

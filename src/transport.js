@@ -188,6 +188,18 @@ export class Transport {
     }
 
     /**
+     * Rewind to the start AND stop playback — the behaviour the user-facing
+     * Rewind controls use (the top transport bar and the beat editor). Pausing
+     * before the rewind leaves the clock frozen at zero. (Plain rewind() keeps
+     * the play state and is still used by the internal repositioning paths —
+     * chart change, unwind, seed, audition — which must not stop the score.)
+     */
+    rewindAndStop() {
+        this.pause();
+        this.rewind();
+    }
+
+    /**
      * @returns {boolean}
      */
     get isPlaying() {

@@ -384,6 +384,24 @@
 }
 .insp-loop-btn:hover { border-color: #9ec79e; }
 .insp-loop-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Transport buttons in the beat editor (Rewind, Play/Pause) — small squares
+ * matching the loop button, mirroring the top transport bar. */
+.insp-transport-btn {
+    background-color: #646464;
+    border: 2px solid #789678;
+    border-radius: 3px;
+    height: 22px;
+    width: 22px;
+    padding: 0;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 11pt;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.insp-transport-btn:hover { border-color: #9ec79e; }
 /* Chord-guide monitor volume: a short Off↔louder slider on the Pattern Type
  * row (a composing aid; see harmonyPanel / chordGuide). */
 .insp-chordguide-slider {
