@@ -784,7 +784,7 @@ export const bandExtraMethods = {
                 hint.style.fontSize = "11px";
                 hint.textContent = (bpObjs.length !== 1)
                     ? "Select a single object to edit its chart rhythm."
-                    : "Load a chord chart in the Harmony tab — its measures appear here to fill in.";
+                    : "Load a chord chart in the Chord Chart tab — its measures appear here to fill in.";
                 box.appendChild(hint);
             } else {
                 const ts = Array.isArray(this._scene.timeSignature) ? this._scene.timeSignature : [masterBeats, 4];

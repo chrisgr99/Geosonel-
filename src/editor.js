@@ -2724,7 +2724,12 @@ export class TabbedEditor {
     _renderTabs() {
         this.tabBar.innerHTML = "";
 
-        // Virtual Inspector tab (form inspector).
+        // Tab order: Inspector, Chord Chart, Canvas, Styles, Script, then any
+        // remaining text files. scene.json is never shown as a tab — the form
+        // inspector covers it.
+        const renderedNames = new Set();
+
+        // 1. Inspector (form inspector) — carries scene.json's dirty dot.
         this.tabBar.appendChild(
             this._renderVirtualTab(
                 VIRTUAL_TAB_INSPECTOR,
@@ -2733,22 +2738,18 @@ export class TabbedEditor {
             ),
         );
 
-        // Virtual Canvas tab. Selection-independent
-        // scene-level chrome; doesn't carry a dirty dot
-        // because the Properties and J tabs already
-        // surface scene.json's dirty state and a third
-        // signal for the same backing file would just
-        // duplicate the cue.
-        // Script tab (script.js) — SECOND, right after Properties,
-        // so the composer reaches the source code before the canvas
-        // and the anonymous JSON tab. Tab order: Properties, Script,
-        // Canvas, then the unnamed JSON (scene.json) tab.
-        const renderedNames = new Set();
-        if (this.bundle.getFile("script.js") !== null) {
-            this.tabBar.appendChild(this._renderFileTab("script.js"));
-            renderedNames.add("script.js");
-        }
+        // 2. Chord Chart (harmony). The iReal Pro chart view; no dirty dot,
+        // no backing file.
+        this.tabBar.appendChild(
+            this._renderVirtualTab(
+                VIRTUAL_TAB_HARMONY,
+                "Chord Chart",
+                /* dirtyBackingFile */ null,
+            ),
+        );
 
+        // 3. Canvas. Selection-independent scene chrome; no dirty dot because
+        // the Inspector already surfaces scene.json's dirty state.
         this.tabBar.appendChild(
             this._renderVirtualTab(
                 VIRTUAL_TAB_CANVAS,
@@ -2757,20 +2758,8 @@ export class TabbedEditor {
             ),
         );
 
-        // Virtual Harmony tab. Placed immediately after the
-        // Canvas tab. Scaffolding only — no dirty dot, no
-        // backing file; the harmony area holds placeholder
-        // content until the iReal Pro chart view lands.
-        this.tabBar.appendChild(
-            this._renderVirtualTab(
-                VIRTUAL_TAB_HARMONY,
-                "Harmony",
-                /* dirtyBackingFile */ null,
-            ),
-        );
-
-        // Virtual Styles tab. After Harmony. The app-wide voice / rhythm style
-        // libraries; no dirty dot, no backing file.
+        // 4. Styles. The app-wide voice / rhythm style libraries; no dirty dot,
+        // no backing file.
         this.tabBar.appendChild(
             this._renderVirtualTab(
                 VIRTUAL_TAB_STYLES,
@@ -2778,6 +2767,12 @@ export class TabbedEditor {
                 /* dirtyBackingFile */ null,
             ),
         );
+
+        // 5. Script (script.js) — the score's source code.
+        if (this.bundle.getFile("script.js") !== null) {
+            this.tabBar.appendChild(this._renderFileTab("script.js"));
+            renderedNames.add("script.js");
+        }
 
         // scene.json is NOT shown as a tab — the form inspector covers it and
         // the raw JSON view is reached separately. Mark it rendered so the

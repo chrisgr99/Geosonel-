@@ -455,7 +455,7 @@ export class HarmonyPanel {
     /** Full re-render from current library + picker state. */
     _render() {
         this.container.innerHTML = "";
-        // No "Harmony" heading: the tab is already labelled "Harmony".
+        // No heading: the tab is already labelled "Chord Chart".
         // Drop stale menu handles; _buildMenu re-sets them when it runs.
         this._menuEl = null;
         this._menuPopup = null;
