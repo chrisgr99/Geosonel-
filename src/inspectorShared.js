@@ -1,4 +1,5 @@
 import { BASS_SOUND_OPTIONS } from "./strudel/bassSamples.js";
+import { GUITAR_SOUND_OPTIONS } from "./strudel/guitarSamples.js";
 
 export const W = {
     // Left-edge label column. Wide enough for the longest
@@ -246,6 +247,9 @@ export const PITCHED_SOUND_OPTIONS = [
     // CC0 multisampled basses (sfzinstruments / Karoryfer / D. Smolken), lazy-
     // loaded on demand; see src/strudel/bassSamples.js.
     ...BASS_SOUND_OPTIONS,
+    // CC0 multisampled guitars (sfzinstruments / Karoryfer), lazy-loaded on
+    // demand; see src/strudel/guitarSamples.js.
+    ...GUITAR_SOUND_OPTIONS,
 ];
 
 /**

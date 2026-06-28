@@ -138,6 +138,7 @@
 import { parsePatternToPositions } from "./patternParse.js";
 import { withFiringContext } from "./firingContext.js";
 import { BASS_SOUND_NAMES } from "./bassSamples.js";
+import { GUITAR_SOUND_NAMES } from "./guitarSamples.js";
 import { flushNoteTaps, clearNoteTaps } from "./debugTap.js";
 
 import { getBeatIntervalEntry, DEFAULT_BEAT_INTERVAL } from "../beatIntervals.js";
@@ -347,11 +348,13 @@ const VOICE_ENVELOPES = {
     kalimba: { decay: 0.1, sustain: 0.9, release: 0.15 },
     harp: { decay: 0.1, sustain: 0.9, release: 0.15 },
     sax: { decay: 0.1, sustain: 0.9, release: 0.15 },
-    // CC0 multisampled basses: the same gentle sampled-instrument shape (high
-    // sustain so the recorded note isn't truncated, short release), generated
-    // from the names set so it stays in sync with bassSamples.js.
+    // CC0 multisampled basses + guitars: the same gentle sampled-instrument shape
+    // (high sustain so the recorded note isn't truncated, short release),
+    // generated from the names sets so it stays in sync with the sample modules.
     ...Object.fromEntries(
-        [...BASS_SOUND_NAMES].map((n) => [n, { decay: 0.1, sustain: 0.9, release: 0.15 }]),
+        [...BASS_SOUND_NAMES, ...GUITAR_SOUND_NAMES].map(
+            (n) => [n, { decay: 0.1, sustain: 0.9, release: 0.15 }],
+        ),
     ),
 };
 
