@@ -762,7 +762,6 @@ export const bandExtraMethods = {
             // Anchor measure (the last plain click / caret) a shift-click extends
             // from. Kept across renders so a shift-click after a re-run still works.
             if (!Number.isFinite(this._mselAnchor)) this._mselAnchor = null;
-            this._mselCpb = bpbForBars;          // cells-per-bar, for clearing
             // Bind the Delete-to-clear key handler once.
             if (!this._mselKeyBound) {
                 document.addEventListener("keydown", (e) => this._onMselKey(e));
@@ -1622,13 +1621,15 @@ export const bandExtraMethods = {
         this._clearSelectedMeasures();
     },
 
-    /** Clear (blank to rests) every selected measure, one setPhrasePattern edit
-     *  per affected row. */
+    /** Clear every selected measure to BLANK (not rest-dots), one setPhrasePattern
+     *  edit per affected row. Blank measures let the ghost/fill show through: a
+     *  shorter row value loops its earlier pattern across the cleared tail, and a
+     *  fully cleared row inherits the row above — rest-dots ("....") would instead
+     *  pin explicit silence and block both. */
     _clearSelectedMeasures() {
         const segs = Array.isArray(this._loopSegs) ? this._loopSegs : [];
         const range = this._mselRange;
         const fields = Array.isArray(this._phraseFields) ? this._phraseFields : [];
-        const cpb = Math.max(1, Math.floor(Number(this._mselCpb)) || 1);
         if (!Array.isArray(range)) return;
         /** @type {Map<number, Set<number>>} row → cols to clear */
         const byRow = new Map();
@@ -1639,14 +1640,16 @@ export const bandExtraMethods = {
             if (!byRow.has(row)) byRow.set(row, new Set());
             byRow.get(row).add(col);
         }
-        const dots = ".".repeat(cpb);
         for (const [row, cols] of byRow) {
             const f = fields[row] && fields[row].field;
             if (!f) continue;
             const measures = String(f.value || "").split("|");
             const maxCol = Math.max(...cols);
-            while (measures.length <= maxCol) measures.push(dots);
-            for (const c of cols) measures[c] = dots;
+            while (measures.length <= maxCol) measures.push("");   // pad with blanks, not dots
+            for (const c of cols) measures[c] = "";                // clear to blank → ghost shows through
+            // Drop trailing blanks so the row value is the shortest form that
+            // ghosts the tail (and an all-cleared row becomes "" → inherits above).
+            while (measures.length > 0 && measures[measures.length - 1] === "") measures.pop();
             this._emitEdit({ kind: "setPhrasePattern", value: measures.join("|"), index: row });
         }
         this._mselRange = null;
