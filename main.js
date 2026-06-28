@@ -67,6 +67,7 @@ import {
 import { TabbedEditor } from "./src/editor.js";
 import { Transport } from "./src/transport.js";
 import { Simulation, deriveStrudelCycleLengths } from "./src/simulation.js";
+import { shellVoicing } from "./src/chordGuide.js";
 import { sectionFormWindows } from "./src/chartFollow.js";
 import { TransportBarView } from "./src/transportBar.js";
 import { StrudelRuntime } from "./src/strudel/runtime.js";
@@ -496,6 +497,20 @@ async function main() {
     /** @type {string[]} */
     let harmonySectionIds = [];
 
+    // Chord-guide monitor: a UI-only aid that softly sounds the chart's chords as
+    // a piano while the user edits beats (not part of the piece). Its volume (0 =
+    // off) is a persisted UI pref the beat editor's slider drives; the chord's
+    // voicing is re-fired on each chord change in the per-frame harmony beat sink.
+    const CHORD_GUIDE_KEY = "gxw.chordGuideGain";
+    let chordGuideGain = (() => {
+        try {
+            const v = parseFloat(window.localStorage.getItem(CHORD_GUIDE_KEY) || "");
+            return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
+        } catch { return 0; }
+    })();
+    /** Signature of the chord last sounded by the guide, to fire only on change. */
+    let chordGuideLastSig = null;
+
     const editor = new TabbedEditor(tabBarEl, editorAreaEl, inspectorAreaEl, canvasInspectorAreaEl, harmonyAreaEl, stylesAreaEl, bundle, {
         onDirtyChange: (dirty) => {
             updateTitleBar(dirty);
@@ -688,10 +703,28 @@ async function main() {
     // transport clock and wraps at its end, so the beat maps straight to the
     // sounding bar.
     canvas.setHarmonyBeatSink((beat) => {
-        if (!editor.harmonyPanel) return;
         // The canvas hands the (compressed) form beat; expand it to the real chart
         // beat so the cursor skips unassigned sections under a compressed form.
-        editor.harmonyPanel.setPlayhead(beat === null ? null : simulation.formBeatToChartBeat(beat));
+        if (editor.harmonyPanel) {
+            editor.harmonyPanel.setPlayhead(beat === null ? null : simulation.formBeatToChartBeat(beat));
+        }
+        // Chord-guide monitor: while turned up, re-sound a soft piano shell of the
+        // chord at the current form beat whenever it changes — a composing aid,
+        // never recorded or exported. Fired straight through the firing engine
+        // (bypassing the Play-Selected solo gate) under a sentinel source id.
+        if (beat === null || chordGuideGain <= 0) { chordGuideLastSig = null; return; }
+        const ctx = simulation.chordStructureAtFormBeat(beat);
+        if (ctx === null) { chordGuideLastSig = null; return; }
+        const sig = ctx.root + ":" + ctx.notes.join(",");
+        if (sig === chordGuideLastSig) return;        // same chord still sounding
+        chordGuideLastSig = sig;
+        const bpm = transport.bpm || 120;
+        const durSec = Math.max(0.25, (ctx.beatsToNext || 2) * (60 / bpm) * 0.95);
+        for (const note of shellVoicing(ctx)) {
+            firingEngine.fireImmediateNote("__chordGuide__", {
+                type: "note", sound: "piano", note, amplitude: 0.9 * chordGuideGain, duration: durSec,
+            });
+        }
     });
 
     // Inspector hover-preview sink. As the pointer hovers an object on
@@ -4406,6 +4439,12 @@ async function main() {
             } else if (edit.kind === "clearPracticeLoop") {
                 simulation.clearPracticeLoop();
                 if (editor.harmonyPanel) editor.harmonyPanel.setLoopBars(null, null);
+            } else if (edit.kind === "setChordGuideGain") {
+                // UI-only monitor volume (0 = off). Transient: update the live
+                // value the beat sink reads and persist the pref; no scene edit.
+                const v = Math.min(1, Math.max(0, Number(edit.value) || 0));
+                chordGuideGain = v;
+                try { window.localStorage.setItem(CHORD_GUIDE_KEY, String(v)); } catch { /* storage unavailable */ }
             } else if (edit.kind === "setPhrasePattern") {
                 await applySceneEdit((data) =>
                     setPhrasePatternOnSelection(data, edit.selection, edit.value, edit.index),

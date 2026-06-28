@@ -2450,6 +2450,24 @@ export class Simulation {
     }
 
     /**
+     * The chord sounding at a FORM beat, packaged for the UI chord-guide monitor:
+     * { root: MIDI, notes: semitone offsets, beatsToNext } — root + tones so the
+     * guide can voice it, and beats-to-next so it can sustain to the next change.
+     * Reuses the same lookup that backs this.chord, so it's exactly the chord the
+     * engine reports; null when there's no harmony / no chord. Read-only — the
+     * guide is a composing aid and never part of playback output.
+     * @param {number} formBeat
+     * @returns {{ root: number, notes: number[], beatsToNext: number | null } | null}
+     */
+    chordStructureAtFormBeat(formBeat) {
+        const h = this._harmonyContextAt(this.formBeatToChartBeat(formBeat));
+        if (!h || !h.chord) return null;
+        const struct = chordStructure(h.chord, h.key);
+        if (struct === null) return null;
+        return { root: struct.root, notes: struct.notes, beatsToNext: h.beatsToNext };
+    }
+
+    /**
      * Attach the live harmony to a firing context and arm the ambient
      * `mapToHarmony` global, just before a callback runs. Sets ctx.chord
      * and ctx.nextChord to a { root, notes } structure (root MIDI + chord

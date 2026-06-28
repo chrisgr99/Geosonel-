@@ -415,6 +415,38 @@ export const bandExtraMethods = {
             r1.appendChild(loopBtn);
         }
 
+        // Chord-guide monitor: a short Off↔louder slider on the Pattern Type row,
+        // right of the loop button. While turned up it softly plays the chart's
+        // chords (piano) as the form advances — a composing aid for hearing where
+        // the phrases/cadences fall while placing beats; NOT part of the piece.
+        // Global + UI-only: reads/writes the persisted gain via setChordGuideGain
+        // (0 = off). Shown whenever a chart is loaded.
+        if (chartMode && chartHarmony !== null) {
+            let cgGain = 0;
+            try {
+                const v = parseFloat(window.localStorage.getItem("gxw.chordGuideGain") || "");
+                cgGain = Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
+            } catch (e) { cgGain = 0; }
+            const cgLabel = mkLabel("Chords", { disabled: !active });
+            cgLabel.style.marginLeft = "10px";
+            r1.appendChild(cgLabel);
+            const cg = document.createElement("input");
+            cg.type = "range";
+            cg.min = "0";
+            cg.max = "1";
+            cg.step = "0.05";
+            cg.value = String(cgGain);
+            cg.className = "insp-chordguide-slider";
+            cg.disabled = !active;
+            cg.title = "Hear the chart's chords as a soft piano while you work — slide from off (far left) "
+                + "up to louder. A composing aid for feeling the phrases/cadences; not part of the music.";
+            cg.setAttribute("aria-label", "Chord guide volume");
+            if (active) cg.addEventListener("input", () => {
+                this._emitEdit({ kind: "setChordGuideGain", value: cg.value });
+            });
+            r1.appendChild(cg);
+        }
+
         // Measures — the pattern length in bars; × cells-per-bar gives the cycle
         // length the pattern loops to fill. Sits between Pattern Type and Beat
         // Interval, for every mode (each bar is one master-meter measure).

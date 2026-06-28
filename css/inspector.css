@@ -384,6 +384,17 @@
 }
 .insp-loop-btn:hover { border-color: #9ec79e; }
 .insp-loop-btn:disabled { opacity: 0.45; cursor: default; }
+/* Chord-guide monitor volume: a short Off↔louder slider on the Pattern Type
+ * row (a composing aid; see harmonyPanel / chordGuide). */
+.insp-chordguide-slider {
+    width: 72px;
+    height: 16px;
+    margin: 0 0 0 4px;
+    vertical-align: middle;
+    accent-color: #789678;
+    cursor: pointer;
+}
+.insp-chordguide-slider:disabled { opacity: 0.45; cursor: default; }
 /* Armed: olive, matching the range it paints. */
 .insp-loop-btn.active {
     background-color: #5c5526;
