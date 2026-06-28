@@ -1,3 +1,5 @@
+import { BASS_SOUND_OPTIONS } from "./strudel/bassSamples.js";
+
 export const W = {
     // Left-edge label column. Wide enough for the longest
     // band-1-or-2 label at 10pt; everything narrower gets
@@ -241,6 +243,9 @@ export const PITCHED_SOUND_OPTIONS = [
     { value: "kalimba", label: "kalimba (VCSL)" },
     { value: "harp", label: "harp (VCSL)" },
     { value: "sax", label: "sax (VCSL)" },
+    // CC0 multisampled basses (sfzinstruments / Karoryfer / D. Smolken), lazy-
+    // loaded on demand; see src/strudel/bassSamples.js.
+    ...BASS_SOUND_OPTIONS,
 ];
 
 /**

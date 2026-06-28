@@ -59,6 +59,8 @@
 /** @typedef {import("../transport.js").Transport} Transport */
 /** @typedef {"idle" | "loading" | "loaded" | "failed"} RuntimeStatus */
 
+import { BASS_SAMPLES, BASS_SOUND_NAMES } from "./bassSamples.js";
+
 const LOG_PREFIX = "[GXW StrudelRuntime]";
 
 /**
@@ -687,10 +689,42 @@ export class StrudelRuntime {
         if (typeof sound === "string") {
             if (VCSL_SOUND_NAMES.has(sound)) {
                 this._ensureSamplesUrl(VCSL_URL);
+            } else if (BASS_SOUND_NAMES.has(sound)) {
+                this._ensureBassSamples(sound);
             } else if (sound.startsWith("gm_")) {
                 this._ensureSoundfonts();
             }
         }
+    }
+
+    /**
+     * Register one CC0 bass instrument's note-to-URL map with strudel, exactly
+     * once per session. Unlike the VCSL / drum-machine maps (a single hosted JSON
+     * fetched by URL), each bass is a small in-code map passed to samples() as an
+     * OBJECT — { soundName: { "A1": url, ... } } with absolute jsDelivr URLs — so
+     * no JSON is fetched here; only the per-note audio lazy-loads on first play.
+     * Deduped under a synthetic "bass:<name>" key in the same set the URL loads
+     * use; a failed registration un-marks it so a later pick can retry.
+     *
+     * @param {string} sound  A BASS_SOUND_NAMES entry, e.g. "swag_bass".
+     */
+    _ensureBassSamples(sound) {
+        const key = "bass:" + sound;
+        if (this._loadedSampleUrls.has(key)) return;
+        const samplesFn = /** @type {((map: any) => Promise<void>) | undefined} */ (
+            /** @type {any} */ (window).samples
+        );
+        if (typeof samplesFn !== "function") return;
+        const map = BASS_SAMPLES[sound];
+        if (map === undefined) return;
+        this._loadedSampleUrls.add(key);
+        Promise.resolve(samplesFn({ [sound]: map })).then(
+            () => console.log(`${LOG_PREFIX} lazy-loaded bass samples: ${sound}`),
+            (err) => {
+                this._loadedSampleUrls.delete(key);
+                console.warn(`${LOG_PREFIX} lazy bass-sample load failed: ${sound}`, err);
+            },
+        );
     }
 
     /**
