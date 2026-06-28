@@ -779,13 +779,28 @@ export function deriveStrudelCycleLengths(scene) {
                     delete obj.chartMulti;
                     delete obj.chartMultiSegs;
                     delete obj.chartMultiSectionBars;
-                    // FORM-GATED (single label): plays only its label's sections, one
-                    // section-bar per played bar, re-tracing each occurrence.
-                    const fb = res ? sectionFormBars(scene.harmony, res.ranges) : null;
+                    // FORM-GATED. ASSIGNED → its label's sections (one section-bar per
+                    // played bar, re-tracing each occurrence). UNASSIGNED with nothing
+                    // assigned anywhere → the WHOLE chart as a single section, so it
+                    // still plays on the form clock — and a practice-loop OFFSET reaches
+                    // it — rather than free-running its own cycle, which a transport
+                    // offset can't shift (the loop would always replay the first bars).
+                    const lastBar = (editor && Number.isFinite(editor.foldedCount))
+                        ? Math.floor(editor.foldedCount) - 1 : -1;
+                    const ranges = res ? res.ranges : (lastBar >= 0 ? [[0, lastBar]] : null);
+                    const fb = ranges ? sectionFormBars(scene.harmony, ranges) : null;
                     if (fb) {
                         obj.chartFormSegs = fb.segs;
                         obj.chartFormBeats = fb.formBeats;
-                        obj.chartSectionBars = fb.sectionBars;
+                        // sectionBars is how many bars one re-trace spans. An ASSIGNED
+                        // section recurs and re-traces, so it's the section's own bar
+                        // count. The WHOLE chart plays once per form pass with no inner
+                        // re-trace — its "section" is the entire PLAYED sequence — so
+                        // sectionBars must be the played-bar count (fb.segs.length), not
+                        // the folded count fb.sectionBars reports. Using the folded count
+                        // would make the engine re-trace mid-chart and mis-map beats
+                        // across a repeat (skipping bars).
+                        obj.chartSectionBars = res ? fb.sectionBars : fb.segs.length;
                     } else {
                         delete obj.chartFormSegs;
                         delete obj.chartFormBeats;
@@ -4460,6 +4475,11 @@ export class Simulation {
     clearPracticeLoop() {
         this._practiceLoopBeats = null;
         this._transport.setLoopOffsetBeats(0);
+    }
+
+    /** The active practice-loop length in beats, or null when off (diagnostics). */
+    get practiceLoopBeats() {
+        return this._practiceLoopBeats;
     }
 
     /**

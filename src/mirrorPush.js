@@ -862,6 +862,14 @@ export class MirrorPush {
                 elapsedBeats: transport.elapsedBeats,
                 musicalPosition: transport.musicalPosition,
                 bpm: transport.bpm,
+                // Practice-loop diagnostics: the length the transport is looping
+                // (null = off) and the form-beat offset it starts at (formBeats -
+                // elapsedBeats). Lets a beat-editor loop be checked from the mirror.
+                practiceLoop: {
+                    lengthBeats: simulation.practiceLoopBeats,
+                    offsetBeats: (transport.formBeats !== null && transport.elapsedBeats !== null)
+                        ? transport.formBeats - transport.elapsedBeats : 0,
+                },
             },
             sprites,
             curves,

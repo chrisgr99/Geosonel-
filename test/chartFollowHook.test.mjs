@@ -27,6 +27,40 @@ test("chart-mode object takes the played-bar timeline + cells-per-bar from the c
     assert.equal(deriveCurveBeatPoints(obj).positions.length, 12);
 });
 
+test("an unassigned chart object (nothing assigned anywhere) is FORM-GATED over the whole chart", () => {
+    // Whole-chart objects must play on the form clock (not free-run their own
+    // cycle), so a practice-loop offset reaches them — otherwise looping any
+    // measures replays the first bars. So chartFormSegs is set over all 12 bars.
+    const harmony = TEST_PROGRESSIONS.find((p) => p.title === "12-Bar Blues");
+    const obj = { id: "C1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x...", strength: "5" };
+    deriveStrudelCycleLengths({ timeSignature: [4, 4], harmony, curves: [obj], sprites: [], triggers: [] });
+
+    assert.ok(Array.isArray(obj.chartFormSegs) && obj.chartFormSegs.length === 12);
+    assert.equal(obj.chartFormBeats, 48);          // 12 bars × 4 beats
+    assert.ok(!obj.chartMulti);                     // not the multi-section path
+});
+
+test("whole-chart form-gating spans the PLAYED bars, so a repeat doesn't re-trace mid-chart", () => {
+    // A repeat: 2 folded bars played 4 times. The whole chart plays once per form
+    // pass (no inner re-trace), so chartSectionBars must be the PLAYED count (4) —
+    // NOT the folded count (2). With the folded count the engine would re-trace
+    // every 2 bars (cyclesPerPass 2) and mis-map beats across the repeat (the
+    // practice-loop "skipped bars" bug).
+    const harmony = {
+        key: { tonicPitchClass: 0, mode: "major" }, timeSignature: [4, 4],
+        progression: [
+            { type: "repeatOpen" }, chord(1), { type: "bar", barStyle: "single" }, chord(5),
+            { type: "repeatClose" }, { type: "end" },
+        ],
+    };
+    const obj = { id: "C1", beatPointsMode: "chart", beatInterval: "Qtr", phrasePatterns: "x...", strength: "5" };
+    deriveStrudelCycleLengths({ timeSignature: [4, 4], harmony, curves: [obj], sprites: [], triggers: [] });
+
+    assert.equal(obj.chartFormSegs.length, 4);                 // 4 played bars
+    assert.equal(obj.chartSectionBars, obj.chartFormSegs.length); // = played count, not folded (2)
+    assert.equal(Math.ceil(obj.chartFormSegs.length / obj.chartSectionBars), 1); // one pass, no re-trace
+});
+
 const sec = (label) => ({ type: "sectionOpen", label });
 const bar1 = { type: "bar", barStyle: "single" };
 
