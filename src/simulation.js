@@ -368,12 +368,16 @@ const ONTICK_DT = 1 / 60;
  * its note with the exact upcoming audio time of the step that
  * produced it (via transport.audioTimeForElapsed) and schedule it
  * there — instead of all of a frame's notes landing at "now + a fixed
- * offset". 45 ms comfortably exceeds one render frame (~33 ms at 30
- * fps), so a stalled frame never strands audio that is already
- * scheduled. The cost is that asynchronous input lands up to a window
- * late, which is immaterial for input that isn't clock-aligned.
+ * offset". The window must exceed the WORST render-frame interval, not
+ * just the average: a single janky frame longer than the window drains
+ * the lead to zero, so every note that frame schedules with no headroom
+ * and superdough drops the ones that land late (audible dropouts with no
+ * error). 45 ms only covered a smooth 30 fps frame; 150 ms absorbs the
+ * stutter that occurs even with a light scene. The cost is that
+ * asynchronous input lands up to a window late, immaterial for input
+ * that isn't clock-aligned.
  */
-const LOOKAHEAD_WINDOW = 0.045;
+const LOOKAHEAD_WINDOW = 0.15;
 
 /**
  * Cap on how far the sim will catch up in a single tick. After a long
@@ -4232,9 +4236,26 @@ export class Simulation {
         // unfolds the compressed chart form). A MANUAL object (patternForm) IS its
         // own form — its segs are its pattern measures in raw beat space — so it
         // reads formBeats directly, which still carries a practice-loop offset.
+        // Read the form clock at the LOOK-AHEAD time (_simTime), not the playhead.
+        // transport.formBeats is the playhead position; it's ~constant across the
+        // whole look-ahead step loop, so reading it directly detects beats only at
+        // frame granularity (sloppy) and stamps them with no scheduling headroom.
+        // Projecting onto _simTime advances the cursor in fine SIM_DT steps and
+        // rides the look-ahead, matching the free-run path's precision. Falls back
+        // to the raw playhead value when the transport can't project (no bpm, or a
+        // test mock without elapsedSeconds).
+        const tr = this._transport;
+        let formNow = tr.formBeats;
+        const _bpm = tr.bpm;
+        const _es = tr.elapsedSeconds;
+        if (formNow !== null && typeof _bpm === "number" && _bpm > 0
+            && typeof _es === "number" && Number.isFinite(_es)
+            && Number.isFinite(this._simTime)) {
+            formNow = formNow + ((this._simTime - _es) * _bpm) / 60;
+        }
         const beat = curve.patternForm === true
-            ? this._transport.formBeats
-            : this.formBeatToChartBeat(this._transport.formBeats);
+            ? formNow
+            : this.formBeatToChartBeat(formNow);
         if (beat === null || !Number.isFinite(beat) || formBeats <= 0) {
             state.cycleProgress = 0; state.t = 0; state.halted = false;
             state._beatOrder = null;
