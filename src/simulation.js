@@ -2633,6 +2633,13 @@ export class Simulation {
             // fresh for the current cycle with no flush (intermediate
             // cycles' beats are not reconstructed — only possible at
             // an unreachably fast tempo).
+            // A fresh START (initial play or a rewind/loop wrap) leaves
+            // _lastBeatCycle < 0: the cursor jumped to a position whose beat has
+            // NOT fired yet — including the loop's first beat when a practice loop
+            // restarts mid-pattern. A live-edit re-arm (setScene during playback)
+            // keeps _lastBeatCycle at the real cycle: the beat at the cursor
+            // already fired this pass. The two need opposite skip rules below.
+            const freshStart = state._lastBeatCycle < 0;
             state._beatOrder = buildOrder(sign);
             state._beatOrderSign = sign;
             state._lastBeatCycle = state.cycleCount;
@@ -2640,20 +2647,27 @@ export class Simulation {
                 // At the cycle start: arm at 0 so the downbeat fires.
                 state._beatNextIdx = 0;
             } else {
-                // Mid-cycle arm: skip beats already passed so they
-                // don't all replay at once. Inclusive (g <= progress):
-                // a beat sitting exactly at the cursor has already
-                // fired this cycle — the firing loop below fires on
-                // `g <= prog` — so it must be skipped, not re-fired.
-                // (A strict `<` here re-fired that beat whenever the
-                // order was rebuilt mid-cycle, e.g. a setScene from a
-                // property/script edit applied during playback, with
-                // the cursor landing on a beat — the cause of the
-                // observed cycle-boundary double-fire. Matches the
-                // direction-flip re-arm below, which already uses <=.)
+                // Mid-cycle arm: skip beats already passed so they don't all
+                // replay at once. On a FRESH start the beat AT the cursor hasn't
+                // fired (loop wrap to a mid-pattern start), so it MUST fire — but
+                // the projected cursor can land a hair PAST it (the formBeats
+                // projection isn't bit-exact), and a strict/inclusive compare then
+                // skips the loop's first beat intermittently. Skip only beats
+                // CLEARLY earlier (g < cursor − SEAM_EPS); SEAM_EPS absorbs the
+                // float/sub-step overshoot while staying far under the beat spacing
+                // so the previous pass's last beat isn't pulled in. On a live-edit
+                // re-arm the beat at the cursor already fired this pass, so skip it
+                // too (inclusive <=) — a strict < there re-fired it (the observed
+                // cycle-boundary double-fire).
+                const SEAM_EPS = 1e-3;
                 let idx = 0;
-                while (idx < state._beatOrder.length
-                    && state._beatOrder[idx].g <= state.cycleProgress) idx++;
+                if (freshStart) {
+                    while (idx < state._beatOrder.length
+                        && state._beatOrder[idx].g < state.cycleProgress - SEAM_EPS) idx++;
+                } else {
+                    while (idx < state._beatOrder.length
+                        && state._beatOrder[idx].g <= state.cycleProgress) idx++;
+                }
                 state._beatNextIdx = idx;
             }
         } else if (state.cycleCount === state._lastBeatCycle + 1) {
@@ -4083,10 +4097,18 @@ export class Simulation {
         // tracing its curve once per occurrence (cursor 0→1 across each sounding
         // window) and freezing — parked at the section start, no beats — between.
         // Driven straight off the master form clock, bypassing the accumulator.
-        if ((Array.isArray(curve.chartFormSegs) && curve.chartFormSegs.length > 0
-            && Number(curve.chartFormBeats) > 0)
-            || (curve.chartMulti === true && Array.isArray(curve.chartMultiSegs)
-                && curve.chartMultiSegs.length > 0)) {
+        // A standalone Manual object (patternForm) is form-gated ONLY to honour a
+        // practice-loop offset — the one thing that needs it tied to the form clock.
+        // With no practice loop it free-runs like Euclidean, so its cycleSpeeds
+        // (per-cycle speed magnitude) takes effect; form-gating ignores the
+        // magnitude (it reads speed only for direction). Chart objects
+        // (chartFormSegs without patternForm, and chartMulti) always gate.
+        const manualNoLoop = curve.patternForm === true && this._practiceLoopBeats === null;
+        if (!manualNoLoop
+            && ((Array.isArray(curve.chartFormSegs) && curve.chartFormSegs.length > 0
+                && Number(curve.chartFormBeats) > 0)
+                || (curve.chartMulti === true && Array.isArray(curve.chartMultiSegs)
+                    && curve.chartMultiSegs.length > 0))) {
             this._stepCurveFormGated(curve, state, dt);
             return;
         }
