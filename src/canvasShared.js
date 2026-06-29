@@ -95,7 +95,7 @@ export const CANVAS_BORDER_WIDTH_PX = 3;
 // cue that distinguishes a moving sprite from a static
 // trigger once the simulation loop runs.
 export const CURVE_COLOUR = "#7dd68a";
-export const CURSOR_COLOUR = "#ffb060";
+export const CURSOR_COLOUR = "#ff8c00";
 export const OBJECT_BOUNDARY_COLOUR = "#7db8d6";
 // Bright magenta used to highlight the object(s) the
 // editor cursor logically owns when sitting inside a

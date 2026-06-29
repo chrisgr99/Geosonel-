@@ -581,15 +581,15 @@ export class Curve {
 
         /**
          * Stroke colour for the curve's geometric body, as a
-         * CSS hex string. Default matches the legacy global
-         * curve colour from canvas.js (CURVE_COLOUR), so
-         * existing scores that load without a per-curve
-         * color field render identically to before. Editable
-         * through the inspector's Color row alongside sprite
-         * and trigger colours.
+         * CSS hex string. Defaults to white so curves read like
+         * the reference design (and their white beat-point ticks
+         * sit on a matching line); a score with an explicit
+         * per-curve color keeps it. Editable through the
+         * inspector's Color row alongside sprite and trigger
+         * colours.
          * @type {string}
          */
-        this.color = opts.color ?? "#7dd68a";
+        this.color = opts.color ?? "#ffffff";
 
         /**
          * Cycle count at which the cursor halts. Default -1

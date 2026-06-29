@@ -4532,6 +4532,24 @@ export class Simulation {
     }
 
     /**
+     * Direction the cursor is currently travelling along the curve: +1 when the
+     * parameter t is increasing (forward, the curve's own direction), −1 when a
+     * negative cycleSpeeds entry runs the current cycle backward. Drives the
+     * cursor's direction arrow. Defaults to +1 when there's no runtime state or
+     * speed list.
+     * @param {string} curveId
+     * @returns {number} +1 or −1
+     */
+    getCurveCursorDirection(curveId) {
+        const state = this._curveState.get(curveId);
+        if (state === undefined) return 1;
+        const loopLen = cycleSpeedsLoopLength(state.speedList);
+        if (loopLen <= 0) return 1;
+        const sp = state.speedList[state.cycleCount % loopLen];
+        return (typeof sp === "number" && sp < 0) ? -1 : 1;
+    }
+
+    /**
      * Arm a PRACTICE LOOP over a span of the chord-chart form: the transport
      * loops just these beats instead of the whole chart, with the musical
      * position offset to the loop's first bar. Global — every form-following

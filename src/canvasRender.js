@@ -10,16 +10,28 @@ import { computeStretchParams, applyStretch } from "./strudel/imageStretch.js";
 import { sampleCurve, splineToPolyline } from "./curveGeometry.js";
 
 /**
- * Beat-point diamond sizing (§3.1a). An ACTIVE beat draws at the
- * default trigger size (0.35 canvas units, the schema default for
- * a trigger's `size`) times the score's triggerScale, so it reads
- * exactly like a normal trigger and scales with zoom the same way.
- * An INACTIVE beat (rest) draws at this fraction of the active
- * radius — visibly smaller, marking the grid without competing
- * with the accents.
+ * Beat-point tick sizing. An ACTIVE beat's tick half-length is this many
+ * canvas units times the score's triggerScale (so it scales with zoom). The
+ * value is a trigger's default size (0.35) reduced by a third — ticks are
+ * thinner than diamonds and read better a touch shorter. An INACTIVE beat
+ * (rest) draws at this fraction of the active length — visibly shorter,
+ * marking the grid without competing with the accents.
  */
-const BEAT_POINT_ACTIVE_UNITS = 0.35;
+const BEAT_POINT_ACTIVE_UNITS = 0.2333;   // 0.35 reduced by 1/3
 const BEAT_POINT_INACTIVE_RATIO = 0.5;
+
+/**
+ * Beat points draw as TICK MARKS across the curve (a short radial line
+ * perpendicular to the path) rather than diamonds: ticks stay legible when
+ * beats crowd together, where the diamonds blurred into each other. Phase 2
+ * will colour them per chord-chart section; for now they are white, matching
+ * the curve. A firing beat overrides the colour with FIRING_FLASH_COLOUR (red)
+ * and grows by BEAT_TICK_FLASH_GROW_PX — 2px longer in each direction and 2px
+ * wider — so the hit stands out even amid dense ticks.
+ */
+const BEAT_TICK_COLOUR = "#ffffff";
+const BEAT_TICK_WIDTH = 1.5;
+const BEAT_TICK_FLASH_GROW_PX = 2;
 
 /**
  * Rendering method bundle for the Canvas module (prototype-mixin
@@ -352,7 +364,7 @@ export const renderMethods = {
         if (!hasActive && !hasInactive) return;
 
         const ctx = this.ctx;
-        ctx.lineWidth = 1.5;
+        // Per-tick line width is set in _paintBeatTick (a firing tick is wider).
 
         // Beat-point diamonds are sized RELATIVE to a trigger and
         // scale with zoom like one. The size reflects whether the
@@ -368,7 +380,7 @@ export const renderMethods = {
         // curve; they have no effect on firing. Orientation
         // follows the curve tangent, as before.
         const scale = this._scene === null ? 1 : this._scene.triggerScale;
-        const largeR = Math.max(3, BEAT_POINT_ACTIVE_UNITS * scale * this.pixelsPerUnit);
+        const largeR = Math.max(2, BEAT_POINT_ACTIVE_UNITS * scale * this.pixelsPerUnit);
         const smallR = largeR * BEAT_POINT_INACTIVE_RATIO;
         const strengths = this._curveBeatStrengths.get(curve.id);
 
@@ -383,11 +395,11 @@ export const renderMethods = {
         // including a small strength-0 beat.
         const flashAbsFrac = this._curveFlashAbsoluteFractional.get(curve.id);
 
-        // Rests/dots (always small) first so audible (large)
-        // diamonds paint on top where they happen to overlap.
+        // Rests/dots (always short) first so audible (long) ticks
+        // paint on top where they happen to overlap.
         if (hasInactive) {
             for (const t of inactive) {
-                this._paintBeatDiamond(curve, t, smallR, false);
+                this._paintBeatTick(curve, t, smallR, false);
             }
         }
         if (hasActive) {
@@ -397,22 +409,24 @@ export const renderMethods = {
                 const r = s > 0 ? largeR : smallR;
                 const isFlashing = flashAbsFrac !== undefined &&
                     Math.abs(t - flashAbsFrac) < FIRING_FLASH_MATCH_EPS;
-                this._paintBeatDiamond(curve, t, r, isFlashing);
+                this._paintBeatTick(curve, t, r, isFlashing);
             }
         }
     },
 
     /**
-     * Paint one beat-point diamond at curve parameter `t` with
-     * vertex radius `r` (pixels). Image-filled with the trigger
-     * boundary stroke, or solid firing-flash colour when
-     * `flashing`. No-op when the curve sample is undefined.
+     * Paint one beat-point TICK at curve parameter `t`: a short line of
+     * half-length `r` (pixels) perpendicular to the curve (radial), centred on
+     * the curve point. White by default, or FIRING_FLASH_COLOUR when `flashing`.
+     * An audible beat passes the larger `r`, a rest/silent beat the smaller one,
+     * so the tick length still reads accent vs rest. No-op when the curve sample
+     * is undefined.
      * @param {any} curve
      * @param {number} t
      * @param {number} r
      * @param {boolean} flashing
      */
-    _paintBeatDiamond(curve, t, r, flashing) {
+    _paintBeatTick(curve, t, r, flashing) {
         const sample = sampleCurve(curve.shape, t);
         if (sample === null) return;
         const ctx = this.ctx;
@@ -420,16 +434,17 @@ export const renderMethods = {
         const py = this.toPixelY(sample.y);
         const axes = pixelTangentAndPerp(sample.tx, sample.ty);
 
+        // A firing tick grows 2px longer in each direction and 2px wider on top
+        // of its red colour, so a hit reads clearly even amid dense ticks.
+        const grow = flashing ? BEAT_TICK_FLASH_GROW_PX : 0;
+        const rr = r + grow;
+        // The (px, py) axis is the unit perpendicular to the curve tangent —
+        // i.e. radial — so a line along it crosses the path at a right angle.
         ctx.beginPath();
-        ctx.moveTo(px + axes.tx * r, py + axes.ty * r);
-        ctx.lineTo(px + axes.px * r, py + axes.py * r);
-        ctx.lineTo(px - axes.tx * r, py - axes.ty * r);
-        ctx.lineTo(px - axes.px * r, py - axes.py * r);
-        ctx.closePath();
-
-        ctx.fillStyle = flashing ? FIRING_FLASH_COLOUR : this._sampleImageAt(sample.x, sample.y);
-        ctx.fill();
-        ctx.strokeStyle = flashing ? FIRING_FLASH_COLOUR : OBJECT_BOUNDARY_COLOUR;
+        ctx.moveTo(px - axes.px * rr, py - axes.py * rr);
+        ctx.lineTo(px + axes.px * rr, py + axes.py * rr);
+        ctx.lineWidth = BEAT_TICK_WIDTH + grow;
+        ctx.strokeStyle = flashing ? FIRING_FLASH_COLOUR : BEAT_TICK_COLOUR;
         ctx.stroke();
     },
 
@@ -526,11 +541,24 @@ export const renderMethods = {
         ctx.lineTo(xRight, yRight);
         ctx.stroke();
 
-        // A small filled dot at the curve point so the cursor's
-        // anchor on the curve itself is unambiguous.
+        // A small filled triangle whose BASE sits on the curve point and whose
+        // tip points the way the cursor is travelling, so direction reads at a
+        // glance (and flips when a negative cycleSpeeds cycle runs the cursor
+        // backward). The forward axis is the pixel tangent times the travel
+        // direction; the base spans the perpendicular through the anchor.
+        const dir = this._simulation === null
+            ? 1 : this._simulation.getCurveCursorDirection(curve.id);
+        const axes = pixelTangentAndPerp(sample.tx, sample.ty);
+        const fx = axes.tx * dir;
+        const fy = axes.ty * dir;
+        const TIP = 8;     // px — tip ahead of the anchor along travel
+        const HALF = 5;    // px — half-width of the base, which sits ON the anchor
         ctx.fillStyle = CURSOR_COLOUR;
         ctx.beginPath();
-        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.moveTo(px + fx * TIP, py + fy * TIP);
+        ctx.lineTo(px + axes.px * HALF, py + axes.py * HALF);
+        ctx.lineTo(px - axes.px * HALF, py - axes.py * HALF);
+        ctx.closePath();
         ctx.fill();
     },
 
