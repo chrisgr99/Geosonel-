@@ -31,6 +31,37 @@ export const hitTestMethods = {
     },
 
     /**
+     * Find the ACTIVE beat point (audible tick) nearest a pixel point, within the
+     * tick hit radius, as { id, index } — id is the curve, index is the slot into
+     * its cached positions (the same index the firing engine stamps). Null when no
+     * tick is close enough. Drives the Ctrl-click "rewind to this beat" seek.
+     * @param {number} pixelX
+     * @param {number} pixelY
+     * @returns {{ id: string, index: number } | null}
+     */
+    _beatPointAt(pixelX, pixelY) {
+        if (this._scene === null) return null;
+        let best = null;
+        let bestD = TOOLTIP_MARKER_HIT_PX;
+        for (let i = this._scene.curves.length - 1; i >= 0; i--) {
+            const c = this._scene.curves[i];
+            if (typeof c.id !== "string") continue;
+            const positions = this._curveMarkerPositions.get(c.id);
+            if (positions === undefined) continue;
+            const offset = this._curveOffset(c.id);
+            for (let k = 0; k < positions.length; k++) {
+                const sample = sampleCurve(c.shape, positions[k]);
+                if (sample === null) continue;
+                const mx = this.toPixelX(sample.x + offset.dx);
+                const my = this.toPixelY(sample.y + offset.dy);
+                const d = Math.hypot(pixelX - mx, pixelY - my);
+                if (d <= bestD) { bestD = d; best = { id: c.id, index: k }; }
+            }
+        }
+        return best;
+    },
+
+    /**
      * Public hit-test from viewport (client) coordinates.
      * Converts the client point to canvas space using the
      * same _eventToCanvas conversion the mousedown handler

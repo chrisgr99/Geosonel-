@@ -14,6 +14,20 @@ export const inputMethods = {
 
     /** @param {MouseEvent} e */
     _onMouseDown(e) {
+        // Cmd-click a beat point → reposition the transport playhead to when that
+        // beat last fired ("rewind to here"). Acts only when the click lands on a
+        // tick; otherwise falls through to normal handling. (Command, not Control —
+        // Control-click stays the macOS context menu.)
+        if (e.metaKey && this._beatSeekSink !== null) {
+            const cpos = this._eventToCanvas(e);
+            const hit = this._beatPointAt(cpos.px, cpos.py);
+            if (hit !== null) {
+                e.preventDefault();
+                this._clearHover();
+                this._beatSeekSink(hit.id, hit.index);
+                return;
+            }
+        }
         if (e.button !== 0) return;
         // Drop any hover-brighten state. A mousedown either
         // begins a drag/marquee (in which case the bright

@@ -252,6 +252,22 @@ export class HarmonyPanel {
         this._nowBarIndex = -1;
         /** Most recent global beat from setPlayhead (re-lights after a re-render). */
         this._lastBeat = null;
+        /**
+         * "Last unfolded position played" per DISPLAYED bar index: as playback
+         * advances, records the chart-beat START of the timeline occurrence
+         * currently sounding for each folded bar. A click to "start here" resolves
+         * to this so a repeated bar resumes the pass most recently heard (first
+         * occurrence when never played). Rebuilt when the timeline shape changes;
+         * cleared on rewind-to-top. @type {Map<number, number>}
+         */
+        this._lastUnfoldedStart = new Map();
+        /** Shape signature of the timeline the memory above is keyed to. */
+        this._playbackSig = "";
+        /** Displayed bar index marked as the playback start point, or -1. */
+        this._startBarIndex = -1;
+        /** Called with a displayed bar index when the user clicks a bar to start
+         *  playback there. @type {((barIndex: number) => void) | null} */
+        this._onStartAtBar = null;
         /** The hamburger menu container (button + popup). @type {HTMLElement | null} */
         this._menuEl = null;
         /** The hamburger popup panel. @type {HTMLElement | null} */
@@ -339,6 +355,55 @@ export class HarmonyPanel {
      */
     onChangeUnwind(cb) {
         this._onChangeUnwind = cb;
+    }
+
+    /**
+     * Wire the "start playback at this bar" callback: fired with a displayed bar
+     * index when the user clicks a chart bar (main.js gates to stopped and seeks).
+     * @param {(barIndex: number) => void} cb
+     */
+    onStartAtBar(cb) {
+        this._onStartAtBar = cb;
+    }
+
+    /**
+     * Resolve a displayed bar index to the CHART beat playback should start from:
+     * the start of the occurrence most recently played (recorded while playing),
+     * or the FIRST occurrence when it has never played this session. Null when the
+     * bar has no occurrence in the timeline. main.js converts this to a form beat.
+     * @param {number} barIndex  displayed ChartBar.index
+     * @returns {number | null}
+     */
+    resolveStartBeatForBar(barIndex) {
+        const recorded = this._lastUnfoldedStart.get(barIndex);
+        if (recorded !== undefined) return recorded;
+        for (const seg of this._playback) {
+            if (seg.index === barIndex) return seg.startBeat;   // first occurrence
+        }
+        return null;
+    }
+
+    /**
+     * Mark (or clear, with -1) the displayed bar where playback will start — a
+     * static marker shown while stopped, since the now-playing highlight only
+     * tracks during play. Survives re-renders via _startBarIndex.
+     * @param {number} index  displayed ChartBar.index, or -1 to clear
+     */
+    setStartBar(index) {
+        const idx = Number.isFinite(index) ? index : -1;
+        const chart = this._chartEl;
+        if (chart !== null) {
+            if (this._startBarIndex >= 0) {
+                const prev = chart.querySelector(
+                    `.harmony-bar[data-bar-index="${this._startBarIndex}"]`);
+                if (prev !== null) prev.classList.remove("start-here");
+            }
+            if (idx >= 0) {
+                const cell = chart.querySelector(`.harmony-bar[data-bar-index="${idx}"]`);
+                if (cell !== null) cell.classList.add("start-here");
+            }
+        }
+        this._startBarIndex = idx;
     }
 
     /**
@@ -1105,6 +1170,15 @@ export class HarmonyPanel {
         const playback = buildBarPlayback(bars);
         this._playback = playback.timeline;
         this._playbackTotal = playback.totalBeats;
+        // The "last played" memory is keyed to THIS unfolded shape; drop it only
+        // when the shape changes (repeat/nav/section-order edits move every beat),
+        // and keep it across cosmetic re-renders so a stop→click→resume still works.
+        const sig = `${playback.timeline.length}:${playback.totalBeats}`;
+        if (sig !== this._playbackSig) {
+            this._lastUnfoldedStart.clear();
+            this._playbackSig = sig;
+            this._startBarIndex = -1;   // bar indices moved — drop the stale start marker
+        }
 
         // Group the bars into ROWS that respect section/ending structure (a
         // section starts a new row at the left; alternative endings indent to
@@ -1139,6 +1213,13 @@ export class HarmonyPanel {
 
         // Re-light the cursor onto the freshly built DOM if a beat is current.
         if (this._lastBeat !== null) this.setPlayhead(this._lastBeat);
+        // Re-apply the start-here marker onto the fresh DOM (reset then set so the
+        // class lands even though the element was rebuilt).
+        if (this._startBarIndex >= 0) {
+            const i = this._startBarIndex;
+            this._startBarIndex = -1;
+            this.setStartBar(i);
+        }
     }
 
     /**
@@ -1175,12 +1256,22 @@ export class HarmonyPanel {
      * @param {MouseEvent} e
      */
     _onChartMouseDown(e) {
-        if (this._sectionObjectIds.length === 0 || this._onEditSection === null) return;
         const target = /** @type {Element} */ (e.target);
+        // Section LETTER → assign/clear that section's label to the selected
+        // chart objects (existing behaviour, only when an object is selected).
         const letter = target.closest ? target.closest(".harmony-bar-section") : null;
-        if (letter === null) return;
-        const label = (letter.textContent || "").trim();
-        if (label !== "") this._onEditSection(label);
+        if (letter !== null && this._sectionObjectIds.length > 0 && this._onEditSection !== null) {
+            const label = (letter.textContent || "").trim();
+            if (label !== "") this._onEditSection(label);
+            return;
+        }
+        // Otherwise a click on a BAR → start playback there (main.js gates to
+        // stopped and seeks). Independent of any selection.
+        const bar = target.closest ? target.closest(".harmony-bar[data-bar-index]") : null;
+        if (bar !== null && this._onStartAtBar !== null) {
+            const idx = Number(bar.getAttribute("data-bar-index"));
+            if (Number.isFinite(idx)) this._onStartAtBar(idx);
+        }
     }
 
     /**
@@ -1204,7 +1295,12 @@ export class HarmonyPanel {
             this._setNowBar(-1); // before start or past the end (loop off)
             return;
         }
-        this._setNowBar(this._barIndexAtBeat(b));
+        const seg = this._segAtBeat(b);
+        if (seg === null) { this._setNowBar(-1); return; }
+        // Record this bar's most-recently-played unfolded position, so a later
+        // "start here" click on it resumes the pass just heard (§ resolveStartBeatForBar).
+        this._lastUnfoldedStart.set(seg.index, seg.startBeat);
+        this._setNowBar(seg.index);
     }
 
     /**
@@ -1214,6 +1310,17 @@ export class HarmonyPanel {
      * @returns {number}
      */
     _barIndexAtBeat(b) {
+        const seg = this._segAtBeat(b);
+        return seg === null ? -1 : seg.index;
+    }
+
+    /**
+     * Binary-search the playback timeline for the PlaybackBar sounding at expanded
+     * beat `b`, or null if none. Its `startBeat` is the current occurrence's start.
+     * @param {number} b
+     * @returns {import("./harmonyChartLayout.js").PlaybackBar | null}
+     */
+    _segAtBeat(b) {
         const tl = this._playback;
         let lo = 0;
         let hi = tl.length - 1;
@@ -1222,9 +1329,9 @@ export class HarmonyPanel {
             const seg = tl[mid];
             if (b < seg.startBeat) hi = mid - 1;
             else if (b >= seg.endBeat) lo = mid + 1;
-            else return seg.index;
+            else return seg;
         }
-        return -1;
+        return null;
     }
 
     /**

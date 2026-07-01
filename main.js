@@ -727,6 +727,17 @@ async function main() {
         }
     });
 
+    // Ctrl-click a beat point on the canvas → reposition the playhead to when
+    // that beat last fired. Works stopped (silent seek; Play resumes there) and
+    // playing (the scene jumps back and continues, re-firing that beat as it
+    // resumes). Never-fired beats have no recorded position yet — the computed
+    // best-effort fallback is a later slice.
+    canvas.setBeatSeekSink((curveId, beatIndex) => {
+        const formBeat = simulation.lastBeatFireForm(curveId, beatIndex);
+        if (formBeat === null) return;
+        simulation.seekToStartBeats(formBeat);
+    });
+
     // Inspector hover-preview sink. As the pointer hovers an object on
     // the canvas, the inspector peeks at that object's fields (even if a
     // different object — or nothing — is selected); moving off reverts to
@@ -2125,6 +2136,20 @@ async function main() {
             }
         });
 
+        // Start playback at a clicked chart bar — while STOPPED only. Seeks the
+        // transport to that bar's most-recently-played unfolded position (first
+        // occurrence if never played this session), so pressing Play begins there
+        // instead of the top. A blue marker shows the chosen bar; Rewind clears it.
+        editor.harmonyPanel.onStartAtBar((barIndex) => {
+            if (transport.isPlaying || !editor.harmonyPanel) return;
+            const chartBeat = editor.harmonyPanel.resolveStartBeatForBar(barIndex);
+            if (chartBeat === null) return;
+            const formBeat = simulation.chartBeatToFormBeat(chartBeat);
+            if (formBeat === null) return;               // bar is in a dropped section
+            simulation.seekToStartBeats(formBeat);
+            editor.harmonyPanel.setStartBar(barIndex);
+        });
+
     }
 
     // Styles tab: persist library edits and re-run so objects using a changed
@@ -2799,6 +2824,15 @@ async function main() {
         for (const el of document.querySelectorAll(".insp-transport-play")) {
             el.textContent = transport.isPlaying ? "⏸" : "▶";
         }
+    });
+
+    transport.on("rewind", () => {
+        // A user rewind (rewind-and-STOP) drops any "start here" marker — back to
+        // the top. Emitted while STOPPED, so the whole-form loop-wrap rewind (fired
+        // while playing) is skipped; the "start here" seek also emits this while
+        // stopped but re-sets its marker immediately after, so only genuine
+        // rewinds actually clear it.
+        if (!transport.isPlaying && editor.harmonyPanel) editor.harmonyPanel.setStartBar(-1);
     });
 
     /**
@@ -4444,7 +4478,8 @@ async function main() {
                 simulation.clearPracticeLoop();
                 if (editor.harmonyPanel) editor.harmonyPanel.setLoopBars(null, null);
             } else if (edit.kind === "transportRewind") {
-                // Beat-editor Rewind: rewind AND stop (same as the top bar).
+                // Beat-editor Rewind: rewind AND stop (same as the top bar). The
+                // "start here" marker clears via the transport "rewind" listener.
                 transport.rewindAndStop();
             } else if (edit.kind === "transportPlayToggle") {
                 transport.toggle();

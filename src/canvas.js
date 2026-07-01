@@ -445,6 +445,20 @@ export class Canvas {
          */
         this._harmonyBeatSink = null;
         /**
+         * Sink for a Ctrl-click on a beat point (curveId, beatIndex), or null
+         * until main.js wires it via setBeatSeekSink. main.js resolves the beat's
+         * last-fired position and seeks the transport there.
+         * @type {((curveId: string, beatIndex: number) => void) | null}
+         */
+        this._beatSeekSink = null;
+        /**
+         * The beat point under the pointer while Cmd is held ({ id, index }) or
+         * null — the Cmd-click seek target, drawn fattened/blue so the user sees
+         * what they're about to rewind to. Set from _onCanvasHoverMove.
+         * @type {{ id: string, index: number } | null}
+         */
+        this._seekHoverBeat = null;
+        /**
          * Whether the harmony sink was last sent null (mirrors
          * _activeBeatsCleared, so the clear fires once per stop).
          * @type {boolean}
@@ -892,6 +906,18 @@ export class Canvas {
             this._lastClickCanvasPos = { x: pos.x, y: pos.y };
         });
         this.canvasEl.addEventListener("dblclick", (e) => this._onDoubleClick(e));
+        // Cmd toggles beat-seek mode: show a plain pointer while held (even with
+        // no mouse movement) so a small tick is easy to aim at, restore on release.
+        // (Control stays free for the macOS context menu.)
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "Meta" && this.canvasEl !== null) this.canvasEl.style.cursor = "default";
+        });
+        window.addEventListener("keyup", (e) => {
+            if (e.key === "Meta" && this.canvasEl !== null) {
+                this.canvasEl.style.cursor = this._baseCanvasCursor();
+                if (this._seekHoverBeat !== null) { this._seekHoverBeat = null; this.scheduleDraw(); }
+            }
+        });
 
         // Hover tracking. mousemove on the canvas element
         // (separate from the window-level mousemove that
@@ -901,7 +927,10 @@ export class Canvas {
         // immediately so a pointer that exits the canvas
         // doesn't leave a brightened object stuck on.
         this.canvasEl.addEventListener("mousemove", (e) => this._onCanvasHoverMove(e));
-        this.canvasEl.addEventListener("mouseleave", () => this._clearHover());
+        this.canvasEl.addEventListener("mouseleave", () => {
+            this._clearHover();
+            if (this._seekHoverBeat !== null) { this._seekHoverBeat = null; this.scheduleDraw(); }
+        });
 
         this._onResize();
     }
@@ -1055,6 +1084,15 @@ export class Canvas {
      */
     setHarmonyBeatSink(fn) {
         this._harmonyBeatSink = fn;
+    }
+
+    /**
+     * Wire the Ctrl-click beat-point seek sink. main.js resolves the clicked
+     * beat's last-fired position and repositions the transport there.
+     * @param {((curveId: string, beatIndex: number) => void) | null} fn
+     */
+    setBeatSeekSink(fn) {
+        this._beatSeekSink = fn;
     }
 
     /**

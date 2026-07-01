@@ -195,6 +195,24 @@ export const hoverMethods = {
             this._clearHover();
             return;
         }
+        // Cmd held → beat-point seek mode: suppress every hover affordance (object
+        // brighten, resize handles, tooltips) and show a plain pointer, so a small
+        // beat tick is easy to aim at. Instead, emphasise the beat point under the
+        // pointer (the Cmd-click seek target) so the user sees what they're about
+        // to rewind to. Restored the moment Cmd is released.
+        if (e.metaKey) {
+            this._clearHover();
+            this._hideTooltipAndCancel();
+            this.canvasEl.style.cursor = "default";
+            const cpos = this._eventToCanvas(e);
+            const hit = this._beatPointAt(cpos.px, cpos.py);
+            const prev = this._seekHoverBeat;
+            const changed = (prev === null) !== (hit === null)
+                || (hit !== null && prev !== null && (prev.id !== hit.id || prev.index !== hit.index));
+            if (changed) { this._seekHoverBeat = hit; this.scheduleDraw(); }
+            return;
+        }
+        if (this._seekHoverBeat !== null) { this._seekHoverBeat = null; this.scheduleDraw(); }
         if (this._scene === null) {
             this._hideTooltipAndCancel();
             return;

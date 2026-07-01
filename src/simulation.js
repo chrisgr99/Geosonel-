@@ -1581,6 +1581,15 @@ export class Simulation {
          */
         this._practiceLoopBeats = null;
         /**
+         * "Last fired" FORM beat per beat point, keyed `${objectId}:${beatIndex}`
+         * (beatIndex = the slot into deriveCurveBeatPoints().positions, the same
+         * index a canvas tick hit-test yields). Stamped each time that beat fires,
+         * so a Ctrl-click on its tick can rewind the playhead to when it last
+         * sounded. Persists across rewinds/edits (resolution guards stale indices).
+         * @type {Map<string, number>}
+         */
+        this._lastBeatFireForm = new Map();
+        /**
          * COMPRESSED FORM map (chartFollow.FormMap) or null. When non-null the
          * shared form is the union of assigned sections — unassigned sections are
          * dropped — and this converts a compressed form beat to the real chart beat
@@ -2729,6 +2738,13 @@ export class Simulation {
         const bpm = this._transport.bpm;
         const bpmNum = (typeof bpm === "number" && Number.isFinite(bpm)) ? bpm : 0;
         const beat = bpmNum > 0 ? (simTime * bpmNum) / 60 : 0;
+
+        // Remember WHEN this beat fired (in form-beat space) so a Ctrl-click on its
+        // canvas tick can rewind the playhead here. Overwrites each pass → the most
+        // recent firing. Only meaningful with a beat clock.
+        if (bpmNum > 0) {
+            this._lastBeatFireForm.set(`${selfId}:${beatIndex}`, beat + this._transport.loopOffsetBeats);
+        }
 
         // Firing point + the colour beneath it (this.x/this.y, this.col). A CURVE
         // samples at the BEAT POINT along its geometry (parameter `fraction`,
@@ -4570,6 +4586,46 @@ export class Simulation {
         this._transport.setLoopOffsetBeats(0);
     }
 
+    /**
+     * Move the playhead to a FORM-beat position so playback (started from stopped)
+     * begins THERE instead of the top — "start at this measure". Physically seeks
+     * the transport clock, unlike a practice loop (which offsets the form beat and
+     * wraps back to its own start), so the piece plays forward from `formBeats`
+     * and a whole-form wrap returns to the top. Clears any practice loop, resets
+     * every object to its home state, and aligns the simulation clock so the first
+     * tick after play advances cleanly from the seek point (no catch-up burst).
+     * Intended for use while stopped.
+     * @param {number} formBeats  target position in FORM-beat (compressed) space
+     */
+    seekToStartBeats(formBeats) {
+        const b = Number(formBeats);
+        if (!Number.isFinite(b) || b < 0) return;
+        this.clearPracticeLoop();               // offset 0; the physical clock carries the position
+        this._transport.seekToBeats(b);         // elapsedSeconds → b beats (also emits "rewind")
+        this._rewind();                         // every object back to its home / fresh beat order
+        // Align the sim clock to the seek target so the next tick sees no time
+        // jump: _simTime/_lastElapsed are in SECONDS (transport is stopped, so
+        // elapsedSeconds is exactly the seeked value).
+        const secs = this._transport.elapsedSeconds;
+        this._lastElapsed = secs;
+        this._simTime = secs;
+        this._accumulator = 0;
+        this._onTickAccumulator = 0;
+    }
+
+    /**
+     * The FORM beat a Ctrl-click on a beat point should seek to: that beat's most
+     * recent recorded firing (stamped in _runOnActiveBeat). Null when it has never
+     * fired this session — the caller then computes a best-effort position.
+     * @param {string} objectId
+     * @param {number} beatIndex  slot into the object's beat positions
+     * @returns {number | null}
+     */
+    lastBeatFireForm(objectId, beatIndex) {
+        const v = this._lastBeatFireForm.get(`${objectId}:${beatIndex}`);
+        return (typeof v === "number" && Number.isFinite(v)) ? v : null;
+    }
+
     /** The active practice-loop length in beats, or null when off (diagnostics). */
     get practiceLoopBeats() {
         return this._practiceLoopBeats;
@@ -4618,6 +4674,30 @@ export class Simulation {
             if (cc >= segs[i].compStart) return segs[i].chartStart + (cc - segs[i].compStart);
         }
         return cc;
+    }
+
+    /**
+     * Inverse of {@link formBeatToChartBeat}: convert a real chart beat to the
+     * COMPRESSED form beat the transport runs on. Identity when no compression is
+     * active. Returns null when the chart beat falls in a dropped (unassigned)
+     * section — there's no form position there, so a "start here" can't seek to
+     * it. Used to seek playback to a clicked measure (whose position is known in
+     * chart-beat space via the chart-cursor timeline).
+     * @param {number} chartBeat
+     * @returns {number | null}
+     */
+    chartBeatToFormBeat(chartBeat) {
+        if (!Number.isFinite(chartBeat)) return null;
+        const map = this._formMap;
+        if (map === null) return Math.max(0, chartBeat);   // no compression → identity
+        const segs = map.segments;
+        for (let i = 0; i < segs.length; i += 1) {
+            const s = segs[i];
+            if (chartBeat >= s.chartStart && chartBeat < s.chartStart + s.len) {
+                return s.compStart + (chartBeat - s.chartStart);
+            }
+        }
+        return null;   // in a dropped section — no form position
     }
 
     /**

@@ -1882,6 +1882,14 @@
     background-color: rgba(179, 161, 74, 0.28);
 }
 
+/* Start-here marker: the bar playback will begin from (set by clicking a bar
+ * while stopped). A blue left-edge flag + soft wash, distinct from the green
+ * now-playing cursor and the olive loop wash. Cleared on rewind-to-top. */
+.harmony-bar.start-here {
+    background-color: rgba(77, 184, 255, 0.16);
+    box-shadow: inset 3px 0 0 0 #4db8ff;
+}
+
 /* ---- Phrase overlay + drawing tool ---------------------------------- */
 
 /* Chart header: song title on the left, phrase-tool toggle on the right. */

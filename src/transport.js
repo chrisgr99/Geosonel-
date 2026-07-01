@@ -284,6 +284,32 @@ export class Transport {
         this._loopOffsetBeats = (typeof beats === "number" && Number.isFinite(beats)) ? beats : 0;
     }
 
+    /** The current form-beat offset (added to elapsedBeats to give formBeats). */
+    get loopOffsetBeats() {
+        return this._loopOffsetBeats;
+    }
+
+    /**
+     * Move the PHYSICAL clock to a musical position: elapsedSeconds becomes the
+     * seconds equivalent of `beats` at the current BPM, so elapsedBeats (and
+     * formBeats, with no loop offset) read `beats`. Unlike setLoopOffsetBeats —
+     * which shifts the FORM beat while the physical clock still runs from 0 and
+     * wraps back to the loop start — this moves the playhead itself, so a piece
+     * started here plays forward from `beats` and a whole-form wrap returns to
+     * the top. Used by "start playback at this measure": seek while stopped, then
+     * play. No-op offset when the piece is time-based (no BPM). Emits "rewind" so
+     * the canvas repositions and the firing engine flushes any pending audio.
+     * @param {number} beats  musical position in beats from the top (>= 0)
+     */
+    seekToBeats(beats) {
+        const b = (typeof beats === "number" && Number.isFinite(beats) && beats > 0) ? beats : 0;
+        this._accumulatedSeconds = this._bpm ? (b * 60) / this._bpm : 0;
+        if (this._isPlaying && this._audioContext !== null) {
+            this._playStartContextTime = this._audioContext.currentTime;
+        }
+        this._emit("rewind");
+    }
+
     // --- BPM ---
 
     /**
