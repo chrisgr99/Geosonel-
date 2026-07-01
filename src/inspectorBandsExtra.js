@@ -700,6 +700,9 @@ export const bandExtraMethods = {
                     allowEmpty: true,
                     kind: "pattern",
                     ghost,
+                    // Focusing a row with ghosted measures reveals the full row so
+                    // any measure can be edited; the first keystroke materialises it.
+                    materializeGhostOnFocus: true,
                     editKind: `setPhrasePattern:${r}`,   // unique per row (focus restore)
                     onCommit: (v) => this._emitEdit({ kind: "setPhrasePattern", value: v, index: r }),
                     onArrowTab: (delta) => moveRow(r, delta),
@@ -720,6 +723,8 @@ export const bandExtraMethods = {
                     segEl.dataset.bar = String(r * measuresNum + mm);   // absolute measure index
                     segEl.dataset.row = String(r);
                     segEl.dataset.col = String(mm);
+                    segEl.dataset.cpb = String(bpbForBars);
+                    segEl._field = field;                               // materialise-on-click target
                     overlay.appendChild(segEl);
                     this._loopSegs.push(segEl);
                 }
@@ -1003,6 +1008,9 @@ export const bandExtraMethods = {
                         allowEmpty: true,                 // empty rows show the grid (ghost), not a default beat
                         kind: "pattern",
                         ghost: playout,
+                        // Clicking a ghosted measure reveals the full row for editing;
+                        // the first keystroke materialises it (same as Manual mode).
+                        materializeGhostOnFocus: true,
                         editKind: `setPhrasePattern:${r}`,
                         onCommit: (v) => this._emitEdit({ kind: "setPhrasePattern", value: v, index: r }),
                         ariaLabel: `Row ${r + 1} beat pattern`,
@@ -1032,6 +1040,8 @@ export const bandExtraMethods = {
                         seg.dataset.bar = String(absBase + barsBefore + m);
                         seg.dataset.row = String(r);     // for measure-selection clear
                         seg.dataset.col = String(m);
+                        seg.dataset.cpb = String(bpbForBars);
+                        seg._field = field;              // materialise-on-click target
                         overlay.appendChild(seg);
                         this._loopSegs.push(seg);
                     }
@@ -1733,6 +1743,20 @@ export const bandExtraMethods = {
             if (!dragging) {                            // a click → clear, let the field take the caret
                 this._mselRange = null;
                 this._paintMsel();
+                // Manual editor: a plain click on a ghosted measure materialises the
+                // row and drops the caret in the clicked cell — the field can't reach
+                // a ghost cell natively (its value ends where the typed text does).
+                const seg = this._loopSegs[idx];
+                const field = seg && /** @type {any} */ (seg)._field;
+                if (field && typeof field._materializeCaret === "function") {
+                    const cpb = Math.max(1, Number(seg.dataset.cpb) || 1);
+                    const col = Math.max(0, Number(seg.dataset.col) || 0);
+                    const rect = seg.getBoundingClientRect();
+                    const chW = rect.width / cpb;
+                    let cell = chW > 0 ? Math.floor((startX - rect.left) / chW) : 0;
+                    cell = Math.max(0, Math.min(cell, cpb - 1));
+                    field._materializeCaret(col * (cpb + 1) + cell);
+                }
             }
         };
         document.addEventListener("mousemove", move);

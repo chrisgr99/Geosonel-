@@ -1157,8 +1157,41 @@ export const fieldMethods = {
             };
             reset();
 
-            input.addEventListener("focus", reset);
-            input.addEventListener("blur", commit);
+            // Ghost materialization (Manual rows). A row whose ghosted (looped /
+            // inherited) measures extend past what's typed shows the FULL resolved
+            // play-out WHILE FOCUSED, so the caret can reach and edit any cell —
+            // including a ghosted measure a few bars ahead. Nothing is stored until
+            // the FIRST edit (which commits the whole materialised row); blurring
+            // without editing reverts to the short stored form, so a stray focus
+            // never pins the row. Off unless opts.materializeGhostOnFocus is set.
+            const materialize = opts.materializeGhostOnFocus === true;
+            const showFullForEditing = () => {
+                if (!materialize) return;
+                const full = typeof opts.ghost === "string" ? cellsOf(opts.ghost) : "";
+                if (full.length > cellsOf(input.value).length) {
+                    input.value = gridBarize(full);
+                    updateGhost();
+                }
+            };
+            // Explicit materialise-and-place-caret. Clicks in the phrase box are owned
+            // by the measure-selection overlay, which calls this on a plain click so a
+            // ghosted measure can be edited in place: focus, reveal the full play-out,
+            // and drop the caret at charIdx (a char offset into the barized value).
+            input._materializeCaret = (charIdx) => {
+                if (document.activeElement !== input) input.focus();
+                showFullForEditing();
+                const c = Math.max(0, Math.min((charIdx | 0), input.value.length));
+                try { input.setSelectionRange(c, c); } catch (_e) { /* detached */ }
+            };
+            input.addEventListener("focus", () => {
+                reset();
+                showFullForEditing();
+            });
+            input.addEventListener("blur", () => {
+                const edited = dirty;
+                commit();
+                if (materialize && !edited) reset();
+            });
             // Edit through beforeinput (the same path the normal field uses, which
             // works reliably here), but OVERWRITE the cell at the caret instead of
             // inserting; at the very end, type appends a whole measure and a delete
