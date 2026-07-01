@@ -14,19 +14,18 @@ export const inputMethods = {
 
     /** @param {MouseEvent} e */
     _onMouseDown(e) {
-        // Cmd-click a beat point → reposition the transport playhead to when that
-        // beat last fired ("rewind to here"). Acts only when the click lands on a
-        // tick; otherwise falls through to normal handling. (Command, not Control —
-        // Control-click stays the macOS context menu.)
+        // Cmd-click a curve → reposition the transport playhead to the first beat
+        // at/after the click position along that curve. Doesn't need to hit a tick
+        // precisely — the click projects onto the nearest curve. Cmd always consumes
+        // the click (no select/marquee while seeking). (Command, not Shift — Shift
+        // stays for extend-selection.)
         if (e.metaKey && this._beatSeekSink !== null) {
+            e.preventDefault();
+            this._clearHover();
             const cpos = this._eventToCanvas(e);
-            const hit = this._beatPointAt(cpos.px, cpos.py);
-            if (hit !== null) {
-                e.preventDefault();
-                this._clearHover();
-                this._beatSeekSink(hit.id, hit.index);
-                return;
-            }
+            const hit = this._curveSeekTargetAt(cpos.px, cpos.py);
+            if (hit !== null) this._beatSeekSink(hit.id, hit.index);
+            return;
         }
         if (e.button !== 0) return;
         // Drop any hover-brighten state. A mousedown either

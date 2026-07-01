@@ -31,34 +31,44 @@ export const hitTestMethods = {
     },
 
     /**
-     * Find the ACTIVE beat point (audible tick) nearest a pixel point, within the
-     * tick hit radius, as { id, index } — id is the curve, index is the slot into
-     * its cached positions (the same index the firing engine stamps). Null when no
-     * tick is close enough. Drives the Ctrl-click "rewind to this beat" seek.
+     * For an Option-click at a pixel point: find the nearest curve (within a
+     * generous band) and the ACTIVE beat at/after the click position ALONG that
+     * curve — as { id, index }. The click needn't hit a tick; it projects onto the
+     * curve, and we take the first beat whose fraction >= the projected fraction,
+     * clamped to the last beat when the click is past it. Null when no curve is
+     * close enough or it has no active beats. Drives the "seek to this beat" jump.
      * @param {number} pixelX
      * @param {number} pixelY
      * @returns {{ id: string, index: number } | null}
      */
-    _beatPointAt(pixelX, pixelY) {
+    _curveSeekTargetAt(pixelX, pixelY) {
         if (this._scene === null) return null;
-        let best = null;
-        let bestD = TOOLTIP_MARKER_HIT_PX;
+        const SAMPLES = 128;
+        const HIT_PX = 20;                 // generous: aim at the curve, not a tick
+        let best = null;                   // { id, t, d }
         for (let i = this._scene.curves.length - 1; i >= 0; i--) {
             const c = this._scene.curves[i];
             if (typeof c.id !== "string") continue;
-            const positions = this._curveMarkerPositions.get(c.id);
-            if (positions === undefined) continue;
             const offset = this._curveOffset(c.id);
-            for (let k = 0; k < positions.length; k++) {
-                const sample = sampleCurve(c.shape, positions[k]);
+            for (let s = 0; s <= SAMPLES; s++) {
+                const t = s / SAMPLES;
+                const sample = sampleCurve(c.shape, t);
                 if (sample === null) continue;
                 const mx = this.toPixelX(sample.x + offset.dx);
                 const my = this.toPixelY(sample.y + offset.dy);
                 const d = Math.hypot(pixelX - mx, pixelY - my);
-                if (d <= bestD) { bestD = d; best = { id: c.id, index: k }; }
+                if (best === null || d < best.d) best = { id: c.id, t, d };
             }
         }
-        return best;
+        if (best === null || best.d > HIT_PX) return null;
+        const positions = this._curveMarkerPositions.get(best.id);
+        if (positions === undefined || positions.length === 0) return null;
+        // First active beat at/after the click's fraction; clamp past the end.
+        let idx = positions.length - 1;
+        for (let k = 0; k < positions.length; k++) {
+            if (positions[k] >= best.t) { idx = k; break; }
+        }
+        return { id: best.id, index: idx };
     },
 
     /**

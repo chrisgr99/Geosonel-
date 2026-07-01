@@ -32,11 +32,12 @@ const BEAT_POINT_INACTIVE_RATIO = 0.5;
 const BEAT_TICK_COLOUR = "#ffffff";
 const BEAT_TICK_WIDTH = 1.5;
 const BEAT_TICK_FLASH_GROW_PX = 2;
-// Cmd-hover emphasis: the beat point under the pointer while Command is held
-// (the Cmd-click seek target) fattens and lengthens in the seek-blue so the
-// user can see exactly which beat they're about to rewind to.
-const BEAT_TICK_HOVER_GROW_PX = 4;
-const BEAT_TICK_HOVER_COLOUR = "#4db8ff";
+// Option-hover emphasis: while Option is held (beat-seek mode), the whole curve
+// under the pointer strokes ORANGE and a little wider — the seek target, so the
+// user just aims at the curve and clicks (no need to hit a tick). An Option-click
+// then jumps to the first beat at/after the click position along that curve.
+const SEEK_HOVER_CURVE_COLOUR = "#ff8c00";
+const SEEK_HOVER_CURVE_WIDTH_BONUS = 2;
 
 /**
  * Rendering method bundle for the Canvas module (prototype-mixin
@@ -215,9 +216,14 @@ export const renderMethods = {
         this._strokeCanvasBorder();
         this._drawGrid();
         this._drawScene();
-        this._drawSelectionMarkers();
-        this._drawResizeHandles();
-        this._drawMarqueeRect();
+        // Cmd (beat-seek mode) hides selection markers, resize handles, and the
+        // marquee so the curve/beat targeting reads cleanly — nothing is selectable
+        // while held, only seekable.
+        if (!this._seekModeHeld) {
+            this._drawSelectionMarkers();
+            this._drawResizeHandles();
+            this._drawMarqueeRect();
+        }
         this._drawCreateEllipseGesture();
         this._drawPolylineGesture();
 
@@ -314,12 +320,20 @@ export const renderMethods = {
         if (this._cursorTargetIds.has(curve.id)) {
             strokeColor = CURSOR_TARGET_COLOUR;
         }
-        ctx.strokeStyle = hovered
-            ? lightenColor(strokeColor, HOVER_LIGHTEN_RATIO)
-            : strokeColor;
-        ctx.lineWidth = hovered
-            ? curve.curveThickness + HOVER_LINE_WIDTH_BONUS
-            : curve.curveThickness;
+        // Option-hover (beat-seek mode) wins: the whole curve strokes orange +
+        // wider to mark it as the seek target the next Option-click acts on.
+        const seekHover = this._seekHoverCurve === curve.id;
+        if (seekHover) {
+            ctx.strokeStyle = SEEK_HOVER_CURVE_COLOUR;
+            ctx.lineWidth = curve.curveThickness + SEEK_HOVER_CURVE_WIDTH_BONUS;
+        } else {
+            ctx.strokeStyle = hovered
+                ? lightenColor(strokeColor, HOVER_LIGHTEN_RATIO)
+                : strokeColor;
+            ctx.lineWidth = hovered
+                ? curve.curveThickness + HOVER_LINE_WIDTH_BONUS
+                : curve.curveThickness;
+        }
         ctx.beginPath();
         const s = curve.shape;
         if (s.type === "line") {
@@ -408,15 +422,13 @@ export const renderMethods = {
             }
         }
         if (hasActive) {
-            const hover = this._seekHoverBeat;
-            const hoverIdx = (hover !== null && hover.id === curve.id) ? hover.index : -1;
             for (let i = 0; i < active.length; i++) {
                 const t = active[i];
                 const s = strengths !== undefined ? strengths[i] : 0;
                 const r = s > 0 ? largeR : smallR;
                 const isFlashing = flashAbsFrac !== undefined &&
                     Math.abs(t - flashAbsFrac) < FIRING_FLASH_MATCH_EPS;
-                this._paintBeatTick(curve, t, r, isFlashing, i === hoverIdx);
+                this._paintBeatTick(curve, t, r, isFlashing);
             }
         }
     },
@@ -432,9 +444,8 @@ export const renderMethods = {
      * @param {number} t
      * @param {number} r
      * @param {boolean} flashing
-     * @param {boolean} [hovered]  Ctrl-hover seek target: fatten + tint blue
      */
-    _paintBeatTick(curve, t, r, flashing, hovered = false) {
+    _paintBeatTick(curve, t, r, flashing) {
         const sample = sampleCurve(curve.shape, t);
         if (sample === null) return;
         const ctx = this.ctx;
@@ -442,10 +453,9 @@ export const renderMethods = {
         const py = this.toPixelY(sample.y);
         const axes = pixelTangentAndPerp(sample.tx, sample.ty);
 
-        // Ctrl-hover wins over the firing flash: a wider blue tick marks the beat
-        // the next Ctrl-click will rewind to. Otherwise a firing tick grows 2px
-        // each way and reddens so a hit reads clearly amid dense ticks.
-        const grow = hovered ? BEAT_TICK_HOVER_GROW_PX : (flashing ? BEAT_TICK_FLASH_GROW_PX : 0);
+        // A firing tick grows 2px longer in each direction and 2px wider on top
+        // of its red colour, so a hit reads clearly even amid dense ticks.
+        const grow = flashing ? BEAT_TICK_FLASH_GROW_PX : 0;
         const rr = r + grow;
         // The (px, py) axis is the unit perpendicular to the curve tangent —
         // i.e. radial — so a line along it crosses the path at a right angle.
@@ -453,7 +463,7 @@ export const renderMethods = {
         ctx.moveTo(px - axes.px * rr, py - axes.py * rr);
         ctx.lineTo(px + axes.px * rr, py + axes.py * rr);
         ctx.lineWidth = BEAT_TICK_WIDTH + grow;
-        ctx.strokeStyle = hovered ? BEAT_TICK_HOVER_COLOUR : (flashing ? FIRING_FLASH_COLOUR : BEAT_TICK_COLOUR);
+        ctx.strokeStyle = flashing ? FIRING_FLASH_COLOUR : BEAT_TICK_COLOUR;
         ctx.stroke();
     },
 

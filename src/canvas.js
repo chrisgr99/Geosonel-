@@ -452,12 +452,20 @@ export class Canvas {
          */
         this._beatSeekSink = null;
         /**
-         * The beat point under the pointer while Cmd is held ({ id, index }) or
-         * null — the Cmd-click seek target, drawn fattened/blue so the user sees
-         * what they're about to rewind to. Set from _onCanvasHoverMove.
-         * @type {{ id: string, index: number } | null}
+         * The curve id under the pointer while Cmd is held (beat-seek mode), or
+         * null — the seek-target curve, stroked orange so the user just aims at the
+         * curve. A Cmd-click jumps to the first beat at/after the click along it.
+         * Set from _onCanvasHoverMove.
+         * @type {string | null}
          */
-        this._seekHoverBeat = null;
+        this._seekHoverCurve = null;
+        /**
+         * True while the Cmd key is held: enters beat-seek mode (selection
+         * markers, handles, and marquee are hidden; the hovered curve strokes
+         * orange). Toggled by window key listeners.
+         * @type {boolean}
+         */
+        this._seekModeHeld = false;
         /**
          * Whether the harmony sink was last sent null (mirrors
          * _activeBeatsCleared, so the clear fires once per stop).
@@ -906,16 +914,23 @@ export class Canvas {
             this._lastClickCanvasPos = { x: pos.x, y: pos.y };
         });
         this.canvasEl.addEventListener("dblclick", (e) => this._onDoubleClick(e));
-        // Cmd toggles beat-seek mode: show a plain pointer while held (even with
-        // no mouse movement) so a small tick is easy to aim at, restore on release.
-        // (Control stays free for the macOS context menu.)
+        // Cmd toggles beat-seek mode: plain pointer, selection/handles/marquee
+        // hidden, hovered curve orange — all keyed off _seekModeHeld, redrawn on the
+        // key edges so it engages/releases even with no mouse movement. (Shift stays
+        // for extend-selection; Control stays free for the macOS context menu.)
         window.addEventListener("keydown", (e) => {
-            if (e.key === "Meta" && this.canvasEl !== null) this.canvasEl.style.cursor = "default";
+            if (e.key === "Meta" && this.canvasEl !== null) {
+                this._seekModeHeld = true;
+                this.canvasEl.style.cursor = "default";
+                this.scheduleDraw();
+            }
         });
         window.addEventListener("keyup", (e) => {
             if (e.key === "Meta" && this.canvasEl !== null) {
+                this._seekModeHeld = false;
                 this.canvasEl.style.cursor = this._baseCanvasCursor();
-                if (this._seekHoverBeat !== null) { this._seekHoverBeat = null; this.scheduleDraw(); }
+                this._seekHoverCurve = null;
+                this.scheduleDraw();
             }
         });
 
@@ -929,7 +944,7 @@ export class Canvas {
         this.canvasEl.addEventListener("mousemove", (e) => this._onCanvasHoverMove(e));
         this.canvasEl.addEventListener("mouseleave", () => {
             this._clearHover();
-            if (this._seekHoverBeat !== null) { this._seekHoverBeat = null; this.scheduleDraw(); }
+            if (this._seekHoverCurve !== null) { this._seekHoverCurve = null; this.scheduleDraw(); }
         });
 
         this._onResize();

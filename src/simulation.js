@@ -1590,6 +1590,13 @@ export class Simulation {
          */
         this._lastBeatFireForm = new Map();
         /**
+         * When true, a _step positions object cursors but fires nothing (see
+         * _detectActiveBeatCrossings). Used to project curves to a seek point while
+         * stopped, for a visible reposition that still lets Play sound that beat.
+         * @type {boolean}
+         */
+        this._positionOnly = false;
+        /**
          * COMPRESSED FORM map (chartFollow.FormMap) or null. When non-null the
          * shared form is the union of assigned sections — unassigned sections are
          * dropped — and this converts a compressed form beat to the real chart beat
@@ -2600,6 +2607,10 @@ export class Simulation {
      * @param {CurveRuntimeState} state
      */
     _detectActiveBeatCrossings(obj, state, kind = "curve") {
+        // Position-only pass (a stopped-seek preview): the steppers still project
+        // the cursor to the seek position, but NO beat fires and the fire cursor is
+        // left untouched — so the beat at the seek point still sounds on Play.
+        if (this._positionOnly) return;
         if (state._beatFractions.length === 0) return;
         if (this._scene === null) return;
         if (obj.state !== "active") return;
@@ -3423,6 +3434,12 @@ export class Simulation {
         const elapsed = this._transport.elapsedSeconds;
         if (elapsed < this._lastElapsed) {
             this._rewind();
+            // A rewind (user Rewind or whole-form loop wrap) starts a fresh pass, so
+            // forget every beat's last-fired position — an Option-click after this
+            // treats not-yet-replayed beats as "never fired since the rewind" and
+            // winds forward to them. (A seek's own _rewind is a direct call that
+            // bypasses this branch, so it keeps the memory.)
+            this._lastBeatFireForm.clear();
             this._lastElapsed = 0;
             this._simTime = 0;
             this._accumulator = 0;
@@ -4597,6 +4614,48 @@ export class Simulation {
      * Intended for use while stopped.
      * @param {number} formBeats  target position in FORM-beat (compressed) space
      */
+    /**
+     * True when a curve is FORM-GATED (driven off the shared form clock) rather
+     * than free-running. Mirrors the dispatch condition in _stepCurve.
+     * @param {any} curve
+     */
+    _isCurveFormGated(curve) {
+        const manualNoLoop = curve.patternForm === true && this._practiceLoopBeats === null;
+        return !manualNoLoop
+            && ((Array.isArray(curve.chartFormSegs) && curve.chartFormSegs.length > 0
+                && Number(curve.chartFormBeats) > 0)
+                || (curve.chartMulti === true && Array.isArray(curve.chartMultiSegs)
+                    && curve.chartMultiSegs.length > 0));
+    }
+
+    /**
+     * Anchor every FREE-RUN curve's cycle phase to global time `secs`, so a seek
+     * lands it where it would be then. Free-run progress INTEGRATES from the reset,
+     * so a plain _rewind would restart the curve at 0 (its cursor snapping to the
+     * curve's start); the closed-form walk sets cycleCount/progress/t to the seek
+     * phase instead. Form-gated curves read the form clock and re-project on their
+     * own, so they're skipped. Beat firing re-arms from the anchored progress.
+     * @param {number} secs
+     */
+    _anchorFreeRunPhasesAt(secs) {
+        if (this._scene === null || !Number.isFinite(secs)) return;
+        const bpm = this._transport.bpm;
+        for (const curve of this._scene.curves) {
+            if (typeof curve.id !== "string" || curve.state === "disabled") continue;
+            const state = this._curveState.get(curve.id);
+            if (state === undefined || state.halted) continue;
+            if (this._isCurveFormGated(curve)) continue;
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(curve), effectiveBeatInterval(curve));
+            if (cd <= 0) continue;
+            const phase = computeCyclePhaseFromGlobalTime(secs, cd, state.speedList);
+            state.cycleCount = phase.cycleCount;
+            state.cycleProgress = phase.cycleProgress;
+            state.t = phase.t;
+            if (phase.halted) state.halted = true;
+            state._lastCycleDuration = cd;
+        }
+    }
+
     seekToStartBeats(formBeats) {
         const b = Number(formBeats);
         if (!Number.isFinite(b) || b < 0) return;
@@ -4611,6 +4670,19 @@ export class Simulation {
         this._simTime = secs;
         this._accumulator = 0;
         this._onTickAccumulator = 0;
+        // Free-run curves integrate their phase from the reset, so anchor them to
+        // the seek time (both live and stopped) or they'd restart at 0. Form-gated
+        // curves project from the form clock and are handled below / by the next tick.
+        this._anchorFreeRunPhasesAt(secs);
+        // Stopped: objects won't advance on their own (stepping is gated to
+        // playing), so project every curve to the seek position for a VISIBLE
+        // reposition. Position-only (no fire, fire-cursor untouched), so Play still
+        // sounds the beat at the seek point. dt=0 → no physics motion, so sprites
+        // and any moving body stay at their home (a follow-up handles those).
+        if (!this._transport.isPlaying) {
+            this._positionOnly = true;
+            try { this._step(0); } finally { this._positionOnly = false; }
+        }
     }
 
     /**
