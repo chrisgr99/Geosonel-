@@ -4165,8 +4165,13 @@ export class Simulation {
         // miscomputed phases for any curve with cycleSpeeds
         // != "1" and caused cross-source desync on every BPM
         // or per-source timing edit mid-playback.
-        if (state._lastCycleDuration > 0
-            && state._lastCycleDuration !== cycleDuration) {
+        // Re-derive the phase from _simTime on a timing-edit change, OR whenever a
+        // position-only seek preview is running — after a seek the curve was reset
+        // to home (_lastCycleDuration 0) but _simTime is the seek target, so the
+        // normal ">0 && changed" guard would skip the snap and the curve would
+        // free-run from home instead of jumping to the seek point.
+        if (this._positionOnly
+            || (state._lastCycleDuration > 0 && state._lastCycleDuration !== cycleDuration)) {
             const phase = computeCyclePhaseFromGlobalTime(
                 this._simTime, cycleDuration, speedList,
             );
@@ -4674,15 +4679,15 @@ export class Simulation {
         // the seek time (both live and stopped) or they'd restart at 0. Form-gated
         // curves project from the form clock and are handled below / by the next tick.
         this._anchorFreeRunPhasesAt(secs);
-        // Stopped: objects won't advance on their own (stepping is gated to
-        // playing), so project every curve to the seek position for a VISIBLE
-        // reposition. Position-only (no fire, fire-cursor untouched), so Play still
-        // sounds the beat at the seek point. dt=0 → no physics motion, so sprites
-        // and any moving body stay at their home (a follow-up handles those).
-        if (!this._transport.isPlaying) {
-            this._positionOnly = true;
-            try { this._step(0); } finally { this._positionOnly = false; }
-        }
+        // Project every curve to the seek position (form-gated by formBeats, free-
+        // run by the closed-form snap against _simTime). Needed BOTH stopped (for a
+        // visible reposition — stepping is otherwise gated to playing) AND playing
+        // (a just-rewound free-run curve would otherwise resume from home rather
+        // than the seek point). Position-only: no fire, fire-cursor untouched, so
+        // Play still sounds the beat at the seek point. dt=0 → no physics motion, so
+        // sprites/moving bodies stay at their home (a follow-up handles those).
+        this._positionOnly = true;
+        try { this._step(0); } finally { this._positionOnly = false; }
     }
 
     /**
@@ -4696,6 +4701,58 @@ export class Simulation {
     lastBeatFireForm(objectId, beatIndex) {
         const v = this._lastBeatFireForm.get(`${objectId}:${beatIndex}`);
         return (typeof v === "number" && Number.isFinite(v)) ? v : null;
+    }
+
+    /**
+     * The FORM beat at which a beat point would NEXT fire, winding FORWARD from
+     * the current playhead — for a beat that hasn't played since the last rewind,
+     * so there's no recorded firing to rewind to. "Simulate forward to arrive at
+     * the click beat": advance the shared clock by the beat's next occurrence in
+     * this object's cycle, carrying every object forward with it. Null when it
+     * can't be computed (no scene/state/bpm, or a bad index).
+     * @param {string} objectId
+     * @param {number} beatIndex
+     * @returns {number | null}
+     */
+    computeForwardSeekFormBeat(objectId, beatIndex) {
+        if (this._scene === null) return null;
+        const curve = this._scene.curves.find((c) => c && c.id === objectId)
+            || this._scene.sprites.find((s) => s && s.id === objectId);
+        const state = this._curveState.get(objectId) || this._spriteState.get(objectId);
+        if (!curve || state === undefined) return null;
+        const bpm = this._transport.bpm;
+        if (!(typeof bpm === "number" && bpm > 0)) return null;
+        const fracs = state._beatFractions;
+        if (!Array.isArray(fracs) || beatIndex < 0 || beatIndex >= fracs.length) return null;
+        const fB = fracs[beatIndex];
+        const p = Number.isFinite(state.cycleProgress) ? state.cycleProgress : 0;
+        // Direction-aware playback progress of this beat (reverse cycles traverse
+        // beats in 1−fraction order), then the forward distance to its NEXT hit.
+        const loopLen = cycleSpeedsLoopLength(state.speedList);
+        const sp = loopLen > 0 ? state.speedList[(state.cycleCount || 0) % loopLen] : 1;
+        const gB = (typeof sp === "number" && sp < 0) ? 1 - fB : fB;
+        let dProg = gB - p;
+        if (dProg <= 1e-6) dProg += 1;                 // at/behind → next cycle forward
+        // Form-beats spanned by one cursor cycle (0→1), per object kind.
+        const manualNoLoop = curve.patternForm === true && this._practiceLoopBeats === null;
+        const formGated = !manualNoLoop
+            && ((Array.isArray(curve.chartFormSegs) && curve.chartFormSegs.length > 0
+                && Number(curve.chartFormBeats) > 0)
+                || (curve.chartMulti === true && Array.isArray(curve.chartMultiSegs)
+                    && curve.chartMultiSegs.length > 0));
+        let cycleBeats;
+        if (formGated) {
+            const sectionBars = Math.max(1, Math.floor(Number(curve.chartSectionBars)) || 1);
+            const bpb = Math.max(1, Math.round(Number(curve.beatsPerBar)) || 1);
+            cycleBeats = sectionBars * bpb;
+        } else {
+            const cd = cycleDurationSeconds(bpm, effectiveBeatsPerCycle(curve), effectiveBeatInterval(curve));
+            const speedMag = Math.abs(Number(sp)) || 1;
+            cycleBeats = (cd / speedMag) * bpm / 60;
+        }
+        const currentForm = this._transport.formBeats;
+        if (currentForm === null || !Number.isFinite(currentForm)) return null;
+        return currentForm + dProg * cycleBeats;
     }
 
     /** The active practice-loop length in beats, or null when off (diagnostics). */

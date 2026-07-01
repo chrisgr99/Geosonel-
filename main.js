@@ -733,7 +733,11 @@ async function main() {
     // resumes). Never-fired beats have no recorded position yet — the computed
     // best-effort fallback is a later slice.
     canvas.setBeatSeekSink((curveId, beatIndex) => {
-        const formBeat = simulation.lastBeatFireForm(curveId, beatIndex);
+        // A beat that has played since the last rewind → rewind BACK to its firing;
+        // one that hasn't → wind FORWARD to where it will next fire (both carry
+        // every object to the same shared form position).
+        let formBeat = simulation.lastBeatFireForm(curveId, beatIndex);
+        if (formBeat === null) formBeat = simulation.computeForwardSeekFormBeat(curveId, beatIndex);
         if (formBeat === null) return;
         simulation.seekToStartBeats(formBeat);
     });
