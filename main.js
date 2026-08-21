@@ -215,7 +215,7 @@ import {
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
 import { variedCycleAt } from "./src/beatPoints.js";
 import { loadDrumMachineSounds } from "./src/drumMachineSounds.js";
-import { paintAppMarkup, mountStyles } from "./src/appMarkup.js";
+import { paintAppMarkup, mountStyles, installEmbeddedMenu } from "./src/appMarkup.js";
 
 // STANDALONE GXW IS ITS OWN FIRST CALLER, and only when this module is the page's own entry: the
 // standalone page has an #app div waiting. A host that embeds GXW imports createGXW and calls it with
@@ -242,23 +242,30 @@ if (document.getElementById("app")) createGXW();
 export async function createGXW(host = {}) {
     // THE FURNITURE FIRST, before anything looks for an element inside it. Nothing in GXW queries the
     // document at module level — checked — so this is early enough for every lookup that follows.
+    // EMBEDDED IS A THIRD CASE, beside desktop and web. GXW has always asked one question — is there
+    // an Electron bridge? — and answered "desktop" or "browser". Inside a host there is no bridge and
+    // it is not the web either: the HOST owns saving, and GXW's own file and storage manners are the
+    // wrong ones. Anything that turns on "am I on the web" has to ask this too.
+    const embedded = host.embedded ?? !!host.element;
     const root = host.element || document.getElementById("app");
     if (!root) throw new Error("createGXW: no element to draw into (pass one, or give the page an #app)");
     // Styles before markup, so the furniture is laid out as it is painted rather than reflowing once
     // the sheets arrive.
     mountStyles(root.ownerDocument || document);
     paintAppMarkup(root);
+    // See the .gxw-embedded rules in css/mode-overrides.css: the host owns the top of the window, so
+    // the in-page menubar goes and the grid collapses to one track.
+    // The class now, so the layout is right from the first paint.
+    if (embedded) root.classList.add("gxw-embedded");
 
     // WHAT THE CALLER GETS BACK, filled in as GXW builds itself rather than returned at the end:
     // main() has early exits (the ?clearstorage recovery path is one), and a host that received
     // nothing from those would have no way to tell a GXW that came up from one that bailed.
-    // EMBEDDED IS A THIRD CASE, beside desktop and web. GXW has always asked one question — is there
-    // an Electron bridge? — and answered "desktop" or "browser". Inside a host there is no bridge and
-    // it is not the web either: the HOST owns saving, and GXW's own file and storage manners are the
-    // wrong ones. Anything that turns on "am I on the web" has to ask this too.
-    const embedded = host.embedded ?? !!host.element;
     const handle = { element: root, embedded, transport: null, strudelRuntime: null };
     await main({ ...host, embedded }, handle);
+    // THE HAMBURGER AFTER main(), not before. main() builds the canvas toolbar's contents, so a
+    // button put there first is swept away by the toolbar it was added to.
+    if (embedded) installEmbeddedMenu(root);
     return handle;
 }
 
@@ -607,7 +614,10 @@ async function main(host = {}, handle = null) {
     // up over the session.
     // Given a context and an output when embedded; its own when not. See createGXW.
     const transport = new Transport({ audioContext: host.audioContext, output: host.output });
-    const strudelRuntime = new StrudelRuntime(transport, { loadStrudel: host.loadStrudel });
+    const strudelRuntime = new StrudelRuntime(transport, {
+        loadStrudel: host.loadStrudel,
+        onNote: host.onNote,      // where an object with a rack voice sends its notes
+    });
     // The two things a host needs to drive GXW from outside: the transport, so a RUN button on a rack
     // faceplate is the same act as pressing play in here, and the runtime, for what comes after.
     if (handle) { handle.transport = transport; handle.strudelRuntime = strudelRuntime; }
@@ -4808,6 +4818,19 @@ async function main(host = {}, handle = null) {
                 await applySceneEdit((data) =>
                     setSceneObjectVoiceField(
                         data, edit.selection, "superdough", "source", edit.value,
+                    ),
+                );
+            } else if (edit.kind === "setVoiceRackVoice") {
+                // Voice band's Rack voice dropdown: which of the host's eight
+                // voice jacks this object's notes leave by, or none. Stored as
+                // voice.rack.voice — the voice model already keeps a section
+                // per engine, so the rack is one more engine and inherits its
+                // storage, aggregation and mutator. The firing engine reads it
+                // and hands the note to the host instead of sounding it.
+                await applySceneEdit((data) =>
+                    setSceneObjectVoiceField(
+                        data, edit.selection, "rack", "voice",
+                        edit.value === "" ? null : Number(edit.value),
                     ),
                 );
             } else if (edit.kind === "createFunctionStub") {

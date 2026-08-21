@@ -112,8 +112,20 @@ export const APP_MARKUP = `
         </main>
     `;
 
-/** Fill an element with GXW's furniture. Returns the element, for chaining. */
+/**
+ * Fill an element with GXW's furniture. Returns the element, for chaining.
+ *
+ * THE ELEMENT BECOMES #app, because that id is not decoration — it carries the layout. The whole
+ * window is a three-row grid (menu bar, divider, body) declared on `#app`, and the body's `1fr` is
+ * where every pane below gets its height from. Painting the markup into an element WITHOUT that id
+ * left GXW with no grid at all: the menu bar took a share of the height instead of its own row, the
+ * inspector had no bounded height so it could not scroll to its own bottom, and the panes fell back
+ * to content width, which is why the inspector came out wider than it should.
+ *
+ * Standalone the element already has the id and this changes nothing.
+ */
 export function paintAppMarkup(element) {
+    if (!element.id) element.id = "app";
     element.innerHTML = APP_MARKUP;
     return element;
 }
@@ -155,4 +167,54 @@ export function mountStyles(doc = document) {
         link.dataset.gxwStyle = rel;
         doc.head.appendChild(link);
     }
+}
+
+/**
+ * EMBEDDED: THE MENUS MOVE, THEY ARE NOT REBUILT. Hiding the top row takes away a band of height the
+ * host needs, but it also takes away File, Edit, View and Run — so the same #menubar element is moved
+ * into a panel behind a hamburger in the canvas toolbar. Moved, not copied: every handler, every
+ * keyboard binding and every future menu item comes with it, and there is no second menu to keep in
+ * step with the first.
+ *
+ * Standalone never calls this.
+ */
+export function installEmbeddedMenu(root) {
+    const bar = root.querySelector("#menubar");
+    const toolbar = root.querySelector("#canvas-toolbar");
+    if (!bar || !toolbar || root.querySelector(".gxw-menu-button")) return null;
+
+    const panel = document.createElement("div");
+    panel.className = "gxw-menu-panel";
+    panel.hidden = true;
+    panel.appendChild(bar);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "gxw-menu-button";
+    button.title = "Menus";
+    button.setAttribute("aria-label", "Menus");
+    button.textContent = "\u2630";
+    button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        panel.hidden = !panel.hidden;
+    });
+    // Anywhere else closes it, the way a menu should. Capture, so a click that also does something
+    // still closes the panel rather than leaving it open behind what it just did.
+    document.addEventListener("click", (e) => {
+        if (panel.hidden) return;
+        if (panel.contains(e.target) || button.contains(e.target)) return;
+        panel.hidden = true;
+    }, true);
+
+    // THE MENUS ARE NOT INSIDE #app. Every dropdown is appended to document.body and positioned
+    // `fixed` at its trigger — which is fine when GXW owns the page, and not fine inside a host, where
+    // the host's pane sits above them in the stacking order and they open behind it, invisible.
+    //
+    // The class goes on the host's body because that is where the dropdowns are; the rule that reads
+    // it lives with GXW's other embedded overrides. One class, so GXW's CSS can reach its own menus.
+    (root.ownerDocument || document).body.classList.add("gxw-embedded-host");
+
+    toolbar.insertBefore(button, toolbar.firstChild);
+    toolbar.parentElement.insertBefore(panel, toolbar.nextSibling);
+    return { button, panel };
 }
