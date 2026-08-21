@@ -218,10 +218,30 @@ function installAudioSourceTimeGuard() {
 export class StrudelRuntime {
     /**
      * @param {Transport} transport
+     * @param {object} [host]
+     * @param {(() => Promise<any>)} [host.loadStrudel]  Supplies the Strudel/superdough namespace
+     *   instead of this runtime importing `@strudel/web` itself. THE POINT OF THE SEAM: superdough is
+     *   a singleton by construction — one audio controller, one output stage, one registry of sounds
+     *   — so a host that already has one must be able to hand over the one it has. Two imports in one
+     *   page are not one singleton with two owners; they are two singletons, neither aware of the
+     *   other, and sounds registered on one are missing from the other. Omitted, GXW imports its own,
+     *   which is what standalone wants.
+     *
+     *   THE CONTRACT: whatever it returns must already be initialised, with Strudel's pattern globals
+     *   live on `window` — `note` is the one checked for. The runtime does NOT call initStrudel on a
+     *   host-supplied engine, because that would set up a second output stage and undo the host's own
+     *   routing. A loader that returns an unstarted namespace fails in `_waitForGlobals` with a clear
+     *   message rather than hanging.
      */
-    constructor(transport) {
+    constructor(transport, host = {}) {
         /** @type {Transport} */
         this._transport = transport;
+
+        /**
+         * @type {(() => Promise<any>) | null}
+         * How to get the engine. See the constructor's host.loadStrudel.
+         */
+        this._loadStrudel = host.loadStrudel || null;
 
         /** @type {RuntimeStatus} */
         this._status = "idle";
@@ -329,6 +349,15 @@ export class StrudelRuntime {
      */
     get audioContext() {
         return this._audioContext;
+    }
+
+    /**
+     * Where GXW's sound leaves. The transport owns the answer, because the transport is what a host
+     * hands an output node to; this passes it on so nothing below has to know about either.
+     * @returns {AudioNode | null}
+     */
+    get outputNode() {
+        return this._transport ? this._transport.outputNode : (this._audioContext ? this._audioContext.destination : null);
     }
 
     /**
@@ -475,7 +504,11 @@ export class StrudelRuntime {
         // produces a duplicate-copies-of-core problem inside
         // strudel's scheduler. Section 27 and GXSTR's Phase 3
         // both record this finding.
-        const web = await import("@strudel/web");
+        // FROM THE HOST IF THERE IS ONE. A bare `@strudel/web` import is also GXW's only npm specifier
+        // at runtime, so taking it from the host is what lets GXW's own source be served as plain
+        // relative-import modules with no bundler — the same rule DreamRack keeps for itself.
+        const web = this._loadStrudel ? await this._loadStrudel({ audioContext: ctx })
+                                      : await import("@strudel/web");
         this._web = web;
 
         // initStrudel sets up strudel's globals (note, s, hush,
@@ -484,7 +517,12 @@ export class StrudelRuntime {
         // to actually be live before continuing. initStrudel
         // accepts options including a pre-existing AudioContext
         // (so strudel does not create its own); we pass GXW's.
-        if (typeof web.initStrudel === "function") {
+        if (this._loadStrudel) {
+            // ALREADY STARTED, BY WHOEVER OWNS IT. initStrudel sets up globals and an output stage;
+            // running it against an engine the host has already initialised would undo the host's
+            // own routing, which is the one thing the injection exists to preserve.
+            console.log(`${LOG_PREFIX} engine supplied by the host; not calling initStrudel`);
+        } else if (typeof web.initStrudel === "function") {
             try {
                 await web.initStrudel({ audioContext: ctx });
             } catch (err) {

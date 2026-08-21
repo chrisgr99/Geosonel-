@@ -1214,7 +1214,9 @@ export class PatternFiringEngine {
         env.gain.exponentialRampToValueAtTime(peak, t + 0.001);
         env.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
         osc.connect(env);
-        env.connect(ctx.destination);
+        // NOT ctx.destination. Embedded, GXW's sound has to arrive at the module's output so the rack
+        // can filter, delay or mix it; standalone, outputNode IS the destination and nothing changes.
+        env.connect(this._runtime.outputNode || ctx.destination);
         osc.start(t);
         osc.stop(t + 0.05);
     }

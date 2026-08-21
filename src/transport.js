@@ -41,13 +41,31 @@
 export const TICKS_PER_BEAT = 480;
 
 export class Transport {
-    constructor() {
+    /**
+     * @param {object} [host]
+     * @param {AudioContext} [host.audioContext]  The context to run on. GIVEN, NOT MADE, when GXW is
+     *   embedded: a host running more than one thing creates one context and hands the same one to
+     *   everything, because two AudioContexts cannot be patched to each other at any price. Omitted,
+     *   the transport makes its own on first play, which is what standalone GXW wants.
+     * @param {AudioNode} [host.output]  Where the sound goes. Embedded, this is the module's own
+     *   output node, so GXW's voices arrive in the rack as ordinary audio to be filtered, delayed or
+     *   mixed. Omitted, it is the context's destination — the speakers, as today.
+     */
+    constructor(host = {}) {
         /**
          * @type {AudioContext | null}
          * Created lazily on first play() call because browsers
          * require a user gesture to initialise an AudioContext.
+         * Non-null from the start when a host supplied one.
          */
-        this._audioContext = null;
+        this._audioContext = host.audioContext || null;
+
+        /**
+         * @type {AudioNode | null}
+         * The node GXW's sound leaves through. Null means the context's destination, resolved late
+         * rather than here because with no context yet there is no destination to point at.
+         */
+        this._outputNode = host.output || null;
 
         /** @type {boolean} */
         this._isPlaying = false;
@@ -413,6 +431,7 @@ export class Transport {
      */
     _ensureAudioContext() {
         if (this._audioContext === null) {
+            // Only reached when no host supplied one; see the constructor.
             // @ts-ignore — webkitAudioContext fallback for older Safari
             const Ctor = window.AudioContext || window.webkitAudioContext;
             this._audioContext = new Ctor();
@@ -437,6 +456,17 @@ export class Transport {
      */
     get audioContext() {
         return this._audioContext;
+    }
+
+    /**
+     * Where GXW's sound should be connected. The host's node when embedded, the speakers otherwise.
+     * Resolved on each call rather than cached, since the context may not have existed when the
+     * transport was built. Returns null before there is any context at all.
+     * @returns {AudioNode | null}
+     */
+    get outputNode() {
+        if (this._outputNode) return this._outputNode;
+        return this._audioContext ? this._audioContext.destination : null;
     }
 
     /**

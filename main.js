@@ -215,10 +215,49 @@ import {
 import { computeShapeBboxCentroid } from "./src/inspectorSelection.js";
 import { variedCycleAt } from "./src/beatPoints.js";
 import { loadDrumMachineSounds } from "./src/drumMachineSounds.js";
+import { paintAppMarkup, mountStyles } from "./src/appMarkup.js";
 
-main();
+// STANDALONE GXW IS ITS OWN FIRST CALLER, and only when this module is the page's own entry: the
+// standalone page has an #app div waiting. A host that embeds GXW imports createGXW and calls it with
+// an element of its own, and its page has no #app — so importing this module does not boot a second
+// GXW into it as a side effect.
+if (document.getElementById("app")) createGXW();
 
-async function main() {
+/**
+ * Build GXW — into an element, on a context, with a sound engine, all of which may be given.
+ *
+ * Every argument is optional and every default is what standalone GXW has always done. That is the
+ * shape of every seam in this merge: pass nothing and nothing changes; pass something and the host
+ * wins. See design/drack.md in the DreamRack repository.
+ *
+ * @param {object} [host]
+ * @param {HTMLElement} [host.element]  Where GXW draws. Defaults to the page's #app.
+ * @param {AudioContext} [host.audioContext]  The context to run on. Defaults to one of its own, made
+ *   on first play. A host running more than one thing passes the single context it created, because
+ *   two contexts cannot be patched to each other.
+ * @param {AudioNode} [host.output]  Where GXW's sound goes. Defaults to the speakers.
+ * @param {() => Promise<any>} [host.loadStrudel]  Supplies an already-started Strudel/superdough
+ *   namespace instead of GXW importing its own. See StrudelRuntime's constructor for the contract.
+ */
+export async function createGXW(host = {}) {
+    // THE FURNITURE FIRST, before anything looks for an element inside it. Nothing in GXW queries the
+    // document at module level — checked — so this is early enough for every lookup that follows.
+    const root = host.element || document.getElementById("app");
+    if (!root) throw new Error("createGXW: no element to draw into (pass one, or give the page an #app)");
+    // Styles before markup, so the furniture is laid out as it is painted rather than reflowing once
+    // the sheets arrive.
+    mountStyles(root.ownerDocument || document);
+    paintAppMarkup(root);
+
+    // WHAT THE CALLER GETS BACK, filled in as GXW builds itself rather than returned at the end:
+    // main() has early exits (the ?clearstorage recovery path is one), and a host that received
+    // nothing from those would have no way to tell a GXW that came up from one that bailed.
+    const handle = { element: root, transport: null, strudelRuntime: null };
+    await main(host, handle);
+    return handle;
+}
+
+async function main(host = {}, handle = null) {
     // --- Emergency storage wipe (?clearstorage) ---
     //
     // When the URL contains the query parameter
@@ -561,8 +600,12 @@ async function main() {
     // Once init starts (or is already running), the listeners
     // remove themselves via AbortController so they don't pile
     // up over the session.
-    const transport = new Transport();
-    const strudelRuntime = new StrudelRuntime(transport);
+    // Given a context and an output when embedded; its own when not. See createGXW.
+    const transport = new Transport({ audioContext: host.audioContext, output: host.output });
+    const strudelRuntime = new StrudelRuntime(transport, { loadStrudel: host.loadStrudel });
+    // The two things a host needs to drive GXW from outside: the transport, so a RUN button on a rack
+    // faceplate is the same act as pressing play in here, and the runtime, for what comes after.
+    if (handle) { handle.transport = transport; handle.strudelRuntime = strudelRuntime; }
     // TransportBarView is constructed AFTER the toolbar
     // below; the toolbar builds the transport DOM elements
     // (rewind-btn, play-btn, musical-position, bpm-input,
