@@ -770,6 +770,46 @@ export class PatternFiringEngine {
      * @param {number} fireTime  The scheduled audio-context time.
      * @returns {boolean}
      */
+    /**
+     * OUT A RACK JACK, IF THIS OBJECT ASKS FOR ONE. An object carrying a rack voice (1..8) sends its
+     * notes to the host instead of sounding them here; anything else is GXW's own and goes to
+     * superdough or MIDI exactly as before. Exclusive, deliberately: a rack voice that also sounded
+     * through superdough would put an unrequested note underneath every one you asked for.
+     *
+     * Returns true when the note has been handed over and the caller should not sound it.
+     * @param {string} sourceId
+     * @param {any} value       the event, after any voice injection
+     * @param {number} fireTime audio-context time the note starts
+     * @param {number} duration seconds
+     * @returns {boolean}
+     */
+    _sendToRack(sourceId, value, fireTime, duration) {
+        const sink = this._runtime.noteSink;
+        if (typeof sink !== "function") return false;
+        const source = this._findSourceById(sourceId);
+        // UNDER voice.rack, beside voice.superdough. The voice model already keeps a per-object
+        // section per engine, so the rack is one more engine rather than a new kind of setting — and
+        // it inherits that model's storage, aggregation and mutators for nothing.
+        const rack = source && source.voice && source.voice.rack;
+        const voice = rack && Number(rack.voice);
+        if (!Number.isFinite(voice) || voice < 1 || voice > 8) return false;
+        try {
+            sink({
+                voice: Math.round(voice),
+                at: fireTime,
+                duration,
+                note: value.note !== undefined ? value.note : value.n,
+                gain: typeof value.gain === "number" ? value.gain : undefined,
+                pan: typeof value.pan === "number" ? value.pan : undefined,
+                sourceId,
+            });
+        } catch (err) {
+            // A host that throws must not strand the firing loop.
+            console.warn("[gxw] note sink threw:", err);
+        }
+        return true;
+    }
+
     _suppressDuplicatePitch(sourceId, note, fireTime) {
         // Keyed on SOURCE + pitch, not pitch alone: this only collapses a single
         // source's own coincident same-pitch fire (the cycle-boundary double-fire,
@@ -1026,7 +1066,9 @@ export class PatternFiringEngine {
         // its own duplicate audio was suppressed.
         const suppressed = this._suppressDuplicatePitch(sourceId, noteField, fireTime);
 
-        if (!suppressed && this._outputMode === "superdough") {
+        if (!suppressed && this._sendToRack(sourceId, value, fireTime, gate)) {
+            // Handed to the host; nothing sounds here.
+        } else if (!suppressed && this._outputMode === "superdough") {
             // An early gate (articulation shorter than the
             // duration) sets the release tail explicitly so it
             // spans the remainder; a full-duration gate leaves
@@ -1241,7 +1283,9 @@ export class PatternFiringEngine {
             out.gain = amplitude;
         }
 
-        if (this._outputMode === "superdough") {
+        if (this._sendToRack(sourceId, out, fireTime, duration)) {
+            // Handed to the host; nothing sounds here.
+        } else if (this._outputMode === "superdough") {
             const source = this._findSourceById(sourceId);
             const globalVoice = this._scene !== null ? this._scene.voiceSuperdough : null;
             const injected = applyVoiceInjection(out, source, globalVoice);

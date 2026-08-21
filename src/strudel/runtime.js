@@ -243,6 +243,16 @@ export class StrudelRuntime {
          */
         this._loadStrudel = host.loadStrudel || null;
 
+        /**
+         * @type {((note: any) => void) | null}
+         * WHERE A NOTE GOES WHEN IT IS NOT GXW'S OWN SOUND. A host that can play notes itself — the
+         * rack, whose voice tabs are instruments — supplies this, and an object carrying a rack voice
+         * sends its notes here instead of to superdough. Both destinations are live at once: GXW's own
+         * sounds keep leaving through superdough exactly as before. Which of the two a note takes is
+         * decided per object, not per module, so nothing doubles.
+         */
+        this._noteSink = host.onNote || null;
+
         /** @type {RuntimeStatus} */
         this._status = "idle";
 
@@ -356,6 +366,14 @@ export class StrudelRuntime {
      * hands an output node to; this passes it on so nothing below has to know about either.
      * @returns {AudioNode | null}
      */
+    /**
+     * The host's note sink, or null when GXW is sounding for itself. See the constructor.
+     * @returns {((note: any) => void) | null}
+     */
+    get noteSink() {
+        return this._noteSink;
+    }
+
     get outputNode() {
         return this._transport ? this._transport.outputNode : (this._audioContext ? this._audioContext.destination : null);
     }

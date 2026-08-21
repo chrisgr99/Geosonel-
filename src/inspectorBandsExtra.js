@@ -32,6 +32,14 @@ import { getBankSoundNames } from "./drumMachineSounds.js";
 import { splitMeasures, resolveMeasures, deriveCurveBeatPoints, fillForwardPhrases, moduleLoopFill } from "./beatPoints.js";
 import { layoutChart, groupRows, sectionLabelFor, rangesForLabel, chartSections } from "./harmonyChartLayout.js";
 
+// V1 to V8 on the GXW module's faceplate, and "None" for an object that sounds here instead. The
+// numbers are the jack legends, not indices, so what the inspector says matches what is printed on
+// the panel the cable goes into.
+const RACK_VOICE_OPTIONS = [
+    { value: "", label: "None" },
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ value: String(n), label: "V" + n })),
+];
+
 /** Wrap a beat-string input in a positioned span carrying the playing-beat
  *  highlight overlay, so the box can sit over the cell under the cursor. */
 function wrapBeatField(input) {
@@ -1462,6 +1470,25 @@ export const bandExtraMethods = {
         };
 
         const labelW = W.voiceBankLabel;
+
+        // RACK ROW. Which of the host's eight voice jacks this object's notes leave by, when GXW is
+        // running as a module on a rack. None — the default — means the object sounds here, through
+        // superdough, exactly as it always has.
+        //
+        // NOT PART OF THE INSTRUMENT/BEATBOX RADIO. Those two are alternative ways for GXW to make a
+        // sound; this says the note is not GXW's to sound at all. It sits outside the choice rather
+        // than as a third option in it, and it stays usable whichever of the two is picked.
+        const rackAgg = aggregateVoiceField(objs.all, "rack", "voice");
+        const rRack = mkRow();
+        rRack.appendChild(mkLabel("Rack voice", { width: labelW + 18, disabled: !voiceActive }));
+        rRack.appendChild(this._buildDropdownField({
+            options: RACK_VOICE_OPTIONS,
+            value: rackAgg === "varies" ? "" : (rackAgg == null ? "" : String(rackAgg)),
+            width: W.voiceFieldCombined,
+            editable: voiceActive,
+            editKind: "setVoiceRackVoice",
+        }));
+        band.appendChild(rRack);
 
         // Instrument row: radio + label + pitched-sound dropdown.
         const rNote = mkRow();
