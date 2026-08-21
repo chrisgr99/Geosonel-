@@ -252,8 +252,13 @@ export async function createGXW(host = {}) {
     // WHAT THE CALLER GETS BACK, filled in as GXW builds itself rather than returned at the end:
     // main() has early exits (the ?clearstorage recovery path is one), and a host that received
     // nothing from those would have no way to tell a GXW that came up from one that bailed.
-    const handle = { element: root, transport: null, strudelRuntime: null };
-    await main(host, handle);
+    // EMBEDDED IS A THIRD CASE, beside desktop and web. GXW has always asked one question — is there
+    // an Electron bridge? — and answered "desktop" or "browser". Inside a host there is no bridge and
+    // it is not the web either: the HOST owns saving, and GXW's own file and storage manners are the
+    // wrong ones. Anything that turns on "am I on the web" has to ask this too.
+    const embedded = host.embedded ?? !!host.element;
+    const handle = { element: root, embedded, transport: null, strudelRuntime: null };
+    await main({ ...host, embedded }, handle);
     return handle;
 }
 
@@ -5545,7 +5550,10 @@ async function main(host = {}, handle = null) {
     // a chance to paint before the dialog overlays it; the
     // openDialog backdrop is transparent enough that the
     // running scene stays visible behind the modal.
-    if (!isElectron) {
+    // ...and NOT when embedded. The notice explains that scores live in the browser's IndexedDB and
+    // points at File > Export Score — advice that is simply untrue inside a host, where the score
+    // belongs to the host's document and GXW's own storage is not what is keeping it.
+    if (!isElectron && !host.embedded) {
         try {
             if (localStorage.getItem("gxw.firstRun.dismissed") === null) {
                 showFirstRunDialog();
