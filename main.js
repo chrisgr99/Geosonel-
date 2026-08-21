@@ -443,9 +443,22 @@ async function main(host = {}, handle = null) {
     // title is the plain score name and the dirty signal
     // additionally appears as the standard macOS dot in the
     // close-button circle via setDocumentEdited.
-    const isElectron =
+    // WHAT THIS FLAG MEANS: "I am the standalone desktop app", and every UI decision below turns on
+    // it — whether the native menu bar takes over from the in-page one, whether the title says
+    // "(Browser)", whether the mirror exists.
+    //
+    // IT IS NOT THE SAME QUESTION AS "do I have a file bridge". A host gives GXW that bridge so both
+    // builds share one set of scores and images — and the moment it did, GXW concluded it was the
+    // desktop app and skipped installing the in-page menus, on the reasoning that a native menu bar
+    // had taken over. Inside a host there is no native menu bar. The menu titles appeared under the
+    // hamburger with nothing behind them.
+    //
+    // So embedded wins where the two disagree. Storage is unaffected: src/storage.js asks for the
+    // bridge itself rather than going through this.
+    const hasFileBridge =
         typeof (/** @type {any} */ (window).gxwStorage) === "object" &&
         (/** @type {any} */ (window).gxwStorage) !== null;
+    const isElectron = hasFileBridge && !host.embedded;
 
     // Tag the document body so CSS can hide the in-page
     // top row (which on Electron contains only the menubar,
