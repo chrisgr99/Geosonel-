@@ -150,6 +150,16 @@ contextBridge.exposeInMainWorld('gxwMidi', {
 //
 // loadImage returns {bytes, mimeType} matching the shape
 // canvas.setImage accepts.
+// SOMETHING ON DISK MOVED. Fired when the scores folder, settings or the image cache changes under
+// either build — see electron-storage.js. The callback gets a kind: 'scores', 'settings' or 'images'.
+contextBridge.exposeInMainWorld('gxwDisk', {
+  onChanged: (callback) => {
+    const listener = (_e, kind) => callback(kind);
+    ipcRenderer.on('gxw:disk-changed', listener);
+    return () => ipcRenderer.removeListener('gxw:disk-changed', listener);
+  },
+});
+
 contextBridge.exposeInMainWorld('gxwGallery', {
   list: () => ipcRenderer.invoke('gxw:gallery-list'),
   add: (input) => ipcRenderer.invoke('gxw:gallery-add', input),
