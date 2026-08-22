@@ -95,6 +95,7 @@ import { installRunMenu } from "./src/runMenu.js";
 import { installEditMenu } from "./src/editMenu.js";
 import { installAppMenu } from "./src/appMenu.js";
 import { installMenuActions, pushMenuState, pushRecentScoresToMenu, pushBackupsToMenu } from "./src/menuActions.js";
+import { actionOpenScoreByPath } from "./src/scoreActions.js";
 import { SceneLoader } from "./src/sceneLoader.js";
 import { createSceneOps } from "./src/sceneOps.js";
 import { createBuilder, builderGlobals, MATH_GLOBALS } from "./src/construction.js";
@@ -750,6 +751,31 @@ async function main(host = {}, handle = null) {
     // pattern cache reconciles to the freshly-loaded scene
     // on the same code path.
     const firingEngine = new PatternFiringEngine(strudelRuntime, midiSender, simulation, transport);
+
+    // ---- TEARDOWN -------------------------------------------------------------------------------
+    //
+    // GXW HAD NO WAY TO BE STOPPED. Standalone it never needed one: the window closing took the whole
+    // renderer with it. Inside a host it is a module that can be deleted — and a GXW whose element is
+    // removed without this goes on running: its transport still counting, its firing engine still
+    // scheduling, its notes still arriving at the host's output. The pane disappears and the music
+    // does not, which is exactly as baffling as it sounds when it happens.
+    //
+    // WHAT IT STOPS, in the order that matters: the clock first, so nothing new is scheduled; then
+    // anything holding a note; then the sound path; then the frame loops. Every step is guarded — a
+    // teardown that throws half way through leaves a worse mess than the one it was fixing.
+    let disposed = false;
+    const disposeGxw = () => {
+        if (disposed) return;
+        disposed = true;
+        try { transport.pause(); } catch (_e) { /* already stopped */ }
+        try { midiSender.panic(); } catch (_e) { /* no MIDI out */ }
+        // THE RUNTIME'S OWN GUARD, used as the off switch: play() returns immediately when there is
+        // no superdough, so dropping the reference silences every future note without having to
+        // unwind the engine that was about to send them.
+        try { strudelRuntime._superdough = null; } catch (_e) { /* nothing to drop */ }
+        try { if (canvas && canvas._resizeObserver) canvas._resizeObserver.disconnect(); } catch (_e) { /* none */ }
+    };
+    if (handle) handle.dispose = disposeGxw;
     canvas.setFiringEngine(firingEngine);
     firingEngine.setCanvas(canvas);
 
@@ -2268,6 +2294,9 @@ async function main(host = {}, handle = null) {
         return out;
     };
     const tickVaryPreview = () => {
+        // A disposed GXW asks for no more frames. Without this the loop outlives the module and keeps
+        // a whole application's worth of work running behind a pane nobody can see.
+        if (disposed) return;
         requestAnimationFrame(tickVaryPreview);
         const insp = editor.inspector;
         if (insp === null || insp === undefined) return;
@@ -5405,7 +5434,7 @@ async function main(host = {}, handle = null) {
     // build (no window.gxwMenu bridge), so this section is
     // Electron-effective only — the web build's in-page
     // menu continues to be the only menu surface.
-    installMenuActions({
+    const actionCtx = {
         session,
         messages,
         editor,
@@ -5425,7 +5454,36 @@ async function main(host = {}, handle = null) {
         runSetup: () => { void runSetup(); },
         toggleFocusCanvas,
         toggleAutoZoom,
-    });
+    };
+    installMenuActions(actionCtx);
+
+    // ---- WHAT A HOST CAN DRIVE FROM OUTSIDE ------------------------------------------------------
+    //
+    // A module on a rack has to be able to say which score, and to start and stop it, without anyone
+    // opening GXW's window. These go through the SAME actions the menus use, so there is one way to
+    // open a score and a host cannot reach a second one that behaves differently.
+    //
+    // THE PATH, NOT THE CONTENT. A patch records which score is loaded, not a copy of it — the two
+    // builds share one library of scores on disk, so duplicating the score into the patch would make
+    // the patch a second, staler copy of something that already has a home.
+    if (handle) {
+        handle.getScorePath = () => (session.bundle ? session.bundle.path : null);
+        handle.getScoreName = () => (session.bundle ? session.bundle.name : null);
+        handle.openScorePath = async (path) => {
+            if (!path || (session.bundle && session.bundle.path === path)) return false;
+            await actionOpenScoreByPath(actionCtx, path);
+            return true;
+        };
+        // ONE TRANSPORT, TWO VIEWS. The rack's RUN button and GXW's own play control are the same
+        // state seen twice, so each has to hear about the other. `play` is emitted on starting AND on
+        // pausing — it means "the transport moved" — so the listener reads isPlaying rather than
+        // assuming which way it went.
+        handle.isPlaying = () => !!transport.isPlaying;
+        handle.play = () => { if (!transport.isPlaying) transport.play(); };
+        handle.pause = () => { if (transport.isPlaying) transport.pause(); };
+        handle.onTransport = (cb) => transport.on("play", () => cb(!!transport.isPlaying));
+    }
+
     pushMenuState({
         dirty: session.bundle.dirty,
         isUntitled: session.bundle.path === null,
